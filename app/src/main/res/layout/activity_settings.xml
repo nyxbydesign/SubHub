@@ -967,7 +967,7 @@
                 android:layout_height="wrap_content"
                 android:minHeight="@dimen/control_min_height"
                 android:layout_marginTop="@dimen/settings_card_gap"
-                android:text="@string/censor_gallery_photos" />
+                android:text="@string/export_workspace_title" />
 
     </LinearLayout>
 

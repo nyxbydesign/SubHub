@@ -17,12 +17,15 @@ public abstract class PreferencePage extends AppCompatActivity {
     protected void page(int title) {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(20), dp(12), dp(20), dp(32));
+        int margin = getResources().getDimensionPixelSize(R.dimen.page_margin);
+        page.setPadding(margin, getResources().getDimensionPixelSize(R.dimen.primary_header_top), margin, dp(32));
         scroll.addView(page); setContentView(scroll);
         View header = getLayoutInflater().inflate(R.layout.view_secondary_header, page, false);
         page.addView(header);
         PrimaryHeader.bindSecondary(header, title, false);
         PrimaryHeader.backButton(header).setOnClickListener(view -> finish());
+        LinearLayout.LayoutParams headerParams = (LinearLayout.LayoutParams) header.getLayoutParams();
+        headerParams.bottomMargin = dp(16); header.setLayoutParams(headerParams);
     }
     protected LinearLayout card(LinearLayout parent) {
         LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL);
@@ -37,9 +40,11 @@ public abstract class PreferencePage extends AppCompatActivity {
         parent.addView(view, new LinearLayout.LayoutParams(-1, -2)); return view;
     }
     protected Button button(LinearLayout parent, CharSequence label, Runnable action) {
-        MaterialButton button = new MaterialButton(this); button.setText(label); button.setAllCaps(false);
+        Button button = (Button) getLayoutInflater().inflate(R.layout.view_ux_action, parent, false);
+        button.setText(label); button.setAllCaps(false);
         button.setMinHeight(dp(48)); button.setOnClickListener(v -> action.run());
-        parent.addView(button, new LinearLayout.LayoutParams(-1, -2)); return button;
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(6); params.bottomMargin = dp(4);
+        parent.addView(button, params); return button;
     }
     protected View toggle(LinearLayout parent, int label, boolean enabled, Consumer<Boolean> changed) {
         StateToggle toggle = new StateToggle(this); toggle.setText(label);

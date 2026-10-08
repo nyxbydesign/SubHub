@@ -33,6 +33,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
 public final class ExportAndCustomUiTest {
+    @org.junit.Before public void enterControllerForEditableScreens() {
+        com.subhub.app.security.ControllerPinManager.enterDomMode();
+    }
     @After public void clearCustomImages() {
         Context context = ApplicationProvider.getApplicationContext();
         CustomImageManager manager = new CustomImageManager(context);
@@ -47,7 +50,7 @@ public final class ExportAndCustomUiTest {
                 assertFalse(((SwitchMaterial) activity.findViewById(
                         R.id.switch_delete_originals)).isChecked());
             });
-            onView(withId(R.id.switch_delete_originals)).perform(click());
+            onView(withId(R.id.switch_delete_originals)).perform(androidx.test.espresso.action.ViewActions.scrollTo(), click());
             onView(withText(R.string.export_delete_warning_title)).check(matches(isDisplayed()));
             onView(withText(R.string.export_delete_warning_enable)).perform(click());
             scenario.onActivity(activity -> assertTrue(((SwitchMaterial) activity.findViewById(

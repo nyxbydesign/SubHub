@@ -99,7 +99,7 @@ public class ExportFoundationAndroidTest {
         byte[] bytes; long time; int flags;
         Sample(byte[] bytes, long time, int flags) { this.bytes = bytes; this.time = time; this.flags = flags; }
     }
-    private static void generate(File file, long[] times, int rotation) throws Exception {
+    static void generate(File file, long[] times, int rotation) throws Exception {
         MediaFormat video = MediaFormat.createVideoFormat("video/avc", 64, 48);
         video.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         video.setInteger(MediaFormat.KEY_BIT_RATE, 500_000); video.setInteger(MediaFormat.KEY_FRAME_RATE, 30);

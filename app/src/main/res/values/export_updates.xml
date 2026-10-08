@@ -2,4 +2,66 @@
     <string name="export_notification_channel">Media exports</string>
     <string name="export_notification_title">Processing media</string>
     <string name="export_notification_progress">Item %1$d of %2$d · Tap for progress</string>
+    <string name="export_workspace_title">Censor photos &amp; videos</string>
+    <string name="export_workspace_help">Create censored copies on this device. Photos go to Pictures/SubHub/Exports and videos to Movies/SubHub/Exports. Originals stay unchanged unless you explicitly approve deletion.</string>
+    <string name="export_choose_media">Select photos &amp; videos</string>
+    <string name="export_selected_count">%1$d selected</string>
+    <string name="export_appearance_title">Gallery censor settings</string>
+    <string name="export_independent_help">These settings only affect gallery exports. They start from your live censor configuration, but changes here never alter live censoring.</string>
+    <string name="export_style_value">Look · %1$s</string>
+    <string name="export_style_title">Export look</string>
+    <string name="export_intensity">Effect intensity</string>
+    <string name="export_padding">Censor padding</string>
+    <string name="export_palette">Colors</string>
+    <string name="export_color_one">Primary color</string>
+    <string name="export_color_two">Secondary color</string>
+    <string name="export_color_three">Accent color</string>
+    <string name="export_border_color">Border color</string>
+    <string name="export_border">Show border</string>
+    <string name="export_labels">Show censor labels</string>
+    <string name="export_reverse">Reverse censoring</string>
+    <string name="export_reverse_strength">Reverse strength</string>
+    <string name="export_categories">What to censor</string>
+    <string name="export_confidence">Detection confidence</string>
+    <string name="export_custom_assets_help">Custom artwork is copied from your current Censor image library into each export job. Changing that library afterward cannot change a prepared job.</string>
+    <string name="export_reset_live">Reset from live settings</string>
+    <string name="export_reset_help">Replace gallery censor settings with your current live configuration? Prepared and running exports keep their own snapshots.</string>
+    <string name="export_quality_value">Output quality · %1$s</string>
+    <string name="export_quality_title">Output quality</string>
+    <string name="export_faster">Faster video detection</string>
+    <string name="export_faster_help">Off: detect every frame. On: detect alternate frames and reuse the previous result between them. Faster mode can miss brief or moving content.</string>
+    <string name="export_mute">Remove audio</string>
+    <string name="export_delete_after">Ask to delete originals after saving</string>
+    <string name="export_preview">Preview selected media</string>
+    <string name="export_preview_help">Preview a frame before exporting. Video previews are individual frames, not a guarantee that every frame will be detected.</string>
+    <string name="export_preview_frame">Preview position in video</string>
+    <string name="export_preview_item">Choose media to preview</string>
+    <string name="export_preview_item_number">Preview item %1$d</string>
+    <string name="export_start_batch">Export censored copies</string>
+    <string name="export_preparing">Preparing your export…</string>
+    <string name="export_preview_failed">Preview unavailable. The original has not been changed.</string>
+    <string name="export_results">Export results</string>
+    <string name="export_item_status">Item %1$d · %2$s · %3$d%%</string>
+    <string name="export_open_copy">Open copy</string>
+    <string name="export_share_copy">Share copy</string>
+    <string name="export_retry_batch">Retry unfinished items</string>
+    <string name="export_delete_saved">Delete originals with saved copies</string>
+    <string name="export_delete_ready_help">Only originals with validated, saved copies are eligible. Android may ask for additional consent. Denying it keeps the original and the copy.</string>
+    <string name="export_deleted_count">Deleted %1$d originals. Any unavailable or denied originals were kept.</string>
+    <string name="export_select_first">Select photos or videos first.</string>
+    <string name="export_wait_running">An export is already running. You can return here to see its results.</string>
+    <string name="export_storage_needed">Allow storage access to save copies on this Android version.</string>
+    <string name="export_cannot_open">No app is available to open this copy.</string>
+    <string name="export_ready_snapshot">Ready. This batch keeps its chosen settings and artwork, even if live censoring changes.</string>
+    <string name="export_batch_running">Exporting · %1$d of %2$d copies saved</string>
+    <string name="export_batch_finished">Finished · %1$d of %2$d copies saved</string>
+    <string-array name="export_category_labels">
+        <item>Female genitals</item><item>Male genitals</item><item>Breasts</item><item>Buttocks &amp; anus</item>
+        <item>Male chest</item><item>Belly</item><item>Feet</item><item>Armpits</item><item>Female faces</item><item>Male faces</item>
+        <item>Covered genitals</item><item>Covered breasts</item><item>Covered buttocks &amp; anus</item><item>Covered belly</item><item>Covered feet</item><item>Covered armpits</item>
+    </string-array>
+    <item name="export_start_batch_button" type="id" />
+    <item name="export_preview_button" type="id" />
+    <item name="export_preview_image" type="id" />
+    <item name="export_results_list" type="id" />
 </resources>

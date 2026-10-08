@@ -22,6 +22,7 @@ public final class SubHubApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        com.subhub.app.capture.export.ExportJobStore.recoverProcess(this);
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
             public void onActivityPreCreated(@NonNull Activity activity, @Nullable Bundle state) {
