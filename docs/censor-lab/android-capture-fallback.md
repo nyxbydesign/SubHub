@@ -46,3 +46,10 @@ the navigation rectangle. Do not substitute `performClick()` or disable navigati
 test pass: that bypasses the touch-routing failure. If a later matcher reports the wrong screen,
 check the actual foreground activity and the preceding tap's geometry before blaming the missing
 control or weakening its assertion. Retain failed-run results separately from a corrected run.
+
+When launching `MainActivity` with a custom `ActivityScenario` intent, set `Intent.ACTION_MAIN`
+before launch. Home normalizes shortcut intents to that action; an initially null action makes
+ActivityScenario reject subsequent lifecycle events as belonging to a different intent and time
+out at `PRE_ON_CREATE`, even though Android displayed the screen. Keep the explicit action and
+any readiness-suppression extra on the same launch intent. Editable-screen fixtures must also
+enter Dom mode explicitly; the instrumentation runner deliberately preserves the current role.
