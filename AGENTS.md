@@ -16,6 +16,10 @@ These repository rules apply to every automated or human-assisted change.
 
 - `VERSION_NAME` uses semantic versioning.
 - `VERSION_CODE` is a positive Android integer and must increase for every released APK.
+- Public CI builds derive their Android code as `VERSION_CODE * 100000 + release workflow run_number`.
+  Stable and development releases share that sequence; a later stable build can replace a dev build
+  of the same source version. Local/private candidates retain the unexpanded source code. Keep the
+  same `release.yml` workflow sequence; fail closed before run 100000 or Android code overflow.
 - Any release-bound change must update both values in the same commit. The helper performs the safe increment:
 
   `python scripts/release_version.py --set-version 0.2.0`
@@ -50,3 +54,24 @@ overriding each test's Dom/Sub state.
 6. `scripts/generate_release_notes.py` categorizes every commit since the previous tag, places those changes in both the GitHub release and updater manifest, and keeps APK-selection guidance in its own release section. The release fails instead of publishing an empty changelog when a commit lacks a supported type prefix.
 
 Release signing is supplied only through the repository Actions secrets named in the workflow. Do not weaken signing or manufacture a different key for a later release; Android updates require the same key.
+
+## Development releases
+
+Every non-`master` branch push builds its exact pushed commit and publishes a signed GitHub
+prerelease named `v<VERSION_NAME>-dev.<release workflow run_number>`. Do not cancel an older push's
+build just because a new commit arrives. Each tag is unique and immutable; verify all APKs,
+checksums and updater metadata in the draft before publishing. Dev builds must not become the
+latest stable release or accidentally enable private experimental flags. Stable release tags
+must identify a tested commit on `master`; branch pushes never create a normal release.
+Dev release notes cover the pushed commit range. For a first or rewritten branch push, describe
+the new snapshot's last commit instead of replaying unrelated legacy history. Stable changelogs
+remain cumulative since the previous stable tag; automatic dev tags must not truncate them.
+The normalized source history has a recorded equivalent for the historical `v0.6.3` release.
+Use that source-history base only when its full Git tree equals the published tag's tree;
+never move the tag, guess an equivalent, or disable strict commit-type validation.
+
+Dev updates are opt-in and off by default. Selection uses the compatible manifest's Android
+version code, not SemVer alone, and stable lookup must still work when dev builds fill the first
+release-feed page. Channel changes invalidate cached candidates/ETags and pending downloads;
+in-flight checks from the previous channel must not restore an old candidate. Do not downgrade
+or uninstall when the user leaves the dev channel.

@@ -4,6 +4,23 @@ plugins {
 
 def releaseVersion = new Properties()
 rootProject.file('version.properties').withInputStream { releaseVersion.load(it) }
+// Stable and dev CI releases share a monotonic bucket derived from version.properties.
+def ciRunNumber = project.findProperty('ciRunNumber')
+def devBuild = project.findProperty('devBuild') == 'true'
+def appVersionCode = releaseVersion.getProperty('VERSION_CODE').toInteger()
+def appVersionName = releaseVersion.getProperty('VERSION_NAME')
+if (ciRunNumber != null) {
+    def sequence = ciRunNumber.toString().toLong()
+    def expanded = appVersionCode.toLong() * 100000L + sequence
+    if (sequence < 1L || sequence >= 100000L || expanded > 2100000000L
+            || !(appVersionName ==~ /(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/)) {
+        throw new GradleException('Invalid CI release version bucket')
+    }
+    appVersionCode = expanded.toInteger()
+    if (devBuild) appVersionName += '-dev.' + sequence
+} else if (devBuild) {
+    throw new GradleException('Development release identity requires ciRunNumber')
+}
 
 def signingStorePath = System.getenv('SUBHUB_SIGNING_STORE_FILE')
 def signingStorePassword = System.getenv('SUBHUB_SIGNING_STORE_PASSWORD')
@@ -29,8 +46,10 @@ android {
         applicationId 'com.subhub.app'
         minSdk 26
         targetSdk 35
-        versionCode releaseVersion.getProperty('VERSION_CODE').toInteger()
-        versionName releaseVersion.getProperty('VERSION_NAME')
+        versionCode appVersionCode
+        versionName appVersionName
+        buildConfigField 'boolean', 'IMMEDIATE_QUALITY_EXPERIMENT',
+                (project.findProperty('immediateQualityExperiment') == 'true' ? 'true' : 'false')
 
         testInstrumentationRunner 'com.subhub.app.SubHubTestRunner'
     }

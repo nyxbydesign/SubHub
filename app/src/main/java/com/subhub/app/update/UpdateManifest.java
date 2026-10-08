@@ -66,7 +66,7 @@ public final class UpdateManifest {
         int minSdk = json.optInt("minSdk", -1);
         String tag = required(json, "tag");
         String releaseNotes = json.optString("releaseNotes", "").trim();
-        if (!tag.equals("v" + versionName) || versionCode < 1 || minSdk < 1) {
+        if (!tag.equals("v" + versionName) || versionCode < 1 || versionCode > 2_100_000_000L || minSdk < 1) {
             throw new JSONException("Invalid release identity");
         }
         if (releaseNotes.length() > 64 * 1024) throw new JSONException("Release notes too large");

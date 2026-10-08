@@ -24,6 +24,11 @@ SUBJECT = re.compile(
     re.IGNORECASE,
 )
 SEMVER_TAG = re.compile(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+# The imported source history normalized commit identities, but retained this release's
+# exact tree. Bind the equivalent before using it; never move the published tag.
+SOURCE_HISTORY_EQUIVALENTS = {
+    "v0.6.3": "b04eb9233e530ad525d358df8438f55b086f7661",
+}
 RELEASE_HOUSEKEEPING = re.compile(
     r"^(?:bump|prepare|release)\b.*\b(?:version|subhub|v?\d+\.\d+\.\d+)",
     re.IGNORECASE,
@@ -75,11 +80,26 @@ def run_git(arguments: Sequence[str]) -> str:
 
 def previous_tag(tag: str) -> str | None:
     try:
-        value = run_git(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", f"{tag}^"])
+        value = run_git(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*",
+                         "--exclude", "v*-dev.*", f"{tag}^"])
     except subprocess.CalledProcessError:
-        return None
+        return equivalent_source_base(tag)
     candidate = value.strip()
     return candidate if SEMVER_TAG.fullmatch(candidate) else None
+
+
+def equivalent_source_base(tag: str) -> str | None:
+    for released_tag, source_commit in SOURCE_HISTORY_EQUIVALENTS.items():
+        try:
+            run_git(["merge-base", "--is-ancestor", source_commit, f"{tag}^"])
+            trees = run_git(["rev-parse", f"{released_tag}^{{tree}}",
+                             f"{source_commit}^{{tree}}"]).splitlines()
+        except subprocess.CalledProcessError:
+            continue
+        if len(trees) != 2 or trees[0] != trees[1]:
+            raise ValueError("Release history equivalent does not match the published tree")
+        return source_commit
+    return None
 
 
 def read_commits(tag: str, base_tag: str | None = None) -> list[Commit]:
@@ -92,6 +112,18 @@ def read_commits(tag: str, base_tag: str | None = None) -> list[Commit]:
     if len(fields) % 3:
         raise ValueError("Unexpected git log record shape")
     return [Commit(*fields[index:index + 3]) for index in range(0, len(fields), 3)]
+
+
+def development_base(before: str) -> str:
+    """Use the pushed range, not unrelated stable history or a rewritten old branch."""
+    if re.fullmatch(r"[0-9a-f]{40}", before) and before != "0" * 40:
+        try:
+            run_git(["merge-base", "--is-ancestor", before, "HEAD"])
+            return before
+        except subprocess.CalledProcessError:
+            pass
+    # First push / force-push: describe the new snapshot's last commit, not all legacy history.
+    return run_git(["rev-parse", "HEAD^"]).strip()
 
 
 def _plain_body(body: str) -> str:
@@ -196,7 +228,7 @@ def release_markdown(version: str, changelog: str, repository: str,
 def release_history(through_tag: str) -> list[ReleaseRecord]:
     tags = [value.strip() for value in run_git(
         ["tag", "--list", "v[0-9]*", "--sort=version:refname"]
-    ).splitlines() if SEMVER_TAG.fullmatch(value.strip())]
+    ).splitlines() if SEMVER_TAG.fullmatch(value.strip()) and "-dev." not in value]
     if through_tag not in tags:
         raise ValueError(f"History tag is not present: {through_tag}")
     records: list[ReleaseRecord] = []
@@ -242,6 +274,8 @@ def history_json(records: Sequence[ReleaseRecord], repository: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--display-tag", help="Published identity for a HEAD development build")
+    parser.add_argument("--development-before", help="Previous push SHA for development changelog scope")
     parser.add_argument("--repository")
     parser.add_argument("--changelog-output", type=Path)
     parser.add_argument("--release-output", type=Path)
@@ -255,18 +289,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    base = args.base_tag if args.base_tag is not None else previous_tag(args.tag)
+    if args.development_before is not None:
+        if args.tag != "HEAD" or not args.display_tag or "-dev." not in args.display_tag:
+            raise SystemExit("Development push ranges require a HEAD development display tag")
+        base = development_base(args.development_before)
+    else:
+        base = args.base_tag if args.base_tag is not None else previous_tag(args.tag)
     values = entries(read_commits(args.tag, base), strict=not args.allow_untyped)
     if args.check_only:
         print(f"Validated {len(values)} release-note commit(s) since {base or 'repository start'}")
         return 0
-    if not SEMVER_TAG.fullmatch(args.tag):
-        raise SystemExit(f"Invalid release tag: {args.tag}")
+    display_tag = args.display_tag or args.tag
+    if not SEMVER_TAG.fullmatch(display_tag):
+        raise SystemExit(f"Invalid release tag: {display_tag}")
+    if args.display_tag and (args.tag != "HEAD" or "-dev." not in display_tag):
+        raise SystemExit("Display tags are restricted to HEAD development releases")
     if not args.repository or args.changelog_output is None or args.release_output is None:
         raise SystemExit("Release output requires --repository, --changelog-output, and --release-output")
-    version = args.tag[1:]
+    version = display_tag[1:]
     changelog = changelog_markdown(version, values)
-    release = release_markdown(version, changelog, args.repository, base, args.tag)
+    release = release_markdown(version, changelog, args.repository, base, display_tag)
     args.changelog_output.parent.mkdir(parents=True, exist_ok=True)
     args.changelog_output.write_text(changelog, encoding="utf-8")
     args.release_output.parent.mkdir(parents=True, exist_ok=True)

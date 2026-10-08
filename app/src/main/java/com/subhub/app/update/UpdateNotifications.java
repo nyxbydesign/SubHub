@@ -24,6 +24,7 @@ public final class UpdateNotifications {
 
     public static void available(Context context, UpdateCandidate candidate) {
         UpdateStateStore state = new UpdateStateStore(context);
+        if (candidate.prerelease && !state.devUpdates()) return;
         if (!state.markNotified(candidate.manifest.versionName) || !canNotify(context)) return;
         manager(context).notify(AVAILABLE_ID, builder(context)
                 .setContentTitle(context.getString(R.string.update_available_title,

@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -74,6 +75,72 @@ class ReleaseNotesTest(unittest.TestCase):
         ], strict=False)
         self.assertEqual(["feat", "refactor"], [value.kind for value in values])
         self.assertEqual("add Dom and Sub modes", values[0].title)
+
+    def test_previous_release_base_excludes_automatic_dev_tags(self):
+        original = MODULE.run_git
+        calls = []
+        def run(arguments):
+            calls.append(arguments)
+            return "v0.6.4\n"
+        MODULE.run_git = run
+        try:
+            self.assertEqual("v0.6.4", MODULE.previous_tag("HEAD"))
+        finally:
+            MODULE.run_git = original
+        self.assertIn("--exclude", calls[0])
+        self.assertIn("v*-dev.*", calls[0])
+
+    def test_development_notes_use_the_actual_push_range(self):
+        original = MODULE.run_git
+        before = "a" * 40
+        calls = []
+        def run(arguments):
+            calls.append(arguments)
+            return ""
+        MODULE.run_git = run
+        try:
+            self.assertEqual(before, MODULE.development_base(before))
+        finally:
+            MODULE.run_git = original
+        self.assertEqual([["merge-base", "--is-ancestor", before, "HEAD"]], calls)
+
+    def test_imported_history_base_requires_exact_published_tree_identity(self):
+        original = MODULE.run_git
+        def run(arguments):
+            if arguments[0] == "describe":
+                raise subprocess.CalledProcessError(128, arguments)
+            if arguments[0] == "merge-base":
+                return ""
+            self.assertEqual("rev-parse", arguments[0])
+            return "tree-identity\ntree-identity\n"
+        MODULE.run_git = run
+        try:
+            self.assertEqual(MODULE.SOURCE_HISTORY_EQUIVALENTS["v0.6.3"], MODULE.previous_tag("HEAD"))
+        finally:
+            MODULE.run_git = original
+
+    def test_imported_history_base_rejects_a_different_tree(self):
+        original = MODULE.run_git
+        MODULE.run_git = lambda arguments: "old-tree\nchanged-tree\n" if arguments[0] == "rev-parse" else ""
+        try:
+            with self.assertRaisesRegex(ValueError, "published tree"):
+                MODULE.equivalent_source_base("HEAD")
+        finally:
+            MODULE.run_git = original
+
+    def test_new_and_rewritten_branches_do_not_replay_unrelated_legacy_history(self):
+        original = MODULE.run_git
+        def run(arguments):
+            if arguments[0] == "merge-base":
+                raise subprocess.CalledProcessError(1, arguments)
+            self.assertEqual(["rev-parse", "HEAD^"], arguments)
+            return "b" * 40 + "\n"
+        MODULE.run_git = run
+        try:
+            for before in ("", "0" * 40, "a" * 40):
+                self.assertEqual("b" * 40, MODULE.development_base(before))
+        finally:
+            MODULE.run_git = original
 
     def test_history_outputs_collapsible_markdown_and_app_json(self):
         records = [MODULE.ReleaseRecord(

@@ -32,6 +32,9 @@ public final class UpdateDownloadCoordinator {
     }
 
     public long start(UpdateCandidate candidate) {
+        if (candidate.prerelease && !state.devUpdates()) {
+            throw new IllegalStateException("Dev updates are disabled");
+        }
         UpdateManifest.Asset asset = candidate.manifest.selectAsset(android.os.Build.SUPPORTED_ABIS);
         if (asset == null) throw new IllegalStateException("No compatible APK");
         cancel();

@@ -120,6 +120,18 @@
                 android:id="@+id/automatic_help"
                 style="@style/Widget.SubHub.FieldHelp"
                 android:text="@string/update_automatic_help" />
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/dev_updates"
+                style="@style/Widget.SubHub.SettingsToggle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:layout_marginTop="8dp"
+                android:text="@string/update_dev_toggle" />
+            <TextView
+                android:id="@+id/dev_updates_help"
+                style="@style/Widget.SubHub.FieldHelp"
+                android:text="@string/update_dev_help" />
         </LinearLayout>
 
         <LinearLayout

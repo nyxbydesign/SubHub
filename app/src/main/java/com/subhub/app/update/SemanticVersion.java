@@ -44,6 +44,8 @@ public final class SemanticVersion implements Comparable<SemanticVersion> {
         return Long.parseLong(value);
     }
 
+    public boolean isPrerelease() { return !prerelease.isEmpty(); }
+
     @Override public int compareTo(SemanticVersion other) {
         int compared = Long.compare(major, other.major);
         if (compared == 0) compared = Long.compare(minor, other.minor);

@@ -59,9 +59,17 @@ final class UpdateDownloadFinalizer {
             UpdateNotifications.failed(context);
             return Result.FAILED;
         }
-        state.setVerifiedPath(destination.getAbsolutePath());
-        state.setDownloadId(-1L);
-        UpdateNotifications.ready(context, candidate);
+        synchronized (UpdateStateStore.class) {
+            UpdateCandidate current = state.candidate();
+            if (state.downloadId() != id || current == null
+                    || !current.manifest.tag.equals(candidate.manifest.tag)) {
+                destination.delete();
+                return Result.FAILED;
+            }
+            state.setVerifiedPath(destination.getAbsolutePath());
+            state.setDownloadId(-1L);
+            UpdateNotifications.ready(context, candidate);
+        }
         return Result.READY;
     }
 }

@@ -60,7 +60,7 @@ public final class ReleaseHistoryCatalog {
         if (candidate == null) return history == null ? new ArrayList<>() : history;
         ReleaseHistoryItem available = new ReleaseHistoryItem(
                 candidate.manifest.versionName, candidate.manifest.tag, candidate.notes,
-                candidate.releaseUrl, "", candidate.manifest.versionName.contains("-"));
+                candidate.releaseUrl, "", candidate.prerelease);
         List<ReleaseHistoryItem> live = new ArrayList<>();
         live.add(available);
         return merge(live, history);

@@ -13,6 +13,8 @@ import java.util.List;
 public final class UpdateStateStore {
     private static final String PREFS = "subhub_updates";
     private static final String AUTO = "automatic_checks";
+    private static final String DEV = "dev_updates";
+    private static final String CHANNEL_REVISION = "channel_revision";
     private static final String LAST_CHECK = "last_check";
     private static final String ETAG = "release_etag";
     private static final String CANDIDATE = "candidate";
@@ -28,10 +30,43 @@ public final class UpdateStateStore {
     public UpdateStateStore(Context context) {
         this.context = context.getApplicationContext();
         preferences = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!preferences.contains(DEV)) {
+            // Old versions included previews implicitly; force a fresh, stable-only lookup.
+            preferences.edit().putBoolean(DEV, false).remove(ETAG).apply();
+        }
     }
 
     public boolean automaticChecks() { return preferences.getBoolean(AUTO, true); }
     public void setAutomaticChecks(boolean enabled) { preferences.edit().putBoolean(AUTO, enabled).apply(); }
+    public boolean devUpdates() { return preferences.getBoolean(DEV, false); }
+    public long channelRevision() { return preferences.getLong(CHANNEL_REVISION, 0L); }
+
+    public void setDevUpdates(boolean enabled) {
+        synchronized (UpdateStateStore.class) {
+            if (enabled == devUpdates()) return;
+            new UpdateDownloadCoordinator(context).cancel();
+            preferences.edit().putBoolean(DEV, enabled)
+                    .putLong(CHANNEL_REVISION, channelRevision() + 1L)
+                    .remove(ETAG).remove(CANDIDATE).remove(LAST_NOTIFIED).remove(LAST_CHECK).apply();
+        }
+    }
+
+    /** A check started under another channel must never repopulate its old candidate. */
+    boolean saveCheck(long revision, String etag, List<ReleaseHistoryItem> history,
+            UpdateCandidate candidate) {
+        synchronized (UpdateStateStore.class) {
+            if (revision != channelRevision()) return false;
+            setEtag(etag);
+            setLastCheck(System.currentTimeMillis());
+            setReleaseHistory(history);
+            if (candidate != null) setCandidate(candidate);
+            else {
+                clearCandidate();
+                new UpdateDownloadCoordinator(context).cancel();
+            }
+            return true;
+        }
+    }
     public long lastCheck() { return preferences.getLong(LAST_CHECK, 0L); }
     public void setLastCheck(long value) { preferences.edit().putLong(LAST_CHECK, value).apply(); }
     public String etag() { return preferences.getString(ETAG, ""); }
@@ -53,8 +88,11 @@ public final class UpdateStateStore {
     public UpdateCandidate candidate() {
         String value = preferences.getString(CANDIDATE, "");
         if (value == null || value.isEmpty()) return null;
-        try { return UpdateCandidate.parse(value); }
-        catch (JSONException exception) { return null; }
+        try {
+            UpdateCandidate candidate = UpdateCandidate.parse(value);
+            return candidate.prerelease && !devUpdates() ? null : candidate;
+        }
+        catch (JSONException | IllegalArgumentException exception) { return null; }
     }
 
     public void setCandidate(UpdateCandidate candidate) {

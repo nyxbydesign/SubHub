@@ -19,10 +19,13 @@ import java.util.List;
 
 /** Read-only client for SubHub's public GitHub Releases feed. */
 public final class GitHubReleaseRepository {
-    static final String RELEASES_URL = "https://api.github.com/repos/bozo-industries/SubHub/releases?per_page=30";
+    static final String RELEASES_URL = "https://api.github.com/repos/confiteor48/SubHub/releases?per_page=30";
+    static final String LATEST_STABLE_URL = "https://api.github.com/repos/confiteor48/SubHub/releases/latest";
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
     private final Context context;
     private final UpdateStateStore state;
+    private final String releasesUrl;
+    private final String latestStableUrl;
 
     public enum Failure { OFFLINE, RATE_LIMITED, SERVER, INVALID_RELEASE }
 
@@ -61,18 +64,35 @@ public final class GitHubReleaseRepository {
     }
 
     public GitHubReleaseRepository(Context context) {
+        this(context, RELEASES_URL, LATEST_STABLE_URL);
+    }
+
+    GitHubReleaseRepository(Context context, String releasesUrl, String latestStableUrl) {
         this.context = context.getApplicationContext();
         state = new UpdateStateStore(this.context);
+        this.releasesUrl = releasesUrl;
+        this.latestStableUrl = latestStableUrl;
     }
 
     public Result check() {
         try {
-            HttpResponse response = get(RELEASES_URL, state.etag(), MAX_RESPONSE);
+            final long revision;
+            final boolean devUpdates;
+            final String etag;
+            synchronized (UpdateStateStore.class) {
+                revision = state.channelRevision();
+                devUpdates = state.devUpdates();
+                etag = state.etag();
+            }
+            HttpResponse response = get(releasesUrl, etag, MAX_RESPONSE);
             if (response.code == HttpURLConnection.HTTP_NOT_MODIFIED) {
-                state.setLastCheck(System.currentTimeMillis());
-                UpdateCandidate cached = state.candidate();
-                return Result.success(cached != null && cached.manifest.versionCode > BuildConfig.VERSION_CODE
-                        ? cached : null);
+                synchronized (UpdateStateStore.class) {
+                    if (revision != state.channelRevision()) return Result.success(null);
+                    state.setLastCheck(System.currentTimeMillis());
+                    UpdateCandidate cached = state.candidate();
+                    return Result.success(cached != null && cached.manifest.versionCode > BuildConfig.VERSION_CODE
+                            ? cached : null);
+                }
             }
             if (response.code == 403 && "0".equals(response.rateRemaining)) {
                 return Result.failure(Failure.RATE_LIMITED, "GitHub API rate limit reached");
@@ -82,32 +102,31 @@ public final class GitHubReleaseRepository {
             }
             JSONArray releases = new JSONArray(response.body);
             List<Release> candidates = parseReleases(releases);
+            // Frequent dev pushes must not push the latest stable off the bounded feed page.
+            HttpResponse stable = get(latestStableUrl, "", MAX_RESPONSE);
+            if (stable.code >= 200 && stable.code < 300) {
+                List<Release> latest = parseReleases(new JSONArray().put(new JSONObject(stable.body)));
+                for (Release release : latest) {
+                    if (!release.prerelease && candidates.stream().noneMatch(item -> item.tag.equals(release.tag))) {
+                        candidates.add(release);
+                    }
+                }
+            } else if (stable.code != HttpURLConnection.HTTP_NOT_FOUND) {
+                return Result.failure(stable.code == 403 && "0".equals(stable.rateRemaining)
+                        ? Failure.RATE_LIMITED : Failure.SERVER, "Stable release lookup failed");
+            }
             candidates.sort(Comparator.comparing((Release value) -> value.version).reversed());
             List<ReleaseHistoryItem> history = ReleaseHistoryCatalog.merge(
                     ReleaseHistoryCatalog.fromReleases(candidates),
                     ReleaseHistoryCatalog.bundled(context));
-            SemanticVersion installed = SemanticVersion.parse(BuildConfig.VERSION_NAME);
-            UpdateCandidate available = null;
-            for (Release release : candidates) {
-                if (release.version.compareTo(installed) <= 0 || release.manifestUrl.isEmpty()) continue;
+            UpdateCandidate available = selectCandidate(candidates, devUpdates, BuildConfig.VERSION_CODE,
+                    Build.VERSION.SDK_INT, Build.SUPPORTED_ABIS, release -> {
                 HttpResponse manifestResponse = get(release.manifestUrl, "", 1024 * 1024);
-                if (manifestResponse.code < 200 || manifestResponse.code >= 300) continue;
-                UpdateManifest manifest = UpdateManifest.parse(manifestResponse.body);
-                if (!release.tag.equals(manifest.tag) || !manifest.isCompatible(BuildConfig.VERSION_CODE)
-                        || manifest.selectAsset(Build.SUPPORTED_ABIS) == null) continue;
-                String notes = releaseNotes(manifest, release.body);
-                available = new UpdateCandidate(manifest, notes, release.htmlUrl);
-                break;
-            }
+                return manifestResponse.code >= 200 && manifestResponse.code < 300
+                        ? UpdateManifest.parse(manifestResponse.body) : null;
+            });
             history = ReleaseHistoryCatalog.withCandidate(history, available);
-            state.setEtag(response.etag);
-            state.setLastCheck(System.currentTimeMillis());
-            state.setReleaseHistory(history);
-            if (available != null) state.setCandidate(available);
-            else {
-                state.clearCandidate();
-                state.clearDownload(true);
-            }
+            if (!state.saveCheck(revision, response.etag, history, available)) return Result.success(null);
             return Result.success(available);
         } catch (java.net.UnknownHostException | java.net.SocketTimeoutException exception) {
             return Result.failure(Failure.OFFLINE, exception.getClass().getSimpleName());
@@ -116,12 +135,40 @@ public final class GitHubReleaseRepository {
         }
     }
 
+    interface ManifestLoader { UpdateManifest load(Release release) throws Exception; }
+
+    static UpdateCandidate selectCandidate(List<Release> releases, boolean devUpdates,
+            long installedCode, int sdk, String[] abis, ManifestLoader loader) {
+        UpdateCandidate available = null;
+        for (Release release : releases) {
+            if ((!devUpdates && release.prerelease) || release.manifestUrl.isEmpty()) continue;
+            try {
+                UpdateManifest manifest = loader.load(release);
+                if (manifest == null || !release.tag.equals(manifest.tag)
+                        || !UpdateManifest.PACKAGE.equals(manifest.packageName)
+                        || manifest.versionCode <= installedCode || manifest.minSdk > sdk
+                        || manifest.selectAsset(abis) == null) continue;
+                // Android's install ordering is authoritative, including dev -> stable transitions.
+                if (available == null || manifest.versionCode > available.manifest.versionCode
+                        || (manifest.versionCode == available.manifest.versionCode
+                        && available.prerelease && !release.prerelease)) {
+                    available = new UpdateCandidate(manifest, releaseNotes(manifest, release.body),
+                            release.htmlUrl, release.prerelease);
+                }
+            } catch (Exception ignored) {
+                // A malformed or unavailable individual release must not mask a valid newer build.
+            }
+        }
+        return available;
+    }
+
     static List<Release> parseReleases(JSONArray releases) {
         List<Release> parsed = new ArrayList<>();
         for (int index = 0; index < releases.length(); index++) {
             JSONObject release = releases.optJSONObject(index);
             if (release == null || release.optBoolean("draft", true)) continue;
             String tag = release.optString("tag_name", "");
+            if (!tag.startsWith("v")) continue;
             SemanticVersion version;
             try { version = SemanticVersion.parse(tag); }
             catch (IllegalArgumentException ignored) { continue; }
@@ -138,7 +185,7 @@ public final class GitHubReleaseRepository {
             parsed.add(new Release(version, tag, release.optString("body", ""),
                     release.optString("html_url", ""), manifestUrl,
                     release.optString("published_at", ""),
-                    release.optBoolean("prerelease", false)));
+                    release.optBoolean("prerelease", false) || version.isPrerelease()));
         }
         return parsed;
     }

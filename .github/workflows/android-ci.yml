@@ -29,7 +29,7 @@ jobs:
         run: python3 scripts/release_version.py
       - name: Test release-note generation
         run: |
-          python3 -m unittest scripts.test_generate_release_notes
+          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version
           python3 scripts/generate_release_notes.py --tag HEAD --check-only
       - name: Test, lint, and build universal APK
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug

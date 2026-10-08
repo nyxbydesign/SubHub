@@ -80,6 +80,13 @@ public final class UpdatesActivity extends AppCompatActivity {
             state.setAutomaticChecks(checked);
             UpdateScheduler.synchronize(this);
         });
+        binding.devUpdates.setChecked(state.devUpdates());
+        binding.devUpdates.setOnCheckedChangeListener((button, checked) -> {
+            if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
+            state.setDevUpdates(checked);
+            render();
+            checkNow();
+        });
         render();
     }
 
@@ -94,6 +101,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (checking) return;
         checking = true;
         binding.buttonCheck.setEnabled(false);
+        binding.devUpdates.setEnabled(false);
         binding.updateStatus.setText(R.string.update_checking);
         network.execute(() -> {
             GitHubReleaseRepository.Result result = new GitHubReleaseRepository(this).check();
@@ -119,6 +127,9 @@ public final class UpdatesActivity extends AppCompatActivity {
     private void render() {
         if (binding == null) return;
         UpdateCandidate candidate = state.candidate();
+        if (candidate == null && (state.downloadId() >= 0 || !state.verifiedPath().isEmpty())) {
+            downloads.cancel();
+        }
         binding.installedVersion.setText(getString(R.string.update_installed_version,
                 BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
         binding.availableVersion.setText(candidate == null
@@ -131,11 +142,15 @@ public final class UpdatesActivity extends AppCompatActivity {
                                 .format(new Date(last))));
         boolean dom = ControllerPinManager.isDomModeActive();
         binding.automaticChecks.setEnabled(dom);
+        binding.devUpdates.setEnabled(dom && !checking);
         binding.automaticHelp.setText(dom
                 ? R.string.update_automatic_help : R.string.update_automatic_dom_help);
         changingAutomatic = true;
         binding.automaticChecks.setChecked(state.automaticChecks());
+        binding.devUpdates.setChecked(state.devUpdates());
         changingAutomatic = false;
+        binding.devUpdatesHelp.setText(dom
+                ? R.string.update_dev_help : R.string.update_dev_dom_help);
         List<ReleaseHistoryItem> history = state.releaseHistory();
         if (history.isEmpty()) history = ReleaseHistoryCatalog.bundled(this);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);
@@ -288,6 +303,11 @@ public final class UpdatesActivity extends AppCompatActivity {
     }
 
     private void installVerified() {
+        if (state.candidate() == null) {
+            downloads.cancel();
+            render();
+            return;
+        }
         String path = state.verifiedPath();
         File apk = path.isEmpty() ? null : new File(path);
         if (apk == null || !apk.isFile()) {
