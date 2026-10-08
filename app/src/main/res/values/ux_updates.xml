@@ -1,25 +1,25 @@
 <resources>
     <string name="ux_off">Off</string>
     <string name="ux_on">On</string>
-    <string name="authenticator_title">Controller authenticator</string>
-    <string name="authenticator_description">An authenticator code can unlock every control that accepts your Dom PIN. Your PIN remains available. Share a code with your partner when you want to grant Dom access; there is no remote connection.</string>
-    <string name="authenticator_paired">Authenticator paired</string>
-    <string name="authenticator_unpaired">No authenticator paired</string>
-    <string name="authenticator_pair">Pair an authenticator</string>
-    <string name="authenticator_replace">Replace authenticator</string>
-    <string name="authenticator_remove">Remove authenticator</string>
-    <string name="authenticator_remove_message">Codes from the paired authenticator will stop working. The Dom PIN will still work.</string>
-    <string name="authenticator_setup_help">On the controller’s phone, scan this QR code with Google Authenticator or another authenticator app. You can also enter the key manually. Keep the key private. Pairing is not active until you confirm a code below.</string>
+    <string name="authenticator_title">Keyholder</string>
+    <string name="authenticator_description">Give the key to someone you trust. They keep it in an authenticator on their phone and share a code when it is time to unlock.</string>
+    <string name="authenticator_paired">Keyholder paired</string>
+    <string name="authenticator_unpaired">The key is yours</string>
+    <string name="authenticator_pair">Hand over the key</string>
+    <string name="authenticator_replace">Pair a new keyholder</string>
+    <string name="authenticator_remove">Take the key back</string>
+    <string name="authenticator_remove_message">Remove this keyholder? Their codes will stop opening your locks. Your Dom PIN will still work.</string>
+    <string name="authenticator_setup_help">Ask your keyholder to scan this with Google Authenticator or another authenticator app on their phone.</string>
     <string name="authenticator_qr">Authenticator pairing QR code</string>
     <string name="authenticator_manual_help">Enter the displayed key manually in your authenticator.</string>
-    <string name="authenticator_code">Six-digit authenticator code</string>
-    <string name="authenticator_confirm">Confirm pairing</string>
-    <string name="authenticator_pair_success">Paired. Wait for the next code before unlocking.</string>
+    <string name="authenticator_code">Six-digit keyholder code</string>
+    <string name="authenticator_confirm">Pair keyholder</string>
+    <string name="authenticator_pair_success">Key handed over. Their next fresh code can open your locks.</string>
     <string name="authenticator_invalid">Code expired, already used, or incorrect. Check automatic time on both phones and try a fresh code.</string>
     <string name="authenticator_throttled">Too many attempts. Wait before trying another code, or use the Dom PIN.</string>
     <string name="authenticator_unavailable">Authenticator unavailable. Use the Dom PIN to pair it again.</string>
     <string name="authenticator_method_pin">Dom PIN</string>
-    <string name="authenticator_method_code">Authenticator</string>
+    <string name="authenticator_method_code">Keyholder code</string>
     <item name="authenticator_confirmation" type="id" />
     <item name="authenticator_confirm_button" type="id" />
     <string name="pact_time_hidden">Time remaining is hidden</string>
@@ -36,4 +36,25 @@
     <string name="pact_selection_summary">%1$s · %2$s</string>
     <string name="pact_selection_hidden">Countdown hidden</string>
     <string name="pact_selection_visible">Countdown visible</string>
+    <string name="keyholder_your_key">YOUR KEYHOLDER</string>
+    <string name="keyholder_paired_help">Your keyholder has the key. Ask them for a fresh code whenever you need to open Dom controls.</string>
+    <string name="keyholder_how">A little trust. One little key.</string>
+    <string name="keyholder_step_one">Hand over the key</string>
+    <string name="keyholder_step_one_help">Pair their authenticator. They do not need SubHub.</string>
+    <string name="keyholder_step_two">Ask for permission</string>
+    <string name="keyholder_step_two_help">Your keyholder shares a fresh six-digit code.</string>
+    <string name="keyholder_step_three">Open your locks</string>
+    <string name="keyholder_step_three_help">Choose Keyholder code wherever you would use the Dom PIN.</string>
+    <string name="keyholder_your_lock">Your lock</string>
+    <string name="keyholder_no_lock">No timed Pact is active. Choose your lock on Home, then enter service when you are ready.</string>
+    <string name="keyholder_view_lock">View your lock</string>
+    <string name="keyholder_choose_lock">Choose a lock on Home</string>
+    <string name="keyholder_pin_help">Your Dom PIN remains a spare key. Codes open Dom access on this phone; they do not send remote commands.</string>
+    <string name="keyholder_handover_title">Hand over the key</string>
+    <string name="keyholder_scan_title">1 · Their phone, your key</string>
+    <string name="keyholder_manual">Enter a key instead</string>
+    <string name="keyholder_confirm_title">2 · Try their first key</string>
+    <string name="keyholder_confirm_help">Ask your keyholder for the code showing in their authenticator.</string>
+    <string name="keyholder_pending_help">Nothing changes until you confirm. Keep the pairing key private.</string>
+    <item name="keyholder_pair_button" type="id" />
 </resources>

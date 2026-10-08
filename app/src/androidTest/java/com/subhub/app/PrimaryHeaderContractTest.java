@@ -105,7 +105,8 @@ public final class PrimaryHeaderContractTest {
 
     @Test public void secondaryHeadersFitEveryPageTitleAndControllerState() {
         int[] titles = {R.string.commitment_title, R.string.custom_images_title,
-                R.string.diagnostics_title, R.string.export_title, R.string.help_title,
+                R.string.diagnostics_title, R.string.export_title, R.string.export_workspace_title,
+                R.string.authenticator_title, R.string.keyholder_handover_title, R.string.help_title,
                 R.string.popup_title,
                 R.string.statistics_title, R.string.achievements_title,
                 R.string.subliminal_title, R.string.update_title, R.string.studio_title};
