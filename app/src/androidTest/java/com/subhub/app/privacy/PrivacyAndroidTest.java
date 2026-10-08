@@ -35,7 +35,7 @@ public class PrivacyAndroidTest {
             assertEquals(action, masked.contentIntent); assertEquals(action, masked.actions[0].actionIntent);
             assertTrue((masked.flags & Notification.FLAG_ONGOING_EVENT) != 0);
             try (ActivityScenario<MainActivity> activity = ActivityScenario.launch(new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN))) {
-                activity.onActivity(a -> assertTrue((a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0));
+                activity.onActivity(a -> assertEquals(0, a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE));
             }
         } finally { assertTrue(privacy.setDiscreet(false)); }
         assertEquals(PackageManager.COMPONENT_ENABLED_STATE_ENABLED, context.getPackageManager().getComponentEnabledSetting(new ComponentName(context, "com.subhub.app.DefaultLauncher")));

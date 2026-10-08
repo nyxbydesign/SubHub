@@ -3,7 +3,6 @@ package com.subhub.app.studio;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
@@ -119,7 +118,7 @@ final class StudioPayPalTransfer {
                         unlocked.close();
                         if (pending == unlocked) pending = null;
                     });
-                    showSecure(dialog);
+                    showDialog(dialog);
                 });
             });
         });
@@ -146,7 +145,7 @@ final class StudioPayPalTransfer {
                 .setPositiveButton(exporting ? "Encrypt" : "Unlock", null).create();
         AlertDialog entry = dialog;
         entry.setOnDismissListener(d -> { password.setText(""); confirmation.setText(""); });
-        showSecure(entry);
+        showDialog(entry);
         entry.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             if (!allowed()) return;
             char[] chars = new char[password.length()];
@@ -177,8 +176,7 @@ final class StudioPayPalTransfer {
         return field;
     }
 
-    private void showSecure(AlertDialog value) {
-        if (value.getWindow() != null) value.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    private void showDialog(AlertDialog value) {
         value.show();
     }
     private boolean allowed() {

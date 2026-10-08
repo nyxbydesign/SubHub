@@ -4,7 +4,6 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.text.InputType;
-import android.view.WindowManager;
 import android.widget.*;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.qrcode.QRCodeWriter;
@@ -24,7 +23,7 @@ public final class AuthenticatorActivity extends PreferencePage {
     private final java.util.Map<String, TextView> methodArrows = new java.util.LinkedHashMap<>();
     private final java.util.Map<String, android.view.View> methodHeaders = new java.util.LinkedHashMap<>();
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state); getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(state);
         if (state != null) expandedMethod = state.getString("keyholder_method", "pin");
         else if ("remote".equals(getIntent().getStringExtra("keyholder_method"))) expandedMethod = "remote";
         page(R.string.authenticator_title);

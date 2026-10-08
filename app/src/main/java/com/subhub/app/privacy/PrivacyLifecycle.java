@@ -5,7 +5,6 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.*;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.FrameLayout;
 import com.subhub.app.R;
 import java.util.*;
@@ -34,15 +33,13 @@ public final class PrivacyLifecycle implements Application.ActivityLifecycleCall
     }
     public static void refresh() { if (instance != null) instance.main.post(instance::refreshWindows); }
     static boolean locked() { return instance != null && new PrivacyManager(instance.app).isAppLockEnabled() && !instance.unlocked; }
-    private void secure(Activity activity) {
+    private void updateRecentPreview(Activity activity) {
         PrivacyManager privacy = new PrivacyManager(app);
         boolean sensitive = activity instanceof com.subhub.app.security.AuthenticatorActivity || activity instanceof AppUnlockActivity;
-        if (privacy.isDiscreet() || privacy.isAppLockEnabled() || sensitive) activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        else activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (Build.VERSION.SDK_INT >= 33) activity.setRecentsScreenshotEnabled(!privacy.isDiscreet() && !privacy.isAppLockEnabled() && !sensitive);
     }
     private void cover(Activity activity) {
-        secure(activity);
+        updateRecentPreview(activity);
         if (activity instanceof AppUnlockActivity) return;
         boolean needsCover = locked(); View previous = covers.get(activity);
         if (previous != null && previous.getParent() == null) previous = null;

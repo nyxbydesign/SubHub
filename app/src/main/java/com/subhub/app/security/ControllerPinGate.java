@@ -71,7 +71,6 @@ public final class ControllerPinGate {
                     .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.controller_pin_set, null).create();
             dialog.setOnShowListener(ignored -> {
                 styleDialog(activity, dialog);
-                dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     if (!ControllerPinManager.isDomModeActive()) { dialog.dismiss(); return; }
                     if (!pin.getText().toString().equals(confirmation.getText().toString()))

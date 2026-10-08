@@ -46,7 +46,7 @@ public final class StudioPayPalTransferAndroidTest {
         ControllerPinManager.enterDomMode();
     }
 
-    @Test public void secretEntryDisablesStateAutofillAndScreenshots() {
+    @Test public void secretEntryAllowsScreenshotsWithoutSavingOrAutofillingThePassphrase() {
         try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
             openEntry();
             onView(withHint(HINT)).check((view, error) -> {
@@ -56,7 +56,7 @@ public final class StudioPayPalTransferAndroidTest {
                         view.getImportantForAutofill());
                 WindowManager.LayoutParams params = (WindowManager.LayoutParams)
                         view.getRootView().getLayoutParams();
-                assertTrue((params.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
+                assertEquals(0, params.flags & WindowManager.LayoutParams.FLAG_SECURE);
             });
             onView(withText(android.R.string.cancel)).perform(click());
             onView(withHint(HINT)).check(doesNotExist());

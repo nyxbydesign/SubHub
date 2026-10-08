@@ -19,6 +19,33 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class KeyholderPresentationAndroidTest {
+    @Test public void androidScreenshotContainsTheKeyholderHeader() {
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<AuthenticatorActivity> scenario=ActivityScenario.launch(AuthenticatorActivity.class)) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            android.os.SystemClock.sleep(200);
+            android.graphics.Rect bounds=new android.graphics.Rect();
+            scenario.onActivity(activity -> {
+                android.view.View title=activity.findViewById(R.id.primary_header_title);
+                int[] origin=new int[2]; title.getLocationOnScreen(origin);
+                bounds.set(origin[0],origin[1],origin[0]+title.getWidth(),origin[1]+title.getHeight());
+            });
+            assertTrue("Header must be laid out before capture: "+bounds,bounds.width()>0 && bounds.height()>0);
+            Bitmap screenshot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+            assertNotNull(screenshot);
+            try {
+                int visibleTextPixels=0;
+                for(int y=bounds.top;y<bounds.bottom;y++) for(int x=bounds.left;x<bounds.right;x++) {
+                    int pixel=screenshot.getPixel(x,y);
+                    if(android.graphics.Color.red(pixel)>180 && android.graphics.Color.green(pixel)>180 && android.graphics.Color.blue(pixel)>180) visibleTextPixels++;
+                }
+                try (FileOutputStream out=new FileOutputStream(new File(InstrumentationRegistry.getInstrumentation().getTargetContext().getFilesDir(),"keyholder-android-screenshot.png"))) {
+                    screenshot.compress(Bitmap.CompressFormat.PNG,100,out);
+                } catch(Exception error) { throw new AssertionError(error); }
+                assertTrue("Android screenshot must contain the visible header text: "+bounds+" count="+visibleTextPixels,visibleTextPixels>20);
+            } finally { screenshot.recycle(); }
+        } finally { ControllerPinManager.enterSubMode(); }
+    }
     @Test public void confirmationPairsUsingTheEnteredSixDigitCode() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.getSharedPreferences("subhub_controller_auth", 0).edit().clear().commit();
@@ -48,7 +75,7 @@ public class KeyholderPresentationAndroidTest {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
             scenario.onActivity(activity -> {
-                assertTrue((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
+                assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
                 assertNotNull(activity.findViewById(R.id.primary_header));
                 // Render only the unpaired overview, which contains no pairing key or credential.
                 android.view.View root = activity.getWindow().getDecorView();
