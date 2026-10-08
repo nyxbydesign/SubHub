@@ -90,6 +90,8 @@ public final class PayPalRequestPolicy {
         public String usage() { return usage; }
         public String usagePattern() { return usagePattern; }
         public boolean permitsInteractiveCheckout() { return false; }
+        /** Separate per-infraction purchase rows stay disabled; one aggregate bill is metadata. */
         public boolean permitsLineItems() { return false; }
+        public int maximumBillRows() { return 1; }
     }
 }

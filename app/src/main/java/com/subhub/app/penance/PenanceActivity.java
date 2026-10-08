@@ -459,10 +459,20 @@ public final class PenanceActivity extends AppCompatActivity {
     private void createPayPalOrder(PenanceManager.Settlement settlement) {
         checkoutBusy = true;
         render();
+        java.util.List<PayPalOrdersClient.OrderItem> bill;
+        try {
+            bill = PayPalOrderDetails.from(this, settlement);
+        } catch (RuntimeException invalidBill) {
+            checkoutBusy = false;
+            manager.cancelSettlement(settlement.getId());
+            toast(getString(R.string.penance_checkout_failed, "The local settlement bill was invalid"));
+            render();
+            return;
+        }
         PayPalCredentialStore.Credentials credentials = paypalCredentials.load();
         paypalClient.createOrder(credentials, settlement.getId(),
                 settlement.getAmountCents(), settlement.getCurrency(), false,
-                PayPalOrderDetails.from(this, settlement), result -> {
+                bill, result -> {
                     checkoutBusy = false;
                     if (binding == null) return;
                     if (!result.isSuccess()) {

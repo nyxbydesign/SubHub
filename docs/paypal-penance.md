@@ -23,6 +23,17 @@ settlement, and opens PayPal's approval page. On return it captures the order an
 only if the environment boundary, local settlement reference, PayPal order, currency, amount, and
 capture status all match.
 
+Every new API payment includes a purchase description built from its immutable settlement:
+the cause, counted events, and actual charged amount in EUR or USD. Charges of the same cause
+are grouped, so a full 200-entry ledger becomes at most six cause rows. Applied caps are already
+reflected in the amounts; the bill does not invent a per-event price or include later ledger entries.
+Tamper events and paid pauses have their own labels. The compact purchase summary fits PayPal's
+127-character limit; longer bills remain complete in the item description, rather than being silently
+cut off. See the [Orders request fields](https://developer.paypal.com/api/orders/v2/definitions/order_request/).
+This changes newly created requests, not descriptions on past payments. PayPal's final account UI
+presentation still needs confirmation from a normal user-authorized payment; request serialization
+tests do not establish what every PayPal view displays.
+
 Before order creation, the official PayPal Android fraud-protection module collects Magnes risk
 data without requesting location. Its transaction-scoped client metadata ID is attached to create
 and capture as `PayPal-Client-Metadata-Id`. The collector uses the same Sandbox or Live environment
@@ -55,9 +66,10 @@ payer authorization even if Sandbox was already ready.
 When automatic Wallet settlement is explicitly enabled and its Hardcore/timed-protection boundary
 is active, an eligible balance uses the saved payment token directly. The app creates a single-step
 Orders v2 request with `paypal.vault_id` and a merchant-initiated `SUBSEQUENT` /
-`UNSCHEDULED_POSTPAID` stored credential. PayPal does not support multiple line items for this saved
-wallet flow, so SubHub sends the bounded settlement total and retains the itemized infractions in
-its local ledger. A payer-action or approval URL is treated as expired authorization: automatic
+`UNSCHEDULED_POSTPAID` stored credential. SubHub keeps one aggregate purchase row for this saved
+wallet flow: quantity one, the unchanged settlement total, and the complete cause/count/amount bill
+in that row's description. It does not turn individual infractions into multiple automatic purchase
+rows. A payer-action or approval URL is treated as expired authorization: automatic
 settlement pauses and asks for the wallet to be linked again instead of silently opening checkout.
 
 Manual settlement remains payer-present. Interactive order state cannot be reused for automatic
@@ -69,6 +81,20 @@ New background automatic cashouts have an internal 15.00 minimum in the selected
 open and accumulate; scheduling waits until enough entries have passed their mercy windows.
 Explicit manual cashouts (including the existing saved-wallet button route) have no minimum.
 Already-submitted automatic settlements retain their original ID and can reconcile below the floor.
+
+## Friends & Family boundary
+
+The current [Orders and saved-wallet API](https://developer.paypal.com/api/orders/v2/definitions/order_request/)
+is merchant checkout and exposes no Friends & Family selector. Describing the underlying transfer
+as a personal gift does not change the API route. SubHub does not automate a consumer PayPal login
+or substitute a personal transfer for the payer's existing authorization.
+
+[Payouts](https://developer.paypal.com/payouts/use-payouts/overview) has a
+[`NON_GOODS_OR_SERVICES` purpose](https://developer.paypal.com/api/payments.payouts-batch/v1/definitions/create_payout_request/),
+but is a different sender-funded integration: it requires an approved business sender and sufficient
+funds in that sender's PayPal balance. [Fees are paid by the sender](https://developer.paypal.com/payouts/fees/).
+It is not a fee-free automatic debit from the personal wallet already linked to SubHub, and no
+Payouts route is implemented here.
 
 ## Wallet currency
 

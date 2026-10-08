@@ -795,6 +795,7 @@
     <string name="paypal_auto_pay_paused_status">Auto-pay paused: %1$s</string>
     <string name="paypal_auto_pay_unavailable">Auto-pay is paused. Check the saved wallet in Settings.</string>
     <string name="paypal_order_item_name">%1$s × %2$d</string>
+    <string name="paypal_bill_line">%1$s: %2$s</string>
     <string name="paypal_order_item_when">Recorded %1$s</string>
     <string name="paypal_auto_payment_processing">Automatic Wallet payment is processing.</string>
     <string name="paypal_link_label">Manual PayPal link</string>

@@ -45,6 +45,7 @@ public final class PayPalRequestPolicyTest {
         assertEquals("UNSCHEDULED_POSTPAID", request.usagePattern());
         assertFalse(request.permitsInteractiveCheckout());
         assertFalse(request.permitsLineItems());
+        assertEquals(1, request.maximumBillRows());
     }
 
     @Test(expected = IllegalArgumentException.class)

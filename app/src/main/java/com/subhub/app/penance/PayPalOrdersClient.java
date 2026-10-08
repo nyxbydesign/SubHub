@@ -77,20 +77,13 @@ public final class PayPalOrdersClient {
                 ? Collections.emptyList() : new ArrayList<>(orderItems);
         network.execute(() -> {
             try {
+                JSONObject unit = purchaseUnit(settlementId, amountCents, currency, items, false);
                 String clientMetadataId = riskData.collect(
                         credentials.clientId(), credentials.environment());
                 if (clientMetadataId.isEmpty()) {
                     throw new IllegalStateException("PayPal risk data was unavailable");
                 }
                 String token = accessToken(credentials);
-                JSONObject amount = new JSONObject()
-                        .put("currency_code", currency)
-                        .put("value", decimalAmount(amountCents));
-                JSONObject unit = new JSONObject()
-                        .put("reference_id", settlementId)
-                        .put("custom_id", settlementId)
-                        .put("amount", amount);
-                addOrderItems(unit, amount, amountCents, currency, items);
                 boolean vaultRequested = requestVault;
                 JSONObject response;
                 try {
@@ -252,7 +245,7 @@ public final class PayPalOrdersClient {
         });
     }
 
-    private static JSONObject createOrderBody(JSONObject unit, String clientMetadataId,
+    static JSONObject createOrderBody(JSONObject unit, String clientMetadataId,
             boolean requestVault) throws Exception {
         JSONObject experience = new JSONObject()
                 .put("user_action", "PAY_NOW")
@@ -318,7 +311,16 @@ public final class PayPalOrdersClient {
     public void createStoredWalletPayment(PayPalCredentialStore.Credentials credentials,
             String settlementId, int amountCents, String currency, String vaultId,
             Callback<Capture> callback) {
+        createStoredWalletPayment(credentials, settlementId, amountCents, currency,
+                vaultId, Collections.emptyList(), callback);
+    }
+
+    public void createStoredWalletPayment(PayPalCredentialStore.Credentials credentials,
+            String settlementId, int amountCents, String currency, String vaultId,
+            List<OrderItem> orderItems, Callback<Capture> callback) {
         WalletCurrency.requireSupported(currency);
+        List<OrderItem> items = orderItems == null
+                ? Collections.emptyList() : new ArrayList<>(orderItems);
         network.execute(() -> {
             try {
                 PayPalRequestPolicy.StoredWalletRequest stored;
@@ -328,28 +330,14 @@ public final class PayPalOrdersClient {
                     throw new ReauthorizationRequiredException(
                             "The saved PayPal wallet must be linked again");
                 }
+                JSONObject unit = purchaseUnit(settlementId, amountCents, currency, items, true);
                 String clientMetadataId = riskData.collect(
                         credentials.clientId(), credentials.environment());
                 if (clientMetadataId.isEmpty()) {
                     throw new IllegalStateException("PayPal risk data was unavailable");
                 }
                 String token = accessToken(credentials);
-                JSONObject unit = new JSONObject()
-                        .put("reference_id", settlementId)
-                        .put("custom_id", settlementId)
-                        .put("amount", new JSONObject()
-                                .put("currency_code", currency)
-                                .put("value", decimalAmount(amountCents)));
-                JSONObject paypal = new JSONObject()
-                        .put("vault_id", stored.vaultId())
-                        .put("stored_credential", new JSONObject()
-                                .put("payment_initiator", stored.paymentInitiator())
-                                .put("usage", stored.usage())
-                                .put("usage_pattern", stored.usagePattern()));
-                JSONObject body = new JSONObject()
-                        .put("intent", "CAPTURE")
-                        .put("purchase_units", new JSONArray().put(unit))
-                        .put("payment_source", new JSONObject().put("paypal", paypal));
+                JSONObject body = createStoredWalletBody(unit, stored);
                 JSONObject response = request(credentials.environment(), "POST",
                         "/v2/checkout/orders", token, body.toString(),
                         PayPalRequestPolicy.autoRequestId(settlementId), clientMetadataId);
@@ -372,6 +360,54 @@ public final class PayPalOrdersClient {
                 deliver(callback, Result.failure(safeMessage(error), classify(error)));
             }
         });
+    }
+
+    static JSONObject createStoredWalletBody(JSONObject unit,
+            PayPalRequestPolicy.StoredWalletRequest stored) throws Exception {
+        JSONArray rows = unit.optJSONArray("items");
+        if (rows != null && rows.length() > stored.maximumBillRows()) {
+            throw new IllegalArgumentException("Automatic Wallet payments require one aggregate bill");
+        }
+        JSONObject paypal = new JSONObject()
+                .put("vault_id", stored.vaultId())
+                .put("stored_credential", new JSONObject()
+                        .put("payment_initiator", stored.paymentInitiator())
+                        .put("usage", stored.usage())
+                        .put("usage_pattern", stored.usagePattern()));
+        return new JSONObject().put("intent", "CAPTURE")
+                .put("purchase_units", new JSONArray().put(unit))
+                .put("payment_source", new JSONObject().put("paypal", paypal));
+    }
+
+    /** Shared by both actual request paths; metadata never changes the settlement total. */
+    static JSONObject purchaseUnit(String settlementId, int amountCents, String currency,
+            List<OrderItem> items, boolean storedWallet) throws Exception {
+        WalletCurrency.requireSupported(currency);
+        if (amountCents <= 0) throw new IllegalArgumentException("Invalid settlement total");
+        JSONObject amount = new JSONObject().put("currency_code", currency)
+                .put("value", decimalAmount(amountCents));
+        JSONObject unit = new JSONObject().put("reference_id", settlementId)
+                .put("custom_id", settlementId).put("amount", amount);
+        // Verify every ledger row before constructing an aggregate saved-wallet bill.
+        addOrderItems(unit, amount, amountCents, currency, items);
+        List<String> lines = new ArrayList<>();
+        if (items != null) for (OrderItem item : items) {
+            if (item == null || item.amountCents <= 0) continue;
+            String detail = item.description.trim();
+            lines.add(detail.isEmpty() ? item.name + ": " + currency + " "
+                    + decimalAmount(item.amountCents) : detail);
+        }
+        String bill = String.join("; ", lines);
+        if (bill.length() > 2048) throw new IllegalArgumentException("Settlement bill is too long");
+        String fallback = "SubHub tribute: " + currency + " " + decimalAmount(amountCents);
+        String summary = bill.isEmpty() ? fallback
+                : bill.length() <= 127 ? bill : fallback + " (" + lines.size() + " causes; see bill details)";
+        unit.put("description", summary);
+        if (storedWallet && !bill.isEmpty()) {
+            addOrderItems(unit, amount, amountCents, currency,
+                    Collections.singletonList(new OrderItem("SubHub tribute bill", bill, amountCents)));
+        }
+        return unit;
     }
 
     static void addOrderItems(JSONObject unit, JSONObject amount, int amountCents,
@@ -407,7 +443,10 @@ public final class PayPalOrdersClient {
     private static String bounded(String value, int maximum, String fallback) {
         String clean = value == null ? "" : value.trim();
         if (clean.isEmpty()) clean = fallback;
-        return clean.length() <= maximum ? clean : clean.substring(0, maximum);
+        if (clean.length() <= maximum) return clean;
+        int end = maximum;
+        if (Character.isHighSurrogate(clean.charAt(end - 1))) end--;
+        return clean.substring(0, end);
     }
 
     static Capture parseCapture(JSONObject response, String settlementId,

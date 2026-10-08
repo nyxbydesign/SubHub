@@ -61,10 +61,20 @@ final class HardcoreAutoPayEngine {
             done(finished);
             return;
         }
+        java.util.List<PayPalOrdersClient.OrderItem> bill;
+        try {
+            bill = PayPalOrderDetails.from(app, settlement);
+        } catch (RuntimeException invalidBill) {
+            penance.cancelSettlement(settlement.getId());
+            policy.pause("The local settlement bill was invalid");
+            notify(app, false, "Automatic Wallet payment paused");
+            done(finished);
+            return;
+        }
         penance.markAutomaticSettlement(settlement.getId(), credentials.boundaryId());
         PayPalOrdersClient client = new PayPalOrdersClient(app);
         client.createStoredWalletPayment(credentials, settlement.getId(),
-                settlement.getAmountCents(), settlement.getCurrency(), vault.vaultId(), result -> {
+                settlement.getAmountCents(), settlement.getCurrency(), vault.vaultId(), bill, result -> {
                     try {
                         if (result.isSuccess()) {
                             if (penance.completeSettlement(
