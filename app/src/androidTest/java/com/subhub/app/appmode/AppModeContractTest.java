@@ -13,7 +13,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.GridLayout;
+import android.widget.LinearLayout;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -26,6 +26,7 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.GlobalSettingsActivity;
+import com.subhub.app.settings.AppAssignmentRow;
 
 import org.junit.After;
 import org.junit.Before;
@@ -37,6 +38,82 @@ import java.util.Set;
 
 @RunWith(AndroidJUnit4.class)
 public final class AppModeContractTest {
+    @Test public void allAppsCoversEachEnabledFeatureAndSelectedModeRetainsIndependentChoices() {
+        com.subhub.app.settings.FeatureModuleManager modules = new com.subhub.app.settings.FeatureModuleManager(context);
+        modules.save(true, true, true, true);
+        new SettingsRepository(context).saveCaptureMethod(com.subhub.app.settings.CaptureMethod.APP_MODE);
+        AppModeManager manager = new AppModeManager(context);
+        manager.saveAppSelections(Set.of("com.example.censor"), Set.of("com.example.timer"), Set.of("com.example.messages"));
+        manager.save(true, AppModePolicy.Mode.ALWAYS, Set.of("com.example.censor"));
+        assertTrue(manager.shouldRecognize("com.example.unassigned"));
+        assertTrue(manager.shouldShowSubliminal("com.example.unassigned"));
+        assertEquals(Set.of("com.example.unassigned"), manager.timerScopeForForeground("com.example.unassigned"));
+        assertTrue(manager.timerScopeForForeground(context.getPackageName()).isEmpty());
+        assertTrue(manager.timerScopeForForeground("com.android.settings").isEmpty());
+        assertFalse(manager.shouldShowSubliminal(context.getPackageName()));
+        String keyboard = manager.inputMethodPackage();
+        if (!keyboard.isEmpty()) {
+            assertTrue(manager.timerScopeForForeground(keyboard).isEmpty());
+            assertFalse(manager.shouldShowSubliminal(keyboard));
+        }
+        manager.save(true, AppModePolicy.Mode.SELECTED_APPS, manager.getSelectedPackages());
+        assertEquals(Set.of("com.example.timer"), manager.getTimerPackages());
+        assertEquals(Set.of("com.example.messages"), manager.getSubliminalPackages());
+        assertTrue(manager.timerScopeForForeground("com.example.unassigned").isEmpty());
+        assertFalse(manager.shouldShowSubliminal("com.example.unassigned"));
+        assertTrue(manager.shouldShowSubliminal("com.example.messages"));
+        assertFalse(manager.shouldShowSubliminal("com.example.timer"));
+        assertEquals(Set.of("com.example.timer"), manager.timerScopeForForeground("com.example.timer"));
+        modules.save(true, false, true, false);
+        assertTrue(manager.timerScopeForForeground("com.example.timer").isEmpty());
+        assertFalse(manager.shouldShowSubliminal("com.example.messages"));
+        modules.save(true, true, true, true);
+        manager.setArmed(false);
+        assertTrue(manager.timerScopeForForeground("com.example.timer").isEmpty());
+        assertFalse(manager.shouldShowSubliminal("com.example.messages"));
+    }
+
+    @Test public void allAppsDefaultAllowanceIsEditableWithoutAnyAppAssignments() {
+        ControllerPinManager.enterDomMode();
+        new com.subhub.app.settings.FeatureModuleManager(context).save(true, true, true, false);
+        AppModeManager manager = new AppModeManager(context);
+        manager.saveAppSelections(Set.of(), Set.of(), Set.of());
+        manager.save(false, AppModePolicy.Mode.ALWAYS, Set.of());
+        AppTimerManager timer = new AppTimerManager(context);
+        timer.saveSettings(true, 30, false, 120);
+        try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.default_allowance_group).getVisibility());
+                assertTrue(activity.findViewById(R.id.default_limit_minutes).isEnabled());
+            });
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.default_limit_minutes))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                            androidx.test.espresso.action.ViewActions.replaceText("45"),
+                            androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+        }
+        assertEquals(45, timer.loadSettings().perAppMinutes);
+        assertTrue(timer.loadSettings().perAppEnabled);
+        assertTrue(manager.getTimerPackages().isEmpty());
+        assertFalse(manager.isArmed());
+    }
+
+    @Test public void allAppsCountsAndEnforcesAnUnassignedAppsExistingDefaultAllowance() {
+        new com.subhub.app.settings.FeatureModuleManager(context).save(true, true, true, true);
+        AppModeManager manager = new AppModeManager(context);
+        manager.saveAppSelections(Set.of(), Set.of(), Set.of());
+        manager.save(true, AppModePolicy.Mode.ALWAYS, Set.of());
+        AppTimerManager timer = new AppTimerManager(context);
+        timer.clearUsageForTesting();
+        timer.saveSettings(true, 1, false, 120);
+        long now = System.currentTimeMillis();
+        Set<String> scope = manager.timerScopeForForeground("com.example.unassigned");
+        timer.recordUsage("com.example.unassigned", 60_000L, scope, now);
+        assertEquals(60_000L, timer.snapshot("com.example.unassigned", now).appUsedMillis);
+        assertEquals(AppTimerManager.LimitStatus.PER_APP, timer.limitStatus("com.example.unassigned", scope, now));
+        assertEquals(AppTimerManager.LimitStatus.NONE,
+                timer.limitStatus(context.getPackageName(), manager.timerScopeForForeground(context.getPackageName()), now));
+        timer.clearUsageForTesting();
+    }
     private Context context;
     private SharedPreferences preferences;
 
@@ -148,6 +225,7 @@ public final class AppModeContractTest {
     }
 
     @Test public void globalSettingsOwnsRecognitionAndAppAssignments() {
+        ControllerPinManager.enterDomMode();
         new AppModeManager(context).save(false, AppModePolicy.Mode.ALWAYS, Set.of());
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(
                 GlobalSettingsActivity.class)) {
@@ -157,8 +235,43 @@ public final class AppModeContractTest {
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.app_list_card).getVisibility());
                 ViewGroup sections = activity.findViewById(R.id.settings_sections);
-                assertEquals(activity.findViewById(R.id.hardcore_card), sections.getChildAt(1));
+                View protection = activity.findViewById(R.id.settings_group_protection);
+                View hardcore = activity.findViewById(R.id.hardcore_card);
+                assertEquals(sections, hardcore.getParent());
+                assertTrue(sections.indexOfChild(protection) < sections.indexOfChild(hardcore));
+                View apps = activity.findViewById(R.id.apps_card);
+                assertEquals(sections, apps.getParent());
+                for (int id : new int[] {R.id.recognition_card, R.id.app_list_card,
+                        R.id.android_access_card}) {
+                    assertEquals(apps, activity.findViewById(id).getParent());
+                }
+                assertEquals(View.GONE, activity.findViewById(R.id.armed).getVisibility());
             });
+        }
+    }
+
+    @Test public void censorScopeChangesPreserveServiceAndIndependentAssignments() {
+        ControllerPinManager.enterDomMode();
+        for (boolean armed : new boolean[] {false, true}) {
+            AppModeManager manager = new AppModeManager(context);
+            manager.saveAppSelections(Set.of("com.example.censor"),
+                    Set.of("com.example.limited"), Set.of("com.example.messages"));
+            manager.save(armed, AppModePolicy.Mode.SELECTED_APPS,
+                    Set.of("com.example.censor"));
+            try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(
+                    GlobalSettingsActivity.class)) {
+                scenario.onActivity(activity -> {
+                    // Use the live scope listener before the asynchronous launcher refresh.
+                    activity.findViewById(R.id.mode_always).performClick();
+                    assertEquals(armed, manager.isArmed());
+                    assertEquals(AppModePolicy.Mode.ALWAYS, manager.getMode());
+                    assertEquals(Set.of("com.example.limited"), manager.getTimerPackages());
+                    assertEquals(Set.of("com.example.messages"), manager.getSubliminalPackages());
+                    activity.findViewById(R.id.mode_selected).performClick();
+                    assertEquals(armed, manager.isArmed());
+                    assertEquals(AppModePolicy.Mode.SELECTED_APPS, manager.getMode());
+                });
+            }
         }
     }
 
@@ -178,7 +291,8 @@ public final class AppModeContractTest {
         }
     }
 
-    @Test public void launcherPickerUsesACompactVerticalGrid() throws Exception {
+    @Test public void launcherPickerUsesCompactRowsWithIndependentModuleTargets() throws Exception {
+        ControllerPinManager.enterDomMode();
         try (ActivityScenario<GlobalSettingsActivity> scenario =
                      ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity ->
@@ -186,13 +300,19 @@ public final class AppModeContractTest {
             Thread.sleep(750L);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             scenario.onActivity(activity -> {
-                GridLayout grid = activity.findViewById(R.id.app_list);
-                int expected = activity.getResources().getInteger(R.integer.app_picker_columns);
-                assertTrue(expected >= 3 && expected <= 5);
-                assertEquals(expected, grid.getColumnCount());
-                assertTrue(grid.getChildCount() > expected);
-                assertEquals(grid.getChildAt(0).getTop(), grid.getChildAt(1).getTop());
-                assertTrue(grid.getChildAt(expected).getTop() > grid.getChildAt(0).getTop());
+                LinearLayout list = activity.findViewById(R.id.app_list);
+                assertEquals(LinearLayout.VERTICAL, list.getOrientation());
+                assertTrue(list.getChildCount() > 2);
+                AppAssignmentRow first = (AppAssignmentRow) list.getChildAt(1);
+                AppAssignmentRow second = (AppAssignmentRow) list.getChildAt(2);
+                assertTrue(second.getTop() > first.getTop());
+                assertEquals(list.getWidth(), first.getWidth());
+                int minimum = Math.round(48 * activity.getResources().getDisplayMetrics().density);
+                for (int index = 0; index < 3; index++) {
+                    assertTrue(first.choice(index).getWidth() >= minimum);
+                    assertTrue(first.choice(index).getHeight() >= minimum);
+                    assertTrue(first.choice(index).getContentDescription().toString().contains(", "));
+                }
             });
         }
     }

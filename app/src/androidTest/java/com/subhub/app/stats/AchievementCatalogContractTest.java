@@ -29,7 +29,7 @@ public final class AchievementCatalogContractTest {
         Context context = ApplicationProvider.getApplicationContext();
         AchievementManager manager = new AchievementManager(context);
 
-        assertEquals(60, manager.getTotalCount());
+        assertEquals(58, manager.getTotalCount());
         Set<String> ids = new HashSet<>();
         Set<Integer> badgeResources = new HashSet<>();
         Set<String> badgeDigests = new HashSet<>();
@@ -50,8 +50,10 @@ public final class AchievementCatalogContractTest {
             }
         }
 
-        assertEquals(60, badgeResources.size());
-        assertEquals(60, badgeDigests.size());
+        assertEquals(58, badgeResources.size());
+        assertEquals(58, badgeDigests.size());
+        assertFalse(ids.contains("profile_creator"));
+        assertFalse(ids.contains("profile_organizer"));
         assertEquals(R.drawable.achievement_badge_app_mode_guardian,
                 find(manager, "app_mode_guardian").getBadgeArtRes());
         assertEquals(R.drawable.achievement_badge_limits_setter,

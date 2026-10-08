@@ -90,32 +90,64 @@ public final class SubliminalSettingsRepository {
 
     public List<String> phrases(SubliminalSettings settings) {
         if (settings == null) settings = load();
-        List<String> result = new ArrayList<>();
+        return resolvePhrases(settings);
+    }
+
+    /** Deduplicate only the display pool; the saved, case-preserving custom text is unchanged. */
+    static List<String> resolvePhrases(SubliminalSettings settings) {
+        Set<String> result = new LinkedHashSet<>();
         Set<String> packs = settings.getEnabledPacks();
         if (packs.contains(PACK_OBEDIENCE)) result.addAll(Arrays.asList(
-                "Eyes forward.", "Wait for permission.", "Follow the rule.",
-                "Service comes first.", "Good behavior is noticed.", "Hold your place.",
-                "Obedience feels natural.", "Listen. Breathe. Obey."));
+                "There you are. Back in line.", "Ask nicely. I like manners.",
+                "Less fuss. More composure.", "That restraint suits you.",
+                "Good. Keep that attitude.", "The rule hasn't changed, trouble.",
+                "You know the drill. Show me.", "A little patience looks good on you.",
+                "No grand speech. Just follow through.", "Steady now. Make it look effortless.",
+                "Nicely done. Don't get smug.", "One instruction. Your full attention.",
+                "Settle down. You've got this.", "That is more like it.",
+                "Save the theatrics. Keep the promise.", "Quiet confidence. Better manners.",
+                "Consider this your raised eyebrow.", "Oh, you heard me.",
+                "Good form. Keep it tidy.", "Your chosen rules. Your chance to shine."));
         if (packs.contains(PACK_FOCUS)) result.addAll(Arrays.asList(
-                "Back to your task.", "Breathe. Focus.", "Your attention has a purpose.",
-                "Stay present.", "Slow down and choose well.", "Keep your hands steady.",
-                "One task. Full attention.", "Discipline is quiet."));
+                "Eyes up. You're drifting.", "Less fidgeting. More composure.",
+                "Back to it, trouble.", "One thing at a time. Do it well.",
+                "Drop the performance. Find your focus.", "Take a breath. Start clean.",
+                "Unclench your shoulders. Look alive.", "Posture check. Nicely now.",
+                "Slow is fine. Sloppy isn't the aim.", "Give this moment some attention.",
+                "Catch that wandering thought.", "A little poise, please.",
+                "Less rushing. More intention.", "Finish the thought before chasing another.",
+                "Bring your attention back here.", "Soft shoulders. Steady hands.",
+                "Find your pace. Hold it.", "That distraction can wait.",
+                "Make the next move a deliberate one.", "Composed looks good on you."));
         if (packs.contains(PACK_BETA)) result.addAll(Arrays.asList(
-                "Know your place.", "Behave, beta.", "Not yours to touch.",
-                "Permission comes first.", "Eyes down.", "You can wait.",
-                "Watching is enough.", "Good betas follow instructions."));
+                "Cute attempt, beta. The rule still stands.", "All that bravado. Adorable.",
+                "Behave, beta. You know this part.", "Big talk. Let's see some manners.",
+                "Back in line, little show-off.", "Not the main character this time.",
+                "That pout isn't changing the script.", "Eyes down, beta. Stay composed.",
+                "The spectator seat has your name on it.", "Nice try, cuck. Still the same rules.",
+                "Less swagger. Better follow-through.", "Oh, look. The beta has an opinion.",
+                "You can be cheeky and still behave.", "Save the victory lap, trouble.",
+                "A little less ego. A little more grace.", "Still trying to charm your way past it?",
+                "Stay in character. You chose this role.", "No need to impress. Just be attentive.",
+                "Caught showing off again, beta.", "Good manners beat that big speech."));
         if (packs.contains(PACK_FINDOM)) result.addAll(Arrays.asList(
-                "Your tribute is remembered.", "Permission has a price.",
-                "Your wallet knows who leads.", "Every slip belongs in the ledger.",
-                "Spend with purpose.", "Tribute follows obedience.",
-                "Your balance tells the truth.", "Pay attention. Then pay tribute."));
+                "Velvet-rope energy. Mind your manners.", "Admire the luxury. Lose the entitlement.",
+                "A little tribute. A lot of theatre.", "The VIP list is looking selective.",
+                "Champagne attitude. Impeccable composure.", "That view has exclusive-access energy.",
+                "Luxury likes a little patience.", "The crown is not taking suggestions.",
+                "Bring your best manners to the throne.", "Worth the wait? Naturally.",
+                "A raised eyebrow. A velvet rope.", "The tribute theatre has a dress code: poise.",
+                "Exclusive doesn't mean entitled.", "Elegance first. Grand gestures optional.",
+                "Put that swagger on the guest list.", "All that sparkle. Still the same rules.",
+                "No shortcuts past the velvet rope.", "A little ceremony. A lot of composure.",
+                "Keep your composure. The crown is watching.", "The throne appreciates good manners."));
         if (packs.contains(PACK_CUSTOM)) {
             for (String line : settings.getCustomPhrases().split("\\R")) {
                 String clean = line.trim();
                 if (!clean.isEmpty()) result.add(clean);
             }
         }
-        return Collections.unmodifiableList(result);
+        return Collections.unmodifiableList(new ArrayList<>(result));
     }
 
     public static Values valuesFor(SubliminalSettings.Preset preset) {

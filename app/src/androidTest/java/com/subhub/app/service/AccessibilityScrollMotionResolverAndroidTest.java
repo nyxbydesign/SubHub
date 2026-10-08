@@ -13,6 +13,30 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class AccessibilityScrollMotionResolverAndroidTest {
+    @Test public void recordedAbsoluteAndVirtualCompanionShareOneDisplacement() {
+        AccessibilityScrollMotionResolver resolver = new AccessibilityScrollMotionResolver();
+        ScrollCompanionDeduplicator deduplicator = new ScrollCompanionDeduplicator();
+        AccessibilityEvent baseline = scrollEvent();
+        baseline.setScrollY(1519);
+        resolver.resolve(baseline, 1344, 2992, "absolute");
+        AccessibilityEvent absolute = scrollEvent();
+        absolute.setScrollY(1238);
+        AccessibilityScrollMotionResolver.Motion first = resolver.resolve(absolute, 1344, 2992, "absolute");
+        assertEquals(281, first.dy);
+        assertFalse(deduplicator.observe(23, 10, 10, 1344, 2992, true, false,
+                first.evidence, first.dx, first.dy, 336559725, 336559727));
+        AccessibilityEvent companion = scrollEvent();
+        companion.setScrollY(0);
+        companion.setScrollDeltaY(-281);
+        AccessibilityScrollMotionResolver.Motion second = resolver.resolve(companion, 1344, 2992, "virtual");
+        assertEquals(281, second.dy);
+        assertTrue(deduplicator.observe(23, 10, 20, 1344, 2992, false, true,
+                second.evidence, second.dx, second.dy, 336559737, 336559739));
+        baseline.recycle();
+        absolute.recycle();
+        companion.recycle();
+    }
+
     @Test public void explicitContentDeltaBecomesOppositeScreenMotion() {
         AccessibilityScrollMotionResolver resolver = new AccessibilityScrollMotionResolver();
         AccessibilityEvent event = scrollEvent();
@@ -54,6 +78,36 @@ public final class AccessibilityScrollMotionResolverAndroidTest {
         assertFalse(resolver.resolve(replacement, 1080, 2400).moved());
         first.recycle();
         replacement.recycle();
+    }
+
+    @Test public void alternatingProducerCannotOverwriteAnotherAbsoluteBaseline() {
+        AccessibilityScrollMotionResolver resolver = new AccessibilityScrollMotionResolver();
+        AccessibilityEvent absoluteStart = scrollEvent();
+        absoluteStart.setScrollY(100);
+        assertFalse(resolver.resolve(absoluteStart, 1080, 2400, "absolute-node").moved());
+
+        AccessibilityEvent explicitCompanion = scrollEvent();
+        explicitCompanion.setScrollY(4_000);
+        explicitCompanion.setScrollDeltaY(80);
+        AccessibilityScrollMotionResolver.Motion explicit = resolver.resolve(
+                explicitCompanion, 1080, 2400, "explicit-node");
+        assertEquals(-80, explicit.dy);
+
+        AccessibilityEvent absoluteReturn = scrollEvent();
+        absoluteReturn.setScrollY(160);
+        assertFalse(resolver.resolve(
+                absoluteReturn, 1080, 2400, "absolute-node").moved());
+
+        AccessibilityEvent absoluteFollowUp = scrollEvent();
+        absoluteFollowUp.setScrollY(200);
+        AccessibilityScrollMotionResolver.Motion absolute = resolver.resolve(
+                absoluteFollowUp, 1080, 2400, "absolute-node");
+        assertEquals(-40, absolute.dy);
+
+        absoluteStart.recycle();
+        explicitCompanion.recycle();
+        absoluteReturn.recycle();
+        absoluteFollowUp.recycle();
     }
 
     @Test public void visibleItemIndexProvidesLastResortFeedMotion() {

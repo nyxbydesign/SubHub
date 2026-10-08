@@ -24,6 +24,7 @@ public final class DetectorConfig {
     private final float maxExtrapolationMs;
     private final boolean detectCovered;
     private final int inferenceThreads;
+    private final CensorCoverage censorCoverage;
 
     private DetectorConfig(Builder builder) {
         enabledCategories = Collections.unmodifiableSet(new LinkedHashSet<>(builder.enabledCategories));
@@ -44,9 +45,32 @@ public final class DetectorConfig {
         maxExtrapolationMs = builder.maxExtrapolationMs;
         detectCovered = builder.detectCovered;
         inferenceThreads = builder.inferenceThreads;
+        censorCoverage = builder.censorCoverage;
     }
 
     public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+        return new Builder()
+                .enabledCategories(enabledCategories)
+                .confidenceThreshold(confidenceThreshold)
+                .trackingSmoothing(trackingSmoothing)
+                .trackMaxAgeSeconds(trackMaxAgeSeconds)
+                .minRemoveFrames(minRemoveFrames)
+                .motionPrediction(motionPrediction)
+                .detectionIntervalMs(detectionIntervalMs)
+                .boxPadding(boxPadding)
+                .minDetectionSize(minDetectionSize)
+                .captureScale(captureScale)
+                .inferenceResolution(inferenceResolution)
+                .modelFilename(modelFilename)
+                .idleThresholdFrames(idleThresholdFrames)
+                .renderAlpha(renderAlpha)
+                .velocitySmoothing(velocitySmoothing)
+                .maxExtrapolationMs(maxExtrapolationMs)
+                .detectCovered(detectCovered)
+                .inferenceThreads(inferenceThreads)
+                .censorCoverage(censorCoverage);
+    }
     public Set<String> getEnabledCategories() { return enabledCategories; }
     public float getConfidenceThreshold() { return confidenceThreshold; }
     public float getTrackingSmoothing() { return trackingSmoothing; }
@@ -65,6 +89,7 @@ public final class DetectorConfig {
     public float getMaxExtrapolationMs() { return maxExtrapolationMs; }
     public boolean isDetectCovered() { return detectCovered; }
     public int getInferenceThreads() { return inferenceThreads; }
+    public CensorCoverage getCensorCoverage() { return censorCoverage; }
 
     public static final class Builder {
         private Set<String> enabledCategories = NudeNetClassCatalog.DEFAULT_ENABLED;
@@ -85,6 +110,7 @@ public final class DetectorConfig {
         private float maxExtrapolationMs = 180f;
         private boolean detectCovered;
         private int inferenceThreads = 2;
+        private CensorCoverage censorCoverage = CensorCoverage.DETECTED_AREAS;
 
         public Builder enabledCategories(Set<String> value) { enabledCategories = value; return this; }
         public Builder confidenceThreshold(float value) { confidenceThreshold = value; return this; }
@@ -104,6 +130,9 @@ public final class DetectorConfig {
         public Builder maxExtrapolationMs(float value) { maxExtrapolationMs = value; return this; }
         public Builder detectCovered(boolean value) { detectCovered = value; return this; }
         public Builder inferenceThreads(int value) { inferenceThreads = value; return this; }
+        public Builder censorCoverage(CensorCoverage value) {
+            censorCoverage = java.util.Objects.requireNonNull(value); return this;
+        }
 
         public DetectorConfig build() {
             if (enabledCategories == null || modelFilename == null || modelFilename.trim().isEmpty()) {

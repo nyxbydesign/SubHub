@@ -25,4 +25,22 @@ public final class CensorPhrasesTest {
         assertTrue(CensorPhrases.build(Collections.emptySet(), Collections.emptySet())
                 .contains("BLOCKED"));
     }
+
+    @Test public void neutralDefaultsRemainAvailableAndThemesHaveDistinctShortLabels() {
+        assertEquals(Arrays.asList("BLOCKED", "CENSORED", "DENIED", "LOCKED"),
+                CensorPhrases.build(Collections.singleton("short"), Collections.emptySet()));
+        LinkedHashSet<String> all = new LinkedHashSet<>();
+        for (String category : CensorPhrases.categoryNames()) {
+            List<String> phrases = CensorPhrases.build(Collections.singleton(category),
+                    Collections.emptySet());
+            assertEquals("short".equals(category) ? 4 : 10, phrases.size());
+            for (String phrase : phrases) {
+                assertTrue(category + ": " + phrase, phrase.length() <= 24);
+                assertTrue("Duplicate across categories: " + phrase, all.add(phrase));
+            }
+        }
+        assertEquals(64, all.size());
+        assertEquals(new LinkedHashSet<>(Arrays.asList("short", "denial")),
+                CensorPhrases.DEFAULT_ENABLED);
+    }
 }

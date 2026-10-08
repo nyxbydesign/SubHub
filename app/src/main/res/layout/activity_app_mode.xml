@@ -11,34 +11,14 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingBottom="124dp">
+        android:paddingBottom="@dimen/bottom_nav_clearance">
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="10dp"
-            android:background="@drawable/bg_header_card" android:gravity="center_vertical"
-            android:orientation="horizontal" android:padding="14dp">
-            <TextView android:id="@+id/button_back" android:layout_width="wrap_content"
-                android:layout_height="40dp" android:gravity="center_vertical" android:text="@string/back"
-                android:textColor="@color/accent" android:textSize="11sp" android:textStyle="bold"
-                android:visibility="gone" />
-            <ImageView android:layout_width="44dp" android:layout_height="44dp"
-                android:background="@drawable/bg_header_icon"
-                android:contentDescription="@string/app_mode_title" android:padding="10dp"
-                android:src="@drawable/ic_nav_limits" app:tint="@color/text_primary" />
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_marginStart="11dp" android:layout_weight="1"
-                android:orientation="vertical">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:letterSpacing="0.1" android:text="@string/app_mode_title"
-                    android:textColor="@color/text_primary" android:textSize="20sp" android:textStyle="bold" />
-                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp" android:text="@string/app_mode_subtitle"
-                    android:textColor="@color/text_secondary" android:textSize="12sp" />
-            </LinearLayout>
-            <TextView android:id="@+id/button_edit_lock"
-                style="@style/Widget.SubHub.ControllerEdit"
-                android:text="@string/controller_edit_locked" />
-        </LinearLayout>
+        <include
+            layout="@layout/view_primary_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="@dimen/primary_header_top" />
 
         <LinearLayout android:id="@+id/timer_card" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
@@ -51,26 +31,37 @@
                 android:textColor="@color/text_secondary" android:textSize="11sp" />
 
             <CheckBox android:id="@+id/per_app_limit_enabled" android:layout_width="match_parent"
-                android:layout_height="44dp" android:layout_marginTop="8dp"
-                android:buttonTint="@color/accent" android:text="@string/app_timer_per_app"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp" android:layout_marginTop="8dp"
+                android:buttonTint="@color/toggle_tint" android:text="@string/app_timer_per_app"
                 android:textColor="@color/text_primary" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
                 android:text="@string/app_timer_per_app_allowances_help" />
+            <LinearLayout android:id="@+id/default_allowance_group"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical">
+                <TextView android:labelFor="@id/default_limit_minutes"
+                    style="@style/Widget.SubHub.FieldLabel" android:text="@string/app_timer_default_minutes" />
+                <EditText android:id="@+id/default_limit_minutes" style="@style/Widget.SubHub.Input"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:minHeight="48dp" android:inputType="number" android:maxLength="4" />
+            </LinearLayout>
             <LinearLayout android:id="@+id/per_app_allowances_list"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginTop="4dp" android:orientation="vertical" />
 
             <CheckBox android:id="@+id/total_limit_enabled" android:layout_width="match_parent"
-                android:layout_height="44dp" android:layout_marginTop="8dp"
-                android:buttonTint="@color/accent" android:text="@string/app_timer_combined"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp" android:layout_marginTop="8dp"
+                android:buttonTint="@color/toggle_tint" android:text="@string/app_timer_combined"
                 android:textColor="@color/text_primary" />
-            <TextView style="@style/Widget.SubHub.FieldLabel"
+            <TextView android:labelFor="@id/total_limit_minutes" style="@style/Widget.SubHub.FieldLabel"
                 android:text="@string/app_timer_total_minutes_label" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
                 android:text="@string/app_timer_total_minutes_help" />
-            <EditText android:id="@+id/total_limit_minutes" android:layout_width="match_parent"
-                android:layout_height="44dp" android:layout_marginTop="4dp"
-                android:backgroundTint="@color/accent"
+            <EditText style="@style/Widget.SubHub.Input" android:id="@+id/total_limit_minutes" android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp" android:layout_marginTop="4dp"
                 android:hint="@string/app_timer_minutes_hint" android:inputType="number"
                 android:maxLength="4" android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_muted" />

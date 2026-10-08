@@ -21,9 +21,8 @@ import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityPenanceBinding;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.pack.SubHubPackLocks;
-import com.subhub.app.pack.SubHubPackSchema;
 import com.subhub.app.security.ControllerEditMode;
+import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
 import java.math.BigDecimal;
@@ -68,6 +67,9 @@ public final class PenanceActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityPenanceBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        arrangeWalletSections();
+        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
+                R.string.penance_title, R.string.penance_subtitle);
         if (!Intent.ACTION_VIEW.equals(getIntent().getAction())
                 && SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.MONEY)) return;
         manager = new PenanceManager(this);
@@ -77,8 +79,9 @@ public final class PenanceActivity extends AppCompatActivity {
         populateRules();
         attachRuleMathListeners();
 
-        binding.buttonBack.setOnClickListener(view -> finish());
-        binding.buttonEditLock.setOnClickListener(view -> toggleEditSession());
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        PrimaryHeader.editLockButton(binding.getRoot())
+                .setOnClickListener(view -> toggleEditSession());
         binding.buttonSettle.setOnClickListener(view -> beginCheckout());
         binding.buttonResumeCheckout.setOnClickListener(view -> openApprovalUrl());
         binding.buttonConfirmPayment.setOnClickListener(view -> confirmPayment());
@@ -116,20 +119,32 @@ public final class PenanceActivity extends AppCompatActivity {
         timer.post(tick);
     }
 
+    private void arrangeWalletSections() {
+        android.view.ViewGroup sections = (android.view.ViewGroup) binding.balanceCard.getParent();
+        View historyCard = (View) binding.history.getParent();
+        View[] order = {binding.balanceCard, binding.checkoutCard, binding.safetyConfigCard,
+                binding.ruleConfigCard, binding.paidPauseConfigCard, historyCard,
+                binding.correctionsCard};
+        for (View section : order) ((android.view.ViewGroup) section.getParent()).removeView(section);
+        for (View section : order) sections.addView(section);
+    }
+
     private void toggleEditSession() {
         if (ControllerPinManager.isSessionUnlocked()) {
+            // Flush the last edit before leaving the role that is allowed to save it.
+            commitRules(true);
             ControllerEditMode.enterSubMode(this);
         } else ControllerPinGate.require(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
         if (binding == null) return;
-        boolean editing = ControllerPinManager.isDomModeActive()
-                && !SubHubPackLocks.isLocked(this, SubHubPackSchema.WALLET);
-        ControllerEditMode.renderButton(this, binding.buttonEditLock);
-        binding.buttonEditLock.setVisibility(editing ? View.VISIBLE : View.GONE);
-        binding.buttonBack.setVisibility(View.GONE);
-        binding.penanceSubtitle.setText(
+        boolean editing = ControllerPinManager.isDomModeActive();
+        ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
+        PrimaryHeader.editLockButton(binding.getRoot())
+                .setVisibility(editing ? View.VISIBLE : View.GONE);
+        PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.GONE);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(
                 getString(R.string.wallet_currency_label) + ": " + manager.getCurrency());
         binding.ruleConfigCard.setVisibility(editing ? View.VISIBLE : View.GONE);
         binding.safetyConfigCard.setVisibility(editing ? View.VISIBLE : View.GONE);
@@ -293,6 +308,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void renderRuleMathPreview() {
         if (binding == null) return;
+        binding.ruleMathPreview.setVisibility(View.VISIBLE);
         long now = System.currentTimeMillis();
         if (manager.isEnabled() && manager.isInfractionEnabled(PenanceInfraction.NEW_DETECTION)) {
             if (manager.getDailyRemainingCents(now) == 0) {
@@ -317,13 +333,8 @@ public final class PenanceActivity extends AppCompatActivity {
             binding.ruleMathPreview.setText(R.string.penance_rule_math_invalid);
             return;
         }
-        int exampleRegions = batch * 5;
-        int progress = batch == manager.getDetectionBatch()
-                ? manager.getDetectionRemainder() : 0;
-        binding.ruleMathPreview.setText(getString(R.string.penance_rule_math_preview,
-                batch, exampleRegions, manager.money(cents),
-                manager.money(cents * 5), manager.money(daily),
-                manager.money(weekly), progress));
+        binding.ruleMathPreview.setText("");
+        binding.ruleMathPreview.setVisibility(View.GONE);
     }
 
     private boolean saveRules(boolean showInvalid) {
@@ -589,7 +600,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void confirmClearUnpaid() {
-        new AlertDialog.Builder(this)
+        com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.penance_clear_title)
                 .setMessage(R.string.penance_clear_body)
                 .setNegativeButton(android.R.string.cancel, null)

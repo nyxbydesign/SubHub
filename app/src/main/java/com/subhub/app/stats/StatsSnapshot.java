@@ -5,7 +5,7 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
 
-/** Immutable aggregate matching the recovered Beta Blocker statistics schema. */
+/** Immutable aggregate compatible with the Android feature-source statistics schema. */
 public final class StatsSnapshot {
     private final long totalBlocks;
     private final long totalSessionSeconds;
@@ -19,7 +19,6 @@ public final class StatsSnapshot {
     private final int browserSessions;
     private final int browserPages;
     private final long exportedImages;
-    private final int profiles;
     private final int customPhrases;
     private final int censorStyleChanges;
     private final boolean borderColorChanged;
@@ -46,7 +45,7 @@ public final class StatsSnapshot {
     StatsSnapshot(long totalBlocks, long totalSessionSeconds, int sessions, int currentStreak,
             String lastSessionDate, long totalProtectedSeconds, int currentSessionBlocks,
             int peakSessionBlocks, long longestSessionSeconds, int browserSessions,
-            int browserPages, long exportedImages, int profiles, int customPhrases,
+            int browserPages, long exportedImages, int customPhrases,
             int censorStyleChanges, boolean borderColorChanged, Set<String> censorStylesTried,
             Set<String> borderEffectsTried, Set<String> activeDates, long allCategoryCensors,
             long currentSessionSeconds, long subliminalImpressions,
@@ -69,7 +68,6 @@ public final class StatsSnapshot {
         this.browserSessions = browserSessions;
         this.browserPages = browserPages;
         this.exportedImages = exportedImages;
-        this.profiles = profiles;
         this.customPhrases = customPhrases;
         this.censorStyleChanges = censorStyleChanges;
         this.borderColorChanged = borderColorChanged;
@@ -106,7 +104,6 @@ public final class StatsSnapshot {
     public int getBrowserSessions() { return browserSessions; }
     public int getBrowserPages() { return browserPages; }
     public long getExportedImages() { return exportedImages; }
-    public int getProfiles() { return profiles; }
     public int getCustomPhrases() { return customPhrases; }
     public int getCensorStyleChanges() { return censorStyleChanges; }
     public boolean isBorderColorChanged() { return borderColorChanged; }

@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 
 import com.subhub.app.BuildConfig;
+import com.subhub.app.R;
 import com.subhub.app.capture.CustomImageManager;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PayPalCredentialStore;
@@ -46,24 +47,23 @@ public final class SubHubPackManager {
     private static final String KEY_ACTIVE_SECTIONS = "active_sections";
     private static final String KEY_DEVICE_ID = "creator_device_id";
     private static final String LOCAL_PAYPAL_BACKUP = "_local_encrypted_paypal";
-    private static final Set<String> STRING_SET_KEYS = Set.of(
-            SettingsRepository.KEY_ENABLED_CATEGORIES,
-            SettingsRepository.KEY_TEXT_SMUT_CATEGORIES,
-            SettingsRepository.KEY_ENABLED_PHRASE_CATEGORIES,
-            com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_PACKS);
-    private static final Set<String> LONG_KEYS = Set.of(
-            com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_VISIBLE_MS,
-            com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_MIN_INTERVAL_MS,
-            com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_MAX_INTERVAL_MS);
-    private static final Set<String> FLOAT_KEYS = Set.of(
-            SettingsRepository.KEY_CENSOR_INTENSITY,
-            SettingsRepository.KEY_CONFIDENCE,
-            SettingsRepository.KEY_TEXT_SMUT_SENSITIVITY,
-            PopupStormSettings.K_SPAWN_RATE,
-            PopupStormSettings.K_DISPLAY_DURATION,
-            PopupStormSettings.K_BURST_FREQUENCY,
-            PopupStormSettings.K_BURST_DURATION,
-            PopupStormSettings.K_BURST_MULTIPLIER);
+    public enum Failure { NONE, CONTROLLER, EMPTY, RECOVERY, INVALID_SETTINGS, PAYMENT, STORAGE }
+    private Failure lastFailure = Failure.NONE;
+
+    public Failure lastFailure() { return lastFailure; }
+
+    public String failureMessage() {
+        return context.getString(switch (lastFailure) {
+            case CONTROLLER -> R.string.pack_apply_controller;
+            case EMPTY -> R.string.pack_apply_empty;
+            case RECOVERY -> R.string.pack_apply_recovery;
+            case INVALID_SETTINGS -> R.string.pack_apply_invalid;
+            case PAYMENT -> R.string.pack_apply_payment;
+            case NONE, STORAGE -> R.string.pack_apply_storage;
+        });
+    }
+
+    private boolean fail(Failure failure) { lastFailure = failure; return false; }
 
     private final Context context;
     private final File root;
@@ -83,20 +83,12 @@ public final class SubHubPackManager {
         ensureDirectory(library);
         state = this.context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
         recoverInterruptedActivation();
-        // PackManager initializes legacy .bbpack key locks first. Do not erase them when no
-        // modern arrangement is active; modern group locks supersede them only while active.
-        if (activePackId() != null) {
-            synchronizeLegacyLocks(SubHubPackLocks.groups(this.context));
-        }
     }
 
     public SubHubPack captureCurrent() {
         SubHubPack pack = createBlank();
-        SharedPreferences main = preferences(SettingsRepository.PREFERENCES_NAME);
         for (String section : SubHubPackSchema.SECTIONS) {
-            JSONObject values = SubHubPackSchema.WALLET.equals(section)
-                    ? SubHubPackSchema.captureWallet(preferences(PenanceManager.PREFS_NAME))
-                    : SubHubPackSchema.captureMainSection(section, main);
+            JSONObject values = captureSection(section);
             pack.setSection(section, values);
         }
         int index = 0;
@@ -123,10 +115,17 @@ public final class SubHubPackManager {
     }
 
     public JSONObject captureSection(String section) {
-        return SubHubPackSchema.WALLET.equals(section)
+        JSONObject result = SubHubPackSchema.WALLET.equals(section)
                 ? SubHubPackSchema.captureWallet(preferences(PenanceManager.PREFS_NAME))
                 : SubHubPackSchema.captureMainSection(section,
                         preferences(SettingsRepository.PREFERENCES_NAME));
+        if (SubHubPackSchema.CENSOR.equals(section)) {
+            try { result.put(com.subhub.app.appmode.AppModeManager.KEY_MODE,
+                    new com.subhub.app.appmode.AppModeManager(context).getMode()
+                            == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS ? "always" : "selected"); }
+            catch (org.json.JSONException invalid) { throw new IllegalArgumentException(invalid); }
+        }
+        return result;
     }
 
     public synchronized void saveDraft(SubHubPack pack) throws IOException {
@@ -174,7 +173,9 @@ public final class SubHubPackManager {
         String slug = pack.getName().replaceAll("[^A-Za-z0-9._-]+", "-")
                 .replaceAll("^-+|-+$", "");
         if (slug.isBlank()) slug = "SubHub-arrangement";
-        File output = new File(share, slug + SubHubPackArchive.EXTENSION);
+        // A share chooser may still be reading an earlier export. Never replace its bytes.
+        File output = new File(share, slug + "-" + java.util.UUID.randomUUID()
+                + SubHubPackArchive.EXTENSION);
         write(pack, output);
         return output;
     }
@@ -276,33 +277,33 @@ public final class SubHubPackManager {
 
     public synchronized boolean activate(SubHubPack pack, Set<String> requestedSections,
             UnlockedPayPal unlocked) {
-        if (pack == null || !isCompatible(pack) || !ControllerPinManager.isDomModeActive()) {
-            return false;
-        }
+        lastFailure = Failure.NONE;
+        if (!ControllerPinManager.isDomModeActive()) return fail(Failure.CONTROLLER);
+        if (pack == null || !isCompatible(pack)) return fail(Failure.INVALID_SETTINGS);
         Set<String> selected = sanitizeSelected(pack, requestedSections);
-        if (selected.isEmpty()) return false;
+        if (selected.isEmpty()) return fail(Failure.EMPTY);
         boolean usePayPal = selected.contains(SubHubPackSchema.WALLET) && pack.hasEncryptedPayPal();
-        if (usePayPal && (unlocked == null || !unlocked.matches(pack) || !canChangeMerchant())) return false;
+        if (usePayPal && (unlocked == null || !unlocked.matches(pack) || !canChangeMerchant())) {
+            return fail(Failure.PAYMENT);
+        }
+        try { validateApplication(pack, selected); }
+        catch (IllegalArgumentException invalid) { return fail(Failure.INVALID_SETTINGS); }
         // Failed recovery must retain its journal and block another activation.
-        if (state.contains(KEY_JOURNAL)) return false;
+        if (state.contains(KEY_JOURNAL)) return fail(Failure.RECOVERY);
         if (activePackId() != null && !deactivate()) return false;
-        new PackManager(context).deactivate();
         try {
             JSONObject backup = backup(pack, selected);
             JSONObject journal = new JSONObject();
             journal.put("pending", true);
             journal.put("backup", backup);
-            if (!state.edit().putString(KEY_JOURNAL, journal.toString()).commit()) return false;
+            journal.put("sections", new JSONArray(selected));
+            if (!state.edit().putString(KEY_JOURNAL, journal.toString()).commit()) return fail(Failure.STORAGE);
             if (!ControllerPinManager.isDomModeActive() || !applyPayPal(usePayPal, unlocked)
                     || !apply(pack, selected)) {
                 if (restore(backup)) state.edit().remove(KEY_JOURNAL).commit();
-                return false;
+                return fail(Failure.STORAGE);
             }
-            installAssets(pack);
-            Set<String> locks = new LinkedHashSet<>(pack.getLockGroups());
-            locks.retainAll(selected);
-            SubHubPackLocks.set(context, locks);
-            synchronizeLegacyLocks(locks);
+            installAssets(pack, selected);
             boolean committed = state.edit().putString(KEY_ACTIVE_ID, pack.getId())
                     .putString(KEY_ACTIVE_BACKUP, backup.toString())
                     .putStringSet(KEY_ACTIVE_SECTIONS, selected)
@@ -313,34 +314,32 @@ public final class SubHubPackManager {
                 state.edit().putString(KEY_JOURNAL, journal.toString()).commit();
                 if (restore(backup)) {
                     clearActiveAssets();
-                    SubHubPackLocks.clear(context);
-                    LockedSettings.clear();
                     state.edit().remove(KEY_ACTIVE_ID).remove(KEY_ACTIVE_BACKUP)
                             .remove(KEY_ACTIVE_SECTIONS).remove(KEY_JOURNAL).commit();
                 }
             }
-            return committed;
+            return committed || fail(Failure.STORAGE);
         } catch (Exception error) {
             recoverInterruptedActivation();
-            return false;
+            return fail(error instanceof IllegalArgumentException ? Failure.INVALID_SETTINGS : Failure.STORAGE);
         }
     }
 
     public synchronized boolean deactivate() {
+        lastFailure = Failure.NONE;
         if (activePackId() == null) return true;
-        if (!ControllerPinManager.isDomModeActive()) return false;
+        if (!ControllerPinManager.isDomModeActive()) return fail(Failure.CONTROLLER);
         String raw = state.getString(KEY_ACTIVE_BACKUP, null);
-        if (raw == null) return false;
+        if (raw == null) return fail(Failure.RECOVERY);
         try {
             JSONObject backup = new JSONObject(raw);
-            if (backup.has(LOCAL_PAYPAL_BACKUP) && !canChangeMerchant()) return false;
-            if (!restore(backup)) return false;
-        } catch (Exception ignored) { return false; }
+            if (backup.has(LOCAL_PAYPAL_BACKUP) && !canChangeMerchant()) return fail(Failure.PAYMENT);
+            if (!restore(backup)) return fail(Failure.STORAGE);
+        } catch (Exception ignored) { return fail(Failure.RECOVERY); }
         clearActiveAssets();
-        SubHubPackLocks.clear(context);
-        LockedSettings.clear();
-        return state.edit().remove(KEY_ACTIVE_ID).remove(KEY_ACTIVE_BACKUP)
+        boolean committed = state.edit().remove(KEY_ACTIVE_ID).remove(KEY_ACTIVE_BACKUP)
                 .remove(KEY_ACTIVE_SECTIONS).remove(KEY_JOURNAL).commit();
+        return committed || fail(Failure.STORAGE);
     }
 
     /** Replaces an active pack without releasing its original pre-pack backup or requiring Dom. */
@@ -353,8 +352,6 @@ public final class SubHubPackManager {
         if (updatedSections.isEmpty()) return false;
         String originalRaw = state.getString(KEY_ACTIVE_BACKUP, null);
         if (originalRaw == null) return false;
-        Set<String> previousLocks = new LinkedHashSet<>(installed.getLockGroups());
-        previousLocks.retainAll(previousSections);
         JSONObject currentSnapshot = null;
         try {
             JSONObject originalBackup = new JSONObject(originalRaw);
@@ -367,11 +364,7 @@ public final class SubHubPackManager {
                 restore(currentSnapshot);
                 return false;
             }
-            installAssets(update);
-            Set<String> updatedLocks = new LinkedHashSet<>(update.getLockGroups());
-            updatedLocks.retainAll(updatedSections);
-            SubHubPackLocks.set(context, updatedLocks);
-            synchronizeLegacyLocks(updatedLocks);
+            installAssets(update, updatedSections);
             boolean committed = state.edit()
                     .putString(KEY_ACTIVE_BACKUP, originalBackup.toString())
                     .putStringSet(KEY_ACTIVE_SECTIONS, updatedSections)
@@ -382,9 +375,7 @@ public final class SubHubPackManager {
         } catch (Exception error) {
             try {
                 if (currentSnapshot != null) restore(currentSnapshot);
-                installAssets(installed);
-                SubHubPackLocks.set(context, previousLocks);
-                synchronizeLegacyLocks(previousLocks);
+                installAssets(installed, previousSections);
                 state.edit().putString(KEY_ACTIVE_BACKUP, originalRaw)
                         .putStringSet(KEY_ACTIVE_SECTIONS, previousSections).commit();
             } catch (Exception ignored) {
@@ -413,18 +404,35 @@ public final class SubHubPackManager {
         }
     }
 
+    private void validateApplication(SubHubPack pack, Set<String> selected) {
+        for (String section : selected) {
+            JSONObject proposed = SubHubPackSchema.sanitizeSection(section, pack.getSection(section));
+            JSONObject combined = captureSection(section);
+            proposed.keys().forEachRemaining(key -> {
+                try { combined.put(key, proposed.opt(key)); }
+                catch (org.json.JSONException invalid) { throw new IllegalArgumentException(invalid); }
+            });
+            PackSettingCatalog.validateRelationships(combined);
+        }
+    }
+
     private boolean apply(SubHubPack pack, Set<String> selected) {
+        validateApplication(pack, selected);
         Map<String, SharedPreferences.Editor> editors = new LinkedHashMap<>();
         for (String section : selected) {
             String store = SubHubPackSchema.preferenceStore(section);
             SharedPreferences.Editor editor = editors.computeIfAbsent(store,
                     unused -> preferences(store).edit());
-            JSONObject values = pack.getSection(section);
+            JSONObject values = SubHubPackSchema.sanitizeSection(section, pack.getSection(section));
             Iterator<String> keys = values.keys();
             while (keys.hasNext()) {
                 String key = keys.next();
                 if (SubHubPackSchema.isSecretOrRuntimeKey(key)) continue;
-                applyJson(editor, key, values.opt(key));
+                applyJson(editor, PackSettingCatalog.field(section, key), values.opt(key));
+            }
+            if (SubHubPackSchema.CENSOR.equals(section)
+                    && values.has(com.subhub.app.appmode.AppModeManager.KEY_MODE)) {
+                editor.putBoolean(com.subhub.app.appmode.AppModeManager.KEY_MODE_EXPLICIT, true);
             }
         }
         for (SharedPreferences.Editor editor : editors.values()) if (!editor.commit()) return false;
@@ -464,9 +472,20 @@ public final class SubHubPackManager {
             }
             Map<String, ?> all = preferences(store).getAll();
             JSONObject values = pack.getSection(section);
-            Iterator<String> keys = values.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
+            Set<String> affected = new LinkedHashSet<>();
+            values.keys().forEachRemaining(affected::add);
+            if (SubHubPackSchema.CENSOR.equals(section)) {
+                affected.add(CustomImageManager.PACK_DIR_KEY);
+                affected.add(CustomImageManager.REVISION_KEY);
+                if (values.has(com.subhub.app.appmode.AppModeManager.KEY_MODE)) {
+                    affected.add(com.subhub.app.appmode.AppModeManager.KEY_MODE_EXPLICIT);
+                }
+            }
+            if (SubHubPackSchema.POPUP.equals(section)) {
+                affected.add(PopupStormSettings.K_PACK_DIR);
+                affected.add(CustomImageManager.REVISION_KEY);
+            }
+            for (String key : affected) {
                 JSONObject item = new JSONObject();
                 item.put("present", all.containsKey(key));
                 if (all.containsKey(key)) encode(item, all.get(key));
@@ -514,40 +533,42 @@ public final class SubHubPackManager {
     private void recoverInterruptedActivation() {
         String raw = state.getString(KEY_JOURNAL, null);
         if (raw == null) return;
+        Set<String> recoveredSections = new LinkedHashSet<>(
+                Set.of(SubHubPackSchema.CENSOR, SubHubPackSchema.POPUP));
         try {
             JSONObject journal = new JSONObject(raw);
+            if (journal.has("sections")) {
+                recoveredSections.clear();
+                JSONArray selected = journal.optJSONArray("sections");
+                if (selected == null) return;
+                for (int index = 0; index < selected.length(); index++) {
+                    String section = selected.optString(index, "");
+                    if (!SubHubPackSchema.SECTIONS.contains(section)) return;
+                    recoveredSections.add(section);
+                }
+            }
             JSONObject backup = journal.optJSONObject("backup");
             if (backup == null || !restore(backup)) return;
         } catch (Exception ignored) { return; }
-        clearActiveAssets();
-        SubHubPackLocks.clear(context);
-        LockedSettings.clear();
+        clearActiveAssets(recoveredSections);
         state.edit().remove(KEY_JOURNAL).remove(KEY_ACTIVE_ID).remove(KEY_ACTIVE_BACKUP)
                 .remove(KEY_ACTIVE_SECTIONS).commit();
     }
 
-    private void synchronizeLegacyLocks(Set<String> groups) {
-        Set<String> keys = new LinkedHashSet<>();
-        if (groups.contains(SubHubPackSchema.CENSOR)) {
-            keys.addAll(SubHubPackSchema.keysFor(SubHubPackSchema.CENSOR));
-            keys.add(CustomImageManager.PREFS_KEY);
-        }
-        LockedSettings.set(keys);
-    }
-
-    private void installAssets(SubHubPack pack) throws IOException {
-        clearActiveAssets();
+    private void installAssets(SubHubPack pack, Set<String> selected) throws IOException {
+        if (!selected.contains(SubHubPackSchema.CENSOR) && !selected.contains(SubHubPackSchema.POPUP)) return;
+        clearActiveAssets(selected);
         File censor = new File(activeAssets, "censor");
         File popup = new File(activeAssets, "popup");
         ensureDirectory(censor);
         ensureDirectory(popup);
         int censorCount = 0;
         int popupCount = 0;
-        for (Map.Entry<String, byte[]> asset : pack.getAssets().entrySet()) {
+        for (Map.Entry<String, byte[]> asset : pack.assetsForArchive().entrySet()) {
             File destination = null;
-            if (asset.getKey().startsWith("assets/censor/")) {
+            if (selected.contains(SubHubPackSchema.CENSOR) && asset.getKey().startsWith("assets/censor/")) {
                 destination = new File(censor, "image-" + censorCount++ + ".png");
-            } else if (asset.getKey().startsWith("assets/popup/")) {
+            } else if (selected.contains(SubHubPackSchema.POPUP) && asset.getKey().startsWith("assets/popup/")) {
                 destination = new File(popup, "image-" + popupCount++ + ".png");
             }
             if (destination != null) try (FileOutputStream output = new FileOutputStream(destination)) {
@@ -555,19 +576,48 @@ public final class SubHubPackManager {
             }
         }
         SharedPreferences.Editor editor = preferences(SettingsRepository.PREFERENCES_NAME).edit();
-        if (censorCount > 0) editor.putString(CustomImageManager.PACK_DIR_KEY, censor.getAbsolutePath());
-        else editor.remove(CustomImageManager.PACK_DIR_KEY);
-        if (popupCount > 0) editor.putString(PopupStormSettings.K_PACK_DIR, popup.getAbsolutePath());
-        else editor.remove(PopupStormSettings.K_PACK_DIR);
+        if (selected.contains(SubHubPackSchema.CENSOR)) {
+            if (censorCount > 0) editor.putString(CustomImageManager.PACK_DIR_KEY, censor.getAbsolutePath());
+            else editor.remove(CustomImageManager.PACK_DIR_KEY);
+        }
+        if (selected.contains(SubHubPackSchema.POPUP)) {
+            if (popupCount > 0) editor.putString(PopupStormSettings.K_PACK_DIR, popup.getAbsolutePath());
+            else editor.remove(PopupStormSettings.K_PACK_DIR);
+        }
         editor.putLong(CustomImageManager.REVISION_KEY, System.currentTimeMillis()).commit();
     }
 
     private void clearActiveAssets() {
-        deleteTree(activeAssets);
-        ensureDirectory(activeAssets);
-        preferences(SettingsRepository.PREFERENCES_NAME).edit()
-                .remove(CustomImageManager.PACK_DIR_KEY).remove(PopupStormSettings.K_PACK_DIR)
-                .putLong(CustomImageManager.REVISION_KEY, System.currentTimeMillis()).commit();
+        Set<String> selected = activeSections();
+        clearActiveAssets(selected.isEmpty()
+                ? Set.of(SubHubPackSchema.CENSOR, SubHubPackSchema.POPUP) : selected);
+    }
+
+    private void clearActiveAssets(Set<String> selected) {
+        SharedPreferences preferences = preferences(SettingsRepository.PREFERENCES_NAME);
+        SharedPreferences.Editor editor = preferences.edit();
+        if (selected.contains(SubHubPackSchema.CENSOR)) {
+            deleteTree(new File(activeAssets, "censor"));
+            if (isOwnedAssetPath(preferences.getString(CustomImageManager.PACK_DIR_KEY, ""))) {
+                editor.remove(CustomImageManager.PACK_DIR_KEY);
+            }
+        }
+        if (selected.contains(SubHubPackSchema.POPUP)) {
+            deleteTree(new File(activeAssets, "popup"));
+            if (isOwnedAssetPath(preferences.getString(PopupStormSettings.K_PACK_DIR, ""))) {
+                editor.remove(PopupStormSettings.K_PACK_DIR);
+            }
+        }
+        if (selected.contains(SubHubPackSchema.CENSOR) || selected.contains(SubHubPackSchema.POPUP)) {
+            editor.putLong(CustomImageManager.REVISION_KEY, System.currentTimeMillis()).commit();
+        }
+    }
+
+    private boolean isOwnedAssetPath(String value) {
+        if (value == null || value.isEmpty()) return false;
+        try { return new File(value).getCanonicalPath().startsWith(
+                activeAssets.getCanonicalPath() + File.separator); }
+        catch (IOException invalid) { return false; }
     }
 
     private Set<String> sanitizeSelected(SubHubPack pack, Set<String> requested) {
@@ -583,9 +633,11 @@ public final class SubHubPackManager {
         File[] files = directory.listFiles(file -> file.isFile()
                 && file.getName().endsWith(SubHubPackArchive.EXTENSION));
         if (files != null) for (File file : files) {
-            SubHubPack pack = read(file);
-            if (pack != null) result.add(new Record(pack, draft,
-                    pack.getId().equals(activePackId())));
+            try {
+                SubHubPackArchive.Overview overview = SubHubPackArchive.readOverview(file);
+                result.add(new Record(overview.pack, draft,
+                        overview.pack.getId().equals(activePackId()), overview.assetCount));
+            } catch (IOException invalid) { /* Never use an unreadable local preview for apply. */ }
         }
         result.sort(Comparator.comparingLong((Record value) -> value.pack.getUpdatedAt()).reversed());
         return Collections.unmodifiableList(result);
@@ -604,8 +656,14 @@ public final class SubHubPackManager {
         try (FileOutputStream output = new FileOutputStream(temporary)) {
             SubHubPackArchive.write(pack, output);
         }
-        if (file.exists() && !file.delete()) throw new IOException("Could not replace pack");
-        if (!temporary.renameTo(file)) throw new IOException("Could not finalize pack");
+        try {
+            java.nio.file.Files.move(temporary.toPath(), file.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            java.nio.file.Files.move(temporary.toPath(), file.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     private SharedPreferences preferences(String name) {
@@ -634,21 +692,25 @@ public final class SubHubPackManager {
         return new File(directory, safe + SubHubPackArchive.EXTENSION);
     }
 
-    private static void applyJson(SharedPreferences.Editor editor, String key, Object value) {
-        if (value == null || value == JSONObject.NULL) { editor.remove(key); return; }
-        if (STRING_SET_KEYS.contains(key) || value instanceof JSONArray) {
+    private static void applyJson(SharedPreferences.Editor editor, PackSettingCatalog.Field field, Object value) {
+        if (field == null) throw new IllegalArgumentException("Unknown portable setting");
+        String key = field.key;
+        Object normalized = field.normalize(value);
+        if (field.kind == PackSettingCatalog.Kind.SELECTION) {
             Set<String> values = new LinkedHashSet<>();
-            JSONArray array = value instanceof JSONArray ? (JSONArray) value : new JSONArray();
+            JSONArray array = (JSONArray) normalized;
             for (int index = 0; index < array.length(); index++) {
                 String item = array.optString(index, "");
                 if (!item.isBlank()) values.add(item);
             }
             editor.putStringSet(key, values);
-        } else if (LONG_KEYS.contains(key)) editor.putLong(key, ((Number) value).longValue());
-        else if (FLOAT_KEYS.contains(key)) editor.putFloat(key, ((Number) value).floatValue());
-        else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
-        else if (value instanceof Number) editor.putInt(key, ((Number) value).intValue());
-        else editor.putString(key, String.valueOf(value));
+        } else if (field.kind == PackSettingCatalog.Kind.LONG) editor.putLong(key, ((Number) normalized).longValue());
+        else if (field.kind == PackSettingCatalog.Kind.DECIMAL || field.kind == PackSettingCatalog.Kind.RATIO) {
+            editor.putFloat(key, ((Number) normalized).floatValue());
+        } else if (field.kind == PackSettingCatalog.Kind.BOOLEAN) editor.putBoolean(key, (Boolean) normalized);
+        else if (field.kind == PackSettingCatalog.Kind.INTEGER || field.kind == PackSettingCatalog.Kind.MONEY) {
+            editor.putInt(key, ((Number) normalized).intValue());
+        } else editor.putString(key, (String) normalized);
     }
 
     private static void encode(JSONObject target, Object value) throws Exception {
@@ -743,10 +805,12 @@ public final class SubHubPackManager {
         public final SubHubPack pack;
         public final boolean draft;
         public final boolean active;
-        Record(SubHubPack pack, boolean draft, boolean active) {
+        public final int assetCount;
+        Record(SubHubPack pack, boolean draft, boolean active, int assetCount) {
             this.pack = pack;
             this.draft = draft;
             this.active = active;
+            this.assetCount = assetCount;
         }
     }
 }

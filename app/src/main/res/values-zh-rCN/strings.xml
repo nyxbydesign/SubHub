@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="header_subtitle">本地守护者</string>
-    <string name="start_protection">启动保护</string><string name="stop_protection">停止保护</string><string name="settings_title">审查设置</string><string name="back">返回</string>
+    <string name="header_subtitle">SubHub</string>
+    <string name="start_protection">Enter Service</string><string name="stop_protection">Leave Service</string><string name="settings_title">Censor</string><string name="back">返回</string>
     <string name="help_title">帮助与安全</string><string name="help_subtitle">设置、隐私、修复和功能指南。</string>
-    <string name="help_permission_check">权限检查</string><string name="help_fix_permissions">修复下一个权限</string><string name="help_accessibility_settings">无障碍捕获设置</string><string name="help_choose_language">选择应用语言</string>
+    <string name="help_permission_check">权限</string><string name="help_fix_permissions">设置权限</string><string name="help_accessibility_settings">Android 无障碍设置</string><string name="help_choose_language">选择语言</string>
     <string name="permission_all_granted">悬浮窗和通知权限已就绪。</string><string name="permission_overlay_name">显示在其他应用上层</string><string name="permission_notifications_name">通知</string><string name="permission_missing_fmt">缺少：%1$s</string>
     <string name="settings_language">语言</string><string name="language_system_default">系统默认</string>
-    <string name="help_getting_started">开始使用</string><string name="help_permissions">权限</string><string name="help_app_protection">应用保护</string><string name="help_censored_downloads">导出与下载</string><string name="help_customisation">自定义</string><string name="help_popup_storm">Popup Storm 安全</string><string name="help_troubleshooting">故障排除</string><string name="help_privacy">隐私与数据</string><string name="help_updates">构建与更新</string>
-    <string name="onboarding_title">你的专属守护者</string><string name="onboarding_body">SubHub 在设备上进行审查，申请 Android 屏幕捕获同意，并始终保留正常的停止和卸载功能。</string><string name="onboarding_help">打开指南</string><string name="onboarding_dismiss">知道了</string>
-    <string name="shortcut_start_protection">启动保护</string><string name="shortcut_start_protection_long">启动 SubHub 保护</string>
+    <string name="help_getting_started">开始使用</string><string name="help_permissions">权限</string><string name="help_app_protection">服务锁定</string><string name="help_censored_downloads">导出与下载</string><string name="help_customisation">自定义</string><string name="help_popup_storm">Popup Storm 安全</string><string name="help_troubleshooting">故障排除</string><string name="help_privacy">隐私与数据</string><string name="help_updates">构建与更新</string>
+    <string name="onboarding_title">欢迎使用 SubHub</string><string name="onboarding_body">在 Dom 模式下配置功能。点击 Enter Service，即可在 Sub 模式下使用已配置的功能。</string><string name="onboarding_help">打开指南</string><string name="onboarding_dismiss">继续</string>
+    <string name="shortcut_start_protection">Enter Service</string><string name="shortcut_start_protection_long">Enter SubHub service</string>
 </resources>

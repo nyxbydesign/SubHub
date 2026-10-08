@@ -257,6 +257,9 @@ public final class PenanceManager {
 
     /** Returns the bounded amount added to the ledger in cents. */
     public int recordInfraction(PenanceInfraction infraction, int count, long nowMillis) {
+        if ((infraction == PenanceInfraction.NEW_DETECTION
+                || infraction == PenanceInfraction.CENSORED_DWELL
+                || infraction == PenanceInfraction.CENSORED_TAP) && !modules.isCensorEnabled()) return 0;
         if (infraction == null || !isEnabled() || !isInfractionEnabled(infraction)
                 || !new AppModeManager(context).isArmed() || count <= 0) return 0;
         synchronized (LOCK) {

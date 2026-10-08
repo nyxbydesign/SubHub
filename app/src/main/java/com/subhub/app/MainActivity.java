@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
@@ -32,6 +33,7 @@ import androidx.core.content.ContextCompat;
 import com.subhub.app.databinding.ActivityMainBinding;
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.capture.ExportActivity;
+import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.commitment.CommitmentActivity;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.penance.PenanceActivity;
@@ -45,11 +47,13 @@ import com.subhub.app.permissions.HomePermissionPolicy;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.diagnostics.DiagnosticsRepository;
+import com.subhub.app.help.HelpActivity;
 import com.subhub.app.overlay.CensorPhrases;
 import com.subhub.app.settings.SettingsActivity;
 import com.subhub.app.stats.StatsRepository;
@@ -59,7 +63,6 @@ import com.subhub.app.stats.AchievementManager;
 import com.subhub.app.stats.AchievementBadgeView;
 import com.subhub.app.stats.AchievementsActivity;
 import com.subhub.app.stats.MilestoneManager;
-import com.subhub.app.help.HelpActivity;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.CaptureMethod;
 import com.subhub.app.settings.CensorAppearance;
@@ -73,6 +76,7 @@ import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.HardcoreReadinessNotificationManager;
 import com.subhub.app.security.ProtectionStopPolicy;
 import com.subhub.app.util.AppShortcuts;
+import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.PremiumMotion;
 import com.subhub.app.util.SubHubNavigation;
 import com.subhub.app.subliminal.SubliminalSettings;
@@ -119,6 +123,8 @@ public final class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_home, R.string.app_name,
+                0);
         editLockButton = findViewById(R.id.button_edit_lock);
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
@@ -182,8 +188,6 @@ public final class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(this, SettingsActivity.class)));
         binding.buttonExport.setOnClickListener(view ->
                 startActivity(new Intent(this, ExportActivity.class)));
-        binding.buttonHelp.setOnClickListener(view ->
-                startActivity(new Intent(this, HelpActivity.class)));
         binding.buttonStatistics.setOnClickListener(view ->
                 startActivity(new Intent(this, StatsActivity.class)));
         binding.achievementsHomeCard.setOnClickListener(view ->
@@ -230,7 +234,9 @@ public final class MainActivity extends AppCompatActivity {
             boolean suppressPermissionReadiness = BuildConfig.DEBUG
                     && getIntent() != null
                     && getIntent().getBooleanExtra(EXTRA_SUPPRESS_PERMISSION_READINESS, false);
-            if (!shortcutStartsProtection && !suppressPermissionReadiness) {
+            // Let first-run setup explain the app before opening Android settings.
+            // Explicit Fix, Enter Service and shortcut actions keep their own flows.
+            if (seen && !shortcutStartsProtection && !suppressPermissionReadiness) {
                 binding.getRoot().postDelayed(
                         () -> beginPermissionReadinessFlow(false), 350L);
             }
@@ -265,13 +271,13 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         FeatureModuleManager featureModules = new FeatureModuleManager(this);
-        if (!featureModules.hasRuntimeFeature()) {
-            startActivity(new Intent(this, GlobalSettingsActivity.class));
-            return;
-        }
         AppModeManager appMode = new AppModeManager(this);
         boolean stopping = ScreenCaptureService.isRunning() || appMode.isArmed()
                 || ScreenshotAccessibilityService.isRecognitionActive();
+        if (!stopping && !featureModules.hasRuntimeFeature()) {
+            startActivity(new Intent(this, GlobalSettingsActivity.class));
+            return;
+        }
         if (stopping) {
             ProtectionStopPolicy.Decision stopDecision = ProtectionStopPolicy.decision(this);
             if (stopDecision == ProtectionStopPolicy.Decision.TIMER_LOCKED) {
@@ -336,6 +342,12 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void requestProjection() {
+        if (MediaProjectionLeaseRegistry.owner() != null) {
+            new AppModeManager(this).setArmed(false);
+            updateProtectionButton(false);
+            showStatus(R.string.screen_capture_projection_conflict);
+            return;
+        }
         projectionPermission.launch(projectionManager.createScreenCaptureIntent());
     }
 
@@ -529,11 +541,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderEditState() {
         if (binding == null) return;
-        boolean domMode = ControllerPinManager.isDomModeActive();
         ControllerEditMode.renderButton(this, editLockButton);
-        TextView headerSubtitle = findViewById(R.id.header_subtitle);
-        if (headerSubtitle != null) headerSubtitle.setText(domMode
-                ? R.string.header_subtitle_dom : R.string.header_subtitle_sub);
         binding.domContent.setVisibility(View.GONE);
         binding.subDashboard.setVisibility(View.VISIBLE);
         // Both spaces use the floating bottom navigation. Keep the final home
@@ -564,33 +572,20 @@ public final class MainActivity extends AppCompatActivity {
         int atmosphereCount = (subliminalEnabled ? 1 : 0) + (popupEnabled ? 1 : 0);
         binding.subAtmosphereStatus.setText(getResources().getQuantityString(
                 R.plurals.atmosphere_effects_active, atmosphereCount, atmosphereCount));
-        binding.subAtmosphereSummary.setText(getString(R.string.atmosphere_home_summary,
-                getString(subliminalEnabled ? R.string.atmosphere_state_on
-                        : R.string.atmosphere_state_off),
-                getString(popupEnabled ? R.string.atmosphere_state_on
-                        : R.string.atmosphere_state_off)));
-        binding.buttonProtection.setVisibility(modules.hasRuntimeFeature()
-                ? View.VISIBLE : View.GONE);
+        binding.buttonProtection.setVisibility(View.VISIBLE);
         binding.protectionStatusRow.setVisibility(View.GONE);
         binding.runtimeStatus.setVisibility(View.GONE);
         binding.modeHint.setVisibility(View.GONE);
 
         long now = System.currentTimeMillis();
         if (censorEnabled) {
-            boolean active = ScreenCaptureService.isRunning()
-                    || ScreenshotAccessibilityService.isRecognitionActive();
-            boolean armed = new AppModeManager(this).isEffectivelyArmed(now);
-            binding.subCensorVoice.setText(active ? R.string.sub_censor_active
-                    : armed ? R.string.sub_censor_armed : R.string.sub_censor_idle);
             SettingsRepository settings = new SettingsRepository(this);
             DetectorConfig detector = settings.loadDetectorConfig();
             TextSmutConfig text = settings.loadTextSmutConfig();
-            String imageState = getString(detector.getEnabledCategories().isEmpty()
-                    ? R.string.sub_censor_images_off : R.string.sub_censor_images_on);
-            String textState = getString(text.isEnabled()
-                    ? R.string.sub_censor_text_on : R.string.sub_censor_text_off);
-            binding.subCensorSummary.setText(getString(R.string.sub_censor_summary,
-                    imageState, textState));
+            int censorCount = detector.getEnabledCategories().size()
+                    + (text.isEnabled() ? text.getEnabledCategories().size() : 0);
+            binding.subCensorVoice.setText(getResources().getQuantityString(
+                    R.plurals.sub_censors_active, censorCount, censorCount));
         }
 
         if (limitsEnabled) {
@@ -600,33 +595,12 @@ public final class MainActivity extends AppCompatActivity {
             Set<String> timerPackages = appMode.getTimerPackages();
             AppTimerManager.AllowanceSummary allowances =
                     timerManager.summarizeAllowances(timerPackages);
-            String limits;
-            String limitDetail;
-            if (!timer.anyEnabled()) {
-                limits = getString(R.string.sub_limits_none);
-                limitDetail = getString(R.string.sub_limits_sleeping);
-            } else if (allowances.isEmpty()) {
-                limits = getString(R.string.sub_limits_no_apps);
-                limitDetail = getString(R.string.sub_limits_sleeping);
-            } else {
-                String individual = allowances.isUniform()
-                        ? getString(R.string.sub_limits_per_app, allowances.minimumMinutes)
-                        : getString(R.string.sub_limits_individual_range,
-                                allowances.minimumMinutes, allowances.maximumMinutes);
-                if (timer.totalEnabled && timer.perAppEnabled) {
-                    limits = getString(R.string.sub_limits_shared_and_individual,
-                            timer.totalMinutes, individual);
-                } else if (timer.totalEnabled) {
-                    limits = getString(R.string.sub_limits_shared, timer.totalMinutes);
-                } else {
-                    limits = individual;
-                }
-                limitDetail = limits;
-                limits = getResources().getQuantityString(R.plurals.sub_limits_selected,
-                        allowances.appCount, allowances.appCount);
-            }
-            binding.subLimitsSummary.setText(limits);
-            binding.subLimitsDetail.setText(limitDetail);
+            boolean allApps = appMode.getMode() == AppModePolicy.Mode.ALWAYS;
+            int limitCount = !allApps && allowances.isEmpty() ? 0
+                    : (timer.totalEnabled ? 1 : 0)
+                            + (timer.perAppEnabled ? (allApps ? 1 : allowances.appCount) : 0);
+            binding.subLimitsSummary.setText(getResources().getQuantityString(
+                    R.plurals.sub_limits_selected, limitCount, limitCount));
         }
 
         if (walletEnabled) {
@@ -639,12 +613,8 @@ public final class MainActivity extends AppCompatActivity {
                             && walletManager.isInfractionEnabled(infraction)) activeRules++;
                 }
             }
-            binding.subWalletVoice.setText(wallet.isEnabled()
-                    ? getResources().getQuantityString(R.plurals.sub_wallet_active,
-                            activeRules, activeRules)
-                    : getString(R.string.sub_wallet_inactive));
-            binding.subWalletSummary.setText(getString(R.string.sub_wallet_summary,
-                    PenanceManager.formatMoney(wallet.getDueCents())));
+            binding.subWalletVoice.setText(getResources().getQuantityString(
+                    R.plurals.sub_wallet_active, activeRules, activeRules));
             boolean checkout = wallet.getCheckoutCents() > 0;
             binding.subWalletPay.setVisibility(wallet.getDueCents() > 0 || checkout
                     ? View.VISIBLE : View.GONE);
@@ -747,6 +717,11 @@ public final class MainActivity extends AppCompatActivity {
                         ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                         : getString(R.string.popup_off)));
         Set<String> packages = appMode.getTimerPackages();
+        if (appMode.getMode() == AppModePolicy.Mode.ALWAYS) {
+            lines.add(detailLine(R.string.arrangement_apps, getString(R.string.arrangement_all_apps)));
+            if (settings.perAppEnabled) lines.add(detailLine(R.string.app_timer_default_minutes,
+                    getString(R.string.arrangement_minutes, settings.perAppMinutes)));
+        }
         if (settings.perAppEnabled && !packages.isEmpty()) {
             List<String> allowances = new ArrayList<>();
             for (String packageName : packages) {
@@ -808,7 +783,8 @@ public final class MainActivity extends AppCompatActivity {
         lines.add(detailLine(R.string.arrangement_subliminal_intensity,
                 friendlyPreset(settings.getPreset())));
         lines.add(detailLine(R.string.arrangement_apps,
-                appLabels(appMode.getSubliminalPackages())));
+                appMode.getMode() == AppModePolicy.Mode.ALWAYS
+                        ? getString(R.string.arrangement_all_apps) : appLabels(appMode.getSubliminalPackages())));
         return joinDetails(lines);
     }
 
@@ -826,7 +802,9 @@ public final class MainActivity extends AppCompatActivity {
                 popup.isEnabled() ? getString(R.string.atmosphere_state_on)
                         : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_apps,
-                appLabels(new AppModeManager(this).getSubliminalPackages())));
+                new AppModeManager(this).getMode() == AppModePolicy.Mode.ALWAYS
+                        ? getString(R.string.arrangement_all_apps)
+                        : appLabels(new AppModeManager(this).getSubliminalPackages())));
         return joinDetails(lines);
     }
 
@@ -864,8 +842,9 @@ public final class MainActivity extends AppCompatActivity {
         addCategoryLabel(labels, categories, "genitals_female", R.string.category_genitals_female);
         addCategoryLabel(labels, categories, "genitals_male", R.string.category_genitals_male);
         addCategoryLabel(labels, categories, "breasts", R.string.category_breasts);
-        addCategoryLabel(labels, categories, "buttocks", R.string.category_buttocks);
-        addCategoryLabel(labels, categories, "anus", R.string.category_anus);
+        if (com.subhub.app.settings.DetectionCategorySelection.isSelected(categories, "buttocks")) {
+            labels.add(getString(R.string.category_buttocks));
+        }
         addCategoryLabel(labels, categories, "face", R.string.category_faces);
         addCategoryLabel(labels, categories, "male_chest", R.string.category_male_chest);
         addCategoryLabel(labels, categories, "belly", R.string.category_belly);
@@ -1004,7 +983,6 @@ public final class MainActivity extends AppCompatActivity {
         switch (resolved) {
             case LOW: return getString(R.string.preset_low);
             case HIGH: return getString(R.string.preset_high);
-            case ULTRA: return getString(R.string.preset_ultra);
             case MEDIUM:
             default: return getString(R.string.preset_medium);
         }
@@ -1108,6 +1086,9 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void renderMetricRows(LinearLayout container, List<Metric> metrics, int columns) {
+        android.content.res.Configuration config = getResources().getConfiguration();
+        if (config.fontScale >= 1.7f) columns = 1;
+        else if (config.screenWidthDp < 380 || config.fontScale >= 1.3f) columns = Math.min(columns, 2);
         container.removeAllViews();
         for (int offset = 0; offset < metrics.size(); offset += columns) {
             LinearLayout row = new LinearLayout(this);
@@ -1136,7 +1117,8 @@ public final class MainActivity extends AppCompatActivity {
         card.setGravity(android.view.Gravity.CENTER);
         card.setBackgroundResource(R.drawable.bg_home_metric);
         card.setPadding(dp(6), dp(8), dp(6), dp(8));
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(0, dp(70), 1f);
+        card.setMinimumHeight(dp(70));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         if (column > 0) cardParams.leftMargin = dp(4);
         if (column < 2) cardParams.rightMargin = dp(4);
         card.setLayoutParams(cardParams);
@@ -1145,16 +1127,15 @@ public final class MainActivity extends AppCompatActivity {
         value.setText(metric.value);
         value.setTextAppearance(R.style.Widget_SubHub_HomeStatValue);
         value.setGravity(android.view.Gravity.CENTER);
-        value.setMaxLines(1);
-        value.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        value.setSingleLine(false);
         card.addView(value);
 
         TextView label = new TextView(this);
         label.setText(metric.label);
         label.setTextAppearance(R.style.Widget_SubHub_HomeStatLabel);
         label.setGravity(android.view.Gravity.CENTER);
-        label.setMaxLines(1);
-        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setTextSize(12f);
+        label.setSingleLine(false);
         card.addView(label);
         return card;
     }
@@ -1269,47 +1250,25 @@ public final class MainActivity extends AppCompatActivity {
         }
         MilestoneManager.Result milestone = MilestoneManager.takeUnseen(this, stats.getTotalBlocks());
         if (milestone != null) {
-            Snackbar.make(binding.getRoot(), milestone.getMessage(), Snackbar.LENGTH_LONG).show();
+            Snackbar notice = Snackbar.make(binding.getRoot(), milestone.getMessage(), Snackbar.LENGTH_LONG)
+                    .setAnchorView(binding.getRoot().findViewById(R.id.bottom_navigation));
+            notice.setAnchorViewLayoutListenerEnabled(true);
+            notice.show();
         }
     }
 
     private void showAchievementUnlock(AchievementManager.Achievement achievement,
             int additionalUnlocks) {
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        View content = LayoutInflater.from(this).inflate(
-                R.layout.dialog_achievement_unlocked, null, false);
-        AchievementBadgeView badge = content.findViewById(R.id.achievement_unlock_badge);
-        badge.bind(achievement.getBadgeArtRes(), true, false,
-                getString(achievement.getName()));
-        ((TextView) content.findViewById(R.id.achievement_unlock_name))
-                .setText(achievement.getName());
-        ((TextView) content.findViewById(R.id.achievement_unlock_description))
-                .setText(achievement.getDescription());
-        TextView more = content.findViewById(R.id.achievement_unlock_more);
-        if (additionalUnlocks > 0) {
-            more.setText(getString(R.string.achievement_more_unlocked, additionalUnlocks));
-            more.setVisibility(View.VISIBLE);
-        }
-        content.findViewById(R.id.achievement_unlock_action).setOnClickListener(view -> {
-            dialog.dismiss();
-            startActivity(new Intent(this, AchievementsActivity.class));
-        });
-        dialog.setContentView(content);
-        dialog.setCanceledOnTouchOutside(true);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams attributes = window.getAttributes();
-            attributes.dimAmount = 0.58f;
-            window.setAttributes(attributes);
-            int availableWidth = getResources().getDisplayMetrics().widthPixels - dp(32);
-            window.setLayout(Math.min(availableWidth, dp(440)),
-                    WindowManager.LayoutParams.WRAP_CONTENT);
-        }
-        PremiumMotion.styleDialog(dialog);
+        int count = additionalUnlocks + 1;
+        String message = additionalUnlocks == 0
+                ? getString(R.string.achievement_notice_single, getString(achievement.getName()))
+                : getResources().getQuantityString(R.plurals.achievement_notice_count, count, count);
+        Snackbar notice = Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG)
+                .setAnchorView(binding.getRoot().findViewById(R.id.bottom_navigation))
+                .setAction(R.string.achievement_notice_view,
+                        view -> startActivity(new Intent(this, AchievementsActivity.class)));
+        notice.setAnchorViewLayoutListenerEnabled(true);
+        notice.show();
     }
 
     @Override

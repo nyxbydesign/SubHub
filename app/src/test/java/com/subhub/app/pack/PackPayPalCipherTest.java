@@ -114,7 +114,7 @@ public final class PackPayPalCipherTest {
         }
         SubHubPack decoded = SubHubPackArchive.read(new ByteArrayInputStream(out.toByteArray()));
         assertTrue(decoded.hasEncryptedPayPal());
-        assertEquals(2, decoded.manifestWithoutIntegrity(Map.of()).getInt("schemaVersion"));
+        assertEquals(4, decoded.manifestWithoutIntegrity(Map.of()).getInt("schemaVersion"));
         assertEquals(pack.getUpdatedAt(), decoded.getUpdatedAt());
         try (PackPayPalCipher.Payload value = PackPayPalCipher.decrypt(decoded.getId(),
                 decoded.getOriginDeviceId(), decoded.getEncryptedPayPal(), PASSWORD)) {
@@ -132,19 +132,21 @@ public final class PackPayPalCipherTest {
         PackPayPalCipher.validateEnvelope(pack.getEncryptedPayPal());
         pack.setSection(SubHubPackSchema.WALLET, null);
         assertFalse(pack.hasEncryptedPayPal());
-        assertEquals(1, pack.manifestWithoutIntegrity(Map.of()).getInt("schemaVersion"));
+        assertEquals(4, pack.manifestWithoutIntegrity(Map.of()).getInt("schemaVersion"));
         assertThrows(GeneralSecurityException.class, () -> pack.setEncryptedPayPal(returned));
     }
 
-    @Test public void schemaDowngradeAndMissingAttachmentRejected() throws Exception {
+    @Test public void everyRetiredSchemaAndMissingIdentityAreRejected() throws Exception {
         SubHubPack pack = wallet();
         pack.setEncryptedPayPal(PackPayPalCipher.encrypt(pack.getId(), pack.getOriginDeviceId(), payload(), PASSWORD));
         JSONObject manifest = pack.manifestWithoutIntegrity(Map.of());
-        manifest.put("schemaVersion", 1);
-        assertThrows(org.json.JSONException.class, () -> SubHubPack.fromManifest(manifest,
-                Map.of(SubHubPackSchema.WALLET, new JSONObject()), Map.of()));
-        manifest.put("schemaVersion", 2);
-        manifest.remove("encryptedPayPal");
+        for (int oldSchema = 1; oldSchema < SubHubPack.SCHEMA_VERSION; oldSchema++) {
+            manifest.put("schemaVersion", oldSchema);
+            assertThrows(org.json.JSONException.class, () -> SubHubPack.fromManifest(manifest,
+                    Map.of(SubHubPackSchema.WALLET, new JSONObject()), Map.of()));
+        }
+        manifest.put("schemaVersion", SubHubPack.SCHEMA_VERSION);
+        manifest.remove("originDeviceId");
         assertThrows(org.json.JSONException.class, () -> SubHubPack.fromManifest(manifest,
                 Map.of(SubHubPackSchema.WALLET, new JSONObject()), Map.of()));
     }

@@ -3,5 +3,5 @@
     <item android:state_enabled="false" android:color="@color/text_muted" />
     <item android:state_selected="true" android:color="@color/text_primary" />
     <item android:state_pressed="true" android:color="@color/text_primary" />
-    <item android:color="@color/accent" />
+    <item android:color="@color/accent_text" />
 </selector>

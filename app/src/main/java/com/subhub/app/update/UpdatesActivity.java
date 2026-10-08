@@ -1,5 +1,7 @@
 package com.subhub.app.update;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.app.DownloadManager;
 import android.content.Intent;
 import android.net.Uri;
@@ -63,9 +65,10 @@ public final class UpdatesActivity extends AppCompatActivity {
         super.onCreate(stateBundle);
         binding = ActivityUpdatesBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.update_title, false);
         state = new UpdateStateStore(this);
         downloads = new UpdateDownloadCoordinator(this);
-        binding.buttonBack.setOnClickListener(view -> finish());
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonCheck.setOnClickListener(view -> checkNow());
         binding.buttonCancel.setOnClickListener(view -> {
             downloads.cancel();

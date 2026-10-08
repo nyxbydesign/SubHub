@@ -88,7 +88,8 @@ public final class StudioPayPalTransferAndroidTest {
     private void openEntry() {
         onView(withId(R.id.tab_create)).perform(click());
         onView(withId(R.id.button_capture)).perform(revealAboveNavigation(), click());
-        onView(withText("Encrypt current PayPal into pack")).perform(revealAboveNavigation(), click());
+        onView(withText(R.string.pack_editor_step_features)).perform(revealAboveNavigation(), click());
+        onView(withText(R.string.pack_editor_attach_paypal)).perform(revealAboveNavigation(), click());
     }
 
     // Espresso's stock scrollTo sees through the floating navigation. Center the actual
@@ -164,6 +165,7 @@ public final class StudioPayPalTransferAndroidTest {
             onView(withHint("Confirm passphrase")).perform(replaceText("synthetic UI passphrase"),
                     closeSoftKeyboard());
             onView(withId(android.R.id.button1)).perform(click());
+            onView(withText(R.string.pack_editor_step_review)).perform(revealAboveNavigation(), click());
             onView(withId(R.id.button_export)).perform(revealAboveNavigation(), click());
             // Export must not launch a chooser and cancel the pending encryption.
             assertEquals(Lifecycle.State.RESUMED, scenario.getState());
@@ -173,11 +175,27 @@ public final class StudioPayPalTransferAndroidTest {
             do {
                 scenario.onActivity(activity -> attached.set(((android.widget.TextView)
                         activity.findViewById(R.id.preview_text)).getText().toString()
-                        .contains("Encrypted PayPal attached")));
+                        .contains(activity.getString(R.string.pack_editor_paypal_attached))));
                 if (!attached.get()) android.os.SystemClock.sleep(100);
             } while (!attached.get() && android.os.SystemClock.uptimeMillis() < deadline);
             assertTrue("Encrypted draft should finish without leaving Studio", attached.get());
-            SubHubPack stored = new SubHubPackManager(context).listDrafts().get(0).pack;
+            java.util.concurrent.atomic.AtomicReference<String> draftId = new java.util.concurrent.atomic.AtomicReference<>();
+            scenario.onActivity(activity -> {
+                try {
+                    java.lang.reflect.Field draftField = StudioActivity.class.getDeclaredField("draft");
+                    draftField.setAccessible(true);
+                    draftId.set(((SubHubPack) draftField.get(activity)).getId());
+                } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+            });
+            // Draft saving is asynchronous; bind durability to this draft rather than list order.
+            SubHubPack stored;
+            long saveDeadline = android.os.SystemClock.uptimeMillis() + 5_000;
+            do {
+                stored = new SubHubPackManager(context).findDraft(draftId.get());
+                if (stored != null && stored.hasEncryptedPayPal()) break;
+                android.os.SystemClock.sleep(50);
+            } while (android.os.SystemClock.uptimeMillis() < saveDeadline);
+            assertNotNull("The current draft must be durable", stored);
             assertTrue(stored.hasEncryptedPayPal());
             try (com.subhub.app.pack.PackPayPalCipher.Payload payload =
                     com.subhub.app.pack.PackPayPalCipher.decrypt(stored.getId(), stored.getOriginDeviceId(),

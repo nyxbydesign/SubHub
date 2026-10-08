@@ -32,7 +32,7 @@ public final class ControllerPinGate {
         panel.addView(explainer);
         panel.addView(pin);
         panel.addView(confirmation);
-        AlertDialog dialog = new AlertDialog.Builder(activity)
+        AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setView(panel)
                 .setCancelable(false)
                 .setPositiveButton(R.string.controller_pin_set, null)
@@ -71,7 +71,7 @@ public final class ControllerPinGate {
         panel.addView(explainer(activity, activity.getString(R.string.controller_pin_unlock_body)));
         EditText pin = pinInput(activity, R.string.controller_pin_label);
         panel.addView(pin);
-        AlertDialog dialog = new AlertDialog.Builder(activity)
+        AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setView(panel)
                 .setNegativeButton(android.R.string.cancel, (ignored, which) -> {
                     if (finishOnCancel) activity.finish();
@@ -144,10 +144,10 @@ public final class ControllerPinGate {
     private static void styleDialog(Activity activity, AlertDialog dialog) {
         Window window = dialog.getWindow();
         if (window != null) {
-            window.setBackgroundDrawableResource(R.drawable.bg_card);
+            window.setBackgroundDrawableResource(R.drawable.bg_native_dialog);
             window.setDimAmount(0.72f);
         }
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(activity.getColor(R.color.accent));
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(activity.getColor(R.color.accent_text));
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
                 .setTextColor(activity.getColor(R.color.text_secondary));
     }

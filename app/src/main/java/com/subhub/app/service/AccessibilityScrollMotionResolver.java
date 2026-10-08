@@ -15,19 +15,28 @@ final class AccessibilityScrollMotionResolver {
     private int firstVisibleIndex = -1;
 
     synchronized Motion resolve(AccessibilityEvent event, int viewportWidth, int viewportHeight) {
+        return resolve(event, viewportWidth, viewportHeight, surfaceKey(event));
+    }
+
+    synchronized Motion resolve(
+            AccessibilityEvent event,
+            int viewportWidth,
+            int viewportHeight,
+            String resolvedSurfaceKey) {
         if (event == null || event.getEventType() != AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             return Motion.NONE;
         }
+        String key = resolvedSurfaceKey == null || resolvedSurfaceKey.isEmpty()
+                ? surfaceKey(event) : resolvedSurfaceKey;
         int safeWidth = Math.max(1, viewportWidth);
         int safeHeight = Math.max(1, viewportHeight);
         Motion explicit = explicitMotion(event, safeWidth, safeHeight);
         if (explicit.moved()) {
-            rememberAbsolute(event);
-            rememberIndex(event);
+            rememberAbsolute(event, key);
+            rememberIndex(event, key);
             return explicit;
         }
 
-        String key = eventKey(event);
         int currentX = event.getScrollX();
         int currentY = event.getScrollY();
         if (!key.equals(absoluteKey)) {
@@ -42,9 +51,10 @@ final class AccessibilityScrollMotionResolver {
             if (Math.abs(contentDx) <= safeWidth * 2
                     && Math.abs(contentDy) <= safeHeight * 2) {
                 Motion absolute = screenMotion(
-                        contentDx, contentDy, safeWidth, safeHeight);
+                        contentDx, contentDy, safeWidth, safeHeight,
+                        Motion.Evidence.ABSOLUTE);
                 if (absolute.moved()) {
-                    rememberIndex(event);
+                    rememberIndex(event, key);
                     return absolute;
                 }
             }
@@ -77,7 +87,8 @@ final class AccessibilityScrollMotionResolver {
             AccessibilityRecord record, int viewportWidth, int viewportHeight) {
         int contentDx = normalizeDelta(record.getScrollDeltaX());
         int contentDy = normalizeDelta(record.getScrollDeltaY());
-        return screenMotion(contentDx, contentDy, viewportWidth, viewportHeight);
+        return screenMotion(contentDx, contentDy, viewportWidth, viewportHeight,
+                Motion.Evidence.EXPLICIT);
     }
 
     private static int normalizeDelta(int value) {
@@ -87,20 +98,24 @@ final class AccessibilityScrollMotionResolver {
     }
 
     private static Motion screenMotion(
-            int contentDx, int contentDy, int viewportWidth, int viewportHeight) {
+            int contentDx,
+            int contentDy,
+            int viewportWidth,
+            int viewportHeight,
+            Motion.Evidence evidence) {
         int limitX = Math.max(1, viewportWidth * 2);
         int limitY = Math.max(1, viewportHeight * 2);
         int screenDx = clamp(-contentDx, -limitX, limitX);
         int screenDy = clamp(-contentDy, -limitY, limitY);
         return screenDx == 0 && screenDy == 0
-                ? Motion.NONE : new Motion(screenDx, screenDy);
+                ? Motion.NONE : new Motion(screenDx, screenDy, evidence);
     }
 
-    private void rememberAbsolute(AccessibilityEvent event) {
+    private void rememberAbsolute(AccessibilityEvent event, String key) {
         int currentX = event.getScrollX();
         int currentY = event.getScrollY();
         if (currentX < 0 && currentY < 0) return;
-        absoluteKey = eventKey(event);
+        absoluteKey = key;
         absoluteX = currentX;
         absoluteY = currentY;
     }
@@ -125,18 +140,19 @@ final class AccessibilityScrollMotionResolver {
         int visibleItems = Math.max(1, currentTo - currentFrom + 1);
         int estimatedItemHeight = Math.max(1, viewportHeight / visibleItems);
         return screenMotion(0, itemDelta * estimatedItemHeight,
-                viewportWidth, viewportHeight);
+                viewportWidth, viewportHeight, Motion.Evidence.INDEXED);
     }
 
-    private void rememberIndex(AccessibilityEvent event) {
+    private void rememberIndex(AccessibilityEvent event, String key) {
         int currentFrom = event.getFromIndex();
         int currentTo = event.getToIndex();
         if (currentFrom < 0 || currentTo < currentFrom) return;
-        indexKey = eventKey(event);
+        indexKey = key;
         firstVisibleIndex = currentFrom;
     }
 
-    private static String eventKey(AccessibilityEvent event) {
+    static String surfaceKey(AccessibilityEvent event) {
+        if (event == null) return "";
         String packageName = event.getPackageName() == null
                 ? "" : event.getPackageName().toString();
         String className = event.getClassName() == null
@@ -149,16 +165,28 @@ final class AccessibilityScrollMotionResolver {
     }
 
     static final class Motion {
-        static final Motion NONE = new Motion(0, 0);
+        enum Evidence {
+            NONE,
+            EXPLICIT,
+            ABSOLUTE,
+            INDEXED
+        }
+
+        static final Motion NONE = new Motion(0, 0, Evidence.NONE);
         final int dx;
         final int dy;
+        final Evidence evidence;
 
-        Motion(int dx, int dy) {
+        Motion(int dx, int dy, Evidence evidence) {
             this.dx = dx;
             this.dy = dy;
+            this.evidence = evidence == null ? Evidence.NONE : evidence;
         }
 
         boolean moved() { return dx != 0 || dy != 0; }
         long magnitude() { return Math.abs((long) dx) + Math.abs((long) dy); }
+        boolean authoritative() {
+            return evidence == Evidence.EXPLICIT || evidence == Evidence.ABSOLUTE;
+        }
     }
 }

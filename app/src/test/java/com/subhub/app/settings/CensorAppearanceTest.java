@@ -19,19 +19,19 @@ public final class CensorAppearanceTest {
                 CensorAppearance.Type.fromPreference("PIXELATE"));
     }
 
-    @Test public void legacyBarPreferenceMigratesToBlackout() {
+    @Test public void retiredPreferencesUseTheDefaultWithoutMigration() {
         assertEquals(CensorAppearance.Type.BOX,
                 CensorAppearance.Type.fromPreference("bar"));
         assertEquals(CensorAppearance.Type.BOX,
                 CensorAppearance.Type.fromPreference(" BAR "));
     }
 
-    @Test public void recoveredStyleAliasesAreAccepted() {
-        assertEquals(CensorAppearance.Type.PIXELATE,
+    @Test public void retiredStyleAliasesAreNotAccepted() {
+        assertEquals(CensorAppearance.Type.BOX,
                 CensorAppearance.Type.fromPreference("mosaic"));
-        assertEquals(CensorAppearance.Type.CUSTOM,
+        assertEquals(CensorAppearance.Type.BOX,
                 CensorAppearance.Type.fromPreference("custom_image"));
-        assertEquals(CensorAppearance.Type.ERROR_POPUP,
+        assertEquals(CensorAppearance.Type.BOX,
                 CensorAppearance.Type.fromPreference("windows_error"));
     }
 

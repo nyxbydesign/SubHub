@@ -1,5 +1,7 @@
 package com.subhub.app.help;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -46,9 +48,10 @@ public final class HelpActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityHelpBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.help_title, true);
         binding.getRoot().setFocusableInTouchMode(true);
         binding.getRoot().requestFocus();
-        binding.buttonBack.setOnClickListener(view -> finish());
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonFixPermissions.setOnClickListener(view -> repairNextPermission());
         binding.buttonAccessibility.setOnClickListener(view ->
                 startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -57,14 +60,14 @@ public final class HelpActivity extends AppCompatActivity {
                 startActivity(new Intent(this, UpdatesActivity.class)));
         addSections();
         if (ControllerPinManager.isDomModeActive()) {
-            editMode = ControllerEditMode.bind(this, binding.buttonEditLock, editing -> {
+            editMode = ControllerEditMode.bind(this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> {
                 int actionVisibility = editing ? View.VISIBLE : View.GONE;
                 binding.buttonFixPermissions.setVisibility(actionVisibility);
                 binding.buttonAccessibility.setVisibility(actionVisibility);
                 binding.buttonLanguage.setVisibility(actionVisibility);
             });
         } else {
-            binding.buttonEditLock.setVisibility(View.GONE);
+            PrimaryHeader.editLockButton(binding.getRoot()).setVisibility(View.GONE);
             binding.buttonFixPermissions.setVisibility(View.GONE);
             binding.buttonAccessibility.setVisibility(View.GONE);
             binding.buttonLanguage.setVisibility(View.GONE);
@@ -171,7 +174,7 @@ public final class HelpActivity extends AppCompatActivity {
                 getString(R.string.language_chinese_traditional), getString(R.string.language_korean),
                 getString(R.string.language_russian)};
         int selected = Math.max(0, codes.indexOf(LocaleHelper.getLanguage(this)));
-        new AlertDialog.Builder(this)
+        com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.settings_language)
                 .setSingleChoiceItems(labels, selected, (dialog, which) -> {
                     LocaleHelper.setLanguage(this, codes.get(which));

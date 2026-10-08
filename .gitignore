@@ -16,6 +16,20 @@ apktool/
 captures/
 *.har
 
+# Internal experiment diaries are not project documentation
+docs/censor-lab/passes/
+docs/censor-lab/registry.md
+docs/censor-lab/*-audit.md
+docs/censor-lab/anchor-freshness-diagnostic.md
+docs/censor-pipeline-v2.md
+docs/static-evidence.md
+docs/reconstruction-roadmap.md
+docs/ui-foundation-2026-09.md
+docs/ui-map.md
+docs/visual-parity.md
+docs/feature-parity-matrix.md
+docs/generated-assets.md
+
 # Signing material and local configuration
 *.jks
 *.keystore

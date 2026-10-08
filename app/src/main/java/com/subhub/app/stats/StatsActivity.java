@@ -1,6 +1,7 @@
 package com.subhub.app.stats;
 
-import android.content.Intent;
+import com.subhub.app.util.PrimaryHeader;
+
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -19,7 +20,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/** Full local statistics, trends, milestones, and achievement entry point. */
+/** Full local statistics, trends, and milestones. */
 public final class StatsActivity extends AppCompatActivity {
     private ActivityStatsBinding binding;
 
@@ -27,9 +28,8 @@ public final class StatsActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityStatsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        binding.buttonBack.setOnClickListener(view -> finish());
-        binding.buttonAchievements.setOnClickListener(view ->
-                startActivity(new Intent(this, AchievementsActivity.class)));
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.statistics_title, false);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
     }
 
     @Override protected void onResume() {
@@ -71,9 +71,6 @@ public final class StatsActivity extends AppCompatActivity {
             binding.historyList.addView(row);
         }
         binding.historyEmpty.setVisibility(history.isEmpty() ? View.VISIBLE : View.GONE);
-        AchievementManager achievements = new AchievementManager(this);
-        binding.achievementProgress.setText(getString(R.string.achievements_progress_fmt,
-                achievements.getUnlockedCount(), achievements.getTotalCount()));
     }
 
     @Override protected void onDestroy() {

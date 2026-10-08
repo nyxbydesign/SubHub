@@ -37,7 +37,10 @@ public final class TextDetectionCoordinateMapper {
                     detection.getConfidence(),
                     new BBox(left, top, right - left, bottom - top),
                     detection.isNsfw(),
-                    detection.isExposed()));
+                    detection.isExposed(),
+                    detection.getSource(),
+                    detection.getGeometryQuality(),
+                    detection.getAnchorKey()));
         }
         return Collections.unmodifiableList(mapped);
     }

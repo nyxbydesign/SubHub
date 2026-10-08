@@ -32,7 +32,6 @@ public final class StatsRepository {
     private static final String KEY_LAST_SESSION_DATE = "last_session_date";
     private static final String KEY_LONGEST_SESSION = "longest_session_seconds";
     private static final String KEY_PEAK_SESSION_BLOCKS = "peak_session_blocks";
-    private static final String KEY_PROFILES_COUNT = "profiles_count";
     private static final String KEY_SESSIONS_COUNT = "sessions_count";
     private static final String KEY_SESSION_HISTORY = "session_history";
     private static final String KEY_ACTIVE_SESSION_START = "active_session_start_ms";
@@ -203,7 +202,6 @@ public final class StatsRepository {
                     preferences.getInt(KEY_BROWSER_SESSIONS, 0),
                     preferences.getInt(KEY_BROWSER_PAGES, 0),
                     getLongCompat(KEY_EXPORTED_IMAGES),
-                    preferences.getInt(KEY_PROFILES_COUNT, 0),
                     preferences.getInt(KEY_CUSTOM_PHRASES_COUNT, 0),
                     preferences.getInt(KEY_CENSOR_STYLE_CHANGES, 0),
                     preferences.getBoolean(KEY_BORDER_COLOR_CHANGED, false),
@@ -283,9 +281,6 @@ public final class StatsRepository {
     }
     public void setCustomPhrasesCount(int count) {
         preferences.edit().putInt(KEY_CUSTOM_PHRASES_COUNT, Math.max(0, count)).apply();
-    }
-    public void setProfilesCount(int count) {
-        preferences.edit().putInt(KEY_PROFILES_COUNT, Math.max(0, count)).apply();
     }
     public void addExportedImages(int count) {
         if (count <= 0) return;

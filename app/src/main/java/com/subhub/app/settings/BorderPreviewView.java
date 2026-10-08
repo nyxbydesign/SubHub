@@ -78,12 +78,12 @@ public final class BorderPreviewView extends View {
                 border.setAlpha(255);
                 break;
             case GRADIENT:
-                float pulse = phase <= 180f ? phase / 180f : (360f - phase) / 180f;
-                border.setShader(new LinearGradient(
+                LinearGradient gradient = new LinearGradient(
                         sample.left, sample.top, sample.right, sample.bottom,
-                        blend(appearance.getBorderColor(), Color.WHITE, .12f + pulse * .24f),
-                        blend(appearance.getBorderColor(), Color.rgb(76, 216, 235),
-                                .30f - pulse * .16f), Shader.TileMode.CLAMP));
+                        appearance.getGradientStart(), appearance.getGradientEnd(), Shader.TileMode.CLAMP);
+                shaderMatrix.setRotate(phase, sample.centerX(), sample.centerY());
+                gradient.setLocalMatrix(shaderMatrix);
+                border.setShader(gradient);
                 break;
             case RAINBOW:
                 SweepGradient rainbow = new SweepGradient(sample.centerX(), sample.centerY(),

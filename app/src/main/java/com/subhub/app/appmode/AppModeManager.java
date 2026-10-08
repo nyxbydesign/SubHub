@@ -15,7 +15,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Persisted user intent for always-on and selected-app recognition. */
+/** Shared app scope with independent per-feature assignments. */
 public final class AppModeManager {
     public static final String KEY_ARMED = "app_mode_armed";
     public static final String KEY_MODE = "app_mode_kind";
@@ -125,8 +125,29 @@ public final class AppModeManager {
     public boolean shouldShowSubliminal(String foregroundPackage) {
         if (!new FeatureModuleManager(context).isSubliminalEnabled()) return false;
         return AppModePolicy.shouldRecognize(isEffectivelyArmed(System.currentTimeMillis()),
-                AppModePolicy.Mode.SELECTED_APPS, getSubliminalPackages(),
+                getMode(), getSubliminalPackages(),
                 foregroundPackage, context.getPackageName(), inputMethodPackage());
+    }
+
+    /** Effective one-app scope for usage accounting, without enumerating installed apps. */
+    public Set<String> timerScopeForForeground(String foregroundPackage) {
+        if (!new FeatureModuleManager(context).isLimitsEnabled()) return Set.of();
+        android.content.pm.ResolveInfo home = context.getPackageManager().resolveActivity(
+                new android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME),
+                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+        String homePackage = home == null || home.activityInfo == null ? "" : home.activityInfo.packageName;
+        boolean eligible = AppModePolicy.shouldLimit(isEffectivelyArmed(System.currentTimeMillis()),
+                getMode(), getTimerPackages(), foregroundPackage,
+                context.getPackageName(), inputMethodPackage(), homePackage);
+        return eligible ? Set.of(foregroundPackage.trim()) : Set.of();
+    }
+
+    /** Popup Storm participates independently of Censor and its app/capture scope. */
+    public boolean shouldShowPopups(String foregroundPackage) {
+        if (!com.subhub.app.popup.PopupStormSettings.load(context).isEnabled()) return false;
+        return AppModePolicy.shouldRecognize(isEffectivelyArmed(System.currentTimeMillis()),
+                AppModePolicy.Mode.ALWAYS, Set.of(), foregroundPackage,
+                context.getPackageName(), inputMethodPackage());
     }
 
     public boolean isEffectivelyArmed(long nowMillis) {

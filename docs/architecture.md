@@ -1,6 +1,6 @@
 # Architecture map
 
-This map is statically derived from Beta Blocker Android 1.67. JADX paths are readable navigation aids; APKTool smali is authoritative when the reconstructions disagree.
+This comparison map is statically derived from the Beta Blocker Android 1.67 feature source. JADX paths are readable navigation aids; APKTool smali is authoritative when the reconstructions disagree.
 
 ## Runtime pipeline
 

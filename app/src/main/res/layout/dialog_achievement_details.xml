@@ -72,7 +72,8 @@
     <TextView
         android:id="@+id/achievement_detail_close"
         style="@style/Widget.SubHub.OutlineAction"
-        android:layout_height="46dp"
+        android:layout_height="wrap_content"
+        android:minHeight="@dimen/control_min_height"
         android:layout_marginTop="20dp"
         android:text="@string/close" />
 </LinearLayout>

@@ -82,7 +82,9 @@ public final class ControllerEditMode {
     }
 
     private boolean supportsSubSurface() {
-        return activity instanceof CommitmentActivity && CommitmentManager.isActive(activity);
+        // The popup editor retains its read-only safety stop in Sub space.
+        return activity instanceof com.subhub.app.popup.PopupStormActivity
+                || activity instanceof CommitmentActivity && CommitmentManager.isActive(activity);
     }
 
     /** Leaves all configuration surfaces and returns to the single Sub dashboard. */

@@ -24,6 +24,25 @@ public final class ForegroundWindowResolverTest {
         assertEquals("com.twitter.android", selected.packageName);
     }
 
+    @Test public void focusedApplicationOverlayDoesNotReplaceProtectedWindowStillInStack() {
+        ForegroundWindowResolver.Candidate selected = ForegroundWindowResolver.select(List.of(
+                candidate("org.chromium.chrome.stable", 10, false, false, 2),
+                candidate("com.pryshedko.mtisland", 20, true, true, 9)),
+                "com.example.ime", "org.chromium.chrome.stable");
+
+        assertEquals("org.chromium.chrome.stable", selected.packageName);
+        assertEquals(10, selected.windowId);
+    }
+
+    @Test public void focusedApplicationWinsOnceProtectedWindowLeavesStack() {
+        ForegroundWindowResolver.Candidate selected = ForegroundWindowResolver.select(List.of(
+                candidate("com.pryshedko.mtisland", 20, true, true, 9)),
+                "com.example.ime", "org.chromium.chrome.stable");
+
+        assertEquals("com.pryshedko.mtisland", selected.packageName);
+        assertEquals(20, selected.windowId);
+    }
+
     private static ForegroundWindowResolver.Candidate candidate(
             String packageName, int id, boolean active, boolean focused, int layer) {
         return new ForegroundWindowResolver.Candidate(

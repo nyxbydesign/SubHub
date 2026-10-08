@@ -20,31 +20,54 @@ public final class DetectionFusion {
             if (source == null) continue;
             for (Detection candidate : source) addOrFuse(merged, candidate);
         }
-        coalesceTextRegions(merged);
         return merged;
     }
 
-    private static void coalesceTextRegions(List<Detection> merged) {
-        // Merge in place without restarting the complete scan after every removal. The old
-        // restart loop became cubic on text-heavy feeds and could starve scroll events.
-        for (int firstIndex = 0; firstIndex < merged.size(); firstIndex++) {
-            Detection first = merged.get(firstIndex);
-            if (!isText(first)) continue;
-            int secondIndex = firstIndex + 1;
-            while (secondIndex < merged.size()) {
-                Detection second = merged.get(secondIndex);
-                if (!isText(second) || !shouldFuse(first, second)) {
-                    secondIndex++;
-                    continue;
-                }
-                first = mergedDetection(first, second);
-                merged.set(firstIndex, first);
-                merged.remove(secondIndex);
-                // The expanded region can now overlap an earlier, previously rejected text box.
-                // Restart only this suffix, not the whole list.
-                secondIndex = firstIndex + 1;
+    /**
+     * Adds settled-model coverage without allowing its older/coarser rectangles to reshape a
+     * matching real-time observation. Unmatched refinement detections remain available as
+     * quality-only coverage; the tracker deliberately treats their geometry as non-authoritative
+     * after the track has been created.
+     */
+    public static List<Detection> mergeVisualRefinement(
+            List<Detection> realtime,
+            List<Detection> refinement) {
+        List<Detection> merged = new ArrayList<>(realtime == null
+                ? Collections.emptyList() : realtime);
+        int realtimeCount = merged.size();
+        if (refinement == null) return merged;
+        for (Detection candidate : refinement) {
+            if (candidate == null) continue;
+            boolean matched = false;
+            for (int index = 0; index < realtimeCount; index++) {
+                Detection authoritative = merged.get(index);
+                if (!shouldFuse(authoritative, candidate)) continue;
+                merged.set(index, metadataWithAuthoritativeBox(authoritative, candidate));
+                matched = true;
+                break;
             }
+            if (!matched) merged.add(candidate);
         }
+        return merged;
+    }
+
+    private static Detection metadataWithAuthoritativeBox(
+            Detection authoritative,
+            Detection supporting) {
+        Detection merged = new Detection(
+                authoritative.getClassName(),
+                authoritative.getCategory(),
+                Math.max(authoritative.getConfidence(), supporting.getConfidence()),
+                authoritative.getBox(),
+                authoritative.isNsfw() || supporting.isNsfw(),
+                authoritative.isExposed() || supporting.isExposed(),
+                authoritative.getSource(),
+                authoritative.getGeometryQuality(),
+                authoritative.getAnchorKey());
+        int trackId = authoritative.getTrackId() >= 0
+                ? authoritative.getTrackId() : supporting.getTrackId();
+        if (trackId >= 0) merged.setTrackId(trackId);
+        return merged;
     }
 
     private static void addOrFuse(List<Detection> merged, Detection candidate) {
@@ -60,14 +83,17 @@ public final class DetectionFusion {
 
     private static Detection mergedDetection(Detection first, Detection second) {
         BBox fused = fusedBox(first, second);
-        Detection preferred = isText(first) ? second : first;
+        Detection preferred = preferredObservation(first, second);
         return new Detection(
                 preferred.getClassName(),
                 preferred.getCategory(),
                 Math.max(first.getConfidence(), second.getConfidence()),
                 fused,
                 first.isNsfw() || second.isNsfw(),
-                first.isExposed() || second.isExposed());
+                first.isExposed() || second.isExposed(),
+                preferred.getSource(),
+                preferred.getGeometryQuality(),
+                preferred.getAnchorKey());
     }
 
     private static boolean isText(Detection detection) {
@@ -83,21 +109,9 @@ public final class DetectionFusion {
         boolean textPair = "text_smut".equals(first.getCategory())
                 && "text_smut".equals(second.getCategory());
         if (textPair) {
-            // Accessibility nodes in social/Compose feeds may describe a whole post while OCR
-            // supplies the actual rendered line. Preserve the precise OCR rectangle.
-            if (isOcr(first) != isOcr(second)) {
-                return isOcr(first) ? first.getBox() : second.getBox();
-            }
-            long intersection = intersection(first.getBox(), second.getBox());
-            long firstArea = first.getBox().getArea();
-            long secondArea = second.getBox().getArea();
-            long smaller = Math.min(firstArea, secondArea);
-            long larger = Math.max(firstArea, secondArea);
-            float containment = smaller == 0 ? 0f : (float) intersection / smaller;
-            // A coarse parent Accessibility description must never enlarge a precise child line.
-            if (containment >= 0.70f && larger >= smaller * 2L) {
-                return firstArea <= secondArea ? first.getBox() : second.getBox();
-            }
+            // Text geometry is an anchored line, never a growing overlap component. Unioning a
+            // bridge box with neighboring lines made the complete group reshape for one frame.
+            return preferredObservation(first, second).getBox();
         }
         return union(first.getBox(), second.getBox());
     }
@@ -105,6 +119,8 @@ public final class DetectionFusion {
     private static boolean shouldFuse(Detection first, Detection second) {
         boolean textPair = "text_smut".equals(first.getCategory())
                 && "text_smut".equals(second.getCategory());
+        if (textPair && first.getAnchorKey() != null && second.getAnchorKey() != null
+                && !first.getAnchorKey().equals(second.getAnchorKey())) return false;
         long intersection = intersection(first.getBox(), second.getBox());
         long smaller = Math.min(first.getBox().getArea(), second.getBox().getArea());
         float containment = smaller == 0 ? 0f : (float) intersection / smaller;
@@ -112,6 +128,22 @@ public final class DetectionFusion {
         // Separate rendered lines must remain separate bars. Only overlapping source estimates
         // are duplicates; proximity alone used to create oversized blocks spanning whitespace.
         return false;
+    }
+
+    private static Detection preferredObservation(Detection first, Detection second) {
+        if (!isText(first) || !isText(second)) return isText(first) ? second : first;
+        int firstQuality = first.getGeometryQuality().ordinal();
+        int secondQuality = second.getGeometryQuality().ordinal();
+        if (firstQuality != secondQuality) return firstQuality > secondQuality ? first : second;
+        if (isOcr(first) != isOcr(second)) return isOcr(first) ? first : second;
+        long smaller = Math.min(first.getBox().getArea(), second.getBox().getArea());
+        long larger = Math.max(first.getBox().getArea(), second.getBox().getArea());
+        if (smaller > 0L && larger >= smaller * 2L) {
+            return first.getBox().getArea() <= second.getBox().getArea() ? first : second;
+        }
+        // Stable source order wins ties. This prevents tiny detector jitter from changing the
+        // chosen rectangle when the same line appears in several overlapping windows.
+        return first;
     }
 
     private static long intersection(BBox first, BBox second) {

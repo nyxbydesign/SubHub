@@ -32,7 +32,11 @@ public final class SubHubTestRunner extends AndroidJUnitRunner {
 
     private static void authorize(android.content.Context context) {
         if (!ControllerPinManager.isConfigured(context)) {
-            ControllerPinManager.setPin(context, TEST_PIN);
+            boolean intendedDom = ControllerPinManager.isDomModeActive();
+            if (!ControllerPinManager.setPin(context, TEST_PIN)) {
+                throw new IllegalStateException("Controller PIN test fixture could not be prepared");
+            }
+            if (!intendedDom) ControllerPinManager.enterSubMode();
         }
     }
 }

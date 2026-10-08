@@ -24,6 +24,16 @@ public final class AppModePolicy {
                 && selectedPackages.contains(foreground);
     }
 
+    /** Never enforce time limits on device escape and permission surfaces. */
+    public static boolean shouldLimit(boolean armed, Mode mode, Set<String> selectedPackages,
+            String foregroundPackage, String ownPackage, String inputMethodPackage, String homePackage) {
+        String foreground = clean(foregroundPackage);
+        if (foreground.equals(clean(homePackage)) || isTransientSystemSurface(foreground)
+                || "com.android.settings".equals(foreground) || "com.google.android.settings".equals(foreground)) return false;
+        return shouldRecognize(armed, mode, selectedPackages, foreground,
+                ownPackage, inputMethodPackage);
+    }
+
     public static boolean shouldAcceptForegroundEvent(
             String packageName, String className, String ownPackage, String inputMethodPackage) {
         String candidate = clean(packageName);

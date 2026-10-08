@@ -1,0 +1,9 @@
+<resources>
+    <string name="color_wheel_description">Color wheel: drag to choose hue and saturation. Use the RGB sliders for precise or accessible selection.</string>
+    <string name="color_value">Brightness</string>
+    <string name="color_red">Red</string>
+    <string name="color_green">Green</string>
+    <string name="color_blue">Blue</string>
+    <string name="gradient_start">Gradient start</string>
+    <string name="gradient_end">Gradient end</string>
+</resources>

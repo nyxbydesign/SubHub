@@ -11,7 +11,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.subhub.app.pack.PackManager;
 import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.util.LocaleHelper;
 import com.subhub.app.update.UpdateScheduler;
@@ -55,7 +54,6 @@ public final class SubHubApp extends Application {
             @Override public void onActivityDestroyed(@NonNull Activity activity) { }
         });
         LocaleHelper.applySaved(this);
-        new PackManager(this);
         new SubHubPackManager(this);
         new UpdateStateStore(this).cleanupInstalled(BuildConfig.VERSION_CODE);
         UpdateScheduler.synchronize(this);

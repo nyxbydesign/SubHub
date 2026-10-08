@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="background">#08060C</color>
+    <color name="dialog_surface_start">#17121F</color>
+    <color name="dialog_surface">#21172C</color>
+    <color name="dialog_surface_end">#281B34</color>
     <color name="launcher_icon_background">#14091D</color>
     <color name="surface">#F0120E18</color>
     <color name="surface_high">#EC241832</color>
@@ -10,6 +13,13 @@
     <color name="surface_card_raised">#EE1D1927</color>
     <color name="surface_pressed">#2A1734</color>
     <color name="surface_disabled">#17131D</color>
+    <!-- Enabled controls share quiet plum surfaces rather than the bright accent pink. -->
+    <color name="control_checked_surface">#3D2B4B</color>
+    <color name="control_checked_outline">#8F70A6</color>
+    <color name="control_checked_indicator">#A588BC</color>
+    <color name="control_checked_text">#EEE5F4</color>
+    <color name="control_pressed_surface">#493452</color>
+    <color name="control_focus">#B098C4</color>
     <color name="outline_subtle">#3A3045</color>
     <color name="outline_default">#5A3D68</color>
     <color name="outline_selected">#B96DDB</color>
@@ -19,6 +29,8 @@
     <color name="accent">#9860BE</color>
     <color name="accent_mid">#AE68CF</color>
     <color name="accent_hot">#C17AE1</color>
+    <!-- Text needs more contrast than decorative strokes on plum surfaces. -->
+    <color name="accent_text">#C17AE1</color>
     <color name="accent_dark">#54296D</color>
     <color name="accent_dim">#669860BE</color>
     <color name="accent_hot_dim">#667B478F</color>

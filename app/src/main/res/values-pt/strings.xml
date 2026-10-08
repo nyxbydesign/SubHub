@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="header_subtitle">GUARDIÃ LOCAL</string>
-    <string name="start_protection">INICIAR PROTEÇÃO</string><string name="stop_protection">PARAR PROTEÇÃO</string><string name="settings_title">DEFINIÇÕES DE CENSURA</string><string name="back">VOLTAR</string>
-    <string name="help_title">AJUDA E SEGURANÇA</string><string name="help_subtitle">Configuração, privacidade, reparações e orientação de funcionalidades.</string>
-    <string name="help_permission_check">VERIFICAR PERMISSÕES</string><string name="help_fix_permissions">CORRIGIR A PRÓXIMA PERMISSÃO</string><string name="help_accessibility_settings">DEFINIÇÕES DE CAPTURA DE ACESSIBILIDADE</string><string name="help_choose_language">ESCOLHER IDIOMA DA APP</string>
+    <string name="header_subtitle">SubHub</string>
+    <string name="start_protection">Enter Service</string><string name="stop_protection">Leave Service</string><string name="settings_title">Censor</string><string name="back">Voltar</string>
+    <string name="help_title">Ajuda e segurança</string><string name="help_subtitle">Configuração, privacidade, reparações e orientação de funcionalidades.</string>
+    <string name="help_permission_check">Permissões</string><string name="help_fix_permissions">Configurar permissão</string><string name="help_accessibility_settings">Acessibilidade do Android</string><string name="help_choose_language">Escolher idioma</string>
     <string name="permission_all_granted">As permissões de sobreposição e notificações estão prontas.</string><string name="permission_overlay_name">mostrar sobre outras apps</string><string name="permission_notifications_name">notificações</string><string name="permission_missing_fmt">Em falta: %1$s</string>
-    <string name="settings_language">IDIOMA</string><string name="language_system_default">Predefinição do sistema</string>
-    <string name="help_getting_started">Primeiros passos</string><string name="help_permissions">Permissões</string><string name="help_app_protection">Proteção de apps</string><string name="help_censored_downloads">Exportação e transferências</string><string name="help_customisation">Personalização</string><string name="help_popup_storm">Segurança do Popup Storm</string><string name="help_troubleshooting">Resolução de problemas</string><string name="help_privacy">Privacidade e dados</string><string name="help_updates">Compilações e atualizações</string>
-    <string name="onboarding_title">A TUA GUARDIÃ PRIVADA</string><string name="onboarding_body">A SubHub censura localmente, pede o consentimento de captura do Android e mantém disponíveis os controlos normais de paragem e desinstalação.</string><string name="onboarding_help">ABRIR O GUIA</string><string name="onboarding_dismiss">PERCEBI</string>
-    <string name="shortcut_start_protection">Iniciar proteção</string><string name="shortcut_start_protection_long">Iniciar proteção SubHub</string>
+    <string name="settings_language">Idioma</string><string name="language_system_default">Predefinição do sistema</string>
+    <string name="help_getting_started">Primeiros passos</string><string name="help_permissions">Permissões</string><string name="help_app_protection">Bloqueio do serviço</string><string name="help_censored_downloads">Exportação e transferências</string><string name="help_customisation">Personalização</string><string name="help_popup_storm">Segurança do Popup Storm</string><string name="help_troubleshooting">Resolução de problemas</string><string name="help_privacy">Privacidade e dados</string><string name="help_updates">Compilações e atualizações</string>
+    <string name="onboarding_title">Bem-vindo ao SubHub</string><string name="onboarding_body">Configura as funções no modo Dom. Usa Enter Service para as utilizar no modo Sub.</string><string name="onboarding_help">Abrir guia</string><string name="onboarding_dismiss">Continuar</string>
+    <string name="shortcut_start_protection">Enter Service</string><string name="shortcut_start_protection_long">Enter SubHub service</string>
 </resources>

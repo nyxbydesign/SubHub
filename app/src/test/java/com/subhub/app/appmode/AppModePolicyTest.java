@@ -8,6 +8,19 @@ import org.junit.Test;
 import java.util.Set;
 
 public final class AppModePolicyTest {
+    @Test public void sharedAllAppsLimitScopeIncludesUnassignedAppsButNeverEscapeSurfaces() {
+        assertTrue(AppModePolicy.shouldLimit(true, AppModePolicy.Mode.ALWAYS, Set.of(),
+                "com.example.browser", "com.subhub.app", "com.example.ime", "com.example.launcher"));
+        for (String excluded : new String[]{"com.subhub.app", "com.example.ime", "com.example.launcher",
+                "com.android.settings", "com.android.permissioncontroller", "com.android.systemui", "android", ""}) {
+            assertFalse(excluded, AppModePolicy.shouldLimit(true, AppModePolicy.Mode.ALWAYS, Set.of(),
+                    excluded, "com.subhub.app", "com.example.ime", "com.example.launcher"));
+        }
+        assertFalse(AppModePolicy.shouldLimit(false, AppModePolicy.Mode.ALWAYS, Set.of(),
+                "com.example.browser", "com.subhub.app", "com.example.ime", "com.example.launcher"));
+        assertFalse(AppModePolicy.shouldLimit(true, AppModePolicy.Mode.SELECTED_APPS, Set.of("com.example.other"),
+                "com.example.browser", "com.subhub.app", "com.example.ime", "com.example.launcher"));
+    }
     @Test public void selectedModeWakesOnlyForAnExactSelectedPackage() {
         Set<String> selected = Set.of("com.example.watched");
         assertTrue(AppModePolicy.shouldRecognize(true, AppModePolicy.Mode.SELECTED_APPS,

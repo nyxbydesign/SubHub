@@ -1,56 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:fillViewport="true">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:paddingStart="@dimen/page_margin"
-        android:paddingTop="10dp" android:paddingEnd="@dimen/page_margin"
+        android:paddingTop="@dimen/primary_header_top" android:paddingEnd="@dimen/page_margin"
         android:paddingBottom="32dp">
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:background="@drawable/bg_header_card" android:orientation="vertical"
-            android:padding="16dp">
-            <TextView android:id="@+id/button_back" android:layout_width="wrap_content"
-                android:layout_height="40dp" android:gravity="center_vertical"
-                android:text="@string/back" android:textColor="@color/accent"
-                android:textSize="12sp" android:textStyle="bold" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:letterSpacing="0.1" android:text="@string/subliminal_title"
-                android:textColor="@color/text_primary" android:textSize="18sp"
-                android:textStyle="bold" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="4dp" android:text="@string/subliminal_desc"
-                android:textColor="@color/text_secondary" android:textSize="12sp" />
-        </LinearLayout>
+        <include layout="@layout/view_secondary_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        <LinearLayout android:id="@+id/intensity_card" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="14dp" android:background="@drawable/bg_card"
             android:orientation="vertical" android:padding="14dp">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/subliminal_intensity_title" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
                 android:layout_marginTop="3dp" android:text="@string/subliminal_intensity_help" />
-            <RadioGroup android:id="@+id/preset_group" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:layout_marginTop="7dp"
-                android:orientation="vertical">
-                <RadioButton android:id="@+id/preset_gentle" android:layout_width="match_parent"
-                    android:layout_height="44dp" android:buttonTint="@color/accent"
-                    android:gravity="center_vertical" android:text="@string/subliminal_preset_gentle"
-                    android:textColor="@color/text_primary" />
-                <RadioButton android:id="@+id/preset_normal" android:layout_width="match_parent"
-                    android:layout_height="44dp" android:buttonTint="@color/accent"
-                    android:gravity="center_vertical" android:text="@string/subliminal_preset_normal"
-                    android:textColor="@color/text_primary" />
-                <RadioButton android:id="@+id/preset_strict" android:layout_width="match_parent"
-                    android:layout_height="44dp" android:buttonTint="@color/accent"
-                    android:gravity="center_vertical" android:text="@string/subliminal_preset_strict"
-                    android:textColor="@color/text_primary" />
-                <RadioButton android:id="@+id/preset_ultra" android:layout_width="match_parent"
-                    android:layout_height="44dp" android:buttonTint="@color/accent"
-                    android:gravity="center_vertical" android:text="@string/subliminal_preset_ultra"
-                    android:textColor="@color/text_primary" />
-            </RadioGroup>
-            <com.google.android.material.switchmaterial.SwitchMaterial
+            <TextView android:id="@+id/preset_value" style="@style/Widget.SubHub.FieldLabel"
+                android:accessibilityLiveRegion="polite" />
+            <com.google.android.material.slider.Slider android:id="@+id/preset_slider"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:minHeight="@dimen/control_min_height"
+                android:focusable="true" android:focusableInTouchMode="true"
+                android:contentDescription="@string/subliminal_intensity_title"
+                android:valueFrom="0" android:valueTo="3" android:stepSize="1"
+                app:tickVisible="true" app:labelBehavior="floating" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:text="@string/subliminal_preset_gentle"
+                    android:textColor="@color/text_secondary" android:textSize="11sp" />
+                <TextView android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:gravity="center"
+                    android:text="@string/subliminal_preset_normal"
+                    android:textColor="@color/text_secondary" android:textSize="11sp" />
+                <TextView android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:gravity="center"
+                    android:text="@string/subliminal_preset_strict"
+                    android:textColor="@color/text_secondary" android:textSize="11sp" />
+                <TextView android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:gravity="end"
+                    android:text="@string/subliminal_preset_ultra"
+                    android:textColor="@color/text_secondary" android:textSize="11sp" />
+            </LinearLayout>
+            <com.subhub.app.util.StateToggle
                 android:id="@+id/advanced_enabled" style="@style/Widget.SubHub.SettingsToggle"
                 android:layout_width="match_parent" android:text="@string/subliminal_advanced" />
             <LinearLayout android:id="@+id/advanced_panel" android:layout_width="match_parent"
@@ -72,10 +68,10 @@
                     android:layout_height="wrap_content" android:max="14" />
             </LinearLayout>
             <TextView android:id="@+id/button_preview" style="@style/Widget.SubHub.OutlineAction"
-                android:layout_height="44dp" android:layout_marginTop="10dp"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:layout_marginTop="10dp"
                 android:text="@string/subliminal_preview" />
             <FrameLayout android:id="@+id/preview_stage" android:layout_width="match_parent"
-                android:layout_height="120dp" android:layout_marginTop="8dp"
+                android:layout_height="120dp" android:layout_marginTop="8dp" android:visibility="gone"
                 android:background="@drawable/bg_header_card">
                 <TextView android:id="@+id/preview_text" android:layout_width="wrap_content"
                     android:layout_height="wrap_content" android:layout_gravity="center"
@@ -84,28 +80,32 @@
             </FrameLayout>
         </LinearLayout>
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        <LinearLayout android:id="@+id/message_packs_card" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="12dp" android:background="@drawable/bg_card"
             android:orientation="vertical" android:padding="14dp">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/subliminal_packs_title" />
-            <TextView style="@style/Widget.SubHub.FieldHelp"
-                android:layout_marginTop="3dp" android:text="@string/subliminal_packs_help" />
-            <CheckBox android:id="@+id/pack_obedience" android:layout_width="match_parent"
-                android:layout_height="44dp" android:buttonTint="@color/accent"
+            <GridLayout android:id="@+id/message_packs_grid" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:columnCount="2">
+            <CheckBox android:id="@+id/pack_obedience" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
                 android:text="@string/subliminal_pack_obedience" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_focus" android:layout_width="match_parent"
-                android:layout_height="44dp" android:buttonTint="@color/accent"
+            <CheckBox android:id="@+id/pack_focus" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
                 android:text="@string/subliminal_pack_focus" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_beta" android:layout_width="match_parent"
-                android:layout_height="44dp" android:buttonTint="@color/accent"
+            <CheckBox android:id="@+id/pack_beta" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
                 android:text="@string/subliminal_pack_beta" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_findom" android:layout_width="match_parent"
-                android:layout_height="44dp" android:buttonTint="@color/accent"
+            <CheckBox android:id="@+id/pack_findom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
                 android:text="@string/subliminal_pack_findom" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_custom" android:layout_width="match_parent"
-                android:layout_height="44dp" android:buttonTint="@color/accent"
+            <CheckBox android:id="@+id/pack_custom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
                 android:text="@string/subliminal_pack_custom" android:textColor="@color/text_primary" />
+            </GridLayout>
+            <LinearLayout android:id="@+id/custom_phrases_section"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical">
             <TextView style="@style/Widget.SubHub.FieldLabel"
                 android:text="@string/subliminal_custom_title" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
@@ -116,8 +116,7 @@
                 android:hint="@string/subliminal_custom_hint" android:inputType="textMultiLine"
                 android:padding="12dp" android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_muted" />
-            <TextView style="@style/Widget.SubHub.FieldHelp"
-                android:layout_marginTop="8dp" android:text="@string/subliminal_autosave" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

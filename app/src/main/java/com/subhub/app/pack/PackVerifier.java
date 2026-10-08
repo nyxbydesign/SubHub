@@ -3,40 +3,15 @@ package com.subhub.app.pack;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 
-/** Compatibility verifier for the original manifest SHA-256 integrity digest. */
+/** Deterministic JSON canonicalization shared by the current pack codec. */
 public final class PackVerifier {
     private PackVerifier() {}
-
-    public static boolean hasIntegrityDigest(JSONObject manifest) {
-        return manifest != null && !manifest.optString("signature", "").trim().isEmpty();
-    }
-
-    public static boolean verifyIntegrityDigest(JSONObject manifest) {
-        if (manifest == null) return false;
-        String expected = manifest.optString("signature", "").trim();
-        if (expected.isEmpty()) return true;
-        try {
-            JSONObject copy = deepCopy(manifest);
-            copy.put("signature", "");
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(canonicalize(copy).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte value : hash) hex.append(String.format(Locale.ROOT, "%02x", value & 0xff));
-            return MessageDigest.isEqual(
-                    expected.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII),
-                    hex.toString().getBytes(StandardCharsets.US_ASCII));
-        } catch (Exception error) {
-            return false;
-        }
-    }
 
     /** Copies JSON without round-tripping through text, which would turn values like 4.0 into 4. */
     static JSONObject deepCopy(JSONObject source) throws org.json.JSONException {

@@ -16,10 +16,9 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.databinding.ActivityAtmosphereBinding;
 import com.subhub.app.popup.IntensityPresets;
 import com.subhub.app.popup.PopupStormActivity;
+import com.subhub.app.popup.PopupStormActivationPolicy;
 import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.popup.PopupStormSettings;
-import com.subhub.app.pack.SubHubPackLocks;
-import com.subhub.app.pack.SubHubPackSchema;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
@@ -29,6 +28,7 @@ import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.subliminal.SubliminalSettings;
 import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import com.subhub.app.subliminal.SubliminalSettingsRepository;
+import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
 import java.util.Locale;
@@ -47,8 +47,10 @@ public final class AtmosphereActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityAtmosphereBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_atmosphere,
+                R.string.atmosphere_title, 0);
         if (SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.ATMOSPHERE)) return;
-        binding.buttonEditLock.setOnClickListener(view -> toggleSpace());
+        PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> toggleSpace());
         binding.whispersCard.setOnClickListener(view -> openWhispers());
         binding.buttonWhispers.setOnClickListener(view -> openWhispers());
         binding.popupStormCard.setOnClickListener(view -> openPopupStorm());
@@ -98,13 +100,9 @@ public final class AtmosphereActivity extends AppCompatActivity {
         binding.switchWhispers.setChecked(modules.isSubliminalEnabled());
         binding.switchPopupStorm.setChecked(popup.isEnabled());
         rendering = false;
-        binding.switchWhispers.setEnabled(dom
-                && !SubHubPackLocks.isLocked(this, SubHubPackSchema.MODULES));
-        binding.switchPopupStorm.setEnabled(dom
-                && !SubHubPackLocks.isLocked(this, SubHubPackSchema.POPUP));
-        ControllerEditMode.renderButton(this, binding.buttonEditLock);
-        binding.atmosphereSubtitle.setText(dom
-                ? R.string.atmosphere_subtitle_dom : R.string.atmosphere_subtitle_sub);
+        binding.switchWhispers.setEnabled(dom);
+        binding.switchPopupStorm.setEnabled(dom);
+        ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         binding.buttonWhispers.setText(dom
                 ? R.string.atmosphere_shape_whispers
                 : R.string.atmosphere_unlock_to_edit);
@@ -116,23 +114,17 @@ public final class AtmosphereActivity extends AppCompatActivity {
     }
 
     private void setWhispersEnabled(boolean enabled) {
-        if (!ControllerPinManager.isSessionUnlocked()
-                || SubHubPackLocks.isLocked(this, SubHubPackSchema.MODULES)) {
+        if (!ControllerPinManager.isSessionUnlocked()) {
             render();
             return;
         }
         FeatureModuleManager modules = new FeatureModuleManager(this);
         modules.setSubliminalEnabled(enabled);
-        if (!modules.hasRuntimeFeature()) {
-            startService(ScreenCaptureService.stopIntent(this));
-            new AppModeManager(this).setArmed(false);
-        }
         render();
     }
 
     private void setPopupEnabled(boolean enabled) {
-        if (!ControllerPinManager.isSessionUnlocked()
-                || SubHubPackLocks.isLocked(this, SubHubPackSchema.POPUP)) {
+        if (!ControllerPinManager.isSessionUnlocked()) {
             render();
             return;
         }
@@ -148,7 +140,7 @@ public final class AtmosphereActivity extends AppCompatActivity {
             rendering = true;
             binding.switchPopupStorm.setChecked(false);
             rendering = false;
-            new AlertDialog.Builder(this)
+            com.subhub.app.util.ThemedDialogs.builder(this)
                     .setTitle(R.string.popup_photosensitivity_title)
                     .setMessage(R.string.popup_photosensitivity_body)
                     .setNegativeButton(android.R.string.cancel, (dialog, which) -> render())
@@ -176,7 +168,9 @@ public final class AtmosphereActivity extends AppCompatActivity {
         PopupStormSettings.preferences(this).edit()
                 .putBoolean(PopupStormSettings.K_ENABLED, true).apply();
         PopupStormManager.get().reloadSettings(this);
-        if (ScreenCaptureService.isRunning() || ScreenshotAccessibilityService.isRunning()) {
+        if (PopupStormActivationPolicy.shouldStart(
+                ScreenCaptureService.isRunning(),
+                ScreenshotAccessibilityService.isRecognitionActive())) {
             PopupStormManager.get().start(this);
         }
         render();
@@ -197,8 +191,10 @@ public final class AtmosphereActivity extends AppCompatActivity {
                 ? R.string.atmosphere_state_active : R.string.atmosphere_state_ready;
         binding.whispersStatus.setText(state);
         SubliminalSettings settings = new SubliminalSettingsRepository(this).load();
-        binding.whispersSummary.setText(getString(R.string.atmosphere_whispers_summary,
-                friendly(settings.getPreset().name()), appMode.getSubliminalPackages().size()));
+        binding.whispersSummary.setText(appMode.getMode() == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS
+                ? getString(R.string.atmosphere_whispers_all_apps, friendly(settings.getPreset().name()))
+                : getString(R.string.atmosphere_whispers_summary,
+                        friendly(settings.getPreset().name()), appMode.getSubliminalPackages().size()));
     }
 
     private void renderPopupStorm() {

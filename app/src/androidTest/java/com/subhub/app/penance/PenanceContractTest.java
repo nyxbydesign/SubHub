@@ -373,6 +373,14 @@ public final class PenanceContractTest {
         assertEquals(0, manager.getDetectionRemainder());
     }
 
+    @Test public void validRulesHaveNoExtraFormulaCaption() {
+        manager.configure(true, 100, 500, 2_000, 0);
+        try (ActivityScenario<PenanceActivity> scenario = ActivityScenario.launch(PenanceActivity.class)) {
+            scenario.onActivity(activity -> assertEquals(android.view.View.GONE,
+                    activity.findViewById(R.id.rule_math_preview).getVisibility()));
+        }
+    }
+
     @Test public void reachedDailyCapIsVisibleAndExplainsWhyNoMoneyWasAdded() {
         long now = System.currentTimeMillis();
         manager.configure(true, 100, 500, 2_000, 0);

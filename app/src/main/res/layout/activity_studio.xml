@@ -16,35 +16,16 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingStart="@dimen/page_margin"
-            android:paddingTop="32dp"
+            android:paddingTop="@dimen/primary_header_top"
             android:paddingEnd="@dimen/page_margin"
             android:paddingBottom="28dp">
 
-            <LinearLayout
+            <include layout="@layout/view_secondary_header"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_header_card"
-                android:orientation="horizontal"
-                android:padding="16dp">
-                <ImageView
-                    android:layout_width="46dp" android:layout_height="46dp"
-                android:background="@drawable/bg_header_icon"
-                    android:contentDescription="@null" android:padding="11dp"
-                    android:src="@drawable/ic_nav_studio" />
-                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical" android:layout_marginStart="12dp"
-                    android:layout_weight="1" android:orientation="vertical">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="@string/studio_title" android:textColor="@color/text_primary"
-                        android:textSize="20sp" android:textStyle="bold" />
-                    <TextView android:id="@+id/studio_mode" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:layout_marginTop="2dp"
-                        android:textColor="@color/text_secondary" android:textSize="11sp" />
-                </LinearLayout>
-            </LinearLayout>
+                android:layout_height="wrap_content" />
 
             <LinearLayout
-                android:layout_width="match_parent" android:layout_height="56dp"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp"
                 android:layout_marginTop="14dp" android:background="@drawable/bg_card"
                 android:gravity="center" android:orientation="horizontal" android:padding="6dp">
                 <Button android:id="@+id/tab_library" style="@style/Widget.SubHub.SegmentedButton"
@@ -62,12 +43,6 @@
                 android:orientation="vertical">
                 <Button android:id="@+id/button_import" style="@style/Widget.SubHub.PrimaryButton"
                     android:text="@string/studio_import" />
-                <Button android:id="@+id/button_saved_profiles"
-                    style="@style/Widget.SubHub.CompactOutlineButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/studio_saved_profiles" />
                 <TextView android:id="@+id/library_empty" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="12dp"
                     android:background="@drawable/bg_card" android:padding="16dp"
@@ -99,33 +74,41 @@
             <LinearLayout android:id="@+id/editor_panel" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginTop="14dp"
                 android:orientation="vertical" android:visibility="gone">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <TextView android:id="@+id/draft_save_status"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp" android:text="@string/pack_editor_saved"
+                    android:textColor="@color/text_secondary" android:textSize="12sp"
+                    android:accessibilityLiveRegion="polite" />
+                <LinearLayout android:id="@+id/editor_steps" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical"
+                    android:layout_marginBottom="8dp" />
+                <LinearLayout android:id="@+id/details_step" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:background="@drawable/bg_card" android:orientation="vertical"
                     android:padding="14dp">
                     <TextView style="@style/Widget.SubHub.SectionHeader"
                         android:text="@string/studio_identity" />
                     <TextView style="@style/Widget.SubHub.FieldLabel" android:layout_marginTop="10dp"
-                        android:text="@string/studio_name" />
+                        android:text="@string/studio_name" android:labelFor="@id/pack_name" />
                     <EditText android:id="@+id/pack_name" style="@style/Widget.SubHub.Input"
                         android:hint="@string/studio_name_hint" android:maxLength="80"
                         android:singleLine="true" />
                     <TextView style="@style/Widget.SubHub.FieldLabel" android:layout_marginTop="10dp"
-                        android:text="@string/studio_author" />
+                        android:text="@string/studio_author" android:labelFor="@id/pack_author" />
                     <EditText android:id="@+id/pack_author" style="@style/Widget.SubHub.Input"
                         android:hint="@string/studio_author_hint" android:maxLength="80"
                         android:singleLine="true" />
                     <TextView style="@style/Widget.SubHub.FieldLabel" android:layout_marginTop="10dp"
-                        android:text="@string/studio_description" />
+                        android:text="@string/studio_description" android:labelFor="@id/pack_description" />
                     <EditText android:id="@+id/pack_description" style="@style/Widget.SubHub.Input"
                         android:hint="@string/studio_description_hint" android:maxLength="500"
                         android:minLines="3" />
                     <TextView style="@style/Widget.SubHub.FieldLabel" android:layout_marginTop="10dp"
-                        android:text="@string/studio_pack_version" />
+                        android:text="@string/studio_pack_version" android:labelFor="@id/pack_version" />
                     <EditText android:id="@+id/pack_version" style="@style/Widget.SubHub.Input"
                         android:hint="1.0.0" android:maxLength="24" android:singleLine="true" />
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <LinearLayout android:id="@+id/features_step" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp" android:background="@drawable/bg_card"
                     android:orientation="vertical" android:padding="14dp">
                     <TextView style="@style/Widget.SubHub.SectionHeader"
@@ -137,7 +120,7 @@
                         android:orientation="vertical" />
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <LinearLayout android:id="@+id/images_step" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp" android:background="@drawable/bg_card"
                     android:orientation="vertical" android:padding="14dp">
                     <TextView style="@style/Widget.SubHub.SectionHeader"
@@ -148,17 +131,21 @@
                         android:layout_marginTop="8dp" android:orientation="horizontal">
                         <Button android:id="@+id/button_censor_assets"
                             style="@style/Widget.SubHub.CompactOutlineButton"
-                            android:layout_width="0dp" android:layout_height="48dp"
+                            android:layout_width="0dp" android:layout_height="wrap_content" android:minHeight="48dp"
                             android:layout_weight="1" android:text="@string/studio_add_censor_images" />
                         <Button android:id="@+id/button_popup_assets"
                             style="@style/Widget.SubHub.CompactOutlineButton"
-                            android:layout_width="0dp" android:layout_height="48dp"
+                            android:layout_width="0dp" android:layout_height="wrap_content" android:minHeight="48dp"
                             android:layout_marginStart="6dp" android:layout_weight="1"
                             android:text="@string/studio_add_popup_images" />
                     </LinearLayout>
+                    <Button android:id="@+id/button_cover_asset" style="@style/Widget.SubHub.CompactOutlineButton"
+                        android:layout_marginTop="8dp" android:text="@string/pack_editor_add_cover" />
+                    <LinearLayout android:id="@+id/asset_list" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:orientation="vertical" />
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <LinearLayout android:id="@+id/recommendations_step" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp" android:background="@drawable/bg_card"
                     android:orientation="vertical" android:padding="14dp">
                     <TextView style="@style/Widget.SubHub.SectionHeader"
@@ -170,10 +157,10 @@
                         android:text="@string/studio_recommend_hardcore"
                         android:textColor="@color/text_primary" />
                     <Spinner android:id="@+id/recommend_duration" android:layout_width="match_parent"
-                        android:layout_height="48dp" android:layout_marginTop="4dp" />
+                        android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="4dp" />
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <LinearLayout android:id="@+id/review_step" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp" android:background="@drawable/bg_card"
                     android:orientation="vertical" android:padding="14dp">
                     <TextView style="@style/Widget.SubHub.SectionHeader"
@@ -188,6 +175,15 @@
                     android:layout_marginTop="12dp" android:text="@string/studio_add_library" />
                 <Button android:id="@+id/button_export" style="@style/Widget.SubHub.CompactOutlineButton"
                     android:layout_marginTop="8dp" android:text="@string/studio_export_share" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="12dp">
+                    <Button android:id="@+id/editor_back" style="@style/Widget.SubHub.CompactOutlineButton"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:text="@string/pack_editor_back" />
+                    <Button android:id="@+id/editor_next" style="@style/Widget.SubHub.CompactOutlineButton"
+                        android:layout_width="0dp" android:layout_weight="1" android:layout_marginStart="8dp"
+                        android:text="@string/pack_editor_next" />
+                </LinearLayout>
                 <Button android:id="@+id/button_delete_draft" style="@style/Widget.SubHub.CompactOutlineButton"
                     android:layout_marginTop="8dp" android:text="@string/studio_delete_draft" />
             </LinearLayout>

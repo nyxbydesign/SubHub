@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<GridLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bottom_navigation"
     android:layout_width="match_parent"
-    android:layout_height="@dimen/bottom_nav_height"
+    android:layout_height="wrap_content"
+    android:minHeight="@dimen/bottom_nav_height"
     android:layout_marginHorizontal="@dimen/bottom_nav_margin"
     android:layout_marginBottom="@dimen/bottom_nav_bottom_margin"
     android:layout_gravity="bottom"
     android:background="@drawable/bg_bottom_pill"
     android:elevation="12dp"
-    android:gravity="center_vertical"
+    android:columnCount="6"
     android:orientation="horizontal"
     android:padding="6dp">
 
@@ -101,4 +102,4 @@
             style="@style/Widget.SubHub.BottomTabLabel"
             android:text="@string/nav_settings" />
     </LinearLayout>
-</LinearLayout>
+</GridLayout>

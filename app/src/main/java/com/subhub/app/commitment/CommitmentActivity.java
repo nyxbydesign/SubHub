@@ -1,5 +1,7 @@
 package com.subhub.app.commitment;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
@@ -36,10 +38,11 @@ public final class CommitmentActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityCommitmentBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        binding.buttonBack.setOnClickListener(view -> finish());
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.commitment_title, true);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonEmergencyRelease.setOnClickListener(view -> confirmEmergencyRelease());
         editMode = ControllerEditMode.bind(
-                this, binding.buttonEditLock, editing -> applyEditState());
+                this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
         renderState();
     }
 
@@ -56,7 +59,7 @@ public final class CommitmentActivity extends AppCompatActivity {
     }
 
     private void confirmEmergencyRelease() {
-        new AlertDialog.Builder(this)
+        com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.commitment_emergency_title)
                 .setMessage(R.string.commitment_emergency_body)
                 .setNegativeButton(android.R.string.cancel, null)

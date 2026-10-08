@@ -23,7 +23,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-/** Strict ZIP codec for legacy v1 and optional encrypted-merchant v2 .subhubpack archives. */
+/** Strict ZIP codec for the current .subhubpack format only. */
 public final class SubHubPackArchive {
     public static final String EXTENSION = ".subhubpack";
     private static final int MAX_MANIFEST_BYTES = 512 * 1024;
@@ -33,10 +33,54 @@ public final class SubHubPackArchive {
 
     private SubHubPackArchive() {}
 
+    /** Local library preview only. Full integrity/asset validation still runs before use. */
+    static Overview readOverview(java.io.File file) throws IOException {
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(file, StandardCharsets.UTF_8)) {
+            Set<String> names = new LinkedHashSet<>();
+            java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+            int count = 0;
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory()) continue;
+                String name = normalize(entry.getName());
+                if (++count > PackInputLimiter.MAX_ENTRIES || !isSafeEntryPath(name) || !names.add(name)) {
+                    throw new IOException("Invalid local pack inventory");
+                }
+            }
+            JSONObject manifest = readJsonEntry(zip, "manifest.json", MAX_MANIFEST_BYTES);
+            Map<String, JSONObject> sections = new LinkedHashMap<>();
+            for (String section : jsonStrings(manifest.optJSONArray("includedSections"))) {
+                if (!SubHubPackSchema.SECTIONS.contains(section)) throw new IOException("Unknown section");
+                sections.put(section, readJsonEntry(zip, "sections/" + section + ".json", MAX_SECTION_BYTES));
+            }
+            JSONObject hashes = manifest.optJSONObject("assetHashes");
+            int assets = hashes == null ? 0 : hashes.length();
+            return new Overview(SubHubPack.fromManifest(manifest, sections, Map.of()), assets);
+        } catch (IOException error) { throw error; }
+        catch (Exception invalid) { throw new IOException("Invalid local pack metadata", invalid); }
+    }
+
+    private static JSONObject readJsonEntry(java.util.zip.ZipFile zip, String name, long limit)
+            throws Exception {
+        ZipEntry entry = zip.getEntry(name);
+        if (entry == null || entry.isDirectory()) throw new IOException("Missing pack metadata");
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (InputStream input = zip.getInputStream(entry)) {
+            PackInputLimiter.copy(input, bytes, limit, "Pack metadata");
+        }
+        return new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
+    }
+
+    static final class Overview {
+        final SubHubPack pack;
+        final int assetCount;
+        Overview(SubHubPack pack, int assetCount) { this.pack = pack; this.assetCount = assetCount; }
+    }
+
     public static void write(SubHubPack pack, OutputStream output) throws IOException {
         if (pack == null || output == null) throw new IOException("Pack output is unavailable");
         try {
-            Map<String, byte[]> assets = pack.getAssets();
+            Map<String, byte[]> assets = pack.assetsForArchive();
             Map<String, String> assetHashes = new LinkedHashMap<>();
             long totalBytes = 0L;
             for (Map.Entry<String, byte[]> item : assets.entrySet()) {
@@ -46,11 +90,13 @@ public final class SubHubPackArchive {
                 if (totalBytes > MAX_TOTAL_BYTES) throw new IOException("Pack exceeds 256 MiB");
                 assetHashes.put(item.getKey(), sha256(item.getValue()));
             }
-            JSONObject manifest = pack.manifestWithoutIntegrity(assetHashes);
+            // JSON's wire representation removes integral decimal suffixes (2.0 -> 2).
+            // Hash the exact parsed wire values that the reader will see, not Float objects.
+            JSONObject manifest = new JSONObject(pack.manifestWithoutIntegrity(assetHashes).toString());
             Map<String, JSONObject> sections = new LinkedHashMap<>();
             for (String section : pack.getIncludedSections()) {
                 JSONObject value = SubHubPackSchema.sanitizeSection(section, pack.getSection(section));
-                sections.put(section, value);
+                sections.put(section, new JSONObject(value.toString()));
             }
             manifest.put("integrity", integrity(manifest, sections));
             byte[] manifestBytes = manifest.toString(2).getBytes(StandardCharsets.UTF_8);
@@ -112,14 +158,17 @@ public final class SubHubPackArchive {
             if (!SubHubPack.FORMAT.equals(manifest.optString("format"))) {
                 throw new IOException("Not a .subhubpack archive");
             }
+            if (manifest.optInt("schemaVersion", -1) != SubHubPack.SCHEMA_VERSION) {
+                throw new IOException("Unsupported pack format; recreate the arrangement in Studio");
+            }
             Set<String> included = jsonStrings(manifest.optJSONArray("includedSections"));
             Map<String, JSONObject> sections = new LinkedHashMap<>();
             for (String section : included) {
                 if (!SubHubPackSchema.SECTIONS.contains(section)) throw new IOException("Unknown pack section");
                 byte[] bytes = entries.remove("sections/" + section + ".json");
                 if (bytes == null) throw new IOException("Pack section is missing: " + section);
-                sections.put(section, SubHubPackSchema.sanitizeSection(section,
-                        new JSONObject(new String(bytes, StandardCharsets.UTF_8))));
+                // Validate original archive data before portable-field sanitization.
+                sections.put(section, new JSONObject(new String(bytes, StandardCharsets.UTF_8)));
             }
             Map<String, byte[]> assets = new LinkedHashMap<>();
             JSONObject expectedHashes = manifest.optJSONObject("assetHashes");

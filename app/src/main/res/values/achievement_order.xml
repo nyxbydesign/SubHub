@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="achievement_display_appearance">Appearance</string>
+    <string name="achievement_display_phrases">Custom phrases</string>
+    <string name="achievement_display_packs">Packs</string>
+    <string name="achievement_display_tribute_setup">Tribute setup and tools</string>
+    <string name="achievement_display_tribute_payments">Tribute payments</string>
+</resources>

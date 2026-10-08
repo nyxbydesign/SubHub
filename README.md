@@ -4,79 +4,64 @@
 
 <p align="center">
   <strong>Set the terms. Hand over control.</strong><br />
-  A private Android control space for live censoring, app limits, and an optional tribute wallet.
+  A private Android control space for live censoring, app limits, an optional tribute wallet, and atmosphere.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-8.0%2B-b64bd2?style=flat-square&logo=android&logoColor=white" alt="Android 8.0+" />
-  <img src="https://img.shields.io/badge/release-v0.6.0-68339b?style=flat-square" alt="v0.6.0" />
+  <img src="https://img.shields.io/badge/release-v0.6.3-68339b?style=flat-square" alt="v0.6.3" />
   <img src="https://img.shields.io/badge/detection-on--device-e32b90?style=flat-square" alt="On-device detection" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/bozo-industries/SubHub/releases/latest"><strong>Download</strong></a>
+  <a href="https://github.com/confiteor48/SubHub/releases/latest"><strong>Download</strong></a>
   &nbsp;·&nbsp;
-  <a href="#control-suite"><strong>Features</strong></a>
+  <a href="#features"><strong>Features</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#how-service-works"><strong>How it works</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/screenshots/ui-map/README.md"><strong>Gallery</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/marketing/README.md"><strong>Media kit</strong></a>
   &nbsp;·&nbsp;
   <a href="#build"><strong>Build</strong></a>
 </p>
 
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
+## Overview
 
-## One clean handoff
+SubHub brings the rules, active session, and progress into one Android app. Choose the features that participate, configure them in Dom mode, and hand over to the focused Sub experience.
 
-Dom mode holds every rule. Sub mode keeps only the active scene: choose a service duration, enter service, and see the current limits, ledger, session, and milestones without exposing configuration.
-
-| **Dom mode** | **Sub mode** |
+| Feature | What it does |
 |---|---|
-| Configure modules, assigned apps, limits, censor appearance, Wallet rules, and Android access. | Start service, follow the timer, review active rules, and settle an enabled Wallet balance. |
-| Protected by the controller PIN. | One focused Home surface with no edit fields. |
-
-A session begins when service starts—not when SubHub opens—and persists until service ends.
+| [Censor](#censor) | On-device image and explicit-text detection with configurable overlays. |
+| [Limits](#limits) | Individual and shared daily app allowances. |
+| [Wallet / Tribute](#wallet--tribute) | Optional tribute rules, bounded balances, and PayPal settlement. |
+| [Atmosphere](#atmosphere) | Subliminal Messaging and Popup Storm, configured independently. |
+| [Studio / Pack Maker](#studio--pack-maker) | Create, edit, share, and apply portable arrangements. |
+| [Milestones](#milestones) | Session statistics and illustrated achievements. |
 
 <p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
 
-## Control suite
+## Features
 
-<table>
-  <tr>
-    <td width="33%" valign="top"><h3>Censor</h3>On-device image and explicit-text detection with tracked overlays, configurable looks, and assigned-app scope.</td>
-    <td width="33%" valign="top"><h3>Limits</h3>Individual and shared daily allowances. When time is spent, SubHub returns the assigned app to Home.</td>
-    <td width="33%" valign="top"><h3>Wallet</h3>Optional local tribute rules, bounded balances, PayPal settlement, and confirmed-payment milestones.</td>
-  </tr>
-</table>
+### Censor
 
-### Subliminal Messaging
+- **App Mode by default.** Accessibility supplies foreground-app awareness and visible-text geometry without a new capture prompt every session.
+- **Screen Capture when wanted.** MediaProjection remains an explicit alternate path.
+- **Assigned means assigned.** Filtering sleeps outside the configured app scope.
+- **Tracked overlays.** Detected regions use temporal tracking. Live stability and responsiveness depend on the workload and device; UI screenshots are not performance benchmarks.
+- **One render system.** Blackout, Blur, Pixelate, Custom Image, TV Static, Glitch, Privacy Tape, and Error Popup share the tracked overlay pipeline.
 
-Faint randomized phrases can follow service through separately assigned apps. Obedience, focus, beta/cuck, findom, and custom phrase packs run through one touch-through Accessibility overlay—without waking the image detector. Presence, timing, text size, and voice are configured in Dom mode; Sub mode sees only the active summary.
-
-Each module is independent. Disable one and it stops participating in service. Subliminal Messaging has its own per-app assignment and does not require Censor, Limits, or Wallet.
+Three detection levels—Low, Medium, and High—offer Balanced Coverage, More Coverage, and Maximum Coverage. Appearance stays separate: choose one of eight phone-previewed styles, customize colors and borders, and manage images when Custom Image is selected.
 
 <p align="center">
-  <img src="docs/screenshots/ui-map/page-map/02-limits.png" alt="Daily app limits" width="42%" />
+  <img src="docs/screenshots/ui-map/page-map/05-censor-settings.png" alt="Three detection levels and body-area choices" width="42%" />
   &nbsp;&nbsp;
-  <img src="docs/screenshots/ui-map/page-map/03-wallet.png" alt="Tribute wallet" width="42%" />
+  <img src="docs/screenshots/ui-map/page-map/05a-settings-appearance.png" alt="Eight Censor appearance styles with phone previews" width="42%" />
 </p>
 
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
-
-## Studio
-
-Studio is the portable arrangement creator built into SubHub. It is always present in the bottom pill: Dom Space sees it beside the enabled feature areas and Settings; Sub Space keeps only Home and Studio.
-
-- Start with a blank draft, capture the current setup, or duplicate an existing arrangement.
-- Mix feature modules, Censor and smut settings, generic Limits, tribute rules and caps, Subliminal Messaging, Popup Storm settings, and embedded private images.
-- Autosave drafts, preview the result, import or export `.subhubpack` files, and share them through Android’s standard share sheet.
-- Review selected sections and a before/after summary before activation. Previous values are backed up locally and restored when the arrangement is deactivated or replaced.
-- Optionally lock stable feature groups. One lock-bearing arrangement can be active at a time, and only Dom Space can activate, replace, or deactivate it.
-
-Security and duration fields are recommendations, never commands. Arrangements cannot contain PayPal credentials or saved payer IDs, controller PINs, Android permissions, Device Admin state, app package assignments, active service state, history, statistics, achievements, or updater state. Legacy `.bbpack` files remain supported as import-only censor packs.
-
-See the [SubHub pack format](docs/subhubpack-format.md) for the schema and privacy boundary.
-
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
-
-## Live censoring
+<details>
+<summary><strong>Live image and text filtering examples</strong></summary>
 
 <p align="center">
   <img src="docs/screenshots/live-image-and-text-filter.jpg" alt="Image and text filtering on Android" width="44%" />
@@ -84,53 +69,121 @@ See the [SubHub pack format](docs/subhubpack-format.md) for the schema and priva
   <img src="docs/screenshots/live-text-filter.jpg" alt="Explicit text filtering on Android" width="44%" />
 </p>
 
-- **App Mode by default.** Accessibility supplies foreground-app awareness and visible-text geometry without a new capture prompt every session.
-- **Screen Capture when wanted.** MediaProjection remains an explicit alternate path.
-- **Assigned means assigned.** Filtering sleeps outside the configured app scope.
-- **Tracked means stable.** Censors follow scrolling and ordinary motion; repeated frames do not create new events.
-- **One render system.** Blackout, Blur, Pixelate, Custom Image, TV Static, Glitch, Privacy Tape, and Error Popup share the tracked overlay pipeline.
+</details>
 
-Low through Ultra presets trade battery for analysis frequency. High and Ultra keep the local pipelines warm and run image and text work concurrently.
+### Limits
 
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
-
-## Limits & Wallet
-
-Assign Censor, Limit, or both to each app. Per-app allowances may differ, and an optional shared allowance can govern the whole set. Usage resets at local midnight.
-
-Wallet rules can count only deliberately enabled events: a new stable temptation, lingering on one still screen, tapping a visible censor, opening an assigned app, or a rate-limited Hardcore tamper signal. Every event is gated behind active service and the Wallet master switch.
-
-The Dom sets prices, batching, grace, correction time, and daily or weekly caps. PayPal merchant credentials and saved-wallet tokens are encrypted with Android Keystore and stay bound to the selected Sandbox or Live environment.
+Give each limited app its own allowance, share one allowance across the set, or use both. App-specific allowances may differ from the default. Usage resets at local midnight; when time is spent, SubHub returns the covered app to Home.
 
 <p align="center">
-  <img src="docs/screenshots/ui-map/page-map/03b-wallet-rules-and-safety.png" alt="Tribute rules and caps" width="45%" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/ui-map/page-map/03c-wallet-checkout-and-history.png" alt="PayPal settlement and ledger" width="45%" />
+  <img src="docs/screenshots/ui-map/page-map/02-limits.png" alt="Individual and shared daily app limits" width="42%" />
 </p>
 
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
+### Wallet / Tribute
 
-## Milestones
+Wallet is optional. Rules can count only deliberately enabled events: a new stable temptation, lingering on one still screen, tapping a visible censor, opening an assigned app, or a rate-limited Hardcore tamper signal. Every event is gated behind active service and the Wallet master switch.
+
+The Dom sets prices, batching, grace, correction time, and daily or weekly caps. Review what is owed and settle it through PayPal. Merchant credentials and saved-wallet tokens are encrypted with Android Keystore and stay bound to the selected Sandbox or Live environment.
+
+<p align="center">
+  <img src="docs/screenshots/ui-map/page-map/03-wallet.png" alt="Tribute wallet and settlement action" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/03b-wallet-rules-and-safety.png" alt="Tribute rules and safety options" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/03c-wallet-checkout-and-history.png" alt="Paid-pause configuration and tribute history" width="30%" />
+</p>
+
+### Atmosphere
+
+#### Subliminal Messaging
+
+Faint randomized phrases can follow service through separately assigned apps. Obedience, focus, beta/cuck, findom, and custom phrase packs run through one touch-through Accessibility overlay—without waking the image detector. Presence, timing, text size, and voice are configured in Dom mode; Sub mode sees only the active summary.
+
+Subliminal Messaging has its own per-app assignment and does not require Censor, Limits, or Wallet.
+
+#### Popup Storm
+
+Configure intensity, choose an image library, and try a bounded ten-second preview without enabling service participation. Popup Storm and Subliminal Messaging have separate controls on the Atmosphere page.
+
+<p align="center">
+  <img src="docs/screenshots/ui-map/page-map/14-atmosphere.png" alt="Independent Atmosphere feature controls" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/15-whispers.png" alt="Subliminal message packs and intensity" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/16-popup-storm.png" alt="Popup Storm intensity and image library" width="30%" />
+</p>
+
+### Studio / Pack Maker
+
+Studio is the portable pack creator built into SubHub, reachable from Settings in both Dom and Sub mode, and from Censor Tools in Dom mode. Drafting a pack never changes live settings.
+
+- Start with a blank draft, capture the current setup, or duplicate an existing arrangement.
+- Use the four-step Details, Features, Images and Review editor. Configure each of the 115 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
+- Mix feature modules, Censor and text filters, generic Limits, tribute rules and caps, Subliminal Messaging, Popup Storm settings, and embedded private images. Preview/remove images and choose an optional cover.
+- Use the shared color wheel and precise RGB sliders, with independent gradient endpoints.
+- Autosave drafts, preview the result, import or export `.subhubpack` files, and share them through Android’s standard share sheet.
+- Review selected sections and a before/after summary before activation. Previous values are backed up locally and restored when the arrangement is deactivated or replaced.
+- One pack can be active at a time. Dom mode is required to apply or restore settings; packs do not add a second setting-lock system. Creating and editing a draft is also available in Sub mode.
+
+<p align="center">
+  <img src="docs/screenshots/ui-map/page-map/22-wizard-details.png" alt="Pack Maker details step" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/23-wizard-features.png" alt="Configure feature settings directly in a draft" width="30%" />
+  &nbsp;
+  <img src="docs/screenshots/ui-map/page-map/26-pack-section-editor.png" alt="Native settings editor for a draft Censor section" width="30%" />
+</p>
+
+<details>
+<summary><strong>Pack compatibility and privacy</strong></summary>
+
+Security and duration fields are recommendations, never commands. Enter Service and Leave Service remain the master controls.
+
+Ordinary sections never carry credentials, saved payer IDs, controller PINs, Android permissions, Device Admin state, app package assignments, active service state, history, statistics, achievements, Wallet currency or automatic-payment consent. Dom mode can explicitly add passphrase-encrypted merchant details; recipients must review and authorize them locally.
+
+The old profile/backup and `.bbpack` interfaces are retired. Existing private saved files are not automatically deleted. See the [SubHub pack format](docs/subhubpack-format.md) for the schema and privacy boundary.
+
+</details>
+
+### Milestones
 
 SubHub includes original illustrated achievements across censoring, protected time, sessions, streaks, customisation, App Mode, limits, service locks, Hardcore Mode, confirmed Wallet payments, and subliminal impressions. Related tiers keep one visual family and grow richer as the target rises.
 
 <details>
 <summary><strong>Open the complete badge collection</strong></summary>
-<br />
+
 <img src="docs/brand/achievement-badge-catalog.png" alt="SubHub achievement medallions" width="100%" />
+
 </details>
 
 <p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
 
-## Boundaries
+## How service works
+
+Dom mode holds every rule. Sub mode keeps only the active scene: choose a service duration, enter service, and see the current limits, ledger, session, and milestones without exposing configuration.
+
+| Dom mode | Sub mode |
+|---|---|
+| Configure modules, assigned apps, limits, censor appearance, Wallet rules, and Android access. | Start service, follow the timer, review active rules, and settle an enabled Wallet balance. |
+| Protected by the controller PIN. | One focused Home surface with no edit fields; Home and Settings remain in the bottom navigation. |
+
+A session begins when service starts—not when SubHub opens—and persists until service ends.
+
+1. Install the universal APK, or the APK matching your device’s ABI, from [Downloads](https://github.com/confiteor48/SubHub/releases/latest).
+2. Set the controller PIN and configure the participating features in Dom mode.
+3. In Settings, choose All apps or Assigned apps only. Censor, Limits, and Subliminal assignments stay independent. Grant the Android access required by the features you use.
+4. Hand over to Sub mode, choose a duration, and enter service.
+
+Disable a feature and it stops participating in service. Android permissions and the controller’s configuration remain separate from a pack or draft.
+
+<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
+
+## Privacy & boundaries
 
 - Detection and text classification run on-device; frames are processed in memory.
 - Android remains the authority for Accessibility, screen capture, overlays, notifications, and Device Admin.
 - Hardcore Mode adds platform-supported friction. It is not an unbreakable device-security boundary.
 - Device Admin requests no wipe, camera, password, force-lock, or login-monitoring policy.
 - Censor, Limits, and Wallet can each be removed from the experience.
-
-<p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
 
 ## Build
 
@@ -146,18 +199,27 @@ Every push to a non-`master` branch also publishes a signed [GitHub prerelease](
 
 In the app, open **Updates → Dev updates** in Dom mode to opt in. It is off by default. Checks follow the selected channel, and downloads and Android installation still require your approval. Turning Dev updates off keeps the installed app and waits for a newer stable build—no uninstall, ADB, or external file host is needed for subsequent updates.
 
-<details>
-<summary><strong>Project documentation</strong></summary>
+## Screenshots & media kit
+
+Browse the [complete current UI gallery](docs/screenshots/ui-map/README.md), including Dom/Sub navigation, app assignments, Appearance, Wallet, Atmosphere, and all four Pack Maker steps. Captures use synthetic data on an Android emulator and show the development build; the published APK may differ.
+
+Ready-to-share marketing materials:
+
+- [Square collage — 1080 × 1080](docs/marketing/subhub-social-square.png)
+- [Portrait collage — 1080 × 1350](docs/marketing/subhub-social-portrait.png)
+- [Wide desktop collage — 1920 × 1080](docs/marketing/subhub-social-wide.png)
+- [Editable SVG sources and regeneration instructions](docs/marketing/README.md)
+
+The square and portrait collages feature Censor, Tribute, and Subliminal Messages. The desktop version adds Limits and Pack Maker. All use genuine app screenshots.
+
+## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Device smoke test](docs/device-smoke-test.md)
-- [Visual audit](docs/visual-parity.md)
 - [PayPal setup](docs/paypal-setup.md)
 - [PayPal settlement](docs/paypal-penance.md)
 - [Client-only roadmap](docs/client-only-roadmap.md)
 - [SubHub pack format](docs/subhubpack-format.md)
-
-</details>
 
 <p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
 

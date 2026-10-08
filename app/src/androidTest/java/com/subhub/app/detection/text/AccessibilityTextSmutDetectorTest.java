@@ -1,9 +1,11 @@
 package com.subhub.app.detection.text;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Rect;
+import android.os.Build;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -84,6 +86,65 @@ public final class AccessibilityTextSmutDetectorTest {
             assertTrue(detections.isEmpty());
         } finally {
             node.recycle();
+        }
+    }
+
+    @Test public void cancelledTraversalDoesNotPublishPartialText() {
+        AccessibilityNodeInfo node = AccessibilityNodeInfo.obtain();
+        try {
+            node.setVisibleToUser(true);
+            node.setText("send nudes");
+            node.setBoundsInScreen(new Rect(70, 700, 1010, 810));
+
+            List<Detection> detections = new AccessibilityTextSmutDetector().detect(
+                    node, balanced(), 1080, 2400, true, false, () -> true);
+
+            assertTrue(detections.isEmpty());
+        } finally {
+            node.recycle();
+        }
+    }
+
+    @Test public void matchedNodesCarryDisposableTargetedConfirmationProbes() {
+        AccessibilityNodeInfo node = AccessibilityNodeInfo.obtain();
+        try {
+            node.setVisibleToUser(true);
+            node.setText("send nudes");
+            node.setBoundsInScreen(new Rect(70, 700, 1010, 810));
+            AccessibilityTextSmutDetector.ScanResult scan =
+                    new AccessibilityTextSmutDetector().detectWithMetrics(
+                            node, balanced(), 1080, 2400, false, false, () -> false);
+            assertEquals(1, scan.getConfirmationProbeCount());
+            scan.close();
+            assertEquals(0, scan.getConfirmationProbeCount());
+        } finally {
+            node.recycle();
+        }
+    }
+
+    @Test public void recycledUniqueNodeDoesNotInheritDifferentTextIdentity() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        AccessibilityNodeInfo first = AccessibilityNodeInfo.obtain();
+        AccessibilityNodeInfo second = AccessibilityNodeInfo.obtain();
+        try {
+            first.setVisibleToUser(true);
+            first.setUniqueId("recycled-feed-cell");
+            first.setText("send nudes");
+            first.setBoundsInScreen(new Rect(70, 700, 1010, 810));
+            second.setVisibleToUser(true);
+            second.setUniqueId("recycled-feed-cell");
+            second.setText("touch yourself");
+            second.setBoundsInScreen(new Rect(70, 700, 1010, 810));
+
+            Detection firstDetection = new AccessibilityTextSmutDetector().detect(
+                    first, balanced(), 1080, 2400).get(0);
+            Detection secondDetection = new AccessibilityTextSmutDetector().detect(
+                    second, balanced(), 1080, 2400).get(0);
+
+            assertNotEquals(firstDetection.getAnchorKey(), secondDetection.getAnchorKey());
+        } finally {
+            first.recycle();
+            second.recycle();
         }
     }
 

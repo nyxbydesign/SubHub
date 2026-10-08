@@ -12,6 +12,38 @@ import java.util.Collections;
 import java.util.List;
 
 public final class DetectionFusionTest {
+    @Test public void realtimeGeometryWinsOverMatchingQualityRefinement() {
+        Detection realtime = new Detection("FAST", "EXPOSED", 0.55f,
+                new BBox(100, 200, 180, 220), true, true);
+        Detection quality = new Detection("QUALITY", "EXPOSED", 0.92f,
+                new BBox(80, 170, 240, 290), true, true,
+                Detection.ObservationSource.QUALITY_VISUAL,
+                Detection.GeometryQuality.MODEL, null);
+
+        List<Detection> merged = DetectionFusion.mergeVisualRefinement(
+                Collections.singletonList(realtime), Collections.singletonList(quality));
+
+        assertEquals(1, merged.size());
+        assertEquals(realtime.getBox(), merged.get(0).getBox());
+        assertEquals(0.92f, merged.get(0).getConfidence(), 0f);
+        assertEquals(Detection.ObservationSource.VISUAL, merged.get(0).getSource());
+    }
+
+    @Test public void unmatchedQualityRefinementRemainsCoverageCandidate() {
+        Detection realtime = new Detection("FAST", "EXPOSED", 0.55f,
+                new BBox(20, 20, 80, 80), true, true);
+        Detection quality = new Detection("QUALITY", "EXPOSED", 0.92f,
+                new BBox(500, 600, 160, 180), true, true,
+                Detection.ObservationSource.QUALITY_VISUAL,
+                Detection.GeometryQuality.MODEL, null);
+
+        List<Detection> merged = DetectionFusion.mergeVisualRefinement(
+                Collections.singletonList(realtime), Collections.singletonList(quality));
+
+        assertEquals(2, merged.size());
+        assertEquals(Detection.ObservationSource.QUALITY_VISUAL, merged.get(1).getSource());
+    }
+
     @Test public void overlappingAccessibilityAndVisualTextBecomeOneRegion() {
         Detection accessibility = text(new BBox(100, 200, 300, 80));
         Detection visualText = text(new BBox(105, 205, 290, 70));
@@ -52,7 +84,7 @@ public final class DetectionFusionTest {
         assertEquals(line.getBox(), merged.get(0).getBox());
     }
 
-    @Test public void bridgeRegionCoalescesAllDuplicateTextBoxes() {
+    @Test public void bridgeRegionCannotCollapseSeparateLinesIntoOneGroup() {
         Detection upper = text(new BBox(80, 300, 500, 60));
         Detection lower = text(new BBox(80, 390, 500, 60));
         Detection bridge = text(new BBox(80, 340, 500, 70));
@@ -60,8 +92,25 @@ public final class DetectionFusionTest {
         List<Detection> merged = DetectionFusion.merge(
                 Collections.emptyList(), Arrays.asList(upper, lower, bridge));
 
-        assertEquals(1, merged.size());
-        assertEquals(new BBox(80, 300, 500, 150), merged.get(0).getBox());
+        assertEquals(2, merged.size());
+        assertEquals(upper.getBox(), merged.get(0).getBox());
+        assertEquals(lower.getBox(), merged.get(1).getBox());
+    }
+
+    @Test public void differentSemanticAnchorsNeverFuseDespiteOverlap() {
+        Detection first = text(new BBox(80, 300, 500, 60)).withObservation(
+                Detection.ObservationSource.ACCESSIBILITY,
+                Detection.GeometryQuality.EXACT,
+                "post-1:line-1");
+        Detection second = text(new BBox(80, 320, 500, 60)).withObservation(
+                Detection.ObservationSource.ACCESSIBILITY,
+                Detection.GeometryQuality.EXACT,
+                "post-1:line-2");
+
+        List<Detection> merged = DetectionFusion.merge(
+                Collections.emptyList(), Arrays.asList(first, second));
+
+        assertEquals(2, merged.size());
     }
 
     @Test public void preciseOcrLineReplacesNearbyAccessibilityEstimate() {

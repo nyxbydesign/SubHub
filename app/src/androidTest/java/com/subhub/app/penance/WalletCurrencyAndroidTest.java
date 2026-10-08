@@ -204,7 +204,7 @@ public final class WalletCurrencyAndroidTest {
             try (androidx.test.core.app.ActivityScenario<PenanceActivity> scenario =
                     androidx.test.core.app.ActivityScenario.launch(PenanceActivity.class)) {
                 scenario.onActivity(activity -> assertEquals("Wallet currency: USD",
-                        ((android.widget.TextView) activity.findViewById(com.subhub.app.R.id.penance_subtitle))
+                        ((android.widget.TextView) activity.findViewById(com.subhub.app.R.id.primary_header_subtitle))
                                 .getText().toString()));
             }
         }

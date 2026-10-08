@@ -2,15 +2,13 @@ package com.subhub.app.detection;
 
 import java.util.Locale;
 
-/** Recovered Beta Blocker 1.67 quality/performance presets. */
+/** Three quality/performance levels shared by live capture and image preparation. */
 public enum DetectionPreset {
-    LOW("Low", "Battery saver", 0.38f, 150, 28, 0.35f, 320, 15, 0.80f, 0.60f,
-            200f, 1, 384, 4),
-    MEDIUM("Medium", "Recommended", 0.30f, 0, 20, 0.45f, 320, 25, 0.75f, 0.55f,
+    LOW("Low", "Balanced", 0.30f, 0, 20, 0.45f, 320, 25, 0.75f, 0.55f,
             180f, 2, 512, 8),
-    HIGH("High", "Better quality", 0.25f, 0, 12, 0.50f, 480, 35, 0.70f, 0.50f,
+    MEDIUM("Medium", "Recommended", 0.25f, 0, 12, 0.50f, 480, 35, 0.70f, 0.50f,
             230f, 3, 768, 12),
-    ULTRA("Ultra", "Maximum", 0.18f, 0, 6, 0.75f, 512, 50, 0.65f, 0.45f,
+    HIGH("High", "Maximum", 0.18f, 0, 6, 0.75f, 512, 50, 0.65f, 0.45f,
             300f, 4, 1024, 16);
 
     private final String displayName;
@@ -91,8 +89,7 @@ public enum DetectionPreset {
     public static DetectionPreset fromPreference(String value) {
         if (value != null) {
             for (DetectionPreset preset : values()) {
-                if (preset.name().equalsIgnoreCase(value)
-                        || preset.displayName.equalsIgnoreCase(value)) return preset;
+                if (preset.preferenceValue().equals(value)) return preset;
             }
         }
         return MEDIUM;

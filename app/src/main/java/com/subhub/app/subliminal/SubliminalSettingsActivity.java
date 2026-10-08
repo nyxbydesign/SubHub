@@ -1,5 +1,7 @@
 package com.subhub.app.subliminal;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -14,8 +16,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivitySubliminalSettingsBinding;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.pack.SubHubPackLocks;
-import com.subhub.app.pack.SubHubPackSchema;
 
 import java.security.SecureRandom;
 import java.util.LinkedHashSet;
@@ -43,34 +43,29 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         }
         binding = ActivitySubliminalSettingsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.subliminal_title, false);
         repository = new SubliminalSettingsRepository(this);
-        binding.buttonBack.setOnClickListener(view -> finish());
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        android.widget.LinearLayout page = (android.widget.LinearLayout) binding.intensityCard.getParent();
+        page.removeView(binding.messagePacksCard);
+        page.addView(binding.messagePacksCard, page.indexOfChild(binding.intensityCard));
         bindListeners();
         render(repository.load());
-        if (SubHubPackLocks.isLocked(this, SubHubPackSchema.SUBLIMINAL)) {
-            setEnabledRecursive(binding.getRoot(), false);
-            binding.buttonBack.setEnabled(true);
-        }
-    }
-
-    private static void setEnabledRecursive(android.view.View view, boolean enabled) {
-        view.setEnabled(enabled);
-        if (view instanceof android.view.ViewGroup) {
-            android.view.ViewGroup group = (android.view.ViewGroup) view;
-            for (int index = 0; index < group.getChildCount(); index++) {
-                setEnabledRecursive(group.getChildAt(index), enabled);
-            }
-        }
     }
 
     private void bindListeners() {
-        binding.presetGroup.setOnCheckedChangeListener((group, id) -> {
-            if (loading) return;
-            repository.savePreset(presetFor(id));
+        binding.presetSlider.setLabelFormatter(value -> presetLabel(Math.round(value)));
+        binding.presetSlider.addOnChangeListener((slider, value, fromUser) -> {
+            if (loading || !fromUser) return;
+            main.removeCallbacks(saveCustom);
+            saveCustom.run();
+            repository.savePreset(SubliminalSettings.Preset.values()[Math.round(value)]);
             render(repository.load());
         });
         binding.advancedEnabled.setOnCheckedChangeListener((button, checked) -> {
             if (loading) return;
+            main.removeCallbacks(saveCustom);
+            saveCustom.run();
             saveAdvanced(checked);
             render(repository.load());
         });
@@ -91,12 +86,16 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.textSize.setOnSeekBarChangeListener(advancedListener);
         for (CheckBox check : packChecks()) {
             check.setOnCheckedChangeListener((button, checked) -> {
-                if (!loading) repository.savePacks(selectedPacks());
+                if (!loading) {
+                    repository.savePacks(selectedPacks());
+                    binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
+                }
             });
         }
         binding.customPhrases.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                if (loading) return;
                 main.removeCallbacks(saveCustom);
                 main.postDelayed(saveCustom, 400L);
             }
@@ -108,7 +107,8 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     private void render(SubliminalSettings settings) {
         if (binding == null) return;
         loading = true;
-        binding.presetGroup.check(idFor(settings.getPreset()));
+        binding.presetSlider.setValue(settings.getPreset().ordinal());
+        binding.presetValue.setText(presetLabel(settings.getPreset().ordinal()));
         binding.advancedEnabled.setChecked(settings.isAdvanced());
         binding.advancedPanel.setVisibility(settings.isAdvanced() ? View.VISIBLE : View.GONE);
         binding.opacity.setProgress(settings.getOpacityPercent() - 1);
@@ -122,6 +122,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.packBeta.setChecked(packs.contains(SubliminalSettingsRepository.PACK_BETA));
         binding.packFindom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_FINDOM));
         binding.packCustom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_CUSTOM));
+        binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
         if (!binding.customPhrases.getText().toString().equals(settings.getCustomPhrases())) {
             binding.customPhrases.setText(settings.getCustomPhrases());
         }
@@ -153,6 +154,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     }
 
     private void preview() {
+        binding.previewStage.setVisibility(View.VISIBLE);
         main.removeCallbacks(saveCustom);
         saveCustom.run();
         SubliminalSettings settings = repository.load();
@@ -167,7 +169,9 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.previewText.animate().alpha(alpha).setDuration(300L)
                 .withEndAction(() -> binding.previewText.animate().alpha(0f)
                         .setStartDelay(Math.max(0L, settings.getVisibleMillis() - 600L))
-                        .setDuration(300L).start()).start();
+                        .setDuration(300L).withEndAction(() -> {
+                            if (binding != null) binding.previewStage.setVisibility(View.GONE);
+                        }).start()).start();
     }
 
     private Set<String> selectedPacks() {
@@ -185,21 +189,10 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
                 binding.packFindom, binding.packCustom};
     }
 
-    private SubliminalSettings.Preset presetFor(int id) {
-        if (id == R.id.preset_gentle) return SubliminalSettings.Preset.GENTLE;
-        if (id == R.id.preset_strict) return SubliminalSettings.Preset.STRICT;
-        if (id == R.id.preset_ultra) return SubliminalSettings.Preset.ULTRA;
-        return SubliminalSettings.Preset.NORMAL;
-    }
-
-    private int idFor(SubliminalSettings.Preset preset) {
-        switch (preset) {
-            case GENTLE: return R.id.preset_gentle;
-            case STRICT: return R.id.preset_strict;
-            case ULTRA: return R.id.preset_ultra;
-            case NORMAL:
-            default: return R.id.preset_normal;
-        }
+    private String presetLabel(int step) {
+        int[] labels = {R.string.subliminal_preset_gentle, R.string.subliminal_preset_normal,
+                R.string.subliminal_preset_strict, R.string.subliminal_preset_ultra};
+        return getString(labels[step]);
     }
 
     @Override protected void onPause() {

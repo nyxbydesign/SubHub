@@ -67,7 +67,7 @@ public final class ExportService extends Service {
     private void run(String job) {
         try (ExportJobStore store = new ExportJobStore(this)) {
             ExportOptions options = store.options(job);
-            SettingsRepository settings = new SettingsRepository(ExportSettings.frozen(store.snapshot(job)));
+            SettingsRepository settings = SettingsRepository.forPreferences(ExportSettings.frozen(store.snapshot(job)));
             com.subhub.app.settings.CensorAppearance appearance = settings.loadAppearance();
             try (DetectionEngine engine = new DetectionEngine(this, settings.loadDetectorConfig());
                  CensorRenderer renderer = new CensorRenderer(this, ExportMedia.assets(store.directory(job),

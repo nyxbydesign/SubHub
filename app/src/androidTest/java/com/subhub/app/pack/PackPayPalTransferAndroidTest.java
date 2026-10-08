@@ -70,7 +70,7 @@ public final class PackPayPalTransferAndroidTest {
         assertFalse(store.vaultState().isReady());
         assertFalse(store.pendingVaultSetup().isPresent());
         assertEquals("https://paypal.me/new-synthetic", new PenanceManager(context).getPayPalLink());
-        assertTrue(SubHubPackLocks.isLocked(context, SubHubPackSchema.WALLET));
+        assertFalse(imported.manifestWithoutIntegrity(Map.of()).has("lockGroups"));
         String persisted = prefs("subhub_pack_state_v1").getAll().toString()
                 + prefs(PayPalCredentialStore.PREFS_NAME).getAll();
         assertFalse(persisted.contains("old-synthetic-secret"));
@@ -80,7 +80,7 @@ public final class PackPayPalTransferAndroidTest {
         assertTrue(manager.deactivate());
         assertEquals(original, prefs(PayPalCredentialStore.PREFS_NAME).getAll());
         assertEquals("https://paypal.me/old-synthetic", new PenanceManager(context).getPayPalLink());
-        assertFalse(SubHubPackLocks.isLocked(context, SubHubPackSchema.WALLET));
+        assertFalse(imported.manifestWithoutIntegrity(Map.of()).has("lockGroups"));
     }
 
     @Test public void wrongPasswordSubModeAndChangedEnvelopeCannotMutateWallet() throws Exception {
@@ -180,7 +180,7 @@ public final class PackPayPalTransferAndroidTest {
     private SubHubPack encryptedPack(String merchant) throws Exception {
         SubHubPack pack = manager.createBlank();
         pack.setSection(SubHubPackSchema.WALLET, new JSONObject().put("daily_cap_cents", 1234));
-        pack.setGroupLocked(SubHubPackSchema.WALLET, true);
+        assertFalse(pack.manifestWithoutIntegrity(Map.of()).has("lockGroups"));
         try (PackPayPalCipher.Payload value = new PackPayPalCipher.Payload("SANDBOX", merchant,
                 "new-synthetic-secret", "https://paypal.me/new-synthetic")) {
             pack.setEncryptedPayPal(PackPayPalCipher.encrypt(pack.getId(), pack.getOriginDeviceId(), value, PASSWORD));

@@ -46,9 +46,8 @@ public final class AtmosphereContractTest {
         try (ActivityScenario<AtmosphereActivity> scenario =
                      ActivityScenario.launch(AtmosphereActivity.class)) {
             scenario.onActivity(activity -> {
-                assertEquals(activity.getString(R.string.atmosphere_subtitle_dom),
-                        ((TextView) activity.findViewById(R.id.atmosphere_subtitle))
-                                .getText().toString());
+                assertEquals(View.GONE,
+                        activity.findViewById(R.id.primary_header_subtitle).getVisibility());
                 assertNotNull(activity.findViewById(R.id.whispers_card));
                 assertNotNull(activity.findViewById(R.id.popup_storm_card));
                 assertEquals(View.VISIBLE,

@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.RectF;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -15,26 +16,49 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OnnxValue;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
+import ai.onnxruntime.TensorInfo;
+import ai.onnxruntime.providers.NNAPIFlags;
 
 /** Owns the ONNX Runtime session and converts Android bitmaps to model input. */
 public final class DetectionEngine implements AutoCloseable {
     private static final String TAG = "DetectionEngine";
     private static final String PROVIDER_PREFS = "detector_provider_cache";
+    private static final String PROVIDER_CONFIG_REVISION = "ep-v3";
     private static final float INV_255 = 1f / 255f;
+    private static final AtomicLong NATIVE_RUN_SEQUENCE = new AtomicLong();
+    private static final ExecutorService REALTIME_PREPROCESS_EXECUTOR =
+            Executors.newFixedThreadPool(3, runnable -> preprocessThread(
+                    runnable, "SubHub-fast-input", Process.THREAD_PRIORITY_DISPLAY));
+    private static final ExecutorService QUALITY_PREPROCESS_EXECUTOR =
+            Executors.newFixedThreadPool(3, runnable -> preprocessThread(
+                    runnable, "SubHub-quality-input", Process.THREAD_PRIORITY_DEFAULT));
 
     private final Context context;
     private final OrtEnvironment environment;
     private final DetectionPostProcessor postProcessor = new DetectionPostProcessor();
+    private final InferencePerformanceHints performanceHints;
+    private final boolean latencyPriority;
+    private final boolean nnapiFp16Relaxation;
+    private final ExecutorService preprocessExecutor;
     private DetectorConfig config;
     private OrtSession session;
     private String inputName = "images";
@@ -42,17 +66,43 @@ public final class DetectionEngine implements AutoCloseable {
     private String activeModel = "";
     private Bitmap letterbox;
     private Canvas letterboxCanvas;
+    private int bufferWidth;
+    private int bufferHeight;
     private int[] pixels;
-    private float[] input;
+    private float[] inputValues;
     private FloatBuffer directInput;
     private OnnxTensor inputTensor;
     private Map<String, OnnxTensor> inferenceInputs;
     private long lastInferenceMs;
+    private long lastPreprocessMs;
+    private long lastRuntimeMs;
+    private long lastPostprocessMs;
+    private volatile boolean lastRunCancelled;
+    private volatile long lastCancellationMs;
+    private final AtomicReference<InferenceRun> activeInference = new AtomicReference<>();
 
     public DetectionEngine(Context context, DetectorConfig config) {
+        this(context, config, true);
+    }
+
+    public DetectionEngine(
+            Context context, DetectorConfig config, boolean latencyPriority) {
+        this(context, config, latencyPriority, false);
+    }
+
+    DetectionEngine(
+            Context context,
+            DetectorConfig config,
+            boolean latencyPriority,
+            boolean nnapiFp16Relaxation) {
         this.context = context.getApplicationContext();
         this.config = config;
+        this.latencyPriority = latencyPriority;
+        this.nnapiFp16Relaxation = nnapiFp16Relaxation;
+        this.preprocessExecutor = latencyPriority
+                ? REALTIME_PREPROCESS_EXECUTOR : QUALITY_PREPROCESS_EXECUTOR;
         this.environment = OrtEnvironment.getEnvironment();
+        performanceHints = new InferencePerformanceHints(this.context);
         allocateBuffers(config.getInferenceResolution());
     }
 
@@ -89,7 +139,8 @@ public final class DetectionEngine implements AutoCloseable {
                 activeModel = model;
                 Log.i(TAG, "Loaded " + model + " using fastest provider "
                         + fastest.provider + " (" + fastest.benchmarkNanos / 1_000_000f
-                        + " ms" + (cachedProvider == null ? "" : ", cached") + ")");
+                        + " ms" + (cachedProvider == null ? "" : ", cached")
+                        + ", profile=" + (latencyPriority ? "realtime" : "quality") + ")");
                 providerPrefs.edit().putString(cacheKey, fastest.provider).apply();
                 return;
             }
@@ -97,6 +148,74 @@ public final class DetectionEngine implements AutoCloseable {
         if (lastFailure instanceof IOException) throw (IOException) lastFailure;
         if (lastFailure instanceof OrtException) throw (OrtException) lastFailure;
         throw new IOException("No compatible ONNX model asset was found", lastFailure);
+    }
+
+    /**
+     * Creates a session without running provider benchmarks. Live Accessibility startup uses this
+     * for optional quality refinement so provider selection cannot compete with real-time work.
+     */
+    public synchronized void initializeWithoutBenchmark(String fallbackProvider)
+            throws IOException, OrtException {
+        closeSession();
+        String model = config.getModelFilename();
+        byte[] bytes = readAsset(model);
+        String cacheKey = providerCacheKey(model);
+        SharedPreferences providerPrefs = context.getSharedPreferences(
+                PROVIDER_PREFS, Context.MODE_PRIVATE);
+        String cachedProvider = providerPrefs.getString(cacheKey, null);
+        List<String> providers = new java.util.ArrayList<>();
+        // This entry point is used by the optional quality lane. Prefer the device accelerator
+        // before a cached CPU/XNNPACK winner from another profile; otherwise Accessibility's
+        // split-hardware admission can silently disable quality forever.
+        addUniqueProvider(providers, "NNAPI");
+        addUniqueProvider(providers, cachedProvider);
+        addUniqueProvider(providers, fallbackProvider);
+        addUniqueProvider(providers, "CPU");
+        Exception lastFailure = null;
+        for (String provider : providers) {
+            try (OrtSession.SessionOptions options = optionsFor(provider)) {
+                session = environment.createSession(bytes, options);
+                inputName = session.getInputNames().iterator().next();
+                activeProvider = provider;
+                activeModel = model;
+                providerPrefs.edit().putString(cacheKey, provider).apply();
+                Log.i(TAG, "Loaded " + model + " using direct provider " + provider
+                        + " (profile=" + (latencyPriority ? "realtime" : "quality") + ")");
+                return;
+            } catch (Exception error) {
+                lastFailure = error;
+                closeSession();
+                if (provider.equals(cachedProvider)) {
+                    providerPrefs.edit().remove(cacheKey).apply();
+                }
+                Log.w(TAG, "Direct provider " + provider + " rejected " + model
+                        + ": " + error.getMessage());
+            }
+        }
+        if (lastFailure instanceof IOException) throw (IOException) lastFailure;
+        if (lastFailure instanceof OrtException) throw (OrtException) lastFailure;
+        throw new IOException("No direct provider could initialize " + model, lastFailure);
+    }
+
+    private static void addUniqueProvider(List<String> providers, String provider) {
+        if (provider == null || provider.trim().isEmpty() || providers.contains(provider)) return;
+        providers.add(provider);
+    }
+
+    /** Device benchmark hook: creates one requested EP without provider-selection side effects. */
+    public synchronized void initializeForProvider(String provider) throws IOException, OrtException {
+        closeSession();
+        String model = config.getModelFilename();
+        byte[] bytes = readAsset(model);
+        try (OrtSession.SessionOptions options = optionsFor(provider)) {
+            session = environment.createSession(bytes, options);
+        }
+        inputName = session.getInputNames().iterator().next();
+        activeProvider = provider;
+        activeModel = model;
+        Log.i(TAG, "Loaded " + model + " using forced provider " + provider
+                + " (profile=" + (latencyPriority ? "realtime" : "quality")
+                + ", fp16Relaxation=" + nnapiFp16Relaxation + ")");
     }
 
     public synchronized List<Detection> detect(Bitmap frame) throws OrtException {
@@ -107,48 +226,245 @@ public final class DetectionEngine implements AutoCloseable {
     /** Detects from a pre-scaled bitmap while mapping results to the original source frame. */
     public synchronized List<Detection> detect(
             Bitmap frame, int sourceWidth, int sourceHeight) throws OrtException {
+        return detect(frame, sourceWidth, sourceHeight, null);
+    }
+
+    /** Quality-only overload with a lock-free admission token owned by the caller. */
+    public synchronized List<Detection> detect(
+            Bitmap frame,
+            int sourceWidth,
+            int sourceHeight,
+            BooleanSupplier cancellationProbe) throws OrtException {
+        int size = config.getInferenceResolution();
+        return detectInternal(
+                frame, sourceWidth, sourceHeight, size, size, cancellationProbe, false);
+    }
+
+    /**
+     * Runs an opt-in rectangular input through the CPU execution provider.
+     *
+     * <p>The bundled model declares dynamic height and width. Accessibility's portrait fast
+     * bitmap is commonly about 144x320 for a 320px long edge, while the legacy square path pads
+     * it to 320x320. This method keeps the source aspect ratio and avoids that padding, but is
+     * deliberately CPU-only: NNAPI and XNNPACK provider support for changing dynamic shapes is
+     * device/runtime-specific and must not be enabled by accident in the live lane.</p>
+     */
+    public synchronized List<Detection> detectRectangular(
+            Bitmap frame,
+            int sourceWidth,
+            int sourceHeight,
+            int inputWidth,
+            int inputHeight) throws OrtException {
+        return detectRectangular(
+                frame, sourceWidth, sourceHeight, inputWidth, inputHeight, null);
+    }
+
+    /** Quality-cancellation overload for the rectangular benchmark path. */
+    public synchronized List<Detection> detectRectangular(
+            Bitmap frame,
+            int sourceWidth,
+            int sourceHeight,
+            int inputWidth,
+            int inputHeight,
+            BooleanSupplier cancellationProbe) throws OrtException {
+        if (!"CPU".equals(activeProvider)) {
+            throw new IllegalStateException(
+                    "Rectangular inference requires the CPU provider; active=" + activeProvider);
+        }
+        if (inputWidth <= 0 || inputHeight <= 0) {
+            throw new IllegalArgumentException("Rectangular input dimensions must be positive");
+        }
+        return detectInternal(
+                frame, sourceWidth, sourceHeight, inputWidth, inputHeight, cancellationProbe, true);
+    }
+
+    private List<Detection> detectInternal(
+            Bitmap frame,
+            int sourceWidth,
+            int sourceHeight,
+            int inputWidth,
+            int inputHeight,
+            BooleanSupplier cancellationProbe,
+            boolean rectangularInput) throws OrtException {
         if (session == null || frame == null || frame.getWidth() <= 0 || frame.getHeight() <= 0) {
             return Collections.emptyList();
         }
         sourceWidth = Math.max(1, sourceWidth);
         sourceHeight = Math.max(1, sourceHeight);
-        long started = System.currentTimeMillis();
-        int size = config.getInferenceResolution();
-        float scale = (float) size / Math.max(sourceWidth, sourceHeight);
-        letterbox.eraseColor(Color.BLACK);
-        letterboxCanvas.drawBitmap(
-                frame,
-                null,
-                new RectF(0f, 0f, sourceWidth * scale, sourceHeight * scale),
-                null);
-        letterbox.getPixels(pixels, 0, size, 0, 0, size, size);
-
-        int plane = size * size;
-        for (int index = 0; index < plane; index++) {
-            int pixel = pixels[index];
-            input[index] = ((pixel >>> 16) & 0xff) * INV_255;
-            input[plane + index] = ((pixel >>> 8) & 0xff) * INV_255;
-            input[plane * 2 + index] = (pixel & 0xff) * INV_255;
+        InferenceRun inferenceRun = latencyPriority ? null : new InferenceRun();
+        lastRunCancelled = false;
+        if (inferenceRun != null && !activeInference.compareAndSet(null, inferenceRun)) {
+            inferenceRun.close();
+            throw new IllegalStateException("Quality inference is already active");
         }
-
-        ensureInputTensor(size);
-        directInput.position(0);
-        directInput.put(input);
-        directInput.position(0);
-        try (OrtSession.Result result = session.run(inferenceInputs)) {
-            OnnxValue value = result.get(0);
-            Object raw = value.getValue();
-            if (!(raw instanceof float[][][])) {
-                Log.e(TAG, "Unexpected model output type: " + raw.getClass());
-                return Collections.emptyList();
+        long started = SystemClock.elapsedRealtimeNanos();
+        try {
+            if (shouldCancel(inferenceRun, cancellationProbe)) {
+                return recordCancelledRun(started);
             }
-            float[][][] batch = (float[][][]) raw;
-            if (batch.length == 0) return Collections.emptyList();
-            List<Detection> detections = postProcessor.decode(
-                    batch[0], sourceWidth, sourceHeight, size, config);
-            lastInferenceMs = System.currentTimeMillis() - started;
-            return detections;
+            performanceHints.begin(latencyPriority
+                    ? config.getDetectionIntervalMs()
+                    : Math.max(200L, config.getDetectionIntervalMs()));
+            ensureBuffers(inputWidth, inputHeight);
+            float scale = Math.min(
+                    (float) inputWidth / sourceWidth,
+                    (float) inputHeight / sourceHeight);
+            int expectedWidth = Math.max(1, Math.round(sourceWidth * scale));
+            int expectedHeight = Math.max(1, Math.round(sourceHeight * scale));
+            if (frame.getWidth() == expectedWidth && frame.getHeight() == expectedHeight
+                    && expectedWidth <= inputWidth && expectedHeight <= inputHeight) {
+                // Accessibility already paid for a hardware-accelerated downscale before readback.
+                // Write that compact bitmap directly into the letterboxed pixel stride instead of
+                // software-scaling/copying it through a second Canvas on every inference pass.
+                Arrays.fill(pixels, Color.BLACK);
+                frame.getPixels(pixels, 0, inputWidth, 0, 0, expectedWidth, expectedHeight);
+            } else {
+                letterbox.eraseColor(Color.BLACK);
+                letterboxCanvas.drawBitmap(
+                        frame,
+                        null,
+                        new RectF(0f, 0f, sourceWidth * scale, sourceHeight * scale),
+                        null);
+                letterbox.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight);
+            }
+
+            int plane = inputWidth * inputHeight;
+            populateInputValues(plane);
+            directInput.clear();
+            directInput.put(inputValues, 0, plane * 3);
+            directInput.flip();
+            if (shouldCancel(inferenceRun, cancellationProbe)) {
+                return recordCancelledRun(started);
+            }
+
+            ensureInputTensor(inputWidth, inputHeight);
+            long runtimeStarted = SystemClock.elapsedRealtimeNanos();
+            long nativeRunId = NATIVE_RUN_SEQUENCE.incrementAndGet();
+            String lane = latencyPriority ? "fast" : "quality";
+            boolean nativeCompleted = false;
+            OrtSession.Result nativeResult;
+            if (inferenceRun != null) inferenceRun.enterNativeRun();
+            Log.i(TAG, "INFERENCE_NATIVE_BEGIN lane=" + lane
+                    + " runId=" + nativeRunId
+                    + " provider=" + activeProvider
+                    + " uptimeNanos=" + runtimeStarted);
+            try {
+                nativeResult = inferenceRun == null
+                        ? session.run(inferenceInputs)
+                        : session.run(inferenceInputs, inferenceRun.options);
+                nativeCompleted = true;
+            } catch (OrtException error) {
+                if (shouldCancel(inferenceRun, cancellationProbe)) {
+                    return recordCancelledRun(started);
+                }
+                throw error;
+            } finally {
+                if (inferenceRun != null) inferenceRun.leaveNativeRun();
+                long nativeEnded = SystemClock.elapsedRealtimeNanos();
+                boolean cancelled = inferenceRun != null
+                        && inferenceRun.isCancellationRequested();
+                Log.i(TAG, "INFERENCE_NATIVE_END lane=" + lane
+                        + " runId=" + nativeRunId
+                        + " status=" + (cancelled ? "cancelled"
+                                : nativeCompleted ? "completed" : "error")
+                        + " durationMs=" + nanosToMillis(nativeEnded - runtimeStarted)
+                        + " uptimeNanos=" + nativeEnded);
+            }
+            try (OrtSession.Result result = nativeResult) {
+                long runtimeFinished = SystemClock.elapsedRealtimeNanos();
+                if (inferenceRun != null && inferenceRun.isCancellationRequested()) {
+                    return recordCancelledRun(started);
+                }
+                OnnxValue value = result.get(0);
+                if (!(value instanceof OnnxTensor)) {
+                    Log.e(TAG, "Unexpected model output type: " + value.getClass());
+                    return Collections.emptyList();
+                }
+                OnnxTensor output = (OnnxTensor) value;
+                TensorInfo info = output.getInfo();
+                long[] shape = info.getShape();
+                if (shape.length != 3 || shape[0] != 1L
+                        || shape[1] != DetectionPostProcessor.OUTPUT_FEATURES
+                        || shape[1] > Integer.MAX_VALUE || shape[2] <= 0L
+                        || shape[2] > Integer.MAX_VALUE) {
+                    Log.e(TAG, "Unexpected model output shape: "
+                            + java.util.Arrays.toString(shape));
+                    return Collections.emptyList();
+                }
+                FloatBuffer outputBuffer = output.getFloatBuffer();
+                List<Detection> detections = rectangularInput
+                        ? postProcessor.decode(
+                                outputBuffer,
+                                (int) shape[1],
+                                (int) shape[2],
+                                sourceWidth,
+                                sourceHeight,
+                                inputWidth,
+                                inputHeight,
+                                config)
+                        : postProcessor.decode(
+                                outputBuffer,
+                                (int) shape[1],
+                                (int) shape[2],
+                                sourceWidth,
+                                sourceHeight,
+                                inputWidth,
+                                config);
+                long finished = SystemClock.elapsedRealtimeNanos();
+                // Close the cancellation window before making decoded output observable. A fast
+                // frame and this commit race on the same monitor: whichever wins determines
+                // whether the quality result is discarded or may safely reach the caller.
+                if (shouldCancel(inferenceRun, cancellationProbe)
+                        || (inferenceRun != null && !inferenceRun.finishForCommit())) {
+                    return recordCancelledRun(started);
+                }
+                lastPreprocessMs = nanosToMillis(runtimeStarted - started);
+                lastRuntimeMs = nanosToMillis(runtimeFinished - runtimeStarted);
+                lastPostprocessMs = nanosToMillis(finished - runtimeFinished);
+                lastInferenceMs = nanosToMillis(finished - started);
+                performanceHints.report(finished - started);
+                return detections;
+            }
+        } finally {
+            if (inferenceRun != null) {
+                activeInference.compareAndSet(inferenceRun, null);
+                inferenceRun.close();
+            }
         }
+    }
+
+    /** Best-effort cancellation used only to give newly arrived real-time work priority. */
+    public boolean cancelActiveInference() {
+        InferenceRun inferenceRun = activeInference.get();
+        return inferenceRun != null && inferenceRun.cancel();
+    }
+
+    public boolean wasLastRunCancelled() { return lastRunCancelled; }
+    public long getLastCancellationMs() { return lastCancellationMs; }
+    public boolean isNativeInferenceRunning() {
+        InferenceRun inferenceRun = activeInference.get();
+        return inferenceRun != null && inferenceRun.isNativeRunActive();
+    }
+
+    private static boolean shouldCancel(
+            InferenceRun inferenceRun,
+            BooleanSupplier cancellationProbe) {
+        if (inferenceRun == null) return false;
+        if (inferenceRun.isCancellationRequested()) return true;
+        if (cancellationProbe == null || !cancellationProbe.getAsBoolean()) return false;
+        inferenceRun.cancel();
+        return true;
+    }
+
+    private List<Detection> recordCancelledRun(long startedNanos) {
+        long elapsed = SystemClock.elapsedRealtimeNanos() - startedNanos;
+        lastRunCancelled = true;
+        lastCancellationMs = nanosToMillis(elapsed);
+        lastInferenceMs = lastCancellationMs;
+        lastPreprocessMs = 0L;
+        lastRuntimeMs = 0L;
+        lastPostprocessMs = 0L;
+        return Collections.emptyList();
     }
 
     public synchronized void setConfig(DetectorConfig value) {
@@ -159,22 +475,46 @@ public final class DetectionEngine implements AutoCloseable {
 
     public String getActiveProvider() { return activeProvider; }
     public String getActiveModel() { return activeModel; }
+    public int getInferenceResolution() { return config.getInferenceResolution(); }
     public long getLastInferenceMs() { return lastInferenceMs; }
+    public long getLastPreprocessMs() { return lastPreprocessMs; }
+    public long getLastRuntimeMs() { return lastRuntimeMs; }
+    public long getLastPostprocessMs() { return lastPostprocessMs; }
+
+    private static long nanosToMillis(long nanos) {
+        return Math.max(0L, Math.round(nanos / 1_000_000d));
+    }
 
     private OrtSession.SessionOptions optionsFor(String provider) throws OrtException {
         OrtSession.SessionOptions options = new OrtSession.SessionOptions();
         options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-        // Keep capture single-flight while letting ONNX parallelize individual kernels inside
-        // the preset's bounded CPU/battery budget.
+        options.setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL);
+        options.setInterOpNumThreads(1);
+        // The real-time lane deliberately keeps its CPU workers hot between 334 ms captures; the
+        // optional quality lane sleeps so it cannot consume the latency budget while idle.
+        options.addConfigEntry("session.inter_op.allow_spinning", "0");
         int threads = Math.max(1, Math.min(config.getInferenceThreads(),
                 Runtime.getRuntime().availableProcessors()));
-        options.setIntraOpNumThreads(threads);
-        options.setInterOpNumThreads(1);
         if ("NNAPI".equals(provider)) {
-            options.addNnapi();
+            options.addConfigEntry("session.intra_op.allow_spinning",
+                    latencyPriority ? "1" : "0");
+            options.setIntraOpNumThreads(threads);
+            // NNAPI's reference CPU device is often slower than ORT's optimized CPU kernels.
+            // Unsupported accelerator nodes still fall back to ORT without changing precision.
+            EnumSet<NNAPIFlags> flags = EnumSet.of(NNAPIFlags.CPU_DISABLED);
+            if (nnapiFp16Relaxation) flags.add(NNAPIFlags.USE_FP16);
+            options.addNnapi(flags);
         } else if ("XNNPACK".equals(provider)) {
-            options.addXnnpack(Collections.emptyMap());
+            // XNNPACK owns a separate intra-op pool. A second multi-threaded ORT pool competes
+            // with it and can make mobile inference slower while consuming substantially more CPU.
+            options.addConfigEntry("session.intra_op.allow_spinning", "0");
+            options.setIntraOpNumThreads(1);
+            options.addXnnpack(Collections.singletonMap(
+                    "intra_op_num_threads", Integer.toString(threads)));
         } else {
+            options.addConfigEntry("session.intra_op.allow_spinning",
+                    latencyPriority ? "1" : "0");
+            options.setIntraOpNumThreads(threads);
             options.addCPU(true);
         }
         return options;
@@ -185,22 +525,27 @@ public final class DetectionEngine implements AutoCloseable {
         FloatBuffer benchmarkInput = ByteBuffer.allocateDirect(
                 size * size * 3 * Float.BYTES)
                 .order(ByteOrder.nativeOrder()).asFloatBuffer();
+        for (int index = 0; index < benchmarkInput.capacity(); index++) {
+            benchmarkInput.put((index & 0xff) * INV_255);
+        }
+        benchmarkInput.flip();
         try (OnnxTensor tensor = OnnxTensor.createTensor(
                 environment,
                 benchmarkInput,
                 new long[]{1, 3, size, size})) {
             Map<String, OnnxTensor> inputs = new LinkedHashMap<>();
             inputs.put(candidate.getInputNames().iterator().next(), tensor);
-            long bestNanos = Long.MAX_VALUE;
-            for (int pass = 0; pass < 3; pass++) {
+            long[] samples = new long[4];
+            for (int pass = 0; pass < 5; pass++) {
                 long started = SystemClock.elapsedRealtimeNanos();
                 try (OrtSession.Result ignored = candidate.run(inputs)) {
-                    // The first pass warms kernels; the next two select on observed device speed.
+                    // The first pass warms kernels; the next four select on sustained median speed.
                 }
                 long elapsed = SystemClock.elapsedRealtimeNanos() - started;
-                if (pass > 0) bestNanos = Math.min(bestNanos, elapsed);
+                if (pass > 0) samples[pass - 1] = elapsed;
             }
-            return bestNanos;
+            Arrays.sort(samples);
+            return samples[1] + (samples[2] - samples[1]) / 2L;
         }
     }
 
@@ -215,7 +560,8 @@ public final class DetectionEngine implements AutoCloseable {
                 candidate = environment.createSession(modelBytes, options);
                 long benchmarkNanos = benchmark(candidate);
                 Log.i(TAG, provider + " benchmark for " + model + ": "
-                        + benchmarkNanos / 1_000_000f + " ms");
+                        + benchmarkNanos / 1_000_000f + " ms profile="
+                        + (latencyPriority ? "realtime" : "quality"));
                 if (benchmarkNanos < fastestNanos) {
                     closeQuietly(fastestSession);
                     fastestSession = candidate;
@@ -235,7 +581,10 @@ public final class DetectionEngine implements AutoCloseable {
 
     private String providerCacheKey(String model) {
         String identity = android.os.Build.FINGERPRINT + '|' + model + '|'
-                + config.getInferenceResolution() + '|' + config.getInferenceThreads();
+                + config.getInferenceResolution() + '|' + config.getInferenceThreads()
+                + '|' + (latencyPriority ? "realtime" : "quality")
+                + '|' + PROVIDER_CONFIG_REVISION
+                + (nnapiFp16Relaxation ? "|nnapi-fp16" : "");
         return "provider_" + Integer.toHexString(identity.hashCode());
     }
 
@@ -250,21 +599,73 @@ public final class DetectionEngine implements AutoCloseable {
     }
 
     private void allocateBuffers(int size) {
+        allocateBuffers(size, size);
+    }
+
+    private void allocateBuffers(int width, int height) {
         closeInputTensor();
-        pixels = new int[size * size];
-        input = new float[size * size * 3];
-        directInput = ByteBuffer.allocateDirect(input.length * Float.BYTES)
+        bufferWidth = width;
+        bufferHeight = height;
+        pixels = new int[width * height];
+        inputValues = new float[width * height * 3];
+        directInput = ByteBuffer.allocateDirect(width * height * 3 * Float.BYTES)
                 .order(ByteOrder.nativeOrder()).asFloatBuffer();
         if (letterbox != null) letterbox.recycle();
-        letterbox = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        letterbox = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         letterboxCanvas = new Canvas(letterbox);
     }
 
+    private void ensureBuffers(int width, int height) {
+        if (bufferWidth != width || bufferHeight != height) allocateBuffers(width, height);
+    }
+
+    private void populateInputValues(int plane) {
+        CountDownLatch finished = new CountDownLatch(3);
+        preprocessExecutor.execute(() -> fillChannel(plane, 0, 16, finished));
+        preprocessExecutor.execute(() -> fillChannel(plane, plane, 8, finished));
+        preprocessExecutor.execute(() -> fillChannel(plane, plane * 2, 0, finished));
+        boolean interrupted = false;
+        while (true) {
+            try {
+                finished.await();
+                break;
+            } catch (InterruptedException ignored) {
+                // Complete the shared-buffer write before returning. Restore interruption after
+                // all three disjoint channel workers have finished.
+                interrupted = true;
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+    }
+
+    private void fillChannel(int plane, int outputOffset, int shift, CountDownLatch finished) {
+        try {
+            for (int index = 0; index < plane; index++) {
+                inputValues[outputOffset + index] =
+                        ((pixels[index] >>> shift) & 0xff) * INV_255;
+            }
+        } finally {
+            finished.countDown();
+        }
+    }
+
+    private static Thread preprocessThread(
+            Runnable runnable, String name, int androidPriority) {
+        Thread thread = new Thread(() -> {
+            Process.setThreadPriority(androidPriority);
+            runnable.run();
+        }, name);
+        thread.setDaemon(true);
+        return thread;
+    }
+
     /** Keeps the native-backed tensor alive across frames instead of reallocating JNI storage. */
-    private void ensureInputTensor(int size) throws OrtException {
-        if (inputTensor != null && inferenceInputs != null) return;
+    private void ensureInputTensor(int width, int height) throws OrtException {
+        if (inputTensor != null && inferenceInputs != null
+                && bufferWidth == width && bufferHeight == height) return;
+        closeInputTensor();
         inputTensor = OnnxTensor.createTensor(
-                environment, directInput, new long[]{1, 3, size, size});
+                environment, directInput, new long[]{1, 3, height, width});
         inferenceInputs = new LinkedHashMap<>(1);
         inferenceInputs.put(inputName, inputTensor);
     }
@@ -304,9 +705,54 @@ public final class DetectionEngine implements AutoCloseable {
         }
     }
 
+    private static final class InferenceRun implements AutoCloseable {
+        final OrtSession.RunOptions options;
+        private final AtomicBoolean cancellationRequested = new AtomicBoolean();
+        private volatile boolean nativeRunActive;
+        private boolean commitClosed;
+        private boolean closed;
+
+        InferenceRun() throws OrtException {
+            options = new OrtSession.RunOptions();
+        }
+
+        synchronized boolean cancel() {
+            if (closed || commitClosed
+                    || !cancellationRequested.compareAndSet(false, true)) return false;
+            try {
+                options.setTerminate(true);
+            } catch (OrtException error) {
+                Log.w(TAG, "Could not preempt quality inference", error);
+            }
+            // Even if the execution provider cannot interrupt its current native call, the
+            // software cancellation remains authoritative and its result will not be committed.
+            return true;
+        }
+
+        synchronized boolean finishForCommit() {
+            if (closed || cancellationRequested.get()) return false;
+            commitClosed = true;
+            return true;
+        }
+
+        boolean isCancellationRequested() { return cancellationRequested.get(); }
+        boolean isNativeRunActive() { return nativeRunActive; }
+        void enterNativeRun() { nativeRunActive = true; }
+        void leaveNativeRun() { nativeRunActive = false; }
+
+        @Override
+        public synchronized void close() {
+            if (closed) return;
+            closed = true;
+            options.close();
+        }
+    }
+
     @Override
     public synchronized void close() {
+        performanceHints.close();
         closeSession();
+        inputValues = null;
         directInput = null;
         if (letterbox != null) letterbox.recycle();
         letterbox = null;

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="header_subtitle">ローカルガーディアン</string>
-    <string name="start_protection">保護を開始</string><string name="stop_protection">保護を停止</string><string name="settings_title">検閲設定</string><string name="back">戻る</string>
+    <string name="header_subtitle">SubHub</string>
+    <string name="start_protection">Enter Service</string><string name="stop_protection">Leave Service</string><string name="settings_title">Censor</string><string name="back">戻る</string>
     <string name="help_title">ヘルプと安全</string><string name="help_subtitle">設定、プライバシー、修復、機能ガイド。</string>
-    <string name="help_permission_check">権限チェック</string><string name="help_fix_permissions">次の権限を修復</string><string name="help_accessibility_settings">ユーザー補助キャプチャ設定</string><string name="help_choose_language">アプリの言語を選択</string>
+    <string name="help_permission_check">権限</string><string name="help_fix_permissions">権限を設定</string><string name="help_accessibility_settings">Android のユーザー補助</string><string name="help_choose_language">言語を選択</string>
     <string name="permission_all_granted">オーバーレイと通知の権限は使用できます。</string><string name="permission_overlay_name">他のアプリの上に表示</string><string name="permission_notifications_name">通知</string><string name="permission_missing_fmt">不足: %1$s</string>
     <string name="settings_language">言語</string><string name="language_system_default">システムの既定値</string>
-    <string name="help_getting_started">はじめに</string><string name="help_permissions">権限</string><string name="help_app_protection">アプリ保護</string><string name="help_censored_downloads">エクスポートとダウンロード</string><string name="help_customisation">カスタマイズ</string><string name="help_popup_storm">Popup Storm の安全性</string><string name="help_troubleshooting">トラブルシューティング</string><string name="help_privacy">プライバシーとデータ</string><string name="help_updates">ビルドと更新</string>
-    <string name="onboarding_title">あなた専用のガーディアン</string><string name="onboarding_body">SubHub は端末内で検閲し、Android の画面キャプチャ同意を求め、通常の停止とアンインストール操作を常に利用可能にします。</string><string name="onboarding_help">ガイドを開く</string><string name="onboarding_dismiss">了解</string>
-    <string name="shortcut_start_protection">保護を開始</string><string name="shortcut_start_protection_long">SubHub の保護を開始</string>
+    <string name="help_getting_started">はじめに</string><string name="help_permissions">権限</string><string name="help_app_protection">サービスロック</string><string name="help_censored_downloads">エクスポートとダウンロード</string><string name="help_customisation">カスタマイズ</string><string name="help_popup_storm">Popup Storm の安全性</string><string name="help_troubleshooting">トラブルシューティング</string><string name="help_privacy">プライバシーとデータ</string><string name="help_updates">ビルドと更新</string>
+    <string name="onboarding_title">SubHub へようこそ</string><string name="onboarding_body">Dom モードで機能を設定します。Enter Service を押すと、Sub モードで設定した機能を使用できます。</string><string name="onboarding_help">ガイドを開く</string><string name="onboarding_dismiss">続行</string>
+    <string name="shortcut_start_protection">Enter Service</string><string name="shortcut_start_protection_long">Enter SubHub service</string>
 </resources>

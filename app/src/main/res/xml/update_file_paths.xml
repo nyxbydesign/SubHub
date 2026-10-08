@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="verified_updates" path="updates/" />
     <cache-path name="shared_packs" path="shared-packs/" />
+    <cache-path name="censor_lab_exports" path="censor-lab/exports/" />
 </paths>

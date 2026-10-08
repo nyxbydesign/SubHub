@@ -22,7 +22,8 @@
             <corners android:radius="1dp" />
         </shape>
     </item>
-    <item android:height="2dp" android:gravity="bottom">
+    <item android:height="1dp" android:gravity="bottom"
+        android:bottom="1dp" android:left="18dp" android:right="18dp">
         <shape android:shape="rectangle">
             <gradient android:angle="0" android:startColor="@color/accent_dim"
                 android:endColor="@color/accent_hot_dim" />

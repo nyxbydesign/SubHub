@@ -18,14 +18,17 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingStart="@dimen/page_margin"
-            android:paddingTop="12dp"
+            android:paddingTop="@dimen/primary_header_top"
             android:paddingEnd="@dimen/page_margin"
-            android:paddingBottom="16dp">
+            android:paddingBottom="@dimen/bottom_nav_clearance">
 
-            <!-- One command deck: identity, readiness, duration, and action. -->
+            <include layout="@layout/view_primary_header" />
+
+            <!-- One command deck: readiness, duration, and action. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/bg_home_command"
                 android:orientation="vertical"
                 android:paddingStart="13dp"
@@ -33,7 +36,36 @@
                 android:paddingEnd="13dp"
                 android:paddingBottom="14dp">
 
-                <include layout="@layout/view_main_header_nav" />
+                <LinearLayout
+                    android:id="@+id/onboarding_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/bg_home_permission"
+                    android:orientation="vertical"
+                    android:padding="12dp"
+                    android:visibility="gone">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/onboarding_body"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="horizontal">
+                        <TextView android:id="@+id/onboarding_help"
+                            style="@style/Widget.SubHub.CompactAction"
+                            android:text="@string/onboarding_help" />
+                        <TextView android:id="@+id/onboarding_dismiss"
+                            style="@style/Widget.SubHub.CompactAction"
+                            android:layout_marginStart="8dp"
+                            android:text="@string/onboarding_dismiss" />
+                    </LinearLayout>
+                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/permission_card"
@@ -90,7 +122,8 @@
                     <TextView
                         android:id="@+id/permission_action"
                         android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
                         android:layout_marginStart="8dp"
                         android:background="@drawable/bg_outline_button"
                         android:gravity="center"
@@ -132,14 +165,6 @@
                                 android:textSize="11sp"
                                 android:textStyle="bold" />
 
-                            <TextView
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
-                                android:includeFontPadding="false"
-                                android:text="@string/commitment_timer_help"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="9sp" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -147,8 +172,10 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="9dp"
                             android:orientation="horizontal">
-                            <TextView android:id="@+id/commitment_timer_1h" style="@style/Widget.SubHub.CompactAction" android:layout_height="48dp" android:text="@string/commitment_timer_1h" />
-                            <TextView android:id="@+id/commitment_timer_24h" style="@style/Widget.SubHub.CompactAction" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="@string/commitment_timer_24h" />
+                            <TextView android:id="@+id/commitment_timer_1h" style="@style/Widget.SubHub.CompactAction" android:layout_height="wrap_content"
+                                android:minHeight="48dp" android:text="@string/commitment_timer_1h" />
+                            <TextView android:id="@+id/commitment_timer_24h" style="@style/Widget.SubHub.CompactAction" android:layout_height="wrap_content"
+                                android:minHeight="48dp" android:layout_marginStart="8dp" android:text="@string/commitment_timer_24h" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -156,14 +183,17 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
                             android:orientation="horizontal">
-                            <TextView android:id="@+id/commitment_timer_7d" style="@style/Widget.SubHub.CompactAction" android:layout_height="48dp" android:text="@string/commitment_timer_7d" />
-                            <TextView android:id="@+id/commitment_timer_30d" style="@style/Widget.SubHub.CompactAction" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="@string/commitment_timer_30d" />
+                            <TextView android:id="@+id/commitment_timer_7d" style="@style/Widget.SubHub.CompactAction" android:layout_height="wrap_content"
+                                android:minHeight="48dp" android:text="@string/commitment_timer_7d" />
+                            <TextView android:id="@+id/commitment_timer_30d" style="@style/Widget.SubHub.CompactAction" android:layout_height="wrap_content"
+                                android:minHeight="48dp" android:layout_marginStart="8dp" android:text="@string/commitment_timer_30d" />
                         </LinearLayout>
 
                         <TextView
                             android:id="@+id/commitment_timer_permanent"
                             style="@style/Widget.SubHub.OutlineAction"
-                            android:layout_height="48dp"
+                            android:layout_height="wrap_content"
+                            android:minHeight="48dp"
                             android:layout_marginTop="8dp"
                             android:text="@string/commitment_timer_permanent" />
                     </LinearLayout>
@@ -194,7 +224,8 @@
                         <TextView
                             android:id="@+id/button_commitment_view"
                             style="@style/Widget.SubHub.OutlineAction"
-                            android:layout_height="48dp"
+                            android:layout_height="wrap_content"
+                            android:minHeight="48dp"
                             android:layout_marginTop="8dp"
                             android:text="@string/commitment_view_pact" />
                     </LinearLayout>
@@ -203,7 +234,8 @@
                 <Button
                     android:id="@+id/button_protection"
                     style="@style/Widget.SubHub.ServiceButton"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginTop="10dp"
                     android:background="@drawable/bg_home_primary_action"
                     android:backgroundTint="@null"
@@ -267,7 +299,7 @@
                     <LinearLayout
                         android:id="@+id/sub_censor_card"
                         android:layout_width="0dp"
-                        android:layout_height="108dp"
+                        android:layout_height="88dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_home_module"
                         android:clickable="true"
@@ -293,6 +325,7 @@
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="@string/sub_censor_title"
+                            android:visibility="gone"
                             android:textColor="@color/text_secondary"
                             android:textSize="8sp"
                             android:textStyle="bold" />
@@ -309,14 +342,14 @@
                             android:ellipsize="end"
                             android:gravity="center"
                             android:includeFontPadding="false"
-                            android:maxLines="1"
-                            android:text="@string/sub_censor_idle"
+                            android:maxLines="2"
                             android:textColor="@color/text_primary"
                             android:textSize="10sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:id="@+id/sub_censor_summary"
+                            android:visibility="gone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="3dp"
@@ -334,7 +367,7 @@
                     <LinearLayout
                         android:id="@+id/sub_limits_card"
                         android:layout_width="0dp"
-                        android:layout_height="108dp"
+                        android:layout_height="88dp"
                         android:layout_marginStart="7dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_home_module"
@@ -361,6 +394,7 @@
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="@string/sub_limits_title"
+                            android:visibility="gone"
                             android:textColor="@color/text_secondary"
                             android:textSize="8sp"
                             android:textStyle="bold" />
@@ -376,13 +410,14 @@
                             android:autoSizeTextType="uniform"
                             android:ellipsize="end"
                             android:gravity="center"
-                            android:maxLines="1"
+                            android:maxLines="2"
                             android:textColor="@color/text_primary"
                             android:textSize="10sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:id="@+id/sub_limits_detail"
+                            android:visibility="gone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="3dp"
@@ -400,7 +435,7 @@
                     <LinearLayout
                         android:id="@+id/sub_wallet_card"
                         android:layout_width="0dp"
-                        android:layout_height="108dp"
+                        android:layout_height="88dp"
                         android:layout_marginStart="7dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_home_module"
@@ -427,6 +462,7 @@
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="@string/sub_wallet_title"
+                            android:visibility="gone"
                             android:textColor="@color/text_secondary"
                             android:textSize="8sp"
                             android:textStyle="bold" />
@@ -442,13 +478,14 @@
                             android:autoSizeTextType="uniform"
                             android:ellipsize="end"
                             android:gravity="center"
-                            android:maxLines="1"
+                            android:maxLines="2"
                             android:textColor="@color/text_primary"
                             android:textSize="10sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:id="@+id/sub_wallet_summary"
+                            android:visibility="gone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="3dp"
@@ -466,7 +503,7 @@
                     <LinearLayout
                         android:id="@+id/sub_atmosphere_card"
                         android:layout_width="0dp"
-                        android:layout_height="108dp"
+                        android:layout_height="88dp"
                         android:layout_marginStart="7dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_home_module"
@@ -493,6 +530,7 @@
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="@string/atmosphere_title"
+                            android:visibility="gone"
                             android:textColor="@color/text_secondary"
                             android:textSize="8sp"
                             android:textStyle="bold" />
@@ -508,13 +546,14 @@
                             android:autoSizeTextType="uniform"
                             android:ellipsize="end"
                             android:gravity="center"
-                            android:maxLines="1"
+                            android:maxLines="2"
                             android:textColor="@color/text_primary"
                             android:textSize="10sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:id="@+id/sub_atmosphere_summary"
+                            android:visibility="gone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="3dp"
@@ -533,7 +572,8 @@
                 <TextView
                     android:id="@+id/sub_wallet_pay"
                     style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="44dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginTop="7dp"
                     android:text="@string/sub_wallet_pay"
                     android:textColor="@color/accent_mid"
@@ -542,7 +582,8 @@
                 <TextView
                     android:id="@+id/sub_wallet_pause"
                     style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="44dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginTop="6dp"
                     android:textColor="@color/accent_mid"
                     android:visibility="gone" />
@@ -597,9 +638,20 @@
                     android:id="@+id/button_statistics"
                     style="@style/Widget.SubHub.OutlineAction"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_marginTop="8dp"
                     android:text="@string/statistics_view" />
+
+                <LinearLayout android:id="@+id/home_lifetime_stats" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="11dp" android:orientation="vertical">
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false" android:text="@string/home_lifetime_title" android:textColor="@color/text_secondary" android:textSize="10sp" android:textStyle="bold" />
+                    <LinearLayout
+                        android:id="@+id/home_lifetime_metrics"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="7dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
 
                 <LinearLayout android:id="@+id/achievements_home_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:orientation="vertical" android:padding="12dp">
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
@@ -614,76 +666,10 @@
                         <TextView android:id="@+id/achievements_home_progress_percent" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="@color/accent_hot" android:textSize="10sp" android:textStyle="bold" />
                     </LinearLayout>
                     <ProgressBar android:id="@+id/achievements_home_progress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="6dp" android:layout_marginTop="7dp" android:max="100" android:progressBackgroundTint="@color/outline_subtle" android:progressTint="@color/accent_hot" />
-                    <TextView android:id="@+id/button_achievements" android:layout_width="match_parent" android:layout_height="40dp" android:layout_marginTop="7dp" android:gravity="center_vertical" android:text="@string/achievements_home_action" android:textColor="@color/accent_mid" android:textSize="10sp" android:textStyle="bold" />
+                    <TextView android:id="@+id/button_achievements" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:minHeight="48dp" android:layout_marginTop="7dp" android:gravity="center_vertical" android:text="@string/achievements_home_action" android:textColor="@color/accent_mid" android:textSize="10sp" android:textStyle="bold" />
                 </LinearLayout>
 
-                <LinearLayout android:id="@+id/home_lifetime_stats" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="11dp" android:orientation="vertical">
-                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false" android:text="@string/home_lifetime_title" android:textColor="@color/text_secondary" android:textSize="10sp" android:textStyle="bold" />
-                    <LinearLayout
-                        android:id="@+id/home_lifetime_metrics"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="7dp"
-                        android:orientation="vertical" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/button_help"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="11dp"
-                    android:background="@drawable/bg_home_module"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center_vertical"
-                    android:minHeight="58dp"
-                    android:orientation="horizontal"
-                    android:paddingHorizontal="12dp"
-                    android:paddingVertical="9dp">
-
-                    <ImageView
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="@drawable/bg_home_metric"
-                        android:contentDescription="@string/help_title"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_tab_help"
-                        app:tint="@color/accent_mid" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:includeFontPadding="false"
-                            android:text="@string/help_title"
-                            android:textColor="@color/text_primary"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:maxLines="1"
-                            android:text="@string/help_subtitle"
-                            android:textColor="@color/text_muted"
-                            android:textSize="9sp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="›"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="20sp" />
-                </LinearLayout>
             </LinearLayout>
 
             <!-- Settings are in their own tabs; these hidden views retain controller bindings. -->
@@ -691,19 +677,12 @@
                 <TextView android:id="@+id/button_accessibility_capture" android:layout_width="match_parent" android:layout_height="wrap_content" />
                 <TextView android:id="@+id/button_censor_settings" android:layout_width="match_parent" android:layout_height="wrap_content" />
                 <TextView android:id="@+id/button_export" android:layout_width="match_parent" android:layout_height="wrap_content" />
-                <LinearLayout android:id="@+id/onboarding_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
-                    <TextView android:id="@+id/onboarding_help" android:layout_width="match_parent" android:layout_height="wrap_content" />
-                    <TextView android:id="@+id/onboarding_dismiss" android:layout_width="match_parent" android:layout_height="wrap_content" />
-                </LinearLayout>
                 <LinearLayout android:id="@+id/penance_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
                     <TextView android:id="@+id/penance_status" android:layout_width="match_parent" android:layout_height="wrap_content" />
                     <TextView android:id="@+id/button_penance_view" android:layout_width="match_parent" android:layout_height="wrap_content" />
                 </LinearLayout>
             </LinearLayout>
 
-            <Space
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/bottom_nav_clearance" />
         </LinearLayout>
     </ScrollView>
 

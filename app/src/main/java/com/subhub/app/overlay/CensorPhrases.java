@@ -43,13 +43,29 @@ public final class CensorPhrases {
     private static Map<String, List<String>> categories() {
         Map<String, List<String>> value = new LinkedHashMap<>();
         value.put("short", Arrays.asList("BLOCKED", "CENSORED", "DENIED", "LOCKED"));
-        value.put("denial", Arrays.asList("NO PEEKING", "ACCESS DENIED", "EYES OFF"));
+        value.put("denial", Arrays.asList(
+                "NICE TRY", "STILL NO", "NO PEEKING", "DENIED, DARLING", "NOT TODAY",
+                "DREAM ON", "EYES OFF", "LOOK ELSEWHERE", "WISHFUL THINKING", "RULES ARE RULES"));
         value.put("humiliation", Arrays.asList(
-                "EYES FORWARD, BETA", "ASK PERMISSION", "BEHAVE, CUCK"));
-        value.put("edge", Arrays.asList("LOOK AWAY", "HANDS OFF", "NO RELIEF"));
-        value.put("findom", Arrays.asList("TRIBUTE FIRST", "PAY TO PEEK", "EARN IT"));
-        value.put("ntr", Arrays.asList("NOT YOURS TO SEE", "KEEP SCROLLING"));
-        value.put("gooner", Arrays.asList("BREAK THE LOOP", "HANDS OFF", "CLOSE IT"));
+                "CUTE TRY, BETA", "BEHAVE, CUCK", "KNOW YOUR ROLE", "ASK NICELY",
+                "EYES DOWN, BETA", "LESS BRAVADO", "GOOD LITTLE BETA", "STILL WAITING?",
+                "BACK IN LINE", "KEEP DREAMING, CUCK"));
+        value.put("edge", Arrays.asList(
+                "NOT YET", "PATIENCE, TROUBLE", "WAIT FOR IT", "ENJOY THE WAIT",
+                "SO CLOSE", "SLOW DOWN", "ANTICIPATION", "STILL WAITING",
+                "HOLD THAT THOUGHT", "THE WAIT CONTINUES"));
+        value.put("findom", Arrays.asList(
+                "VIP VIEW", "LUXURY DENIED", "TRIBUTE THEATRE", "PREMIUM TEMPTATION",
+                "EXCLUSIVE ACCESS", "VELVET ROPE", "NOT ON THE LIST", "PRIVATE COLLECTION",
+                "LOOKS EXPENSIVE", "PRICELESS PATIENCE"));
+        value.put("ntr", Arrays.asList(
+                "NOT YOUR VIEW", "SIDE SEAT", "SPECTATOR ONLY", "WATCH THE RULES",
+                "PRIVATE SHOW", "WRONG INVITATION", "OUTSIDE LOOKING IN", "JUST A SPECTATOR",
+                "RESERVED ELSEWHERE", "GUEST LIST CLOSED"));
+        value.put("gooner", Arrays.asList(
+                "CAUGHT LOOKING", "THERE YOU GO AGAIN", "ONE MORE PEEK?", "EYES UP, TROUBLE",
+                "NICE EXCUSE", "SCROLLING, HUH?", "THAT LOOK AGAIN", "OH, REALLY?",
+                "CURIOUS LITTLE THING", "YOU KNOW THE RULE"));
         return value;
     }
 

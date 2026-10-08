@@ -1,9 +1,15 @@
 package com.subhub.app.studio;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.content.Intent;
 import android.graphics.Typeface;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -11,8 +17,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.CheckBox;
+import com.subhub.app.util.StateToggle;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,14 +28,15 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityStudioBinding;
-import com.subhub.app.pack.PackManager;
+import com.subhub.app.pack.PackSettingCatalog;
 import com.subhub.app.pack.SubHubPack;
 import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.pack.SubHubPackSchema;
-import com.subhub.app.profiles.ProfilesActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.SubHubNavigation;
 
@@ -45,6 +53,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /** Always-available creator, library, importer, previewer, and share surface for arrangements. */
 public final class StudioActivity extends AppCompatActivity {
@@ -63,8 +75,21 @@ public final class StudioActivity extends AppCompatActivity {
     private SubHubPack draft;
     private boolean suppressEvents;
     private String assetTarget = "censor";
-    private final Map<String, CheckBox> includes = new LinkedHashMap<>();
-    private final Map<String, CheckBox> locks = new LinkedHashMap<>();
+    private final Handler editorHandler = new Handler(Looper.getMainLooper());
+    private ExecutorService storage;
+    private StudioState retained;
+    private final Runnable pendingSave = this::flushDraftSave;
+    private long saveRevision;
+    private boolean actionBusy;
+    private long libraryRequest;
+    private long draftsRequest;
+    private int editorStep;
+    private long assetRequest;
+    private final List<Button> stepButtons = new ArrayList<>();
+    private final Map<View, Boolean> busyStates = new LinkedHashMap<>();
+    private final Map<String, StateToggle> includes = new LinkedHashMap<>();
+    private final Map<String, TextView> sectionSummaries = new LinkedHashMap<>();
+    private final Map<String, JSONObject> sectionDrafts = new LinkedHashMap<>();
 
     private final ActivityResultLauncher<String[]> importPicker = registerForActivityResult(
             new ActivityResultContracts.OpenDocument(), this::importPack);
@@ -76,21 +101,64 @@ public final class StudioActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityStudioBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        retained = new ViewModelProvider(this).get(StudioState.class);
+        storage = retained.storage;
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.studio_title, false);
+        PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.VISIBLE);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> {
+            startActivity(new Intent(this, com.subhub.app.settings.GlobalSettingsActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            finish();
+        });
         manager = new SubHubPackManager(this);
         payPalTransfer = new StudioPayPalTransfer(this, manager);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
-        binding.studioMode.setText(ControllerPinManager.isDomModeActive()
-                ? R.string.studio_dom_space : R.string.studio_sub_space);
         setupTabs();
         setupEditor();
         binding.buttonImport.setOnClickListener(view -> importPicker.launch(
                 new String[]{"application/zip", "application/octet-stream", "*/*"}));
-        binding.buttonSavedProfiles.setOnClickListener(view ->
-                startActivity(new Intent(this, ProfilesActivity.class)));
         binding.buttonBlank.setOnClickListener(view -> openDraft(manager.createBlank()));
-        binding.buttonCapture.setOnClickListener(view -> openDraft(manager.captureCurrent()));
+        binding.buttonCapture.setOnClickListener(view -> storageAction(manager::captureCurrent, this::openDraft));
         renderLibrary();
         renderDrafts();
+        if (savedInstanceState != null) {
+            assetTarget = savedInstanceState.getString("assetTarget", "censor");
+            String id = savedInstanceState.getString("draftId");
+            int step = savedInstanceState.getInt("editorStep", 0);
+            int panel = savedInstanceState.getInt("panel", R.id.library_panel);
+            if (id != null) storageAction(() -> retained.draft != null
+                    && id.equals(retained.draft.getId()) ? retained.draft.snapshot()
+                    : manager.findDraft(id), restored -> {
+                if (restored != null) {
+                    openDraft(restored);
+                    sectionDrafts.putAll(retained.sections);
+                    showEditorStep(step);
+                    View selected = binding.getRoot().findViewById(panel);
+                    if (selected != null) showPanel(selected);
+                }
+            });
+            else {
+                View selected = binding.getRoot().findViewById(panel);
+                if (selected != null) showPanel(selected);
+            }
+        }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        flushDraftSave();
+        // A queued image import publishes its newer snapshot on the shared storage executor.
+        // Do not overwrite that result with the activity's temporarily older draft.
+        if (!actionBusy) retained.draft = draft == null ? null : draft.snapshot();
+        retained.sections.clear();
+        retained.sections.putAll(sectionDrafts);
+        if (draft != null) state.putString("draftId", draft.getId());
+        state.putString("assetTarget", assetTarget);
+        state.putInt("editorStep", editorStep);
+        for (View panel : new View[] {binding.libraryPanel, binding.draftsPanel,
+                binding.createPanel, binding.editorPanel}) {
+            if (panel.getVisibility() == View.VISIBLE) state.putInt("panel", panel.getId());
+        }
+        super.onSaveInstanceState(state);
     }
 
     @Override
@@ -98,20 +166,29 @@ public final class StudioActivity extends AppCompatActivity {
         super.onResume();
         if (binding != null) {
             SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
-            binding.studioMode.setText(ControllerPinManager.isDomModeActive()
-                    ? R.string.studio_dom_space : R.string.studio_sub_space);
             applySpaceVisibility();
         }
     }
 
     @Override protected void onPause() {
         if (payPalTransfer != null) payPalTransfer.pause();
+        editorHandler.removeCallbacks(pendingSave);
+        flushDraftSave();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         if (payPalTransfer != null) payPalTransfer.destroy();
+        editorHandler.removeCallbacks(pendingSave);
         super.onDestroy();
+    }
+
+    /** Rotation keeps draft bytes and serial I/O together, rather than racing old/new saves. */
+    public static final class StudioState extends ViewModel {
+        final ExecutorService storage = Executors.newSingleThreadExecutor();
+        final Map<String, JSONObject> sections = new LinkedHashMap<>();
+        volatile SubHubPack draft;
+        @Override protected void onCleared() { storage.shutdown(); }
     }
 
     private void setupTabs() {
@@ -126,11 +203,10 @@ public final class StudioActivity extends AppCompatActivity {
     }
 
     private void applySpaceVisibility() {
-        boolean domSpace = ControllerPinManager.isDomModeActive();
-        binding.tabDrafts.setVisibility(domSpace ? View.VISIBLE : View.GONE);
-        binding.tabCreate.setVisibility(domSpace ? View.VISIBLE : View.GONE);
-        binding.buttonSavedProfiles.setVisibility(domSpace ? View.VISIBLE : View.GONE);
-        if (!domSpace) showPanel(binding.libraryPanel);
+        // Creating/editing a draft never changes live configuration; only Apply requires Dom.
+        binding.tabDrafts.setVisibility(View.VISIBLE);
+        binding.tabCreate.setVisibility(View.VISIBLE);
+        updateSectionSummaries();
     }
 
     private void showPanel(View panel) {
@@ -165,89 +241,204 @@ public final class StudioActivity extends AppCompatActivity {
         binding.recommendDuration.setOnItemSelectedListener(new SimpleItemSelectedListener(this::saveEditor));
         binding.buttonCensorAssets.setOnClickListener(view -> pickImages("censor"));
         binding.buttonPopupAssets.setOnClickListener(view -> pickImages("popup"));
+        binding.buttonCoverAsset.setOnClickListener(view -> pickImages("cover"));
         binding.buttonPublish.setOnClickListener(view -> publishDraft());
         binding.buttonExport.setOnClickListener(view -> share(draft));
         binding.buttonDeleteDraft.setOnClickListener(view -> deleteDraft());
+        int[] titles = {R.string.pack_editor_step_details, R.string.pack_editor_step_features,
+                R.string.pack_editor_step_images, R.string.pack_editor_step_review};
+        for (int row = 0; row < 2; row++) {
+            LinearLayout actions = actionRow();
+            for (int column = 0; column < 2; column++) {
+                int step = row * 2 + column;
+                Button button = outlineButton(getString(titles[step]));
+                button.setTag("pack_step:" + step);
+                button.setOnClickListener(view -> showEditorStep(step));
+                actions.addView(button, weighted());
+                stepButtons.add(button);
+            }
+            binding.editorSteps.addView(actions);
+        }
+        binding.editorBack.setOnClickListener(view -> showEditorStep(editorStep - 1));
+        binding.editorNext.setOnClickListener(view -> showEditorStep(editorStep + 1));
+        showEditorStep(0);
         buildSectionRows();
+    }
+
+    private void showEditorStep(int step) {
+        editorStep = Math.max(0, Math.min(3, step));
+        binding.detailsStep.setVisibility(editorStep == 0 ? View.VISIBLE : View.GONE);
+        binding.featuresStep.setVisibility(editorStep == 1 ? View.VISIBLE : View.GONE);
+        binding.imagesStep.setVisibility(editorStep == 2 ? View.VISIBLE : View.GONE);
+        binding.recommendationsStep.setVisibility(editorStep == 3 ? View.VISIBLE : View.GONE);
+        binding.reviewStep.setVisibility(editorStep == 3 ? View.VISIBLE : View.GONE);
+        binding.buttonPublish.setVisibility(editorStep == 3 ? View.VISIBLE : View.GONE);
+        binding.buttonExport.setVisibility(editorStep == 3 ? View.VISIBLE : View.GONE);
+        binding.editorBack.setEnabled(editorStep > 0 && !actionBusy);
+        binding.editorNext.setEnabled(editorStep < 3 && !actionBusy);
+        for (int index = 0; index < stepButtons.size(); index++) {
+            stepButtons.get(index).setSelected(index == editorStep);
+        }
+        binding.studioScroll.smoothScrollTo(0, 0);
     }
 
     private void buildSectionRows() {
         binding.sectionList.removeAllViews();
         includes.clear();
-        locks.clear();
+        sectionSummaries.clear();
         for (String section : SECTION_ORDER) {
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(10), dp(8), dp(10), dp(8));
+            card.setPadding(dp(12), dp(8), dp(12), dp(10));
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            cardParams.topMargin = dp(6);
+            cardParams.topMargin = dp(8);
             card.setLayoutParams(cardParams);
             card.setBackgroundResource(R.drawable.bg_sub_module_card);
 
-            LinearLayout controls = new LinearLayout(this);
-            controls.setGravity(Gravity.CENTER_VERTICAL);
-            CheckBox include = new CheckBox(this);
-            include.setText(sectionTitle(section));
+            StateToggle include = new StateToggle(this);
+            include.setText(getString(R.string.pack_editor_include_section, sectionTitle(section)));
             include.setTextColor(getColor(R.color.text_primary));
-            include.setTextSize(12f);
-            controls.addView(include, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            CheckBox lock = new CheckBox(this);
-            lock.setText(R.string.studio_lock);
-            lock.setTextColor(getColor(R.color.text_secondary));
-            lock.setTextSize(10f);
-            lock.setVisibility(ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
-            controls.addView(lock);
-            card.addView(controls);
-
-            Button refresh = outlineButton(getString(R.string.studio_refresh));
-            LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
-            refreshParams.topMargin = dp(4);
-            card.addView(refresh, refreshParams);
+            include.setTextSize(14f);
+            include.setMinHeight(dp(48));
+            include.setTag("pack_include:" + section);
+            card.addView(include);
+            TextView summary = label("", false);
+            card.addView(summary);
+            sectionSummaries.put(section, summary);
+            Button configure = outlineButton(getString(R.string.pack_editor_settings));
+            configure.setTag("pack_configure:" + section);
+            configure.setOnClickListener(view -> editSection(section));
+            card.addView(configure, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            Button copy = outlineButton(getString(R.string.pack_editor_current));
+            copy.setTag("pack_copy:" + section);
+            copy.setOnClickListener(view -> confirmReplaceSection(section, false));
+            card.addView(copy);
+            Button defaults = outlineButton(getString(R.string.pack_editor_defaults));
+            defaults.setTag("pack_defaults:" + section);
+            defaults.setOnClickListener(view -> confirmReplaceSection(section, true));
+            card.addView(defaults);
             if (SubHubPackSchema.WALLET.equals(section)) {
-                Button attach = outlineButton("Encrypt current PayPal into pack");
+                Button attach = outlineButton(getString(R.string.pack_editor_attach_paypal));
+                attach.setTag("pack_attach_paypal");
                 attach.setOnClickListener(view -> payPalTransfer.attach(draft, this::saveEditor));
                 card.addView(attach);
-                Button remove = outlineButton("Remove encrypted PayPal");
+                Button remove = outlineButton(getString(R.string.pack_editor_remove_paypal));
+                remove.setTag("pack_remove_paypal");
                 remove.setOnClickListener(view -> {
                     if (draft == null || !ControllerPinManager.isDomModeActive()) return;
-                    payPalTransfer.pause();
-                    try { draft.setEncryptedPayPal(null); saveEditor(); }
-                    catch (java.security.GeneralSecurityException ignored) { }
+                    com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.pack_editor_remove_paypal)
+                            .setMessage(R.string.pack_editor_remove_paypal_body)
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .setPositiveButton(R.string.pack_editor_remove_paypal, (dialog, which) -> {
+                                payPalTransfer.pause();
+                                try { draft.setEncryptedPayPal(null); saveEditor(); }
+                                catch (java.security.GeneralSecurityException ignored) { }
+                            }).show();
                 });
                 card.addView(remove);
             }
             binding.sectionList.addView(card);
             includes.put(section, include);
-            locks.put(section, lock);
             include.setOnCheckedChangeListener((button, checked) -> {
                 if (suppressEvents || draft == null) return;
-                if (!checked && SubHubPackSchema.WALLET.equals(section)) payPalTransfer.pause();
-                draft.setSection(section, checked ? manager.captureSection(section) : null);
-                lock.setEnabled(checked);
-                if (!checked) { lock.setChecked(false); draft.setGroupLocked(section, false); }
-                saveEditor();
-            });
-            lock.setOnCheckedChangeListener((button, checked) -> {
-                if (!suppressEvents && draft != null && ControllerPinManager.isDomModeActive()) {
-                    draft.setGroupLocked(section, checked && include.isChecked());
-                    saveEditor();
+                if (!checked && SubHubPackSchema.WALLET.equals(section) && draft.hasEncryptedPayPal()) {
+                    com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.pack_editor_remove_paypal)
+                            .setMessage(R.string.pack_editor_remove_paypal_body)
+                            .setNegativeButton(android.R.string.cancel, (dialog, which) -> restoreIncludedWallet())
+                            .setOnCancelListener(dialog -> restoreIncludedWallet())
+                            .setPositiveButton(android.R.string.ok, (dialog, which) -> setSectionIncluded(section, false))
+                            .show();
+                    return;
                 }
-            });
-            refresh.setOnClickListener(view -> {
-                if (draft == null) return;
-                draft.setSection(section, manager.captureSection(section));
-                include.setChecked(true);
-                saveEditor();
+                setSectionIncluded(section, checked);
             });
         }
     }
 
+    private void restoreIncludedWallet() {
+        suppressEvents = true;
+        includes.get(SubHubPackSchema.WALLET).setChecked(true);
+        suppressEvents = false;
+    }
+
+    private void setSectionIncluded(String section, boolean included) {
+        if (draft == null) return;
+        if (included) {
+            JSONObject value = sectionDrafts.get(section);
+            if (value == null) value = PackSettingCatalog.defaults(section);
+            draft.setSection(section, value);
+            sectionDrafts.put(section, value);
+        } else {
+            JSONObject existing = draft.getSection(section);
+            if (existing != null) sectionDrafts.put(section, existing);
+            if (SubHubPackSchema.WALLET.equals(section)) payPalTransfer.pause();
+            draft.setSection(section, null);
+        }
+        saveEditor();
+    }
+
+    private void editSection(String section) {
+        if (draft == null) return;
+        String id = draft.getId();
+        JSONObject existing = draft.getSection(section);
+        if (existing == null) existing = sectionDrafts.get(section);
+        PackSectionEditor.show(this, section, sectionTitle(section), existing, values -> {
+            if (draft == null || !id.equals(draft.getId())) return;
+            sectionDrafts.put(section, values);
+            draft.setSection(section, values);
+            suppressEvents = true;
+            includes.get(section).setChecked(true);
+            suppressEvents = false;
+            saveEditor();
+        });
+    }
+
+    private void confirmReplaceSection(String section, boolean defaults) {
+        if (draft == null) return;
+        com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.pack_editor_reset_title)
+                .setMessage(R.string.pack_editor_reset_body)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(defaults ? R.string.pack_editor_defaults : R.string.pack_editor_current,
+                        (dialog, which) -> {
+                            try {
+                                JSONObject values = defaults ? PackSettingCatalog.defaults(section)
+                                        : manager.captureSection(section);
+                                sectionDrafts.put(section, values);
+                                draft.setSection(section, values);
+                                suppressEvents = true;
+                                includes.get(section).setChecked(true);
+                                suppressEvents = false;
+                                saveEditor();
+                            } catch (IllegalArgumentException invalid) {
+                                toast(getString(R.string.pack_apply_invalid));
+                            }
+                        }).show();
+    }
+
+    private void updateSectionSummaries() {
+        if (draft == null) return;
+        for (String section : SECTION_ORDER) {
+            int count = PackSettingCatalog.fields(section).size();
+            sectionSummaries.get(section).setText(getResources().getQuantityString(
+                    R.plurals.pack_editor_setting_count, count, count));
+        }
+        View attach = binding.sectionList.findViewWithTag("pack_attach_paypal");
+        View remove = binding.sectionList.findViewWithTag("pack_remove_paypal");
+        boolean walletIncluded = draft.getIncludedSections().contains(SubHubPackSchema.WALLET);
+        if (attach != null) attach.setEnabled(walletIncluded && ControllerPinManager.isDomModeActive());
+        if (remove != null) {
+            remove.setVisibility(draft.hasEncryptedPayPal() ? View.VISIBLE : View.GONE);
+            remove.setEnabled(ControllerPinManager.isDomModeActive());
+        }
+    }
+
     private void openDraft(SubHubPack value) {
+        flushDraftSave();
         if (payPalTransfer != null) payPalTransfer.pause();
         draft = value;
+        sectionDrafts.clear();
         suppressEvents = true;
         binding.packName.setText(value.getName());
         binding.packAuthor.setText(value.getAuthor());
@@ -257,8 +448,7 @@ public final class StudioActivity extends AppCompatActivity {
             boolean included = value.getIncludedSections().contains(section);
             includes.get(section).setChecked(included);
             includes.get(section).setEnabled(true);
-            locks.get(section).setChecked(value.getLockGroups().contains(section));
-            locks.get(section).setEnabled(included);
+            if (included) sectionDrafts.put(section, value.getSection(section));
         }
         JSONObject recommendations = value.getRecommendations();
         binding.recommendHardcore.setChecked(recommendations.optBoolean("hardcoreSuggested", false));
@@ -272,6 +462,8 @@ public final class StudioActivity extends AppCompatActivity {
         updatePreview();
         autosave();
         showPanel(binding.editorPanel);
+        showEditorStep(0);
+        renderAssets();
     }
 
     private void saveEditor() {
@@ -292,66 +484,166 @@ public final class StudioActivity extends AppCompatActivity {
 
     private void autosave() {
         if (draft == null) return;
-        try { manager.saveDraft(draft); }
-        catch (IOException error) { toast(error.getMessage()); }
+        saveRevision++;
+        binding.draftSaveStatus.setText(R.string.pack_editor_saving);
+        editorHandler.removeCallbacks(pendingSave);
+        editorHandler.postDelayed(pendingSave, 400L);
+    }
+
+    private void flushDraftSave() {
+        editorHandler.removeCallbacks(pendingSave);
+        if (draft == null || actionBusy || storage.isShutdown()) return;
+        SubHubPack snapshot = draft.snapshot();
+        long revision = saveRevision;
+        storage.execute(() -> {
+            boolean saved = true;
+            try { manager.saveDraft(snapshot); }
+            catch (IOException error) { saved = false; }
+            boolean success = saved;
+            editorHandler.post(() -> {
+                if (isDestroyed() || draft == null || !draft.getId().equals(snapshot.getId())
+                        || saveRevision != revision) return;
+                binding.draftSaveStatus.setText(success ? R.string.pack_editor_saved : R.string.pack_editor_save_failed);
+            });
+        });
+    }
+
+    private <T> void storageAction(Callable<T> operation, Consumer<T> completed) {
+        if (actionBusy || storage.isShutdown()) return;
+        flushDraftSave();
+        actionBusy = true;
+        updateActionState();
+        storage.execute(() -> {
+            T value;
+            try { value = operation.call(); }
+            catch (Exception error) {
+                editorHandler.post(() -> {
+                    if (isDestroyed()) return;
+                    actionBusy = false;
+                    updateActionState();
+                    toast(getString(error instanceof IllegalArgumentException
+                            ? R.string.pack_apply_invalid : R.string.pack_apply_storage));
+                });
+                return;
+            }
+            editorHandler.post(() -> {
+                if (isDestroyed()) return;
+                actionBusy = false;
+                updateActionState();
+                completed.accept(value);
+            });
+        });
+    }
+
+    private void updateActionState() {
+        if (actionBusy) rememberAndDisable(binding.getRoot());
+        else {
+            for (Map.Entry<View, Boolean> entry : busyStates.entrySet()) entry.getKey().setEnabled(entry.getValue());
+            busyStates.clear();
+            showEditorStep(editorStep);
+            updateSectionSummaries();
+        }
+    }
+
+    private void rememberAndDisable(View view) {
+        if (view instanceof Button || view instanceof android.widget.EditText
+                || view instanceof android.widget.Spinner) {
+            busyStates.putIfAbsent(view, view.isEnabled());
+            view.setEnabled(false);
+        }
+        if (view instanceof ViewGroup) for (int index = 0; index < ((ViewGroup) view).getChildCount(); index++) {
+            rememberAndDisable(((ViewGroup) view).getChildAt(index));
+        }
     }
 
     private void updatePreview() {
         if (draft == null) return;
+        updateSectionSummaries();
         int censorAssets = 0;
         int popupAssets = 0;
-        for (String path : draft.getAssets().keySet()) {
+        int coverAssets = 0;
+        for (String path : draft.getAssetPaths()) {
             if (path.startsWith("assets/censor/")) censorAssets++;
             if (path.startsWith("assets/popup/")) popupAssets++;
+            if (path.startsWith("assets/cover/")) coverAssets++;
         }
-        binding.assetSummary.setText(censorAssets == 0 && popupAssets == 0
+        binding.assetSummary.setText(censorAssets == 0 && popupAssets == 0 && coverAssets == 0
                 ? getString(R.string.studio_assets_empty)
-                : getString(R.string.studio_assets_count, censorAssets, popupAssets));
-        String creator = draft.getAuthor().isBlank() ? "Private arrangement"
-                : "By " + draft.getAuthor();
-        String locksText = draft.getLockGroups().isEmpty() ? "No Dom locks"
-                : draft.getLockGroups().size() + " Dom lock group(s)";
+                : getString(R.string.pack_editor_assets_summary, censorAssets, popupAssets, coverAssets));
+        String creator = draft.getAuthor().isBlank() ? getString(R.string.pack_editor_private)
+                : getString(R.string.pack_editor_by_author, draft.getAuthor());
         binding.previewText.setText(draft.getName() + " · v" + draft.getPackVersion() + "\n"
-                + creator + "\n" + draft.getIncludedSections().size() + " feature section(s) · "
-                + locksText + "\n" + (draft.hasEncryptedPayPal()
-                ? "Encrypted PayPal attached · passphrase required · no payer authorization"
+                + creator + "\n" + getResources().getQuantityString(R.plurals.pack_editor_section_count,
+                        draft.getIncludedSections().size(), draft.getIncludedSections().size())
+                + "\n" + (draft.hasEncryptedPayPal()
+                ? getString(R.string.pack_editor_paypal_attached)
                 : getString(R.string.studio_no_secrets)));
     }
 
     private void renderLibrary() {
         binding.libraryList.removeAllViews();
-        List<SubHubPackManager.Record> records = manager.listLibrary();
-        List<PackManager.PackInfo> legacy = new PackManager(this).listInstalled();
-        binding.libraryEmpty.setVisibility(records.isEmpty() && legacy.isEmpty()
-                ? View.VISIBLE : View.GONE);
-        for (SubHubPackManager.Record record : records) addLibraryCard(record);
-        for (PackManager.PackInfo record : legacy) addLegacyCard(record);
+        binding.libraryEmpty.setText(R.string.pack_editor_loading);
+        binding.libraryEmpty.setVisibility(View.VISIBLE);
+        long request = ++libraryRequest;
+        storage.execute(() -> {
+            List<SubHubPackManager.Record> records = manager.listLibrary();
+            editorHandler.post(() -> {
+                if (isDestroyed() || request != libraryRequest) return;
+                binding.libraryEmpty.setText(R.string.studio_library_empty);
+                binding.libraryEmpty.setVisibility(records.isEmpty() ? View.VISIBLE : View.GONE);
+                for (SubHubPackManager.Record record : records) addLibraryCard(record);
+            });
+        });
     }
 
     private void renderDrafts() {
+        flushDraftSave();
         binding.draftsList.removeAllViews();
-        List<SubHubPackManager.Record> records = manager.listDrafts();
-        binding.draftsEmpty.setVisibility(records.isEmpty() ? View.VISIBLE : View.GONE);
-        for (SubHubPackManager.Record record : records) {
-            LinearLayout card = packCard(record.pack,
-                    record.pack.getIncludedSections().size() + " feature section(s)");
-            LinearLayout actions = actionRow();
-            Button edit = outlineButton(getString(R.string.studio_edit));
-            edit.setOnClickListener(view -> openDraft(record.pack));
-            Button duplicate = outlineButton(getString(R.string.studio_duplicate));
-            duplicate.setOnClickListener(view -> duplicatePack(record.pack));
-            Button share = outlineButton(getString(R.string.studio_share));
-            share.setOnClickListener(view -> share(record.pack));
-            actions.addView(edit, weighted()); actions.addView(duplicate, weighted());
-            actions.addView(share, weighted());
-            card.addView(actions);
-            binding.draftsList.addView(card);
-        }
+        binding.draftsEmpty.setText(R.string.pack_editor_loading);
+        binding.draftsEmpty.setVisibility(View.VISIBLE);
+        long request = ++draftsRequest;
+        storage.execute(() -> {
+            List<SubHubPackManager.Record> records = manager.listDrafts();
+            editorHandler.post(() -> {
+                if (isDestroyed() || request != draftsRequest) return;
+                binding.draftsEmpty.setText(R.string.studio_drafts_empty);
+                binding.draftsEmpty.setVisibility(records.isEmpty() ? View.VISIBLE : View.GONE);
+                for (SubHubPackManager.Record record : records) addDraftCard(record);
+            });
+        });
+    }
+
+    private void loadRecord(SubHubPackManager.Record record, Consumer<SubHubPack> completed) {
+        storageAction(() -> {
+            SubHubPack loaded = record.draft ? manager.findDraft(record.pack.getId())
+                    : manager.findLibrary(record.pack.getId());
+            if (loaded == null) throw new IOException("Stored pack could not be validated");
+            return loaded;
+        }, completed);
+    }
+
+    private void addDraftCard(SubHubPackManager.Record record) {
+        LinearLayout card = packCard(record.pack,
+                getResources().getQuantityString(R.plurals.pack_editor_section_count,
+                        record.pack.getIncludedSections().size(), record.pack.getIncludedSections().size()));
+        LinearLayout actions = actionRow();
+        Button edit = outlineButton(getString(R.string.studio_edit));
+        edit.setOnClickListener(view -> loadRecord(record, this::openDraft));
+        Button duplicate = outlineButton(getString(R.string.studio_duplicate));
+        duplicate.setOnClickListener(view -> loadRecord(record, this::duplicatePack));
+        Button share = outlineButton(getString(R.string.studio_share));
+        share.setOnClickListener(view -> loadRecord(record, this::share));
+        actions.addView(edit, weighted()); actions.addView(duplicate, weighted());
+        actions.addView(share, weighted());
+        card.addView(actions);
+        binding.draftsList.addView(card);
     }
 
     private void addLibraryCard(SubHubPackManager.Record record) {
-        String detail = record.pack.getIncludedSections().size() + " feature section(s) · "
-                + record.pack.getAssets().size() + " asset(s)";
+        String detail = getResources().getQuantityString(R.plurals.pack_editor_section_count,
+                record.pack.getIncludedSections().size(), record.pack.getIncludedSections().size())
+                + " · " + getResources().getQuantityString(R.plurals.pack_editor_image_count,
+                        record.assetCount, record.assetCount);
         LinearLayout card = packCard(record.pack, detail);
         if (record.active) {
             TextView active = label(getString(R.string.studio_active), true);
@@ -361,29 +653,35 @@ public final class StudioActivity extends AppCompatActivity {
         LinearLayout actions = actionRow();
         Button apply = outlineButton(record.active
                 ? getString(R.string.studio_deactivate) : getString(R.string.studio_apply));
+        apply.setTag("pack_apply:" + record.pack.getId());
         apply.setOnClickListener(view -> {
             if (!ControllerPinManager.isDomModeActive()) {
                 toast(getString(R.string.studio_unlock_required));
             } else if (record.active) {
-                if (!manager.deactivate()) toast("Could not deactivate. Turn off automatic settlement "
-                        + "and finish or cancel any pending checkout first.");
-                renderLibrary();
-            } else review(record.pack);
+                com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.pack_editor_restore_title)
+                        .setMessage(R.string.pack_editor_restore_body)
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(android.R.string.ok, (dialog, which) -> storageAction(
+                                manager::deactivate, restored -> {
+                                    if (!restored) toast(manager.failureMessage());
+                                    renderLibrary();
+                                })).show();
+            } else loadRecord(record, this::review);
         });
         Button share = outlineButton(getString(R.string.studio_share));
-        share.setOnClickListener(view -> share(record.pack));
+        share.setOnClickListener(view -> loadRecord(record, this::share));
         Button duplicate = outlineButton(getString(R.string.studio_duplicate));
-        duplicate.setOnClickListener(view -> duplicatePack(record.pack));
+        duplicate.setOnClickListener(view -> loadRecord(record, this::duplicatePack));
         Button delete = outlineButton(getString(R.string.studio_delete));
-        delete.setOnClickListener(view -> new AlertDialog.Builder(this)
+        delete.setOnClickListener(view -> com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.studio_delete_title)
                 .setMessage(record.pack.getName())
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.studio_delete, (dialog, which) -> {
-                    boolean deleted = manager.deleteLibrary(record.pack.getId());
-                    toast(getString(deleted ? R.string.studio_deleted
-                            : R.string.studio_unlock_required));
-                    renderLibrary();
+                    storageAction(() -> manager.deleteLibrary(record.pack.getId()), deleted -> {
+                        toast(getString(deleted ? R.string.studio_deleted : R.string.studio_unlock_required));
+                        renderLibrary();
+                    });
                 }).show());
         actions.addView(apply, weighted()); actions.addView(share, weighted());
         card.addView(actions);
@@ -393,29 +691,6 @@ public final class StudioActivity extends AppCompatActivity {
         binding.libraryList.addView(card);
     }
 
-    private void addLegacyCard(PackManager.PackInfo record) {
-        SubHubPack shell = new SubHubPack(record.getManifest().getPackId(),
-                record.getManifest().getName(), record.getManifest().getAuthor(),
-                record.getManifest().getDescription(), record.getManifest().getVersion(),
-                1L, 1L, "0.1.0", Map.of(), Set.of(), new JSONObject(), Map.of());
-        LinearLayout card = packCard(shell, getString(R.string.studio_legacy_badge));
-        LinearLayout actions = actionRow();
-        Button apply = outlineButton(record.getManifest().getPackId().equals(
-                new PackManager(this).activePackId()) ? getString(R.string.studio_deactivate)
-                : getString(R.string.studio_apply));
-        apply.setOnClickListener(view -> {
-            if (!ControllerPinManager.isDomModeActive()) {
-                toast(getString(R.string.studio_unlock_required)); return;
-            }
-            PackManager legacy = new PackManager(this);
-            if (record.getManifest().getPackId().equals(legacy.activePackId())) legacy.deactivate();
-            else legacy.activate(record.getManifest().getPackId());
-            renderLibrary();
-        });
-        actions.addView(apply, weighted());
-        card.addView(actions);
-        binding.libraryList.addView(card);
-    }
 
     private void review(SubHubPack pack) {
         List<String> included = new ArrayList<>(pack.getIncludedSections());
@@ -424,7 +699,7 @@ public final class StudioActivity extends AppCompatActivity {
         java.util.Arrays.fill(selected, true);
         CharSequence[] labels = new CharSequence[included.size()];
         for (int index = 0; index < labels.length; index++) labels[index] = sectionTitle(included.get(index));
-        new AlertDialog.Builder(this).setTitle(R.string.studio_review_title)
+        com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.studio_review_title)
                 .setMultiChoiceItems(labels, selected, (dialog, which, checked) -> selected[which] = checked)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.studio_apply, (dialog, which) -> {
@@ -439,115 +714,200 @@ public final class StudioActivity extends AppCompatActivity {
     private void showDiff(SubHubPack pack, Set<String> sections) {
         if (sections.isEmpty()) { toast(getString(R.string.studio_no_sections)); return; }
         String message = String.join("\n\n", manager.diff(pack, sections));
-        new AlertDialog.Builder(this).setTitle(pack.getName()).setMessage(message)
+        com.subhub.app.util.ThemedDialogs.builder(this).setTitle(pack.getName()).setMessage(message)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.studio_apply_confirm, (dialog, which) -> {
                     if (pack.hasEncryptedPayPal() && sections.contains(SubHubPackSchema.WALLET)) {
                         payPalTransfer.activate(pack, sections, this::renderLibrary);
                         return;
                     }
-                    boolean applied = manager.activate(pack, sections);
-                    toast(getString(applied ? R.string.studio_applied : R.string.studio_apply_failed));
-                    renderLibrary();
+                    storageAction(() -> manager.activate(pack, sections), applied -> {
+                        toast(applied ? getString(R.string.studio_applied) : manager.failureMessage());
+                        renderLibrary();
+                    });
                 }).show();
     }
 
     private void duplicatePack(SubHubPack source) {
         if (source.hasEncryptedPayPal()) {
-            new AlertDialog.Builder(this).setTitle("Duplicate without PayPal?")
-                    .setMessage("The copy has a new identity. Its encrypted PayPal attachment is removed; "
-                            + "attach and encrypt again if needed. The original is unchanged.")
+            com.subhub.app.util.ThemedDialogs.builder(this).setTitle(R.string.pack_editor_duplicate_title)
+                    .setMessage(R.string.pack_editor_duplicate_body)
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("Duplicate", (d, w) -> {
+                    .setPositiveButton(R.string.studio_duplicate, (d, w) -> {
                         openDraft(source.duplicate());
                     }).show();
         } else openDraft(source.duplicate());
     }
 
     private void publishDraft() {
-        if (payPalTransfer.isWorking()) { toast("Wait for PayPal encryption to finish."); return; }
+        if (payPalTransfer.isWorking()) { toast(getString(R.string.pack_editor_wait_encryption)); return; }
         saveEditor();
         if (draft == null || draft.getIncludedSections().isEmpty()) {
             toast(getString(R.string.studio_no_sections)); return;
         }
-        try {
-            manager.addToLibrary(draft);
+        SubHubPack snapshot = draft.snapshot();
+        storageAction(() -> { manager.addToLibrary(snapshot); return snapshot; }, stored -> {
             toast(getString(R.string.studio_library_added));
             renderLibrary();
             showPanel(binding.libraryPanel);
-        } catch (IOException error) { toast(error.getMessage()); }
+        });
     }
 
     private void deleteDraft() {
         if (draft == null) return;
         payPalTransfer.pause();
-        manager.deleteDraft(draft.getId());
+        String id = draft.getId();
+        editorHandler.removeCallbacks(pendingSave);
         draft = null;
-        renderDrafts();
-        showPanel(binding.draftsPanel);
+        storageAction(() -> { manager.deleteDraft(id); return Boolean.TRUE; }, deleted -> {
+            renderDrafts();
+            showPanel(binding.draftsPanel);
+        });
     }
 
     private void importPack(Uri uri) {
         if (uri == null) return;
-        try {
-            SubHubPack pack = manager.importPack(uri);
+        storageAction(() -> manager.importPack(uri), pack -> {
             toast(getString(pack.getId().equals(manager.activePackId())
                     ? R.string.studio_active_update_imported : R.string.studio_imported,
                     pack.getName()));
-        } catch (IOException modernFailure) {
-            try {
-                PackManager.PackInfo legacy = new PackManager(this).importPack(uri);
-                toast(getString(R.string.studio_legacy_imported, legacy.getManifest().getName()));
-            } catch (IOException legacyFailure) {
-                toast(getString(R.string.studio_import_failed, modernFailure.getMessage()));
-            }
-        }
-        renderLibrary();
+            renderLibrary();
+        });
     }
 
     private void share(SubHubPack pack) {
         if (pack == null) return;
-        if (payPalTransfer.isWorking()) { toast("Wait for PayPal encryption to finish."); return; }
-        try {
-            File file = manager.exportForShare(pack);
+        if (payPalTransfer.isWorking()) { toast(getString(R.string.pack_editor_wait_encryption)); return; }
+        SubHubPack snapshot = pack.snapshot();
+        storageAction(() -> manager.exportForShare(snapshot), file -> {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".updates", file);
             Intent send = new Intent(Intent.ACTION_SEND).setType("application/zip")
                     .putExtra(Intent.EXTRA_STREAM, uri)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(send, getString(R.string.studio_share_chooser)));
-        } catch (Exception error) { toast(error.getMessage()); }
+            try { startActivity(Intent.createChooser(send, getString(R.string.studio_share_chooser))); }
+            catch (android.content.ActivityNotFoundException unavailable) {
+                toast(getString(R.string.pack_editor_share_unavailable));
+            }
+        });
     }
 
     private void pickImages(String target) {
+        if (actionBusy || draft == null) return;
         assetTarget = target;
         imagePicker.launch(new String[]{"image/png", "image/jpeg", "image/webp"});
     }
 
     private void addImages(List<Uri> uris) {
-        if (draft == null || uris == null) return;
-        int existing = 0;
-        for (String path : draft.getAssets().keySet()) if (path.startsWith("assets/" + assetTarget + "/")) {
-            existing++;
-        }
-        for (Uri uri : uris) {
-            if (existing >= 64) break;
-            try (InputStream input = getContentResolver().openInputStream(uri)) {
-                if (input == null) continue;
-                ByteArrayOutputStream output = new ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                long total = 0L;
-                int read;
-                while ((read = input.read(buffer)) >= 0) {
-                    total += read;
-                    if (total > MAX_IMAGE_BYTES) throw new IOException("Image exceeds 25 MiB");
-                    output.write(buffer, 0, read);
+        if (draft == null || uris == null || uris.isEmpty() || actionBusy) return;
+        SubHubPack target = draft.snapshot();
+        String folder = assetTarget;
+        List<Uri> selected = new ArrayList<>(uris);
+        storageAction(() -> {
+            int failed = 0;
+            int added = 0;
+            for (Uri uri : selected) {
+                if ("cover".equals(folder) && added > 0) break;
+                long existing = target.getAssetPaths().stream()
+                        .filter(path -> path.startsWith("assets/" + folder + "/")).count();
+                if (!"cover".equals(folder) && existing >= 64) { failed++; continue; }
+                try (InputStream input = getContentResolver().openInputStream(uri)) {
+                    if (input == null) throw new IOException("Unreadable image");
+                    ByteArrayOutputStream output = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    long total = 0L;
+                    int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        total += read;
+                        if (total > MAX_IMAGE_BYTES) throw new IOException("Oversize image");
+                        output.write(buffer, 0, read);
+                    }
+                    byte[] bytes = output.toByteArray();
+                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0
+                            || !Set.of("image/png", "image/jpeg", "image/webp").contains(bounds.outMimeType)) {
+                        throw new IOException("Unsupported image");
+                    }
+                    String extension = "image/jpeg".equals(bounds.outMimeType) ? "jpg"
+                            : "image/webp".equals(bounds.outMimeType) ? "webp" : "png";
+                    String path = "assets/" + folder + "/" + java.util.UUID.randomUUID() + "." + extension;
+                    // Admit the new bytes before removing the old cover: failed replacement keeps it.
+                    target.putAsset(path, bytes);
+                    if ("cover".equals(folder)) for (String previous : target.getAssetPaths()) {
+                        if (previous.startsWith("assets/cover/") && !previous.equals(path)) target.removeAsset(previous);
+                    }
+                    added++;
+                } catch (IOException | IllegalArgumentException error) { failed++; }
+            }
+            manager.saveDraft(target);
+            retained.draft = target.snapshot();
+            return new ImageImport(target, failed);
+        }, result -> {
+            if (draft == null || !draft.getId().equals(result.pack.getId())) return;
+            draft = result.pack;
+            if (result.failed > 0) toast(getString(R.string.pack_editor_image_failed));
+            autosave();
+            updatePreview();
+            renderAssets();
+        });
+    }
+
+    private record ImageImport(SubHubPack pack, int failed) { }
+
+    private void renderAssets() {
+        binding.assetList.removeAllViews();
+        if (draft == null || storage.isShutdown()) return;
+        long request = ++assetRequest;
+        SubHubPack snapshot = draft.snapshot();
+        storage.execute(() -> {
+            Map<String, Bitmap> thumbnails = new LinkedHashMap<>();
+            for (String path : snapshot.getAssetPaths()) {
+                byte[] bytes = snapshot.getAsset(path);
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inJustDecodeBounds = true;
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+                options.inSampleSize = 1;
+                while (options.outWidth / options.inSampleSize > 128
+                        || options.outHeight / options.inSampleSize > 128) options.inSampleSize *= 2;
+                options.inJustDecodeBounds = false;
+                thumbnails.put(path, BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options));
+            }
+            editorHandler.post(() -> {
+                if (isDestroyed() || request != assetRequest || draft == null
+                        || !draft.getId().equals(snapshot.getId())) {
+                    for (Bitmap image : thumbnails.values()) if (image != null) image.recycle();
+                    return;
                 }
-                draft.putAsset(String.format(Locale.ROOT, "assets/%s/image-%02d.png",
-                        assetTarget, existing++), output.toByteArray());
-            } catch (IOException error) { toast(error.getMessage()); }
-        }
-        autosave();
-        updatePreview();
+                int index = 0;
+                for (Map.Entry<String, Bitmap> entry : thumbnails.entrySet()) {
+                    String path = entry.getKey();
+                    LinearLayout row = actionRow();
+                    ImageView image = new ImageView(this);
+                    image.setImageBitmap(entry.getValue());
+                    image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+                    image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                    row.addView(image, new LinearLayout.LayoutParams(dp(64), dp(64)));
+                    String group = path.startsWith("assets/cover/") ? getString(R.string.pack_editor_cover)
+                            : path.startsWith("assets/popup/") ? sectionTitle(SubHubPackSchema.POPUP)
+                            : sectionTitle(SubHubPackSchema.CENSOR);
+                    TextView name = label(getString(R.string.pack_editor_image_label, group, ++index), false);
+                    row.addView(name, weighted());
+                    Button remove = outlineButton(getString(R.string.pack_editor_remove_image));
+                    remove.setTag("pack_remove_asset:" + path);
+                    remove.setOnClickListener(view -> {
+                        if (actionBusy || draft == null) return;
+                        draft.removeAsset(path);
+                        autosave();
+                        updatePreview();
+                        renderAssets();
+                    });
+                    row.addView(remove, weighted());
+                    binding.assetList.addView(row);
+                }
+                if (actionBusy) rememberAndDisable(binding.assetList);
+            });
+        });
     }
 
     private LinearLayout packCard(SubHubPack pack, String detail) {
@@ -582,14 +942,17 @@ public final class StudioActivity extends AppCompatActivity {
     private Button outlineButton(String text) {
         Button button = new Button(this, null, 0, R.style.Widget_SubHub_CompactOutlineButton);
         button.setText(text);
-        button.setTextSize(10f);
+        button.setTextSize(14f);
+        button.setAllCaps(false);
+        button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
         button.setMinWidth(0);
         button.setPadding(dp(4), 0, dp(4), 0);
         return button;
     }
 
     private LinearLayout.LayoutParams weighted() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         params.setMarginEnd(dp(4));
         return params;
     }
@@ -598,7 +961,7 @@ public final class StudioActivity extends AppCompatActivity {
         TextView value = new TextView(this);
         value.setText(text);
         value.setTextColor(getColor(title ? R.color.text_primary : R.color.text_secondary));
-        value.setTextSize(title ? 15f : 11f);
+        value.setTextSize(title ? 15f : 12f);
         if (title) value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         if (!title) value.setPadding(0, dp(3), 0, 0);
         return value;

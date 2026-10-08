@@ -1,5 +1,7 @@
 package com.subhub.app.stats;
 
+import com.subhub.app.util.PrimaryHeader;
+
 import android.app.Dialog;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -24,6 +26,7 @@ import com.subhub.app.util.PremiumMotion;
 
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -35,9 +38,10 @@ import java.util.Set;
 /** Illustrated, grouped achievement catalog for both recovered and SubHub-native milestones. */
 public final class AchievementsActivity extends AppCompatActivity {
     private static final String[] CATEGORY_ORDER = {
-            "blocks", "time", "sessions", "peaks", "streaks", "app_mode", "limits",
-            "pact", "hardcore", "censor", "custom", "profiles", "export",
-            "wallet", "hidden", "special"
+            "sessions", "time", "streaks", "app_mode", "limits", "pact", "hardcore",
+            "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
+            "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
+            "control", "hidden"
     };
     private ActivityAchievementsBinding binding;
     private AchievementManager manager;
@@ -47,7 +51,8 @@ public final class AchievementsActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityAchievementsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        binding.buttonBack.setOnClickListener(view -> finish());
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.achievements_title, false);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
     }
 
     @Override protected void onResume() {
@@ -69,26 +74,75 @@ public final class AchievementsActivity extends AppCompatActivity {
         addShowcaseBadges();
         renderNextMilestone();
 
-        Map<String, List<AchievementManager.Achievement>> groups = new LinkedHashMap<>();
-        for (AchievementManager.Achievement achievement : manager.all()) {
-            List<AchievementManager.Achievement> group = groups.get(achievement.getCategory());
-            if (group == null) {
-                group = new ArrayList<>();
-                groups.put(achievement.getCategory(), group);
-            }
-            group.add(achievement);
-        }
-        for (String category : CATEGORY_ORDER) {
-            List<AchievementManager.Achievement> group = groups.remove(category);
-            if (group == null) continue;
-            addCategoryHeader(category);
-            for (AchievementManager.Achievement achievement : group) {
-                addRow(achievement);
-            }
-        }
-        for (Map.Entry<String, List<AchievementManager.Achievement>> entry : groups.entrySet()) {
+        for (Map.Entry<String, List<AchievementManager.Achievement>> entry
+                : orderedGroups(manager.all()).entrySet()) {
             addCategoryHeader(entry.getKey());
             for (AchievementManager.Achievement achievement : entry.getValue()) addRow(achievement);
+        }
+    }
+
+    /** Keep feature milestones ahead of completion, including newly added categories. */
+    static Map<String, List<AchievementManager.Achievement>> orderedGroups(
+            List<AchievementManager.Achievement> achievements) {
+        Map<String, List<AchievementManager.Achievement>> remaining = new LinkedHashMap<>();
+        for (AchievementManager.Achievement achievement : achievements) {
+            remaining.computeIfAbsent(displayCategory(achievement), category -> new ArrayList<>())
+                    .add(achievement);
+        }
+        for (Map.Entry<String, List<AchievementManager.Achievement>> entry : remaining.entrySet()) {
+            if (isTieredCategory(entry.getKey())) {
+                // List.sort is stable: equal targets retain their deliberate catalog order.
+                // Compare real requirements, not legacy numeric suffixes or unlock state.
+                entry.getValue().sort(Comparator.comparingLong(
+                        achievement -> {
+                            long target = AchievementManager.target(achievement.getId());
+                            return target > 0 ? target : Long.MAX_VALUE;
+                        }));
+            }
+        }
+        // Reserve the terminal group before appending uncatalogued feature groups.
+        List<AchievementManager.Achievement> completion = remaining.remove("special");
+        Map<String, List<AchievementManager.Achievement>> ordered = new LinkedHashMap<>();
+        for (String category : CATEGORY_ORDER) {
+            List<AchievementManager.Achievement> group = remaining.remove(category);
+            if (group != null) ordered.put(category, group);
+        }
+        ordered.putAll(remaining);
+        if (completion != null) {
+            // Future special milestones must not follow the all-achievements milestone.
+            List<AchievementManager.Achievement> terminal = new ArrayList<>();
+            for (AchievementManager.Achievement achievement : completion) {
+                if (!"legend".equals(achievement.getId())) terminal.add(achievement);
+            }
+            for (AchievementManager.Achievement achievement : completion) {
+                if ("legend".equals(achievement.getId())) terminal.add(achievement);
+            }
+            ordered.put("special", terminal);
+        }
+        return ordered;
+    }
+
+    static String displayCategory(AchievementManager.Achievement achievement) {
+        switch (achievement.getId()) {
+            case "color_picker": case "border_artist": case "style_explorer":
+                return "appearance";
+            case "first_custom_phrase": case "phrase_library": return "phrases";
+            case "pack_curator": return "packs";
+            case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault":
+            case "paid_pause": return "wallet_setup";
+            case "wallet_paid_10": case "wallet_paid_100":
+            case "wallet_paid_500": case "wallet_paid_1000": return "wallet_payments";
+            default: return achievement.getCategory();
+        }
+    }
+
+    private static boolean isTieredCategory(String category) {
+        switch (category) {
+            case "sessions": case "time": case "streaks": case "app_mode":
+            case "blocks": case "peaks": case "censor": case "appearance":
+            case "phrases": case "export": case "subliminal": case "wallet_payments":
+                return true;
+            default: return false;
         }
     }
 
@@ -157,9 +211,11 @@ public final class AchievementsActivity extends AppCompatActivity {
     }
 
     private AchievementManager.Achievement nextVisibleLocked() {
-        for (AchievementManager.Achievement value : manager.all()) {
-            if (!manager.isUnlocked(value.getId()) && !value.isHidden()
-                    && manager.progress(value, stats).isCountable()) return value;
+        for (List<AchievementManager.Achievement> group : orderedGroups(manager.all()).values()) {
+            for (AchievementManager.Achievement value : group) {
+                if (!manager.isUnlocked(value.getId()) && !value.isHidden()
+                        && manager.progress(value, stats).isCountable()) return value;
+            }
         }
         return null;
     }
@@ -397,7 +453,11 @@ public final class AchievementsActivity extends AppCompatActivity {
             case "peaks": return R.string.achievement_category_peaks;
             case "streaks": return R.string.achievement_category_streaks;
             case "custom": return R.string.achievement_category_custom;
-            case "profiles": return R.string.achievement_category_profiles;
+            case "appearance": return R.string.achievement_display_appearance;
+            case "phrases": return R.string.achievement_display_phrases;
+            case "packs": return R.string.achievement_display_packs;
+            case "wallet_setup": return R.string.achievement_display_tribute_setup;
+            case "wallet_payments": return R.string.achievement_display_tribute_payments;
             case "export": return R.string.achievement_category_export;
             case "app_mode": return R.string.achievement_category_app_mode;
             case "limits": return R.string.achievement_category_limits;

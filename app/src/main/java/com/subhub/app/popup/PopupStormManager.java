@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -34,8 +35,12 @@ public final class PopupStormManager {
     private static final String TAG = "PopupStorm";
     private static final int WINDOW_SLOP = 6;
     private static final int STOP_MARGIN = 16;
+    public static final long PREVIEW_DURATION_MS = 10_000L;
+    public enum PreviewResult { STARTED, ALREADY_RUNNING, UNAVAILABLE }
     private static final PopupStormManager INSTANCE = new PopupStormManager();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final PopupRunOwnership ownership = new PopupRunOwnership();
+    private Runnable previewTimeout;
     private final AtomicLong ids = new AtomicLong();
     private final CopyOnWriteArrayList<LivePopup> popups = new CopyOnWriteArrayList<>();
     private final Random random = new Random();
@@ -43,11 +48,11 @@ public final class PopupStormManager {
     private Context context;
     private PopupBitmapCache bitmapCache;
     private PopupLibrary library;
-    private PopupStormSettings settings;
+    private volatile PopupStormSettings settings;
     private WindowManager windowManager;
     private TextView stopControl;
-    private boolean running;
-    private boolean startRequested;
+    private volatile boolean running;
+    private volatile boolean startRequested;
     private long lastTick;
     private long lastSpawn;
     private long burstStarted;
@@ -68,37 +73,111 @@ public final class PopupStormManager {
     private PopupStormManager() {}
     public static PopupStormManager get() { return INSTANCE; }
     public boolean isRunning() { return running; }
+    public boolean isPreviewing() { return ownership.isPreview(); }
+    /** Foreground/service reevaluation must not reset a preview or restart image I/O each event. */
+    public void syncServiceParticipation(Context source, boolean eligible) {
+        if (eligible) {
+            if (!ownership.isService()) start(source);
+        } else if (ownership.isService()) stop();
+    }
+    public long remainingPreviewMillis() {
+        return ownership.remainingPreviewMillis(SystemClock.uptimeMillis());
+    }
     public int libraryImageCount() { return library == null ? 0 : library.count(); }
 
     public void reloadSettings(Context source) {
         initialize(source);
         settings = PopupStormSettings.load(source);
         rescanAsync();
-        if (!settings.isEnabled() && running) stop();
+        if (!settings.isEnabled() && !ownership.isPreview() && running) stop();
     }
 
     public boolean canStart(Context source) {
         initialize(source);
         PopupStormSettings current = settings == null ? PopupStormSettings.load(source) : settings;
-        return current.isEnabled() && current.isAcknowledged()
+        return current.isEnabled() && canRender(source);
+    }
+
+    private boolean canRender(Context source) {
+        PopupStormSettings current = settings == null ? PopupStormSettings.load(source) : settings;
+        return current.isAcknowledged()
                 && Settings.canDrawOverlays(source) && library != null && !library.isEmpty();
     }
 
     public void start(Context source) {
+        // Claim before posting so an already queued preview timeout cannot stop
+        // an effect that a real service has adopted from another thread.
+        long token;
+        synchronized (ownership) {
+            token = ownership.adoptService();
+            startRequested = true;
+        }
         initialize(source);
-        startRequested = true;
         settings = PopupStormSettings.load(source);
         rescanAsync();
-        main.post(this::startIfReady);
+        main.post(() -> {
+            synchronized (ownership) {
+                if (!ownership.isService(token)) return;
+                cancelPreviewTimeout();
+                startIfReady();
+            }
+        });
+    }
+
+    /** Starts at most ten seconds of editor preview without changing service state. */
+    public PreviewResult preview(Context source) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            throw new IllegalStateException("Popup previews must be requested on the main thread");
+        }
+        initialize(source);
+        settings = PopupStormSettings.load(source);
+        if (!settings.isAcknowledged()
+                || !Settings.canDrawOverlays(source)) return PreviewResult.UNAVAILABLE;
+        synchronized (ownership) {
+            if (running || ownership.hasOwner()) return PreviewResult.ALREADY_RUNNING;
+            long token = ownership.beginPreview(SystemClock.uptimeMillis(), PREVIEW_DURATION_MS);
+            startRequested = true;
+            cancelPreviewTimeout();
+            previewTimeout = () -> {
+                synchronized (ownership) {
+                    if (!ownership.expirePreview(token, SystemClock.uptimeMillis())) return;
+                    startRequested = false;
+                    previewTimeout = null;
+                    stopOnMain();
+                }
+            };
+            main.postDelayed(previewTimeout, PREVIEW_DURATION_MS);
+            rescanAsync();
+            startIfReady();
+        }
+        return PreviewResult.STARTED;
     }
 
     public void stop() {
-        startRequested = false;
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post(this::stopOnMain);
-        } else {
-            stopOnMain();
+        long token;
+        synchronized (ownership) {
+            token = ownership.stop();
+            startRequested = false;
         }
+        Runnable stopRequest = () -> {
+            synchronized (ownership) {
+                // An older queued stop must not remove a newly owned effect.
+                if (!ownership.isStopped(token)) return;
+                cancelPreviewTimeout();
+                stopOnMain();
+            }
+        };
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(stopRequest);
+        } else {
+            stopRequest.run();
+        }
+    }
+
+    private void cancelPreviewTimeout() {
+        if (previewTimeout == null) return;
+        main.removeCallbacks(previewTimeout);
+        previewTimeout = null;
     }
 
     public void updateDetections(List<RectF> boxes) {
@@ -159,16 +238,27 @@ public final class PopupStormManager {
     }
 
     private void startIfReady() {
-        if (running || !startRequested || context == null || !canStart(context)) return;
-        updateDisplayBounds();
-        long now = System.currentTimeMillis();
-        lastTick = now;
-        lastSpawn = now;
-        burstStarted = 0;
-        burstUntil = 0;
-        running = true;
-        showStopControl();
-        Choreographer.getInstance().postFrameCallback(frameCallback);
+        synchronized (ownership) {
+            long preview = ownership.previewToken();
+            if (preview != 0 && ownership.expirePreview(preview, SystemClock.uptimeMillis())) {
+                startRequested = false;
+                cancelPreviewTimeout();
+                stopOnMain();
+                return;
+            }
+            if (running || !startRequested || !ownership.hasOwner()
+                    || context == null || (!ownership.isPreview() && !settings.isEnabled())
+                    || !canRender(context)) return;
+            updateDisplayBounds();
+            long now = System.currentTimeMillis();
+            lastTick = now;
+            lastSpawn = now;
+            burstStarted = 0;
+            burstUntil = 0;
+            running = true;
+            showStopControl();
+            Choreographer.getInstance().postFrameCallback(frameCallback);
+        }
     }
 
     private void stopOnMain() {
@@ -187,7 +277,8 @@ public final class PopupStormManager {
         float seconds = Math.max(0, Math.min(.1f, (now - lastTick) / 1000f));
         lastTick = now;
         PopupStormSettings current = settings;
-        if (current == null || !current.isEnabled()) { stop(); return; }
+        if (current == null || (!ownership.isPreview() && !current.isEnabled())
+                || !current.isAcknowledged()) { stop(); return; }
         for (LivePopup live : popups) {
             if (now >= live.popup.expiresAt()) {
                 popups.remove(live);

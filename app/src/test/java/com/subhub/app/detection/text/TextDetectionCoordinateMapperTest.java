@@ -1,6 +1,7 @@
 package com.subhub.app.detection.text;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
 import com.subhub.app.detection.BBox;
 import com.subhub.app.detection.Detection;
@@ -35,5 +36,21 @@ public final class TextDetectionCoordinateMapperTest {
                 Collections.singletonList(detection), 1080, 2400, 1080, 2400);
 
         assertEquals(original, mapped.get(0).getBox());
+    }
+
+    @Test public void mappingPreservesAccessibilityIdentityAndGeometryAuthority() {
+        Detection detection = new Detection(
+                "TEXT_SMUT_ACCESSIBILITY_EXPLICIT", "text_smut", 0.91f,
+                new BBox(50, 500, 600, 80), true, false,
+                Detection.ObservationSource.ACCESSIBILITY,
+                Detection.GeometryQuality.EXACT,
+                "a11y:id:caption-42");
+
+        Detection mapped = TextDetectionCoordinateMapper.screenToCapture(
+                Collections.singletonList(detection), 1080, 2400, 540, 1200).get(0);
+
+        assertSame(Detection.ObservationSource.ACCESSIBILITY, mapped.getSource());
+        assertSame(Detection.GeometryQuality.EXACT, mapped.getGeometryQuality());
+        assertEquals("a11y:id:caption-42", mapped.getAnchorKey());
     }
 }

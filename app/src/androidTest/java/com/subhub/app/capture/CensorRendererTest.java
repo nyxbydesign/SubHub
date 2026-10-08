@@ -36,6 +36,31 @@ import java.util.concurrent.TimeUnit;
 
 @RunWith(AndroidJUnit4.class)
 public final class CensorRendererTest {
+    @Test public void gradientBorderUsesBothConfiguredEndpoints() {
+        Context context = ApplicationProvider.getApplicationContext();
+        Bitmap source = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
+        source.eraseColor(Color.WHITE);
+        Bitmap blue = source.copy(Bitmap.Config.ARGB_8888, true);
+        Bitmap green = source.copy(Bitmap.Config.ARGB_8888, true);
+        try (CensorRenderer renderer = new CensorRenderer(context)) {
+            for (int end : new int[]{Color.BLUE, Color.GREEN}) {
+                CensorAppearance appearance = new CensorAppearance(CensorAppearance.Type.BOX,
+                        100, 0f, true, false, CensorAppearance.BorderEffect.GRADIENT,
+                        false, Color.MAGENTA, new EffectPalette(Color.BLACK, Color.WHITE, Color.WHITE),
+                        Collections.emptyList(), false, 100, "rectangle", "SubHub", "Blocked", Color.RED, end);
+                renderer.draw(end == Color.BLUE ? blue : green, source,
+                        Collections.singletonList(detection(20, 20, 60, 60)), appearance);
+            }
+            int changed = 0;
+            for (int y = 18; y <= 82; y++) for (int x = 18; x <= 82; x++) {
+                if (blue.getPixel(x, y) != green.getPixel(x, y)) changed++;
+            }
+            assertTrue("Changing only the endpoint must recolor the rendered border", changed > 100);
+            assertEquals(Color.BLACK, blue.getPixel(50, 50));
+            assertEquals(Color.BLACK, green.getPixel(50, 50));
+        } finally { source.recycle(); blue.recycle(); green.recycle(); }
+    }
+
     @Test public void solidBoxUsesItsSelectedOpaqueColor() {
         Context context = ApplicationProvider.getApplicationContext();
         Bitmap source = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);

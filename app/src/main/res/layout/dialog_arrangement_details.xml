@@ -2,20 +2,14 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_header_card"
+    android:background="@drawable/bg_native_dialog"
     android:orientation="vertical"
     android:padding="18dp">
-
-    <TextView
-        android:id="@+id/arrangement_detail_eyebrow"
-        style="@style/Widget.SubHub.SectionHeader"
-        android:text="@string/home_arrangement_title" />
 
     <TextView
         android:id="@+id/arrangement_detail_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="7dp"
         android:includeFontPadding="false"
         android:textColor="@color/text_primary"
         android:textSize="19sp"
@@ -31,7 +25,7 @@
     <TextView
         android:id="@+id/arrangement_detail_close"
         style="@style/Widget.SubHub.OutlineAction"
-        android:layout_height="44dp"
+        android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height"
         android:layout_marginTop="16dp"
         android:text="@string/close" />
 </LinearLayout>

@@ -18,6 +18,7 @@ import android.graphics.Typeface;
 import com.subhub.app.detection.BBox;
 import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
+import com.subhub.app.overlay.CensorLabelLayout;
 import com.subhub.app.settings.CensorAppearance;
 import com.subhub.app.settings.SettingsRepository;
 
@@ -92,10 +93,14 @@ public final class CensorRenderer implements AutoCloseable {
             drawEffect(canvas, source, rect, index, appearance.getType(),
                     appearance.getIntensity(), appearance);
             if (appearance.isShowBorder()) drawBorder(canvas, rect, appearance);
+        }
+        // Labels are a final global layer so overlapping censor artwork cannot bury glyphs.
+        for (int index = 0; index < detections.size(); index++) {
+            RectF rect = paddedRect(detections.get(index).getBox(), target, appearance);
             if (appearance.isShowText()
                     && appearance.getType() != CensorAppearance.Type.ERROR_POPUP
-                    && rect.width() >= 64 && rect.height() >= 28) {
-                drawLabel(canvas, rect, appearance.phraseFor(index), appearance);
+                    && rect.width() >= 32 && rect.height() >= 16) {
+                drawLabel(canvas, rect, index, appearance);
             }
         }
     }
@@ -408,7 +413,7 @@ public final class CensorRenderer implements AutoCloseable {
             border.setStrokeWidth(3);
         } else if (appearance.getBorderEffect() == CensorAppearance.BorderEffect.GRADIENT) {
             border.setShader(new LinearGradient(rect.left, rect.top, rect.right, rect.bottom,
-                    appearance.getBorderColor(), Color.WHITE, Shader.TileMode.CLAMP));
+                    appearance.getGradientStart(), appearance.getGradientEnd(), Shader.TileMode.CLAMP));
         } else if (appearance.getBorderEffect() == CensorAppearance.BorderEffect.RAINBOW) {
             border.setShader(new SweepGradient(rect.centerX(), rect.centerY(), new int[]{
                     Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE,
@@ -433,22 +438,25 @@ public final class CensorRenderer implements AutoCloseable {
     }
 
     private void drawLabel(
-            Canvas canvas, RectF rect, String label, CensorAppearance appearance) {
+            Canvas canvas, RectF rect, int stableId, CensorAppearance appearance) {
         text.setColor(Color.WHITE);
-        text.setTextSize(Math.max(10, Math.min(36, rect.height() * .18f)));
+        float maximumWidth = Math.max(18f, rect.width() - 10f);
+        float minimumSize = 7f;
+        float maximumSize = Math.min(36f, Math.max(minimumSize, rect.height() * .20f));
+        text.setTextSize(minimumSize);
+        String selected = CensorLabelLayout.selectPhrase(
+                appearance.getPhrases(), stableId, maximumWidth, text::measureText);
+        text.setTextSize(maximumSize);
+        float measured = text.measureText(selected);
+        text.setTextSize(measured <= maximumWidth || measured <= 0f
+                ? maximumSize : Math.max(minimumSize,
+                maximumSize * maximumWidth / measured));
         text.setShadowLayer(3, 0, 1, Color.BLACK);
         float baseline = rect.centerY() - (text.ascent() + text.descent()) / 2f;
-        drawFittedText(canvas, label, rect.centerX(), baseline, rect.width() - 12);
+        String fitted = CensorLabelLayout.ellipsize(
+                selected, maximumWidth, text::measureText);
+        canvas.drawText(fitted, rect.centerX(), baseline, text);
         text.clearShadowLayer();
-    }
-
-    private void drawFittedText(
-            Canvas canvas, String value, float x, float baseline, float maximumWidth) {
-        String fitted = value == null ? "" : value;
-        while (fitted.length() > 4 && text.measureText(fitted) > maximumWidth) {
-            fitted = fitted.substring(0, fitted.length() - 2) + "…";
-        }
-        canvas.drawText(fitted, x, baseline, text);
     }
 
     private static RectF paddedRect(

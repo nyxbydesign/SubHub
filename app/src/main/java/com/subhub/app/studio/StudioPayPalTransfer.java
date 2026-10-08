@@ -101,7 +101,7 @@ final class StudioPayPalTransfer {
                     if (!current(token)) { if (unlocked != null) unlocked.close(); return; }
                     if (unlocked == null) { toast("Wrong passphrase or invalid PayPal attachment."); return; }
                     pending = unlocked;
-                    dialog = new AlertDialog.Builder(activity).setTitle("Confirm PayPal recipient")
+                    dialog = com.subhub.app.util.ThemedDialogs.builder(activity).setTitle("Confirm PayPal recipient")
                             .setMessage(unlocked.summary() + "\n\nOrders go to the merchant owning these API "
                                     + "credentials; the fallback link may identify a different recipient. "
                                     + "Confirm the merchant with your Dom independently.\n\n"
@@ -134,7 +134,7 @@ final class StudioPayPalTransfer {
         fields.addView(password);
         EditText confirmation = passwordField("Confirm passphrase");
         if (exporting) fields.addView(confirmation);
-        dialog = new AlertDialog.Builder(activity)
+        dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setTitle(exporting ? "Encrypt PayPal for this arrangement" : "Unlock PayPal attachment")
                 .setMessage(exporting
                         ? "Includes your current PayPal client ID, secret, environment and fallback link. "

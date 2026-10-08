@@ -38,7 +38,8 @@ public final class FeatureModuleManager {
     }
 
     public boolean hasRuntimeFeature() {
-        return isCensorEnabled() || isLimitsEnabled() || isSubliminalEnabled();
+        return isCensorEnabled() || isLimitsEnabled() || isSubliminalEnabled()
+                || preferences.getBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, false);
     }
 
     public void save(boolean censor, boolean limits, boolean wallet, boolean subliminal) {

@@ -1,6 +1,6 @@
 # SubHub pack format
 
-`.subhubpack` is SubHub Studio's portable arrangement format. It is a bounded ZIP archive designed for local creation, review, sharing, and reversible activation. Schema version 1 was introduced with SubHub 0.6.0 and remains the format for ordinary account-free arrangements. Schema version 2 adds an optional passphrase-encrypted PayPal merchant attachment; older apps reject it rather than silently skipping the attachment.
+`.subhubpack` is SubHub Studio's portable pack format. It is a bounded ZIP archive designed for local creation, review, sharing, and reversible application. Packs use schema version 4 and the shared typed setting catalog. Only the current schema is accepted; earlier packs must be recreated. There are no legacy setting aliases, lock groups, or identity migrations. Both pack and origin identities must be canonical UUIDs.
 
 ## Archive layout
 
@@ -17,7 +17,7 @@ assets/popup/*
 assets/cover/*
 ```
 
-Only sections declared by `includedSections` are required. The manifest records the format and schema versions, arrangement identity and author metadata, minimum SubHub version, included sections, optional lock groups, non-binding recommendations, per-asset SHA-256 values, and an integrity digest covering the manifest and section data.
+Only sections declared by `includedSections` are required. The manifest records the format and schema versions, pack identity and author metadata, minimum SubHub version, included sections, non-binding recommendations, per-asset SHA-256 values, and an integrity digest covering the manifest and section data. New manifests never write lock groups.
 
 Studio rejects duplicate or unsafe paths, unknown sections, missing entries, mismatched hashes, malformed metadata, oversized entries, archives that expand beyond the total limit, and arrangements requiring a newer SubHub build.
 
@@ -32,7 +32,9 @@ Studio rejects duplicate or unsafe paths, unknown sections, missing entries, mis
 | `subliminal` | Preset, timing, opacity, text size, phrase groups, and custom phrases |
 | `popup` | Popup Storm behavior and embedded popup images |
 
-The schema is an explicit allowlist. Unknown fields are discarded rather than copied into application preferences.
+`PackSettingCatalog` is the single allowlist for capture, native draft controls, validation and typed preference writes. Its 115 fields cover every transferable setting across the six sections, including independent border gradient start/end colors. Unknown fields are discarded; malformed known fields, invalid choices, out-of-range values and incompatible relationships are rejected. String sets stay JSON arrays, integer preferences stay integers, timing longs stay longs and float preferences stay floats. Money controls display decimal amounts but store minor units; percentage controls preserve the runtime ratio. Detection uses `detection_quality` (`low`, `medium`, `high`) and `detection_confidence_percent`; retired detection and Wallet rule keys are not migrated.
+
+Studio's Details → Features → Images → Review editor never writes live preferences. Section controls offer full configuration, current-setting copy and defaults. Missing fields receive catalog defaults when opened for editing, while imported partial sections remain partial until edited. Image reads, thumbnail decoding, archive I/O and draft persistence run off the UI thread. Each image is limited to 25 MiB, with at most 64 images per feature, a single cover in the creator and a 256 MiB total archive limit. Covers are presentation assets, never applied as feature images. Local library previews do not load image payloads; operations validate the complete archive before use.
 
 ## Deliberately excluded
 
@@ -41,21 +43,21 @@ An arrangement never carries:
 - PayPal access tokens, saved payer or wallet identifiers, approval/verification state, or transaction history. Merchant client ID, secret, environment and fallback recipient link may be included **only** in the opt-in encrypted attachment below, never in ordinary sections.
 - Controller PIN material, permission state, Accessibility or Device Admin state, or Hardcore activation state.
 - App package names, app assignments, per-app usage, or per-app allowance overrides.
-- Current service state, release time, session data, statistics, achievements, ledger history, update state, or private filesystem paths.
+- Current service state, release time, session data, statistics, achievements, ledger history, Wallet currency, automatic-payment consent, Popup Storm photosensitivity acknowledgement, update state, or private filesystem paths.
 
 Hardcore and service-duration fields are recommendations shown during activation. Studio never applies them automatically.
 
-## Activation and locks
+## Applying and restoring settings
 
-Only Dom Space can activate an arrangement. The review flow chooses sections, shows the proposed changes, writes a recovery journal, backs up affected keys, commits the new values, installs verified assets into private storage, and then records the active arrangement. An interrupted activation is rolled back at next startup.
+Only Dom mode can apply a pack. The review flow chooses sections, shows the proposed changes, validates them against local settings, writes a recovery journal, backs up affected keys, commits typed values, installs verified selected-section assets into private storage, and then records the active pack. An interrupted application is rolled back at next startup; failed recovery retains its journal and blocks another application. Applying/restoring never enters or leaves service.
 
-Lock groups use stable section names rather than individual UI widgets. Locked groups stay read-only until Dom Space deactivates or replaces the arrangement. Replacing an arrangement restores the previous backup before applying the next one. Sub Space may create, import, duplicate, export, and share arrangements, but cannot activate, replace, or deactivate one.
+Packs no longer impose setting locks. The ordinary Dom/PIN editing boundary still applies. Restoring returns the affected keys to their pre-pack values. Replacing a pack restores the previous backup before applying the next one. Sub mode may create, edit, import, duplicate, export and share drafts, but cannot newly apply or restore a pack. A matching ordinary active-pack update retains the original backup; encrypted updates require fresh Dom review as described below.
 
-Legacy `.bbpack` archives use their existing verifier and activation path. They remain import-only and are shown in the Studio Library; they are not silently converted to `.subhubpack`.
+There is one current pack system. The legacy `.bbpack`, saved-profile and settings-backup interfaces and their related profile achievements are retired. Previously saved private files remain on disk; this change does not delete or silently convert them. Internal application-recovery backups remain supported and are never portable.
 
 ## Optional encrypted PayPal attachment
 
-In Dom Space, include Wallet in a draft and choose **Encrypt current PayPal into pack**.
+In Dom mode, include Tributes in a draft and choose **Add encrypted merchant details**.
 This explicitly snapshots the current merchant client ID, secret, Sandbox/Live environment,
 and optional PayPal-hosted fallback link. Capturing or refreshing Wallet alone never includes
 credentials. Use a strong unique 12–256-character passphrase, confirm it, and share it separately

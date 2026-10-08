@@ -45,17 +45,25 @@ public final class CensorPreviewView extends View {
 
         String style = String.valueOf(getTag());
         float edge = Math.min(width, height) * 0.06f;
-        scene.set(edge, edge, width - edge, height - edge);
-        target.set(scene.left + scene.width() * 0.26f,
-                scene.top + scene.height() * 0.34f,
-                scene.left + scene.width() * 0.74f,
-                scene.top + scene.height() * 0.80f);
+        float phoneHeight = Math.min(height - 2 * edge, (width - 2 * edge) / .54f);
+        float phoneWidth = phoneHeight * .54f;
+        scene.set((width - phoneWidth) / 2f, (height - phoneHeight) / 2f,
+                (width + phoneWidth) / 2f, (height + phoneHeight) / 2f);
+        target.set(scene.left + scene.width() * .12f,
+                scene.top + scene.height() * .30f,
+                scene.right - scene.width() * .12f,
+                scene.top + scene.height() * .76f);
 
         paint.setShader(new LinearGradient(scene.left, scene.top, scene.right, scene.bottom,
                 Color.rgb(39, 25, 49), Color.rgb(25, 18, 33), Shader.TileMode.CLAMP));
         paint.setStyle(Paint.Style.FILL);
-        canvas.drawRoundRect(scene, scene.height() * 0.14f, scene.height() * 0.14f, paint);
+        float corner = scene.width() * .14f;
+        canvas.drawRoundRect(scene, corner, corner, paint);
         paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setColor(PLUM_LIGHT);
+        paint.setStrokeWidth(Math.max(1f, scene.width() * .035f));
+        canvas.drawRoundRect(scene, corner, corner, paint);
 
         drawSceneChrome(canvas);
         if ("pixelate".equals(style)) {
@@ -79,33 +87,27 @@ public final class CensorPreviewView extends View {
 
     private void drawSceneChrome(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.rgb(132, 78, 151));
-        canvas.drawCircle(scene.left + scene.width() * 0.12f,
-                scene.top + scene.height() * 0.19f, scene.height() * 0.045f, paint);
-        paint.setColor(Color.rgb(83, 57, 102));
-        canvas.drawRoundRect(scene.left + scene.width() * 0.23f,
-                scene.top + scene.height() * 0.14f,
-                scene.right - scene.width() * 0.10f,
-                scene.top + scene.height() * 0.22f,
-                scene.height() * 0.04f, scene.height() * 0.04f, paint);
-        paint.setColor(Color.rgb(101, 68, 117));
-        canvas.drawRoundRect(scene.left + scene.width() * 0.10f,
-                scene.top + scene.height() * 0.31f,
-                scene.left + scene.width() * 0.21f,
-                scene.bottom - scene.height() * 0.12f,
-                scene.height() * 0.04f, scene.height() * 0.04f, paint);
         paint.setColor(PLUM_LIGHT);
-        canvas.drawRoundRect(scene.left + scene.width() * 0.30f,
-                scene.top + scene.height() * 0.27f,
-                scene.right - scene.width() * 0.10f,
-                scene.top + scene.height() * 0.30f,
-                scene.height() * 0.02f, scene.height() * 0.02f, paint);
+        canvas.drawRoundRect(scene.left + scene.width() * .35f,
+                scene.top + scene.height() * .065f, scene.right - scene.width() * .35f,
+                scene.top + scene.height() * .085f, 2, 2, paint);
+        canvas.drawCircle(scene.left + scene.width() * .18f,
+                scene.top + scene.height() * .19f, scene.width() * .05f, paint);
+        paint.setColor(Color.rgb(83, 57, 102));
+        canvas.drawRoundRect(scene.left + scene.width() * .30f,
+                scene.top + scene.height() * .17f, scene.right - scene.width() * .12f,
+                scene.top + scene.height() * .21f, 2, 2, paint);
         paint.setColor(Color.rgb(75, 48, 89));
-        canvas.drawRoundRect(scene.left + scene.width() * 0.30f,
-                scene.bottom - scene.height() * 0.16f,
-                scene.right - scene.width() * 0.12f,
-                scene.bottom - scene.height() * 0.10f,
-                scene.height() * 0.02f, scene.height() * 0.02f, paint);
+        canvas.drawRoundRect(scene.left + scene.width() * .12f,
+                scene.top + scene.height() * .81f, scene.right - scene.width() * .12f,
+                scene.top + scene.height() * .84f, 2, 2, paint);
+        canvas.drawRoundRect(scene.left + scene.width() * .12f,
+                scene.top + scene.height() * .87f, scene.left + scene.width() * .60f,
+                scene.top + scene.height() * .895f, 2, 2, paint);
+        paint.setColor(PLUM_LIGHT);
+        canvas.drawRoundRect(scene.left + scene.width() * .35f,
+                scene.bottom - scene.height() * .055f, scene.right - scene.width() * .35f,
+                scene.bottom - scene.height() * .035f, 2, 2, paint);
     }
 
     private void drawBox(Canvas canvas) {

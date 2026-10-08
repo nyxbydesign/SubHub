@@ -12,7 +12,7 @@ import java.util.*;
 public final class ExportSettings {
     private static final String STORE = "subhub_export_settings";
     private static final Set<String> KEYS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-            "enabled_categories", "detection_confidence_percent", "detection_quality", "censor_type",
+            "enabled_categories", "detection_confidence_percent", "detection_quality", "censor_type", "censor_coverage",
             "censor_intensity", "censor_size_padding", "show_border", "animate_border", "border_effect",
             "show_text", "border_color", "enabled_phrase_categories", "custom_phrases", "reverse_mode",
             "reverse_strength", "reverse_cutout_shape", "error_popup_title", "error_popup_text",

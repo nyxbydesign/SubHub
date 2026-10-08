@@ -6,36 +6,13 @@
     <ScrollView android:layout_width="match_parent" android:layout_height="match_parent"
         android:clipToPadding="false" android:fillViewport="true">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="vertical" android:paddingBottom="116dp">
-            <LinearLayout android:id="@+id/penance_header"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="10dp"
-                android:background="@drawable/bg_header_card" android:gravity="center_vertical"
-                android:orientation="horizontal" android:padding="14dp">
-                <TextView android:id="@+id/button_back" android:layout_width="wrap_content"
-                    android:layout_height="36dp" android:gravity="center_vertical"
-                    android:text="@string/back" android:textColor="@color/accent"
-                    android:textSize="11sp" android:textStyle="bold" android:visibility="gone" />
-                <ImageView android:layout_width="44dp" android:layout_height="44dp"
-                    android:background="@drawable/bg_header_icon"
-                    android:contentDescription="@string/penance_title" android:padding="10dp"
-                    android:src="@drawable/ic_nav_money" app:tint="@color/text_primary" />
-                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_marginStart="11dp" android:layout_weight="1"
-                    android:orientation="vertical">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:letterSpacing="0.1" android:text="@string/penance_title"
-                        android:textColor="@color/text_primary" android:textSize="20sp"
-                        android:textStyle="bold" />
-                    <TextView android:id="@+id/penance_subtitle"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp" android:text="@string/penance_subtitle"
-                        android:textColor="@color/text_secondary" android:textSize="12sp" />
-                </LinearLayout>
-                <TextView android:id="@+id/button_edit_lock"
-                    style="@style/Widget.SubHub.ControllerEdit"
-                    android:text="@string/controller_edit_locked" />
-            </LinearLayout>
+            android:orientation="vertical" android:paddingBottom="@dimen/bottom_nav_clearance">
+            <include
+                layout="@layout/view_primary_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="@dimen/page_margin"
+                android:layout_marginTop="@dimen/primary_header_top" />
 
             <LinearLayout android:id="@+id/balance_card"
                 style="@style/Widget.SubHub.CompactCard">
@@ -74,8 +51,9 @@
                     android:lineSpacingExtra="2dp" android:padding="10dp"
                     android:textColor="@color/text_secondary" android:textSize="11sp" />
                 <CheckBox android:id="@+id/ledger_enabled" android:layout_width="match_parent"
-                    android:layout_height="42dp" android:layout_marginTop="4dp"
-                    android:buttonTint="@color/accent" android:text="@string/penance_enabled"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" android:layout_marginTop="4dp"
+                    android:buttonTint="@color/toggle_tint" android:text="@string/penance_enabled"
                     android:textColor="@color/text_primary" />
                 <GridLayout android:id="@+id/rule_grid" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:columnCount="2">
@@ -88,14 +66,14 @@
                             android:orientation="horizontal">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                                 android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/Widget.SubHub.RuleCostLabel" />
+                                <TextView android:labelFor="@id/rule_detection_amount" style="@style/Widget.SubHub.RuleCostLabel" />
                                 <EditText android:id="@+id/rule_detection_amount"
                                     style="@style/Widget.SubHub.MoneyInput" />
                             </LinearLayout>
                             <Space android:layout_width="5dp" android:layout_height="1dp" />
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                                 android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/Widget.SubHub.RuleCostLabel"
+                                <TextView android:labelFor="@id/detection_batch" style="@style/Widget.SubHub.RuleCostLabel"
                                     android:text="@string/penance_detection_batch_label" />
                                 <EditText android:id="@+id/detection_batch"
                                     style="@style/Widget.SubHub.IntegerInput" />
@@ -110,14 +88,14 @@
                             android:orientation="horizontal">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                                 android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/Widget.SubHub.RuleCostLabel" />
+                                <TextView android:labelFor="@id/rule_dwell_amount" style="@style/Widget.SubHub.RuleCostLabel" />
                                 <EditText android:id="@+id/rule_dwell_amount"
                                     style="@style/Widget.SubHub.MoneyInput" />
                             </LinearLayout>
                             <Space android:layout_width="5dp" android:layout_height="1dp" />
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                                 android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/Widget.SubHub.RuleCostLabel"
+                                <TextView android:labelFor="@id/dwell_seconds" style="@style/Widget.SubHub.RuleCostLabel"
                                     android:text="@string/penance_dwell_seconds_label" />
                                 <EditText android:id="@+id/dwell_seconds"
                                     style="@style/Widget.SubHub.IntegerInput" />
@@ -128,14 +106,14 @@
                         <CheckBox android:id="@+id/rule_tap_enabled" style="@style/Widget.SubHub.RuleToggle"
                             android:text="@string/penance_rule_tap_title" />
                         <TextView style="@style/Widget.SubHub.RuleHelp" android:text="@string/penance_rule_tap_help" />
-                        <TextView style="@style/Widget.SubHub.RuleCostLabel" />
+                        <TextView android:labelFor="@id/rule_tap_amount" style="@style/Widget.SubHub.RuleCostLabel" />
                         <EditText android:id="@+id/rule_tap_amount" style="@style/Widget.SubHub.MoneyInput" />
                     </LinearLayout>
                     <LinearLayout style="@style/Widget.SubHub.RuleTile">
                         <CheckBox android:id="@+id/rule_app_open_enabled" style="@style/Widget.SubHub.RuleToggle"
                             android:text="@string/penance_rule_app_open_title" />
                         <TextView style="@style/Widget.SubHub.RuleHelp" android:text="@string/penance_rule_app_open_help" />
-                        <TextView style="@style/Widget.SubHub.RuleCostLabel" />
+                        <TextView android:labelFor="@id/rule_app_open_amount" style="@style/Widget.SubHub.RuleCostLabel" />
                         <EditText android:id="@+id/rule_app_open_amount" style="@style/Widget.SubHub.MoneyInput" />
                     </LinearLayout>
                 </GridLayout>
@@ -152,7 +130,7 @@
                     <GridLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:columnCount="2" android:layout_marginTop="4dp">
                         <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                            <TextView style="@style/Widget.SubHub.WalletFieldLabel"
+                            <TextView android:labelFor="@id/rule_tamper_amount" style="@style/Widget.SubHub.WalletFieldLabel"
                                 android:text="@string/penance_rule_cost_label" />
                             <TextView style="@style/Widget.SubHub.WalletFieldHelp"
                                 android:text="@string/penance_rule_tamper_price_help" />
@@ -160,7 +138,7 @@
                                 style="@style/Widget.SubHub.MoneyInput" />
                         </LinearLayout>
                         <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                            <TextView style="@style/Widget.SubHub.WalletFieldLabel"
+                            <TextView android:labelFor="@id/tamper_cooldown_minutes" style="@style/Widget.SubHub.WalletFieldLabel"
                                 android:text="@string/penance_tamper_cooldown_label" />
                             <TextView style="@style/Widget.SubHub.WalletFieldHelp"
                                 android:text="@string/penance_tamper_cooldown_help" />
@@ -171,9 +149,7 @@
                 </LinearLayout>
 
                 <LinearLayout android:id="@+id/paid_pause_config_card"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp" android:background="@drawable/bg_stat_card"
-                    android:orientation="vertical" android:padding="10dp">
+                    style="@style/Widget.SubHub.CompactCard">
                     <CheckBox android:id="@+id/paid_pause_enabled"
                         style="@style/Widget.SubHub.RuleToggle"
                         android:text="@string/paid_pause_enabled" />
@@ -182,7 +158,7 @@
                     <GridLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:columnCount="2" android:layout_marginTop="4dp">
                         <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                            <TextView style="@style/Widget.SubHub.WalletFieldLabel"
+                            <TextView android:labelFor="@id/paid_pause_amount" style="@style/Widget.SubHub.WalletFieldLabel"
                                 android:text="@string/paid_pause_price_label" />
                             <TextView style="@style/Widget.SubHub.WalletFieldHelp"
                                 android:text="@string/paid_pause_price_help" />
@@ -190,7 +166,7 @@
                                 style="@style/Widget.SubHub.MoneyInput" />
                         </LinearLayout>
                         <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                            <TextView style="@style/Widget.SubHub.WalletFieldLabel"
+                            <TextView android:labelFor="@id/paid_pause_minutes" style="@style/Widget.SubHub.WalletFieldLabel"
                                 android:text="@string/paid_pause_minutes_label" />
                             <TextView style="@style/Widget.SubHub.WalletFieldHelp"
                                 android:text="@string/paid_pause_minutes_help" />
@@ -207,18 +183,18 @@
                 <GridLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:columnCount="2" android:layout_marginTop="2dp">
                     <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                        <TextView style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_daily_label" />
+                        <TextView android:labelFor="@id/daily_cap" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_daily_label" />
                         <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/penance_daily_help" />
                         <EditText android:id="@+id/daily_cap" style="@style/Widget.SubHub.MoneyInput" />
                     </LinearLayout>
                     <LinearLayout style="@style/Widget.SubHub.FieldTile">
-                        <TextView style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_weekly_label" />
+                        <TextView android:labelFor="@id/weekly_cap" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_weekly_label" />
                         <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/penance_weekly_help" />
                         <EditText android:id="@+id/weekly_cap" style="@style/Widget.SubHub.MoneyInput" />
                     </LinearLayout>
                     <LinearLayout style="@style/Widget.SubHub.FieldTile"
                         android:layout_columnSpan="2" android:layout_columnWeight="2">
-                        <TextView style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_mercy_label_input" />
+                        <TextView android:labelFor="@id/mercy_minutes" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_mercy_label_input" />
                         <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/penance_mercy_help" />
                         <EditText android:id="@+id/mercy_minutes" style="@style/Widget.SubHub.IntegerInput" />
                     </LinearLayout>
@@ -236,7 +212,7 @@
                     android:textColor="@color/text_muted" android:textSize="10sp" />
                 <TextView android:id="@+id/payment_status" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center"
-                    android:textColor="@color/accent" android:textStyle="bold" />
+                    android:textColor="@color/accent_text" android:textStyle="bold" />
                 <Button android:id="@+id/button_settle" style="@style/Widget.SubHub.PrimaryButton"
                     android:layout_marginTop="7dp" android:text="@string/penance_settle" />
                 <Button android:id="@+id/button_confirm_payment"
@@ -264,7 +240,8 @@
                         android:text="@string/penance_clear_unpaid" android:textColor="@color/accent_hot" />
                 </LinearLayout>
                 <Button android:id="@+id/button_test_strike" style="@style/Widget.SubHub.PrimaryButton"
-                    android:layout_height="48dp" android:layout_marginTop="6dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" android:layout_marginTop="6dp"
                     android:text="@string/penance_test_strike" />
             </LinearLayout>
 
