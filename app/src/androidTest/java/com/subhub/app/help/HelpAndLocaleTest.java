@@ -101,45 +101,25 @@ public final class HelpAndLocaleTest {
         }
     }
 
-    @Test public void onboardingIsVisibleInBothModesAndDismissalPersists() {
-        Intent home = new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN)
-                .putExtra(MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true);
-        try {
-            for (boolean dom : new boolean[] {true, false}) {
-                preferences.edit().remove("has_seen_onboarding").commit();
-                if (dom) ControllerPinManager.enterDomMode();
-                else ControllerPinManager.enterSubMode();
-                try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home)) {
-                    scenario.onActivity(activity -> {
-                        View card = activity.findViewById(R.id.onboarding_card);
-                        assertTrue("First-run setup must actually be shown", card.isShown());
-                        View permission = activity.findViewById(R.id.permission_card);
-                        assertEquals(permission.getParent(), card.getParent());
-                        android.view.ViewGroup command = (android.view.ViewGroup) card.getParent();
-                        assertTrue(command.indexOfChild(card) < command.indexOfChild(permission));
-                        int minimum = activity.getResources()
-                                .getDimensionPixelSize(R.dimen.control_min_height);
-                        for (int id : new int[] {R.id.onboarding_help, R.id.onboarding_dismiss}) {
-                            View action = activity.findViewById(id);
-                            assertTrue(action.isShown());
-                            assertTrue(action.getHeight() >= minimum);
-                            assertTrue(action.getWidth() >= minimum);
-                        }
-                        boolean armed = new AppModeManager(context).isArmed();
-                        activity.findViewById(R.id.onboarding_dismiss).performClick();
-                        assertEquals(View.GONE, card.getVisibility());
-                        assertTrue(preferences.getBoolean("has_seen_onboarding", false));
-                        assertEquals("Continue must not toggle service", armed,
-                                new AppModeManager(context).isArmed());
-                    });
-                }
-                try (ActivityScenario<MainActivity> reopened = ActivityScenario.launch(home)) {
-                    reopened.onActivity(activity -> assertEquals(View.GONE,
-                            activity.findViewById(R.id.onboarding_card).getVisibility()));
-                }
+    @Test public void globalNoticesUseOneSlotAndDismissalPersists() {
+        Intent home = new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN);
+        for (boolean dom : new boolean[]{true,false}) {
+            context.getSharedPreferences("subhub_home",0).edit().remove("keyholder_intro_dismissed").remove("dismissed_permission_state").commit();
+            if(dom)ControllerPinManager.enterDomMode();else ControllerPinManager.enterSubMode();
+            try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(home)) {
+                scenario.onActivity(activity->{
+                    View card=activity.findViewById(R.id.global_notice_host);
+                    assertTrue(card.isShown());
+                    assertEquals(activity.findViewById(R.id.page_content),card.getParent());
+                    boolean armed=new AppModeManager(context).isArmed();
+                    activity.findViewById(R.id.global_notice_dismiss).performClick();
+                    if(card.getVisibility()==View.VISIBLE)activity.findViewById(R.id.global_notice_dismiss).performClick();
+                    assertEquals(View.GONE,card.getVisibility());
+                    assertEquals(armed,new AppModeManager(context).isArmed());
+                });
+                scenario.recreate();
+                scenario.onActivity(activity->assertEquals(View.GONE,activity.findViewById(R.id.global_notice_host).getVisibility()));
             }
-        } finally {
-            ControllerPinManager.enterSubMode();
         }
     }
 

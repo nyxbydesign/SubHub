@@ -26,6 +26,7 @@ public final class AuthenticatorActivity extends PreferencePage {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state); getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (state != null) expandedMethod = state.getString("keyholder_method", "pin");
+        else if ("remote".equals(getIntent().getStringExtra("keyholder_method"))) expandedMethod = "remote";
         page(R.string.authenticator_title);
         render();
     }

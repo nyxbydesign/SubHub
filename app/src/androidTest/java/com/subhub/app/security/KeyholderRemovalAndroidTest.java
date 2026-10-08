@@ -52,10 +52,11 @@ public class KeyholderRemovalAndroidTest {
     @Test public void meetDismissesHomeNotePersistently() {
         context.getSharedPreferences("subhub_home",0).edit().remove("keyholder_intro_dismissed").commit();
         try(ActivityScenario<MainActivity> home=ActivityScenario.launch(new Intent(context,MainActivity.class).setAction(Intent.ACTION_MAIN))) {
-            onView(withId(R.id.keyholder_intro_open)).perform(scrollTo(),click());
+            home.onActivity(a->{if("PERMISSIONS".equals(a.findViewById(R.id.global_notice_host).getTag()))a.findViewById(R.id.global_notice_dismiss).performClick();});
+            onView(withId(R.id.global_notice_action)).perform(scrollTo(),click());
             assertTrue(context.getSharedPreferences("subhub_home",0).getBoolean("keyholder_intro_dismissed",false));
             androidx.test.espresso.Espresso.pressBack(); home.recreate();
-            home.onActivity(a->assertEquals(android.view.View.GONE,a.findViewById(R.id.keyholder_intro).getVisibility()));
+            home.onActivity(a->assertEquals(android.view.View.GONE,a.findViewById(R.id.global_notice_host).getVisibility()));
         } finally { context.getSharedPreferences("subhub_home",0).edit().remove("keyholder_intro_dismissed").commit(); }
     }
 }

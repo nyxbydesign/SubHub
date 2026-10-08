@@ -1,0 +1,19 @@
+<resources>
+    <string name="notice_dismiss">Dismiss notice</string>
+    <string name="tour_title">Setup</string>
+    <string name="tour_progress">%1$d / %2$d</string>
+    <string name="tour_next">Continue</string>
+    <string name="tour_skip">Skip setup</string>
+    <string name="tour_finish">Finish</string>
+    <string name="tour_replay">Setup tour</string>
+    <string name="tour_features_help">Configure features in Dom mode. Start them with Enter Service on Home. Rituals contains Keyholder, subliminal messages and popups.</string>
+    <string name="tour_keyholder_help">Optional: use a PIN for in-person approval or Google Authenticator for remote approval.</string>
+    <string name="tour_permissions">Permissions</string>
+    <string name="tour_allow">Allow</string>
+    <string name="tour_allowed">Allowed</string>
+    <string name="tour_permission_help">Permissions can also be granted later when starting a feature.</string>
+    <item type="id" name="tour_progress" />
+    <item type="id" name="tour_step_title" />
+    <item type="id" name="tour_next" />
+    <item type="id" name="tour_skip" />
+</resources>

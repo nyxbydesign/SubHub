@@ -39,10 +39,14 @@ public class KeyholderDiscoveryAndroidTest {
         context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit();
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<MainActivity> home = ActivityScenario.launch(new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN))) {
-            onView(withId(R.id.keyholder_intro_dismiss)).perform(scrollTo(), click());
+            home.onActivity(a->{
+                if("PERMISSIONS".equals(a.findViewById(R.id.global_notice_host).getTag()))a.findViewById(R.id.global_notice_dismiss).performClick();
+                assertEquals("KEYHOLDER",a.findViewById(R.id.global_notice_host).getTag());
+            });
+            onView(withId(R.id.global_notice_dismiss)).perform(scrollTo(), click());
             home.recreate();
             home.onActivity(activity -> {
-                assertEquals(View.GONE, activity.findViewById(R.id.keyholder_intro).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.global_notice_host).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
             });
         } finally { context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit(); }

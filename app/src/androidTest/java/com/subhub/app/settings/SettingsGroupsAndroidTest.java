@@ -26,11 +26,13 @@ public class SettingsGroupsAndroidTest {
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             onView(withText(R.string.settings_apps)).perform(scrollTo(), click());
             onView(withId(R.id.button_toggle_apps)).perform(scrollTo()).check(matches(isDisplayed()));
-            onView(withText(R.string.settings_all)).perform(scrollTo(), click());
             onView(org.hamcrest.Matchers.allOf(withText(R.string.privacy_title), withEffectiveVisibility(Visibility.VISIBLE))).perform(scrollTo(), click());
             onView(withId(R.id.privacy_discreet_toggle)).check(matches(isDisplayed()));
-            androidx.test.espresso.Espresso.pressBack();
-            onView(org.hamcrest.Matchers.allOf(withText(R.string.settings_features), withEffectiveVisibility(Visibility.VISIBLE))).perform(scrollTo());
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:features"))).perform(scrollTo(),click());
+            onView(withId(R.id.switch_module_censor)).check(matches(isDisplayed()));
+            onView(withId(R.id.privacy_discreet_toggle)).check(matches(withEffectiveVisibility(Visibility.GONE)));
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:help"))).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:features"))).perform(scrollTo());
             scenario.onActivity(activity -> {
                 assertFalse(activity.findViewById(R.id.paypal_client_secret).isShown());
                 View root = activity.getWindow().getDecorView();

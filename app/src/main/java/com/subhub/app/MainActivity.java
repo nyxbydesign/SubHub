@@ -126,6 +126,9 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (com.subhub.app.onboarding.OnboardingState.shouldStart(this)) {
+            startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)); finish(); return;
+        }
         if (savedInstanceState != null) {
             selectedPactDurationMs = savedInstanceState.getLong("ux_pact_selection", PACT_UNTIL_RELEASED);
             selectedPactMinimumMs = savedInstanceState.getLong("ux_pact_min", 0);
@@ -138,15 +141,6 @@ public final class MainActivity extends AppCompatActivity {
         android.widget.LinearLayout homeContent = findViewById(R.id.page_content);
         android.widget.LinearLayout.LayoutParams dailyParams = new android.widget.LinearLayout.LayoutParams(-1, -2); dailyParams.topMargin = dp(12);
         homeContent.addView(dailyStats, Math.min(3, homeContent.getChildCount()), dailyParams);
-        findViewById(R.id.keyholder_intro_open).setOnClickListener(view -> {
-            getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
-            findViewById(R.id.keyholder_intro).setVisibility(View.GONE);
-            startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
-        });
-        findViewById(R.id.keyholder_intro_dismiss).setOnClickListener(view -> {
-            getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
-            findViewById(R.id.keyholder_intro).setVisibility(View.GONE);
-        });
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_home, R.string.app_name,
                 0);
         editLockButton = findViewById(R.id.button_edit_lock);
@@ -202,8 +196,6 @@ public final class MainActivity extends AppCompatActivity {
                 });
 
         binding.buttonProtection.setOnClickListener(this::toggleProtection);
-        binding.permissionCard.setOnClickListener(view -> beginPermissionReadinessFlow(true));
-        binding.permissionAction.setOnClickListener(view -> beginPermissionReadinessFlow(true));
         editLockButton.setOnClickListener(view -> toggleEditSession());
         binding.buttonAccessibilityCapture.setOnClickListener(view ->
                 startActivity(new Intent(this, SettingsActivity.class)));
@@ -218,11 +210,6 @@ public final class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(this, AchievementsActivity.class)));
         binding.buttonAchievements.setOnClickListener(view ->
                 startActivity(new Intent(this, AchievementsActivity.class)));
-        binding.onboardingHelp.setOnClickListener(view -> {
-            markOnboardingSeen();
-            startActivity(new Intent(this, HelpActivity.class));
-        });
-        binding.onboardingDismiss.setOnClickListener(view -> markOnboardingSeen());
         binding.buttonCommitmentView.setVisibility(View.GONE);
         binding.commitmentTimer1h.setOnClickListener(view ->
                 selectPactDuration(60L * 60L * 1000L));
@@ -247,24 +234,8 @@ public final class MainActivity extends AppCompatActivity {
                 R.string.sub_wallet_title, walletArrangementDetails()));
         binding.subAtmosphereCard.setOnClickListener(view -> showArrangementDetails(
                 R.string.atmosphere_title, atmosphereArrangementDetails()));
-        boolean seen = getSharedPreferences(SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE)
-                .getBoolean("has_seen_onboarding", false);
-        binding.onboardingCard.setVisibility(seen ? View.GONE : View.VISIBLE);
         AppShortcuts.install(this);
-        ControllerPinGate.ensureConfigured(this, () -> {
-            boolean shortcutStartsProtection = getIntent() != null
-                    && AppShortcuts.ACTION_START_PROTECTION.equals(getIntent().getAction());
-            handleShortcutIntent(getIntent());
-            boolean suppressPermissionReadiness = BuildConfig.DEBUG
-                    && getIntent() != null
-                    && getIntent().getBooleanExtra(EXTRA_SUPPRESS_PERMISSION_READINESS, false);
-            // Let first-run setup explain the app before opening Android settings.
-            // Explicit Fix, Enter Service and shortcut actions keep their own flows.
-            if (seen && !shortcutStartsProtection && !suppressPermissionReadiness) {
-                binding.getRoot().postDelayed(
-                        () -> beginPermissionReadinessFlow(false), 350L);
-            }
-        });
+        ControllerPinGate.ensureConfigured(this, () -> handleShortcutIntent(getIntent()));
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -281,12 +252,6 @@ public final class MainActivity extends AppCompatActivity {
             AppShortcuts.reportUsed(this, "start_protection");
             binding.getRoot().post(() -> toggleProtection(binding.buttonProtection));
         }
-    }
-
-    private void markOnboardingSeen() {
-        getSharedPreferences(SettingsRepository.PREFERENCES_NAME, MODE_PRIVATE)
-                .edit().putBoolean("has_seen_onboarding", true).apply();
-        binding.onboardingCard.setVisibility(View.GONE);
     }
 
     private void toggleProtection(View view) {
@@ -483,8 +448,6 @@ public final class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (binding != null) {
-            findViewById(R.id.keyholder_intro).setVisibility(getSharedPreferences("subhub_home", MODE_PRIVATE)
-                    .getBoolean("keyholder_intro_dismissed", false) ? View.GONE : View.VISIBLE);
             uiTimer.removeCallbacks(uiTick);
             uiTimer.post(uiTick);
             renderCommitmentState();
@@ -566,15 +529,24 @@ public final class MainActivity extends AppCompatActivity {
     private void renderPermissionReadiness() {
         if (binding == null) return;
         List<HomePermissionPolicy.Requirement> missing = missingPermissions();
-        binding.permissionCard.setVisibility(missing.isEmpty() ? View.GONE : View.VISIBLE);
-        if (missing.isEmpty()) return;
-        StringBuilder names = new StringBuilder();
-        for (int index = 0; index < missing.size(); index++) {
-            if (index > 0) names.append(index == missing.size() - 1 ? " and " : ", ");
-            names.append(getString(permissionName(missing.get(index))));
+        String fingerprint = missing.toString(); if (missing.isEmpty()) fingerprint = "";
+        final String state = fingerprint;
+        com.subhub.app.onboarding.GlobalNoticeState notices = new com.subhub.app.onboarding.GlobalNoticeState(this);
+        com.subhub.app.onboarding.GlobalNoticeState.Kind kind = notices.next(state);
+        View host = findViewById(R.id.global_notice_host); host.setTag(kind.name());
+        host.setVisibility(kind == com.subhub.app.onboarding.GlobalNoticeState.Kind.NONE ? View.GONE : View.VISIBLE);
+        if (kind == com.subhub.app.onboarding.GlobalNoticeState.Kind.NONE) return;
+        TextView title = findViewById(R.id.global_notice_title), body = findViewById(R.id.global_notice_body), action = findViewById(R.id.global_notice_action);
+        if (kind == com.subhub.app.onboarding.GlobalNoticeState.Kind.PERMISSIONS) {
+            StringBuilder names = new StringBuilder();
+            for (int i = 0; i < missing.size(); i++) { if (i > 0) names.append(", "); names.append(getString(permissionName(missing.get(i)))); }
+            title.setText(R.string.home_permission_title); body.setText(getString(R.string.home_permission_missing,names.toString())); action.setText(R.string.home_permission_action);
+            action.setOnClickListener(v -> beginPermissionReadinessFlow(true));
+        } else {
+            title.setText(R.string.keyholder_home_title); body.setText(R.string.keyholder_intro_body); action.setText(R.string.keyholder_intro_open);
+            action.setOnClickListener(v -> { notices.dismiss(kind,state); renderPermissionReadiness(); startActivity(new Intent(this,com.subhub.app.security.AuthenticatorActivity.class)); });
         }
-        binding.permissionSummary.setText(
-                getString(R.string.home_permission_missing, names.toString()));
+        findViewById(R.id.global_notice_dismiss).setOnClickListener(v -> { notices.dismiss(kind,state); renderPermissionReadiness(); });
     }
 
     private int permissionName(HomePermissionPolicy.Requirement requirement) {

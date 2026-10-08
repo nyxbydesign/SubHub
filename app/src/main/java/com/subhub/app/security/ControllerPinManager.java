@@ -37,6 +37,9 @@ public final class ControllerPinManager {
     static boolean allowUnkeyedAccess(Context context) {
         return preferences(context).edit().putBoolean("controller_keyholder_optional", true).commit();
     }
+    public static boolean useWithoutKeyholder(Context context) {
+        return !hasCredentials(context) && allowUnkeyedAccess(context);
+    }
     public static boolean removePin(Context context) {
         if (!isDomModeActive()) return false;
         return preferences(context).edit().remove(KEY_SALT).remove(KEY_HASH)
