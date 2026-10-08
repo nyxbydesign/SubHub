@@ -19,6 +19,21 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class KeyholderDiscoveryAndroidTest {
+    @Test public void methodCardsAreExclusiveAndRestoreTheirExpandedSelection() {
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<AuthenticatorActivity> page = ActivityScenario.launch(AuthenticatorActivity.class)) {
+            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
+            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
+            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
+            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+            page.recreate();
+            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+            onView(withId(R.id.keyholder_pin_header)).perform(scrollTo(), click());
+            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
+            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+        } finally { ControllerPinManager.enterSubMode(); }
+    }
     @Test public void dismissedIntroductionStaysDismissedAndRitualsRemainsInSubNavigation() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit();
@@ -40,6 +55,7 @@ public class KeyholderDiscoveryAndroidTest {
             onView(withText(R.string.controller_pin_unlock)).check(matches(isDisplayed()));
             onView(withText(android.R.string.cancel)).perform(click());
             assertFalse(ControllerPinManager.isDomModeActive());
+            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
             onView(withId(R.id.keyholder_pair_button)).perform(scrollTo()).check(matches(isDisplayed()));
         }
     }

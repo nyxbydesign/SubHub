@@ -38,6 +38,17 @@ public class KeyholderPresentationAndroidTest {
                     finally { image.recycle(); }
                 });
             });
+            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
+            onView(withId(R.id.keyholder_pin_header)).perform(scrollTo());
+            scenario.onActivity(activity -> {
+                android.view.View root = activity.getWindow().getDecorView();
+                Bitmap image = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
+                root.draw(new Canvas(image));
+                try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "keyholder-remote-overview.png"))) {
+                    image.compress(Bitmap.CompressFormat.PNG, 100, out);
+                } catch (Exception error) { throw new AssertionError(error); }
+                finally { image.recycle(); }
+            });
             onView(withId(R.id.keyholder_pair_button)).perform(scrollTo(), click());
             onView(withId(R.id.authenticator_confirm_button)).perform(scrollTo());
             assertFalse(new ControllerAuthenticator(context).isPaired());
