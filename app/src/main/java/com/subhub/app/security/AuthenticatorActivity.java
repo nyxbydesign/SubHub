@@ -22,12 +22,17 @@ public final class AuthenticatorActivity extends PreferencePage {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state); getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         page(R.string.authenticator_title);
-        ControllerPinGate.require(this, this::render, true);
+        render();
     }
     private void render() {
         if (isFinishing() || isDestroyed()) return;
         page(R.string.authenticator_title);
         ControllerAuthenticator authenticator = new ControllerAuthenticator(this);
+        LinearLayout pinCard = card(page);
+        text(pinCard, getString(R.string.keyholder_pin_heading), 18, false);
+        text(pinCard, getString(R.string.keyholder_pin_description), 14, true);
+        button(pinCard, getString(ControllerPinManager.isConfigured(this) ? R.string.keyholder_pin_change : R.string.controller_pin_set),
+                () -> ControllerPinGate.changePin(this, this::render)).setId(R.id.keyholder_pin_change_button);
         LinearLayout section = card(page); section.setBackgroundResource(R.drawable.bg_sub_hero);
         section.setPadding(dp(20), dp(20), dp(20), dp(18));
         LinearLayout identity = new LinearLayout(this); identity.setGravity(android.view.Gravity.CENTER_VERTICAL); section.addView(identity);
@@ -36,7 +41,7 @@ public final class AuthenticatorActivity extends PreferencePage {
         key.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         LinearLayout words = new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams wordParams = new LinearLayout.LayoutParams(0, -2, 1); wordParams.leftMargin = dp(14); identity.addView(words, wordParams);
-        TextView eyebrow = text(words, getString(R.string.keyholder_your_key), 11, true); eyebrow.setLetterSpacing(.12f);
+        TextView eyebrow = text(words, getString(R.string.keyholder_remote_heading), 11, true); eyebrow.setLetterSpacing(.12f);
         TextView title = text(words, getString(authenticator.isPaired() ? R.string.authenticator_paired : R.string.authenticator_unpaired), 20, false);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         text(section, getString(authenticator.isPaired() ? R.string.keyholder_paired_help : R.string.authenticator_description), 14, true);
@@ -65,6 +70,10 @@ public final class AuthenticatorActivity extends PreferencePage {
                             if (new ControllerAuthenticator(this).remove()) render();
                             else notice(getString(R.string.authenticator_unavailable));
                         }).show(), false));
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (pendingSecret == null) render();
     }
     private void beginPairing() {
         clearPending(); pendingSecret = Totp.newSecret();

@@ -1,0 +1,14 @@
+<resources>
+    <string name="keyholder_home_title">Keyholder</string>
+    <string name="keyholder_home_unpaired">Your lock. Their key. Set up code-based approval.</string>
+    <string name="keyholder_home_paired">Key handed over · View your arrangement</string>
+    <string name="keyholder_intro_title">Who holds your key?</string>
+    <string name="keyholder_intro_body">One place for your arrangement: a private PIN in person, or short-lived authenticator codes when your keyholder is far away.</string>
+    <string name="keyholder_intro_open">Meet Keyholder</string>
+    <string name="keyholder_intro_dismiss">Got it</string>
+    <string name="keyholder_pin_heading">In person · Private PIN</string>
+    <string name="keyholder_pin_description">Your keyholder enters their PIN on this device to open Dom access. Your existing PIN stays the same.</string>
+    <string name="keyholder_pin_change">Change Keyholder PIN</string>
+    <string name="keyholder_remote_heading">REMOTE · AUTHENTICATOR</string>
+    <item type="id" name="keyholder_pin_change_button" />
+</resources>

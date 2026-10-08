@@ -50,7 +50,7 @@
     <string name="nav_money">Wallet</string>
     <string name="nav_settings">Settings</string>
     <string name="nav_studio">Studio</string>
-    <string name="nav_atmosphere">Atmosphere</string>
+    <string name="nav_atmosphere">Rituals</string>
     <string name="global_settings_title">Settings</string>
     <string name="global_settings_group_protection">Protection &amp; Control</string>
     <string name="global_settings_group_coverage">Apps</string>
@@ -604,7 +604,7 @@
     <string name="help_body_dom_sub">Dom mode controls features, rules, app assignments, service duration, PayPal, arrangements, and safety release. Sub mode shows configured rules, Wallet balances, and the actions allowed by Dom mode. Enter Service and Leave Service control the whole service; feature switches configure participation. Keep the Dom PIN private. Changing modes does not erase settings or stop an active service.</string>
     <string name="help_body_service_timers">Enter Service starts the service and its session. Choose 1 hour, 24 hours, 7 days, 30 days, or Permanent before entering. The duration defines when Leave Service is allowed; Dom mode can release the lock earlier. After reboot, an active lock can resume App Mode when Android allows it. Screen Capture always needs fresh Android approval.</string>
     <string name="help_body_app_assignment">In Settings → Apps, All apps covers enabled Censor, Limits, and Subliminal features. Assigned apps only uses each feature’s independent selections. Existing selections are retained when switching scope. Feature switches and app assignments configure service, while Enter Service and Leave Service control whether it runs. Review assignments after apps are installed, removed, or renamed.</string>
-    <string name="help_body_subliminal">Subliminal Messaging displays brief messages on this device. Configure it in Atmosphere, then assign Subliminal to apps in Settings → Apps. During service, Accessibility shows one faint, touch-through message at a random safe position and removes it smoothly. Messages do not appear in SubHub, the keyboard, Android Settings, or unassigned apps. Only aggregate impression counts are stored; message history and screen content are not.</string>
+    <string name="help_body_subliminal">Subliminal Messaging displays brief messages on this device. Configure it in Rituals, then assign Subliminal to apps in Settings → Apps. During service, Accessibility shows one faint, touch-through message at a random safe position and removes it smoothly. Messages do not appear in SubHub, the keyboard, Android Settings, or unassigned apps. Only aggregate impression counts are stored; message history and screen content are not.</string>
     <string name="help_body_censoring">Censor settings select body areas, clothed matches, text categories, censor phrases, replacement images, and appearance. Higher detection levels can use more battery. Medium and High add context recognition for text; High also supports reading text inside images. Censor photos from gallery creates copies on this device. Deleting originals always requires a separate confirmation.</string>
     <string name="help_body_limits">Limits follow App coverage. All apps uses the default per-app allowance, with any app-specific overrides; Assigned apps only uses apps marked Limit. You can also use one shared allowance, or both. Usage resets at local midnight. When either applicable allowance is exhausted, SubHub returns the limited app to Home. SubHub, keyboards and essential Android surfaces are excluded. Limits require Accessibility; Screen Capture alone cannot enforce foreground-app time.</string>
     <string name="help_body_wallet">Wallet is optional and local until checkout. Dom mode chooses the enabled events, prices, batching, grace/correction time, and daily and weekly caps. Manual checkout is payer-present. Saved-wallet auto-pay is separate, explicit, and runs only while Wallet, Hardcore Mode, an active service lock, and a verified saved PayPal wallet are all active. PayPal can still decline or require the payer to authorize again.</string>
@@ -830,7 +830,7 @@
     <string name="app_mode_notification_resume_projection">Tap to grant fresh Android screen-capture approval and resume.</string>
     <string name="app_mode_notification_armed">App Mode is armed and waiting for its foreground rule.</string>
     <string name="app_mode_disarm">Disarm</string>
-    <string name="controller_pin_setup_title">Set the Dom PIN</string>
+    <string name="controller_pin_setup_title">Set your Keyholder PIN</string>
     <string name="controller_pin_setup_body">The PIN reveals Dom mode and every setting. Sub mode shows only active rules, protection controls, and payment.</string>
     <string name="controller_pin_label">Dom PIN (4–12 digits)</string>
     <string name="controller_pin_confirm_label">Confirm Dom PIN</string>
@@ -1019,9 +1019,9 @@
     <string name="sub_subliminal_idle">Messages are disabled</string>
     <string name="sub_subliminal_setup">Accessibility permission is required</string>
     <string name="sub_subliminal_summary">%1$s pack · %2$d assigned app(s) · %3$d this session</string>
-    <string name="atmosphere_title">Atmosphere</string>
+    <string name="atmosphere_title">Rituals</string>
     <string name="atmosphere_home_summary">Whispers %1$s · Popup Storm %2$s</string>
-    <string name="atmosphere_home_hint">Faint messages and visual disruption</string>
+    <string name="atmosphere_home_hint">Keyholder, whispers and visual rituals</string>
     <plurals name="atmosphere_effects_active">
         <item quantity="one">%1$d Effect active</item>
         <item quantity="other">%1$d Effects active</item>

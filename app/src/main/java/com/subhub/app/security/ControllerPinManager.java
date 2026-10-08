@@ -35,10 +35,11 @@ public final class ControllerPinManager {
         new SecureRandom().nextBytes(salt);
         try {
             byte[] hash = derive(value, salt);
-            preferences(context).edit()
+            boolean saved = preferences(context).edit()
                     .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
                     .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
                     .commit();
+            if (!saved) return false;
             enterDomMode();
             return true;
         } catch (GeneralSecurityException exception) {

@@ -132,6 +132,12 @@ public final class MainActivity extends AppCompatActivity {
         }
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        findViewById(R.id.keyholder_intro_open).setOnClickListener(view ->
+                startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
+        findViewById(R.id.keyholder_intro_dismiss).setOnClickListener(view -> {
+            getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
+            findViewById(R.id.keyholder_intro).setVisibility(View.GONE);
+        });
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_home, R.string.app_name,
                 0);
         editLockButton = findViewById(R.id.button_edit_lock);
@@ -468,6 +474,8 @@ public final class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (binding != null) {
+            findViewById(R.id.keyholder_intro).setVisibility(getSharedPreferences("subhub_home", MODE_PRIVATE)
+                    .getBoolean("keyholder_intro_dismissed", false) ? View.GONE : View.VISIBLE);
             uiTimer.removeCallbacks(uiTick);
             uiTimer.post(uiTick);
             renderCommitmentState();

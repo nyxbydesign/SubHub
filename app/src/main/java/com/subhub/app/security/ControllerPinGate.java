@@ -57,6 +57,34 @@ public final class ControllerPinGate {
         dialog.show();
     }
 
+    /** Existing PINs remain valid; replacement requires the same controller authorization as pairing. */
+    public static void changePin(Activity activity, Runnable changed) {
+        if (!ControllerPinManager.isConfigured(activity)) { ensureConfigured(activity, changed); return; }
+        require(activity, () -> {
+            LinearLayout content = panel(activity);
+            content.addView(title(activity, activity.getString(R.string.keyholder_pin_change)));
+            EditText pin = pinInput(activity, R.string.controller_pin_label);
+            EditText confirmation = pinInput(activity, R.string.controller_pin_confirm_label);
+            pin.setSaveEnabled(false); confirmation.setSaveEnabled(false);
+            content.addView(pin); content.addView(confirmation);
+            AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity).setView(content)
+                    .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.controller_pin_set, null).create();
+            dialog.setOnShowListener(ignored -> {
+                styleDialog(activity, dialog);
+                dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                    if (!ControllerPinManager.isDomModeActive()) { dialog.dismiss(); return; }
+                    if (!pin.getText().toString().equals(confirmation.getText().toString()))
+                        confirmation.setError(activity.getString(R.string.controller_pin_mismatch));
+                    else if (!ControllerPinManager.setPin(activity, pin.getText().toString()))
+                        pin.setError(activity.getString(R.string.controller_pin_invalid));
+                    else { dialog.dismiss(); changed.run(); }
+                });
+            });
+            dialog.show();
+        }, false);
+    }
+
     public static void require(Activity activity, Runnable authorized, boolean finishOnCancel) {
         if (!ControllerPinManager.isConfigured(activity)) {
             ensureConfigured(activity, authorized);

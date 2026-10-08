@@ -88,11 +88,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_settings,
                 R.string.global_settings_title, 0);
         arrangeSettingsSections();
-        android.widget.Button authenticator = new android.widget.Button(this);
-        authenticator.setText(R.string.authenticator_title);
-        authenticator.setOnClickListener(view -> ControllerPinGate.require(this, () ->
-                startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)), false));
-        binding.hardcoreCard.addView(authenticator);
         modules = new FeatureModuleManager(this);
         hardcore = new HardcoreModeManager(this);
         appMode = new AppModeManager(this);

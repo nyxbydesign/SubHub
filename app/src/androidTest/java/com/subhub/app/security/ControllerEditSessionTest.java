@@ -50,7 +50,7 @@ public final class ControllerEditSessionTest {
                         activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE,
                         activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.GONE,
+                assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_settings).getVisibility());

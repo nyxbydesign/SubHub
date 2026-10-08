@@ -32,7 +32,7 @@ public final class AtmosphereContractTest {
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.sub_atmosphere_card).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
-                assertEquals(View.GONE,
+                assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
             });
