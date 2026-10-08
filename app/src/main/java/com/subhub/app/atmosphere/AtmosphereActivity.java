@@ -51,6 +51,7 @@ public final class AtmosphereActivity extends AppCompatActivity {
                 R.string.atmosphere_title, 0);
         if (SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.ATMOSPHERE)) return;
         PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> toggleSpace());
+        binding.buttonKeyholder.setOnClickListener(view -> startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
         binding.ritualsKeyholderCard.setOnClickListener(view -> startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
         binding.whispersCard.setOnClickListener(view -> openWhispers());
         binding.buttonWhispers.setOnClickListener(view -> openWhispers());
@@ -94,8 +95,9 @@ public final class AtmosphereActivity extends AppCompatActivity {
     }
 
     private void render() {
-        binding.ritualsKeyholderStatus.setText(new com.subhub.app.security.ControllerAuthenticator(this).isPaired()
-                ? R.string.keyholder_home_paired : R.string.keyholder_home_unpaired);
+        boolean pin = ControllerPinManager.isConfigured(this), auth = new com.subhub.app.security.ControllerAuthenticator(this).isPaired();
+        binding.ritualsKeyholderStatus.setText(pin && auth ? R.string.keyholder_status_both : pin ? R.string.keyholder_status_pin
+                : auth ? R.string.keyholder_status_auth : R.string.keyholder_status_none);
         boolean dom = ControllerPinManager.isSessionUnlocked();
         FeatureModuleManager modules = new FeatureModuleManager(this);
         PopupStormSettings popup = PopupStormSettings.load(this);

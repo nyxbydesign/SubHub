@@ -54,6 +54,7 @@ public final class ControllerAuthenticator {
     public boolean remove() {
         synchronized (LOCK) {
             if (!ControllerPinManager.isDomModeActive()) return false;
+            if (!ControllerPinManager.allowUnkeyedAccess(context)) return false;
             return prefs.edit().clear().commit();
         }
     }

@@ -20,13 +20,16 @@ public final class ControllerCredentialChoice {
         RadioButton pin = new RadioButton(activity); pin.setId(android.view.View.generateViewId()); pin.setText(R.string.authenticator_method_pin);
         RadioButton code = new RadioButton(activity); code.setId(android.view.View.generateViewId()); code.setText(R.string.authenticator_method_code);
         pin.setTextColor(activity.getColor(R.color.text_primary)); code.setTextColor(activity.getColor(R.color.text_primary));
-        methods.addView(pin, new LinearLayout.LayoutParams(0, -2, 1)); methods.addView(code, new LinearLayout.LayoutParams(0, -2, 1));
-        methods.check(pin.getId()); panel.addView(methods);
+        boolean hasPin = ControllerPinManager.isConfigured(activity);
+        if (hasPin) methods.addView(pin, new LinearLayout.LayoutParams(0, -2, 1));
+        methods.addView(code, new LinearLayout.LayoutParams(0, -2, 1));
+        panel.addView(methods);
         methods.setOnCheckedChangeListener((group, id) -> {
             useAuthenticator = id == code.getId(); input.setText(""); input.setError(null);
             input.setHint(useAuthenticator ? R.string.authenticator_code : R.string.controller_pin_label);
             input.setInputType(InputType.TYPE_CLASS_NUMBER | (useAuthenticator ? 0 : InputType.TYPE_NUMBER_VARIATION_PASSWORD));
         });
+        methods.check(hasPin ? pin.getId() : code.getId());
     }
     public boolean verify() {
         if (!useAuthenticator) {

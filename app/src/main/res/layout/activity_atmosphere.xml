@@ -26,15 +26,26 @@
 
         <LinearLayout android:id="@+id/rituals_keyholder_card" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="14dp"
-            android:background="@drawable/bg_sub_hero" android:orientation="vertical" android:padding="16dp"
+            android:background="@drawable/bg_card" android:orientation="vertical" android:padding="16dp"
             android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground">
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:drawableStart="@drawable/ic_keyholder" android:drawablePadding="12dp"
-                android:text="@string/keyholder_home_title" android:textSize="18sp" android:textStyle="bold" android:textColor="@color/text_primary" />
-            <TextView android:id="@+id/rituals_keyholder_status" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="8dp" android:text="@string/keyholder_home_unpaired" android:textSize="13sp" android:textColor="@color/text_secondary" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp"
-                android:text="@string/keyholder_intro_body" android:textSize="13sp" android:textColor="@color/text_secondary" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:layout_width="42dp" android:layout_height="42dp" android:padding="9dp"
+                    android:background="@drawable/bg_home_metric" android:src="@drawable/ic_keyholder"
+                    app:tint="@color/accent_mid" android:importantForAccessibility="no" />
+                <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:orientation="vertical">
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="@string/keyholder_home_title" android:textSize="15sp" android:textStyle="bold" android:textColor="@color/text_primary" />
+                    <TextView android:id="@+id/rituals_keyholder_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp" android:textSize="11sp" android:textStyle="bold" android:textColor="@color/accent_mid" />
+                </LinearLayout>
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="11dp"
+                android:text="@string/keyholder_intro_body" android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:id="@+id/button_keyholder" style="@style/Widget.SubHub.OutlineAction"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                android:layout_marginTop="12dp" android:text="@string/keyholder_open" />
         </LinearLayout>
 
         <LinearLayout

@@ -20,7 +20,7 @@ public final class ControllerPinGate {
     private ControllerPinGate() {}
 
     public static void ensureConfigured(Activity activity, Runnable authorized) {
-        if (ControllerPinManager.isConfigured(activity)) {
+        if (ControllerPinManager.hasCredentials(activity) || ControllerPinManager.allowsUnkeyedAccess(activity)) {
             authorized.run();
             return;
         }
@@ -59,7 +59,7 @@ public final class ControllerPinGate {
 
     /** Existing PINs remain valid; replacement requires the same controller authorization as pairing. */
     public static void changePin(Activity activity, Runnable changed) {
-        if (!ControllerPinManager.isConfigured(activity)) { ensureConfigured(activity, changed); return; }
+        if (!ControllerPinManager.hasCredentials(activity) && !ControllerPinManager.allowsUnkeyedAccess(activity)) { ensureConfigured(activity, changed); return; }
         require(activity, () -> {
             LinearLayout content = panel(activity);
             content.addView(title(activity, activity.getString(R.string.keyholder_pin_change)));
@@ -86,8 +86,11 @@ public final class ControllerPinGate {
     }
 
     public static void require(Activity activity, Runnable authorized, boolean finishOnCancel) {
-        if (!ControllerPinManager.isConfigured(activity)) {
-            ensureConfigured(activity, authorized);
+        if (ControllerPinManager.allowsUnkeyedAccess(activity)) {
+            ControllerPinManager.enterDomMode(); authorized.run(); return;
+        }
+        if (!ControllerPinManager.hasCredentials(activity)) {
+            ensureConfigured(activity, () -> require(activity, authorized, finishOnCancel));
             return;
         }
         if (ControllerPinManager.isDomModeActive()) {

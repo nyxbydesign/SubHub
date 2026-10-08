@@ -13,7 +13,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import static androidx.test.espresso.Espresso.*;
+import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static androidx.test.espresso.assertion.ViewAssertions.*;
@@ -28,10 +28,8 @@ public class SettingsGroupsAndroidTest {
             onView(withId(R.id.button_toggle_apps)).perform(scrollTo()).check(matches(isDisplayed()));
             onView(withText(R.string.settings_all)).perform(scrollTo(), click());
             onView(org.hamcrest.Matchers.allOf(withText(R.string.privacy_title), withEffectiveVisibility(Visibility.VISIBLE))).perform(scrollTo(), click());
-            onView(org.hamcrest.Matchers.allOf(withText(R.string.privacy_title), withEffectiveVisibility(Visibility.VISIBLE))).perform(scrollTo(), click());
             onView(withId(R.id.privacy_discreet_toggle)).check(matches(isDisplayed()));
             androidx.test.espresso.Espresso.pressBack();
-            onView(withText(R.string.settings_all)).perform(scrollTo(), click());
             onView(org.hamcrest.Matchers.allOf(withText(R.string.settings_features), withEffectiveVisibility(Visibility.VISIBLE))).perform(scrollTo());
             scenario.onActivity(activity -> {
                 assertFalse(activity.findViewById(R.id.paypal_client_secret).isShown());

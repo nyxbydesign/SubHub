@@ -28,6 +28,21 @@ public final class ControllerPinManager {
         return preferences.contains(KEY_SALT) && preferences.contains(KEY_HASH);
     }
 
+    public static boolean hasCredentials(Context context) {
+        return isConfigured(context) || new ControllerAuthenticator(context).isPaired();
+    }
+    public static boolean allowsUnkeyedAccess(Context context) {
+        return !hasCredentials(context) && preferences(context).getBoolean("controller_keyholder_optional", false);
+    }
+    static boolean allowUnkeyedAccess(Context context) {
+        return preferences(context).edit().putBoolean("controller_keyholder_optional", true).commit();
+    }
+    public static boolean removePin(Context context) {
+        if (!isDomModeActive()) return false;
+        return preferences(context).edit().remove(KEY_SALT).remove(KEY_HASH)
+                .putBoolean("controller_keyholder_optional", true).commit();
+    }
+
     public static boolean setPin(Context context, String pin) {
         String value = normalize(pin);
         if (!value.matches("[0-9]{4,12}")) return false;
@@ -36,6 +51,7 @@ public final class ControllerPinManager {
         try {
             byte[] hash = derive(value, salt);
             boolean saved = preferences(context).edit()
+                    .putBoolean("controller_keyholder_optional", false)
                     .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
                     .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
                     .commit();

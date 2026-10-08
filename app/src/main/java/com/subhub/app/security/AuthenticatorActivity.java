@@ -35,10 +35,13 @@ public final class AuthenticatorActivity extends PreferencePage {
         ControllerAuthenticator authenticator = new ControllerAuthenticator(this);
         methodBodies.clear(); methodArrows.clear(); methodHeaders.clear();
         LinearLayout pinCard = method("pin", R.string.keyholder_pin_heading, R.string.keyholder_pin_subtitle, R.id.keyholder_pin_header);
-        text(pinCard, getString(R.string.keyholder_pin_description), 14, true);
         button(pinCard, getString(ControllerPinManager.isConfigured(this) ? R.string.keyholder_pin_change : R.string.controller_pin_set),
                 () -> ControllerPinGate.changePin(this, this::render)).setId(R.id.keyholder_pin_change_button);
-        stepsTitle(pinCard);
+        if (ControllerPinManager.isConfigured(this)) button(pinCard, getString(R.string.keyholder_remove_pin), () ->
+                ControllerPinGate.require(this, () -> {
+                    if (ControllerPinManager.removePin(this)) render();
+                    else notice(getString(R.string.authenticator_unavailable));
+                }, false)).setId(R.id.keyholder_remove_pin);
         LinearLayout pinSteps = card(pinCard);
         step(pinSteps, "1", R.string.keyholder_pin_step_one, R.string.keyholder_pin_step_one_help);
         step(pinSteps, "2", R.string.keyholder_pin_step_two, R.string.keyholder_pin_step_two_help);
@@ -46,12 +49,10 @@ public final class AuthenticatorActivity extends PreferencePage {
         LinearLayout section = method("remote", R.string.keyholder_remote_title, R.string.keyholder_remote_subtitle, R.id.keyholder_remote_header);
         TextView status = text(section, getString(authenticator.isPaired() ? R.string.authenticator_paired : R.string.authenticator_unpaired), 18, false);
         status.setTypeface(null, android.graphics.Typeface.BOLD);
-        text(section, getString(authenticator.isPaired() ? R.string.keyholder_paired_help : R.string.authenticator_description), 14, true);
         Button pair = button(section, getString(authenticator.isPaired() ? R.string.authenticator_replace : R.string.authenticator_pair), () ->
                 ControllerPinGate.require(this, this::beginPairing, false));
         pair.setId(R.id.keyholder_pair_button); pair.setBackgroundResource(R.drawable.bg_primary_button);
         pair.setTextColor(getColor(R.color.text_primary));
-        stepsTitle(section);
         LinearLayout steps = card(section);
         step(steps, "1", R.string.keyholder_step_one, R.string.keyholder_step_one_help);
         step(steps, "2", R.string.keyholder_step_two, R.string.keyholder_step_two_help);
@@ -64,15 +65,11 @@ public final class AuthenticatorActivity extends PreferencePage {
         text(lock, active ? com.subhub.app.commitment.CommitmentManager.countdownLabel(this) : getString(R.string.keyholder_no_lock), 14, true);
         button(lock, getString(active ? R.string.keyholder_view_lock : R.string.keyholder_choose_lock), () -> startActivity(new android.content.Intent(this,
                 active ? com.subhub.app.commitment.CommitmentActivity.class : com.subhub.app.MainActivity.class).setAction(android.content.Intent.ACTION_MAIN)));
-        text(page, getString(R.string.keyholder_pin_help), 12, true);
         if (authenticator.isPaired()) button(section, getString(R.string.authenticator_remove), () ->
-                ControllerPinGate.require(this, () -> com.subhub.app.util.ThemedDialogs.builder(this)
-                        .setTitle(R.string.authenticator_remove).setMessage(R.string.authenticator_remove_message)
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton(R.string.authenticator_remove, (d, w) -> {
+                ControllerPinGate.require(this, () -> {
                             if (new ControllerAuthenticator(this).remove()) render();
                             else notice(getString(R.string.authenticator_unavailable));
-                        }).show(), false));
+                        }, false)).setId(R.id.keyholder_remove_authenticator);
     }
     private LinearLayout method(String key, int title, int subtitle, int id) {
         LinearLayout outer = card(page); outer.setBackgroundResource(R.drawable.bg_sub_hero);
@@ -84,7 +81,6 @@ public final class AuthenticatorActivity extends PreferencePage {
         LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams copy = new LinearLayout.LayoutParams(0, -2, 1); copy.leftMargin = dp(12); header.addView(labels, copy);
         TextView heading = text(labels, getString(title), 17, false); heading.setTypeface(null, android.graphics.Typeface.BOLD);
-        text(labels, getString(subtitle), 12, true);
         TextView arrow = new TextView(this); arrow.setTextSize(23); arrow.setTextColor(getColor(R.color.accent_hot)); arrow.setGravity(android.view.Gravity.CENTER);
         header.addView(arrow, new LinearLayout.LayoutParams(dp(36), dp(48)));
         arrow.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -94,10 +90,6 @@ public final class AuthenticatorActivity extends PreferencePage {
         LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); outer.addView(body, new LinearLayout.LayoutParams(-1, -2));
         methodHeaders.put(key, header); methodBodies.put(key, body); methodArrows.put(key, arrow);
         return body;
-    }
-    private void stepsTitle(LinearLayout parent) {
-        TextView heading = text(parent, getString(R.string.keyholder_how), 14, false);
-        heading.setTextColor(getColor(R.color.accent_hot)); heading.setTypeface(null, android.graphics.Typeface.BOLD);
     }
     private void updateMethods() {
         for (String key : methodBodies.keySet()) {

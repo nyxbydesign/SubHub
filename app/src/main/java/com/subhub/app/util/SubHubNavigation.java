@@ -29,7 +29,7 @@ import com.subhub.app.security.ControllerPinManager;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Feature-aware navigation: Sub Space retains Home, Keyholder and its safe Settings surface. */
+/** Feature-aware navigation: Sub Space retains Home and its safe Settings surface. */
 public final class SubHubNavigation {
     public enum Screen { HOME, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
@@ -54,7 +54,7 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_censor), domMode && modules.isCensorEnabled());
         setVisible(root.findViewById(R.id.nav_limits), domMode && modules.isLimitsEnabled());
         setVisible(root.findViewById(R.id.nav_money), domMode && modules.isWalletEnabled());
-        setVisible(root.findViewById(R.id.nav_atmosphere), true);
+        setVisible(root.findViewById(R.id.nav_atmosphere), domMode);
         setVisible(root.findViewById(R.id.nav_settings), true);
         bindTab(activity, root.findViewById(R.id.nav_home),
                 root.findViewById(R.id.nav_home_icon), root.findViewById(R.id.nav_home_label),
@@ -198,7 +198,7 @@ public final class SubHubNavigation {
     public static boolean redirectIfDisabled(Activity activity, Screen current) {
         FeatureModuleManager modules = new FeatureModuleManager(activity);
         boolean enabled = current == Screen.HOME || current == Screen.SETTINGS
-                || current == Screen.ATMOSPHERE
+                || current == Screen.ATMOSPHERE && ControllerPinManager.isDomModeActive()
                 || current == Screen.CENSOR && modules.isCensorEnabled()
                 || current == Screen.LIMITS && modules.isLimitsEnabled()
                 || current == Screen.MONEY && modules.isWalletEnabled();

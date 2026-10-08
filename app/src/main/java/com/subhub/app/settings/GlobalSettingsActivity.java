@@ -272,7 +272,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         label.setTextColor(getColor(R.color.text_primary)); card.addView(label);
         TextView summary = new TextView(this); summary.setTextSize(12); summary.setTextColor(getColor(R.color.text_secondary)); summary.setPadding(0, dp(5), 0, 0); card.addView(summary);
         groupSummaries.put(key, summary);
+        if (key.equals("appearance") || key.equals("help")) summary.setVisibility(View.GONE);
         card.setFocusable(true); card.setOnClickListener(v -> {
+            if (key.equals("privacy")) { startActivity(new Intent(this, com.subhub.app.privacy.PrivacyActivity.class)); return; }
+            if (key.equals("appearance")) { startActivity(new Intent(this, StudioActivity.class)); return; }
             Runnable open = () -> { selectedGroup = key; applyEditState(); displayGroup(); };
             if (protectedGroup(key)) ControllerPinGate.require(this, open, false); else open.run();
         });

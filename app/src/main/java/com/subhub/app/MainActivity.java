@@ -132,8 +132,11 @@ public final class MainActivity extends AppCompatActivity {
         }
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        findViewById(R.id.keyholder_intro_open).setOnClickListener(view ->
-                startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
+        findViewById(R.id.keyholder_intro_open).setOnClickListener(view -> {
+            getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
+            findViewById(R.id.keyholder_intro).setVisibility(View.GONE);
+            startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
+        });
         findViewById(R.id.keyholder_intro_dismiss).setOnClickListener(view -> {
             getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
             findViewById(R.id.keyholder_intro).setVisibility(View.GONE);

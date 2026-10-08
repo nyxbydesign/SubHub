@@ -11,7 +11,7 @@ import com.subhub.app.R;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import static androidx.test.espresso.Espresso.*;
+import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static androidx.test.espresso.assertion.ViewAssertions.*;
@@ -34,7 +34,7 @@ public class KeyholderDiscoveryAndroidTest {
             onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
         } finally { ControllerPinManager.enterSubMode(); }
     }
-    @Test public void dismissedIntroductionStaysDismissedAndRitualsRemainsInSubNavigation() {
+    @Test public void dismissedIntroductionStaysDismissedAndRitualsStaysDomOnly() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit();
         ControllerPinManager.enterSubMode();
@@ -43,14 +43,13 @@ public class KeyholderDiscoveryAndroidTest {
             home.recreate();
             home.onActivity(activity -> {
                 assertEquals(View.GONE, activity.findViewById(R.id.keyholder_intro).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
             });
         } finally { context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit(); }
     }
     @Test public void subCanDiscoverBothMethodsButCannotChangePinWithoutAuthorization() {
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<AtmosphereActivity> rituals = ActivityScenario.launch(AtmosphereActivity.class)) {
-            onView(withId(R.id.rituals_keyholder_card)).perform(scrollTo(), click());
+        try (ActivityScenario<AuthenticatorActivity> rituals = ActivityScenario.launch(AuthenticatorActivity.class)) {
             onView(withId(R.id.keyholder_pin_change_button)).check(matches(isDisplayed())).perform(click());
             onView(withText(R.string.controller_pin_unlock)).check(matches(isDisplayed()));
             onView(withText(android.R.string.cancel)).perform(click());

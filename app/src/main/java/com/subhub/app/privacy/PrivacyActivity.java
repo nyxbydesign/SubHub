@@ -15,14 +15,14 @@ public final class PrivacyActivity extends PreferencePage {
     @Override protected void onCreate(Bundle state) { super.onCreate(state); page(R.string.privacy_title); ControllerPinGate.require(this, this::render, true); }
     private void render() {
         page(R.string.privacy_title); PrivacyManager privacy = new PrivacyManager(this);
-        LinearLayout discreet = card(page); text(discreet, getString(R.string.privacy_discreet_heading), 18, false);
+        LinearLayout discreet = card(page);
         text(discreet, getString(R.string.privacy_discreet_help), 14, true);
         toggle(discreet, R.string.privacy_discreet_mode, privacy.isDiscreet(), value -> {
             if (!ControllerPinManager.isDomModeActive() || !privacy.setDiscreet(value)) notice(getString(R.string.privacy_save_failed));
             render();
         }).setId(R.id.privacy_discreet_toggle);
         text(discreet, getString(R.string.privacy_system_identity), 12, true);
-        LinearLayout lock = card(page); text(lock, getString(R.string.privacy_app_lock), 18, false);
+        LinearLayout lock = card(page);
         text(lock, getString(R.string.privacy_lock_help), 14, true);
         toggle(lock, R.string.privacy_app_lock, privacy.isAppLockEnabled(), value -> {
             if (!ControllerPinManager.isDomModeActive()) { render(); return; }
