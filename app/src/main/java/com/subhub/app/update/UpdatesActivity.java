@@ -237,7 +237,7 @@ public final class UpdatesActivity extends AppCompatActivity {
             TextView chevron = row.findViewById(R.id.release_chevron);
             version.setText(getString(R.string.update_history_version, item.versionName));
             meta.setText(historyMeta(item, candidate));
-            details.setText(ReleaseNotesFormatter.forDisplay(
+            details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
             boolean expanded = expandedHistory.contains(item.tag);
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);

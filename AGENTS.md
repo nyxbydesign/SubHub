@@ -20,7 +20,9 @@ These repository rules apply to every automated or human-assisted change.
   Stable and development releases share that sequence; a later stable build can replace a dev build
   of the same source version. Local/private candidates retain the unexpanded source code. Keep the
   same `release.yml` workflow sequence; fail closed before run 100000 or Android code overflow.
-- Any release-bound change must update both values in the same commit. The helper performs the safe increment:
+- Any stable release-bound change must update both source values in the same commit. Automatic dev
+  builds keep the source version and derive a unique name/code from the shared CI sequence.
+  The helper performs the safe increment:
 
   `python scripts/release_version.py --set-version 0.2.0`
 
