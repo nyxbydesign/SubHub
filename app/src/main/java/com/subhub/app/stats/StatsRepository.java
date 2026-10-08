@@ -71,9 +71,12 @@ public final class StatsRepository {
     private static int sessionBlocks;
 
     private final SharedPreferences preferences;
+    private final Context app;
 
     public StatsRepository(Context context) {
-        preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        app = context.getApplicationContext();
+        preferences = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        synchronized (SESSION_LOCK) { syncDaily(); }
     }
 
     public void startSession() {
@@ -83,7 +86,7 @@ public final class StatsRepository {
             sessionStartMs = System.currentTimeMillis();
             sessionBlocks = 0;
             SEEN_TRACK_IDS.clear();
-            preferences.edit()
+            writeDaily(preferences.edit()
                     .putLong(KEY_ACTIVE_SESSION_START, sessionStartMs)
                     .putInt(KEY_ACTIVE_SESSION_BLOCKS, 0)
                     .putLong(KEY_ACTIVE_SESSION_SUBLIMINALS, 0L)
@@ -95,8 +98,9 @@ public final class StatsRepository {
                     .putLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS, 0L)
                     .putLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS, 0L)
                     .putInt(KEY_SESSIONS_COUNT, preferences.getInt(KEY_SESSIONS_COUNT, 0) + 1)
-                    .apply();
+                    );
             updateStreak();
+            DailyDurationRecorder.changed();
         }
     }
 
@@ -137,7 +141,7 @@ public final class StatsRepository {
                 edit.putLong(KEY_ALL_CATEGORIES_CENSORS,
                         preferences.getLong(KEY_ALL_CATEGORIES_CENSORS, 0) + added);
             }
-            edit.apply();
+            writeDaily(edit);
             return added;
         }
     }
@@ -178,6 +182,7 @@ public final class StatsRepository {
             sessionStartMs = 0;
             sessionBlocks = 0;
             SEEN_TRACK_IDS.clear();
+            DailyDurationRecorder.changed();
         }
     }
 
@@ -291,12 +296,12 @@ public final class StatsRepository {
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs == 0) return;
-            preferences.edit()
+            writeDaily(preferences.edit()
                     .putLong(KEY_SUBLIMINAL_IMPRESSIONS,
                             preferences.getLong(KEY_SUBLIMINAL_IMPRESSIONS, 0L) + 1L)
                     .putLong(KEY_ACTIVE_SESSION_SUBLIMINALS,
                             preferences.getLong(KEY_ACTIVE_SESSION_SUBLIMINALS, 0L) + 1L)
-                    .apply();
+                    );
         }
     }
     public void recordLimitedAppUsage(long elapsedMillis) {
@@ -347,7 +352,7 @@ public final class StatsRepository {
                         .putLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS,
                                 safeAdd(activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS), 1L));
             }
-            editor.apply();
+            writeDaily(editor);
         }
     }
     public void recordPopupImpression() {
@@ -408,10 +413,29 @@ public final class StatsRepository {
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs == 0) return;
-            preferences.edit()
+            writeDaily(preferences.edit()
                     .putLong(totalKey, safeAdd(preferences.getLong(totalKey, 0L), amount))
                     .putLong(activeKey, safeAdd(activeLong(activeKey), amount))
-                    .apply();
+                    );
+        }
+    }
+
+    private void writeDaily(SharedPreferences.Editor editor) {
+        editor.putLong(DailyStatsStore.STAMP, System.currentTimeMillis())
+                .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).apply();
+        syncDaily();
+    }
+    private void syncDaily() {
+        try { DailyStatsStore.get(app).queueStats(preferences); }
+        catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Counter checkpoint pending"); }
+    }
+    /** Reconcile completed photo jobs without double-counting them after a process restart. */
+    public void reconcileExportedPhotos(long completed) {
+        synchronized (SESSION_LOCK) {
+            long previous = preferences.getLong("export_job_photos_seen", 0);
+            if (completed <= previous) return;
+            preferences.edit().putLong(KEY_EXPORTED_IMAGES, safeAdd(getLongCompat(KEY_EXPORTED_IMAGES), completed - previous))
+                    .putLong("export_job_photos_seen", completed).commit();
         }
     }
 

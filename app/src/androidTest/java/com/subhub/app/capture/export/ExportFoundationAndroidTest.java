@@ -66,6 +66,14 @@ public class ExportFoundationAndroidTest {
             assertTrue(Color.red(color) > 180); assertTrue(Color.blue(color) > 180); assertTrue(Color.green(color) < 80);
             frame.recycle();
         }
+        MediaPlayer player = new MediaPlayer();
+        java.util.concurrent.CountDownLatch completed = new java.util.concurrent.CountDownLatch(1);
+        try {
+            player.setDataSource(output.getAbsolutePath()); player.setVolume(0, 0);
+            player.setOnCompletionListener(ignored -> completed.countDown()); player.prepare();
+            player.start();
+            assertTrue("Export plays to completion in Android", completed.await(10, java.util.concurrent.TimeUnit.SECONDS));
+        } finally { player.release(); }
     }
     @Test public void muteRemovesAudioAndCancellationLeavesNoPartialVideo() throws Exception {
         File source = new File(context.getFilesDir(), "export-mute-source.mp4");

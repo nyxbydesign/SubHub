@@ -587,6 +587,8 @@ public final class PenanceManager {
             List<PenanceEvent> events = loadEvents();
             Settlement selected = settlement(events, settlementId);
             if (selected == null || !getCurrency().equals(selected.getCurrency())) return false;
+            com.subhub.app.stats.DailyStatsStore daily = com.subhub.app.stats.DailyStatsStore.get(context);
+            try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
             long paidBeforeSettlement = totalPaidCentsLocked(events);
             int expected = 0;
             boolean activatesPause = false;
@@ -610,7 +612,10 @@ public final class PenanceManager {
             saveEvents(events);
             long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
                     ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
-            preferences.edit().putLong(totalPaidKey(), updatedTotal).apply();
+            preferences.edit().putLong(totalPaidKey(), updatedTotal)
+                    .putLong(com.subhub.app.stats.DailyStatsStore.STAMP, System.currentTimeMillis())
+                    .putString(com.subhub.app.stats.DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).commit();
+            try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
             clearOrderState();
             HardcoreAutoPayManager.schedule(context);
             return true;

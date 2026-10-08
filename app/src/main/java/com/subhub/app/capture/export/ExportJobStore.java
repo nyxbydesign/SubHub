@@ -27,16 +27,22 @@ public final class ExportJobStore extends SQLiteOpenHelper {
     }
     private final Context context;
     public ExportJobStore(Context context) {
-        super(context.getApplicationContext(), "export_jobs.db", null, 1);
+        super(context.getApplicationContext(), "export_jobs.db", null, 2);
         this.context = context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE jobs(id TEXT PRIMARY KEY, created INTEGER NOT NULL, config TEXT NOT NULL, quality TEXT NOT NULL, detect_every INTEGER NOT NULL, mute INTEGER NOT NULL, delete_originals INTEGER NOT NULL)");
-        db.execSQL("CREATE TABLE items(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, output TEXT, message TEXT NOT NULL DEFAULT '', progress INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE items(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, output TEXT, message TEXT NOT NULL DEFAULT '', progress INTEGER NOT NULL DEFAULT 0, saved_at INTEGER NOT NULL DEFAULT 0, saved_zone TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX items_job ON items(job,id)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { throw new IllegalStateException("Unsupported export schema"); }
+    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE items ADD COLUMN saved_at INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE items ADD COLUMN saved_zone TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE items ADD COLUMN kind TEXT NOT NULL DEFAULT ''");
+        }
+    }
     public String create(List<Uri> sources, JSONObject snapshot, ExportOptions options) throws IOException {
         return create(sources, snapshot, options, State.PENDING);
     }
@@ -103,7 +109,17 @@ public final class ExportJobStore extends SQLiteOpenHelper {
         ContentValues v = new ContentValues(); v.put("state", state.name());
         v.put("output", output == null ? null : output.toString()); v.put("message", message);
         v.put("progress", Math.max(0, Math.min(100, progress)));
-        getWritableDatabase().update("items", v, "id=?", new String[] {Long.toString(id)});
+        SQLiteDatabase db = getWritableDatabase();
+        if (state == State.SAVED && output != null) {
+            try (Cursor c = db.rawQuery("SELECT saved_at FROM items WHERE id=?", new String[]{Long.toString(id)})) {
+                if (c.moveToFirst() && c.getLong(0) == 0) {
+                    v.put("saved_at", System.currentTimeMillis()); v.put("saved_zone", java.time.ZoneId.systemDefault().getId());
+                    v.put("kind", output.getPath() != null && output.getPath().contains("/video/") ? "videos" : "photos");
+                }
+            }
+        }
+        db.update("items", v, "id=?", new String[] {Long.toString(id)});
+        if (state == State.SAVED) syncDailyExports(id);
     }
     public void progress(long id, int percent) {
         ContentValues v = new ContentValues(); v.put("progress", Math.max(0, Math.min(99, percent)));
@@ -138,9 +154,22 @@ public final class ExportJobStore extends SQLiteOpenHelper {
             if (partial.exists() && !partial.delete()) partial.deleteOnExit();
         }
     }
+    private void syncDailyExports(Long onlyId) {
+        try {
+            com.subhub.app.stats.DailyStatsStore daily = com.subhub.app.stats.DailyStatsStore.get(context);
+            long photos = 0;
+            try (Cursor c = getReadableDatabase().rawQuery("SELECT job,id,kind,saved_at,saved_zone FROM items WHERE state='SAVED' AND saved_at>0" + (onlyId == null ? "" : " AND id=?"), onlyId == null ? null : new String[]{Long.toString(onlyId)})) {
+                while (c.moveToNext()) {
+                    daily.exported(c.getString(0) + ":" + c.getLong(1), c.getString(2), c.getLong(3), c.getString(4));
+                }
+            }
+            try (Cursor c=getReadableDatabase().rawQuery("SELECT count(*) FROM items WHERE state='SAVED' AND saved_at>0 AND kind='photos'",null)) { if(c.moveToFirst())photos=c.getLong(0); }
+            new com.subhub.app.stats.StatsRepository(context).reconcileExportedPhotos(photos);
+        } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Export receipts pending"); }
+    }
     public static synchronized void recoverProcess(Context context) {
         if (processRecovered) return;
-        try (ExportJobStore store = new ExportJobStore(context)) { store.recover(); }
+        try (ExportJobStore store = new ExportJobStore(context)) { store.recover(); store.syncDailyExports(null); }
         processRecovered = true;
     }
     public void enqueue(String job) {

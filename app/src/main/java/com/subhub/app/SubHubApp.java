@@ -22,6 +22,7 @@ public final class SubHubApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        com.subhub.app.stats.DailyDurationRecorder.install(this);
         com.subhub.app.capture.export.ExportJobStore.recoverProcess(this);
         com.subhub.app.privacy.PrivacyLifecycle.install(this);
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
