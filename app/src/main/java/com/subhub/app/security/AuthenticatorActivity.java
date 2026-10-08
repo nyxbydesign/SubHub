@@ -28,6 +28,11 @@ public final class AuthenticatorActivity extends PreferencePage {
         if (state != null) expandedMethod = state.getString("keyholder_method", "pin");
         else if ("remote".equals(getIntent().getStringExtra("keyholder_method"))) expandedMethod = "remote";
         page(R.string.authenticator_title);
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (pendingSecret != null) { clearPending(); render(); } else finish();
+            }
+        });
         render();
     }
     private void render() {
@@ -107,43 +112,47 @@ public final class AuthenticatorActivity extends PreferencePage {
     }
     private void beginPairing() {
         clearPending(); pendingSecret = Totp.newSecret();
-        page(R.string.keyholder_handover_title); LinearLayout setup = card(page);
-        TextView scanTitle = text(setup, getString(R.string.keyholder_scan_title), 18, false); scanTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        text(setup, getString(R.string.authenticator_setup_help), 14, true);
+        page(R.string.keyholder_handover_title);
+        com.subhub.app.util.PrimaryHeader.backButton(page).setOnClickListener(v -> { clearPending(); render(); });
+        LinearLayout setup = (LinearLayout) getLayoutInflater().inflate(R.layout.view_authenticator_setup, page, false);
+        page.addView(setup);
+        ImageView image = setup.findViewById(R.id.authenticator_pairing_qr);
         try {
             BitMatrix matrix = new QRCodeWriter().encode("otpauth://totp/SubHub:Controller?secret=" + pendingSecret
                     + "&issuer=SubHub&algorithm=SHA1&digits=6&period=30", BarcodeFormat.QR_CODE, 600, 600);
             int[] pixels = new int[600 * 600];
             for (int y = 0; y < 600; y++) for (int x = 0; x < 600; x++) pixels[y * 600 + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
             qr = Bitmap.createBitmap(pixels, 600, 600, Bitmap.Config.ARGB_8888);
-            ImageView image = new ImageView(this); image.setImageBitmap(qr); image.setContentDescription(getString(R.string.authenticator_qr));
-            image.setAdjustViewBounds(true); image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(-1, dp(230)); qrParams.topMargin = dp(8); qrParams.bottomMargin = dp(8);
-            setup.addView(image, qrParams);
+            image.setImageBitmap(qr);
         } catch (Exception failure) { notice(getString(R.string.authenticator_manual_help)); }
-        TextView manual = text(setup, pendingSecret, 16, false);
-        manual.setSaveEnabled(false); manual.setTextIsSelectable(true);
-        manual.setTypeface(android.graphics.Typeface.MONOSPACE);
-        manual.setGravity(android.view.Gravity.CENTER); manual.setVisibility(android.view.View.GONE);
-        button(setup, getString(R.string.keyholder_manual), () -> manual.setVisibility(manual.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE));
-        LinearLayout confirmCard = card(page);
-        TextView confirmTitle = text(confirmCard, getString(R.string.keyholder_confirm_title), 18, false); confirmTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        text(confirmCard, getString(R.string.keyholder_confirm_help), 14, true);
-        EditText code = input(confirmCard, R.string.authenticator_code, InputType.TYPE_CLASS_NUMBER);
-        code.setTextSize(24); code.setGravity(android.view.Gravity.CENTER); code.setLetterSpacing(.18f);
+        TextView manual = setup.findViewById(R.id.authenticator_manual_key);
+        manual.setText(pendingSecret); manual.setSaveEnabled(false);
+        TextView manualToggle = setup.findViewById(R.id.authenticator_manual_toggle);
+        manualToggle.setOnClickListener(v -> {
+            boolean showing = manual.getVisibility() == android.view.View.VISIBLE;
+            manual.setVisibility(showing ? android.view.View.GONE : android.view.View.VISIBLE);
+            manualToggle.setText(showing ? R.string.keyholder_manual : R.string.keyholder_manual_hide);
+        });
+        EditText code = setup.findViewById(R.id.authenticator_confirmation);
         code.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(6)});
-        code.setImportantForAutofill(android.view.View.IMPORTANT_FOR_AUTOFILL_NO);
-        code.setBackgroundResource(R.drawable.bg_input);
-        code.setSaveEnabled(false); code.setId(R.id.authenticator_confirmation);
-        Button confirm = button(confirmCard, getString(R.string.authenticator_confirm), () -> {
+        Button confirm = setup.findViewById(R.id.authenticator_confirm_button);
+        confirm.setEnabled(false);
+        code.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence value,int start,int count,int after) { }
+            public void onTextChanged(CharSequence value,int start,int before,int count) {
+                confirm.setEnabled(code.isEnabled() && value.length() == 6);
+            }
+            public void afterTextChanged(android.text.Editable value) { }
+        });
+        confirm.setOnClickListener(view -> {
             String secret = pendingSecret; String entered = code.getText().toString();
             if (secret == null || !ControllerPinManager.isDomModeActive()) { clearPending(); render(); return; }
-            code.setEnabled(false);
+            code.setEnabled(false); confirm.setEnabled(false);
             worker.execute(() -> {
                 ControllerAuthenticator.Result result = new ControllerAuthenticator(this).pair(secret, entered);
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
-                    code.setEnabled(true);
+                    code.setEnabled(true); confirm.setEnabled(code.length() == 6);
                     if (result == ControllerAuthenticator.Result.SUCCESS) { clearPending(); notice(getString(R.string.authenticator_pair_success)); render(); }
                     else code.setError(getString(result == ControllerAuthenticator.Result.THROTTLED
                             ? R.string.authenticator_throttled : result == ControllerAuthenticator.Result.INVALID
@@ -151,10 +160,13 @@ public final class AuthenticatorActivity extends PreferencePage {
                 });
             });
         });
-        confirm.setId(R.id.authenticator_confirm_button);
-        confirm.setBackgroundResource(R.drawable.bg_primary_button); confirm.setTextColor(getColor(R.color.text_primary));
-        text(confirmCard, getString(R.string.keyholder_pending_help), 12, true);
-        button(page, getString(android.R.string.cancel), () -> { clearPending(); render(); });
+        code.setOnEditorActionListener((view, action, event) -> {
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE && confirm.isEnabled()) {
+                confirm.performClick(); return true;
+            }
+            return false;
+        });
+        setup.findViewById(R.id.authenticator_pairing_cancel).setOnClickListener(v -> { clearPending(); render(); });
     }
     private void step(LinearLayout parent, String number, int title, int description) {
         LinearLayout row = new LinearLayout(this); row.setGravity(android.view.Gravity.TOP); row.setPadding(0, dp(6), 0, dp(6)); parent.addView(row);

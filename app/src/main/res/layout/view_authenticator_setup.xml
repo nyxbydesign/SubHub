@@ -1,0 +1,63 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:background="@drawable/bg_sub_hero"
+    android:padding="20dp">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="32dp" android:layout_height="32dp"
+            android:background="@drawable/bg_header_icon" android:text="1" android:gravity="center"
+            android:textColor="@color/accent_hot" android:textStyle="bold" android:importantForAccessibility="no" />
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:layout_marginStart="12dp" android:text="@string/keyholder_scan_title"
+            android:textSize="18sp" android:textStyle="bold" android:textColor="@color/text_primary" />
+    </LinearLayout>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:layout_marginBottom="18dp"
+        android:text="@string/authenticator_setup_help" android:textColor="@color/text_secondary"
+        android:textSize="13sp" android:lineSpacingExtra="3dp" />
+
+    <ImageView android:id="@+id/authenticator_pairing_qr"
+        android:layout_width="224dp" android:layout_height="224dp" android:layout_gravity="center_horizontal"
+        android:background="@drawable/bg_authenticator_qr" android:padding="8dp"
+        android:scaleType="fitCenter" android:contentDescription="@string/authenticator_qr" />
+    <TextView android:id="@+id/authenticator_manual_toggle"
+        android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+        android:layout_marginTop="8dp" android:gravity="center" android:padding="10dp"
+        android:text="@string/keyholder_manual" android:textColor="@color/accent_hot" android:textSize="13sp"
+        android:clickable="true" android:focusable="true" android:background="?attr/selectableItemBackground" />
+    <TextView android:id="@+id/authenticator_manual_key" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:padding="12dp" android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_input" android:fontFamily="monospace" android:gravity="center"
+        android:textSize="15sp" android:textColor="@color/text_primary" android:textIsSelectable="true"
+        android:saveEnabled="false" android:importantForAutofill="no" android:visibility="gone" />
+
+    <View android:layout_width="match_parent" android:layout_height="1dp"
+        android:layout_marginTop="4dp" android:layout_marginBottom="20dp" android:background="@color/outline_subtle" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="32dp" android:layout_height="32dp"
+            android:background="@drawable/bg_header_icon" android:text="2" android:gravity="center"
+            android:textColor="@color/accent_hot" android:textStyle="bold" android:importantForAccessibility="no" />
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:layout_marginStart="12dp" android:text="@string/keyholder_confirm_title"
+            android:textSize="18sp" android:textStyle="bold" android:textColor="@color/text_primary"
+            android:labelFor="@id/authenticator_confirmation" />
+    </LinearLayout>
+    <androidx.appcompat.widget.AppCompatEditText android:id="@id/authenticator_confirmation"
+        android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="64dp" android:padding="12dp" android:layout_marginTop="16dp"
+        android:background="@drawable/bg_input" android:inputType="number" android:maxLength="6"
+        android:singleLine="true" android:imeOptions="actionDone" android:gravity="center"
+        android:hint="000000" android:contentDescription="@string/authenticator_code"
+        android:textSize="28sp" android:fontFamily="monospace" android:letterSpacing="0.22"
+        android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary"
+        android:saveEnabled="false" android:importantForAutofill="no" />
+    <androidx.appcompat.widget.AppCompatButton android:id="@id/authenticator_confirm_button"
+        style="@style/Widget.SubHub.PrimaryButton" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:minHeight="52dp" android:layout_marginTop="16dp"
+        android:text="@string/authenticator_confirm" android:textAllCaps="false" />
+    <androidx.appcompat.widget.AppCompatButton android:id="@+id/authenticator_pairing_cancel"
+        style="@style/Widget.SubHub.DefaultButton" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="6dp"
+        android:text="@android:string/cancel" android:textAllCaps="false" />
+</LinearLayout>
