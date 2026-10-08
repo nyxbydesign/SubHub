@@ -122,11 +122,11 @@ final class HardcoreAutoPayEngine {
         if (notifications == null) return;
         notifications.createNotificationChannel(new NotificationChannel(
                 CHANNEL, "Hardcore Wallet", NotificationManager.IMPORTANCE_DEFAULT));
-        notifications.notify(9062, new NotificationCompat.Builder(context, CHANNEL)
+        notifications.notify(9062, com.subhub.app.privacy.PrivacyNotifications.present(context, 9062, new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle(success ? "SubHub Wallet" : "SubHub Wallet needs attention")
                 .setContentText(text)
                 .setAutoCancel(true)
-                .build());
+                .build()));
     }
 }

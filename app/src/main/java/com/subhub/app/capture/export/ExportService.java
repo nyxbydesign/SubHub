@@ -146,12 +146,12 @@ public final class ExportService extends Service {
     private Notification notification(int current, int total) {
         PendingIntent open = PendingIntent.getActivity(this, 8406, new Intent(this, ExportActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         PendingIntent cancel = PendingIntent.getService(this, 8407, new Intent(this, ExportService.class).setAction(ACTION_CANCEL), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_launcher_foreground)
+        return com.subhub.app.privacy.PrivacyNotifications.present(this, NOTIFICATION, new NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle(getString(R.string.export_notification_title))
                 .setContentText(getString(R.string.export_notification_progress, current, total))
                 .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
                 .setProgress(total, current, total == 0)
-                .addAction(0, getString(android.R.string.cancel), cancel).build();
+                .addAction(0, getString(android.R.string.cancel), cancel).build());
     }
     private void updateNotification(int current, int total) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)

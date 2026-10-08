@@ -58,6 +58,12 @@ import java.util.concurrent.Executors;
 /** Always-available home for app-wide feature, safety, pack, and support settings. */
 public final class GlobalSettingsActivity extends AppCompatActivity {
     private ActivityGlobalSettingsBinding binding;
+    private final Map<String, LinearLayout> focusedGroups = new LinkedHashMap<>();
+    private final Map<String, TextView> groupSummaries = new LinkedHashMap<>();
+    private LinearLayout categoryMenu;
+    private String selectedGroup = "";
+    private TextView groupBack;
+
     private FeatureModuleManager modules;
     private HardcoreModeManager hardcore;
     private AppModeManager appMode;
@@ -208,6 +214,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void showRequestedAppAssignments() {
         if (binding == null || !getIntent().getBooleanExtra("show_app_assignments", false)) return;
         getIntent().removeExtra("show_app_assignments");
+        selectedGroup = "apps"; displayGroup();
         binding.appListContent.setVisibility(View.VISIBLE);
         binding.buttonToggleApps.setText(R.string.app_selection_collapse);
         binding.appsCard.post(() -> {
@@ -219,43 +226,75 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
 
     private void arrangeSettingsSections() {
         LinearLayout container = binding.settingsSections;
-        View[] order = {
-                binding.featureAreasCard,
-                binding.settingsGroupCoverage,
-                binding.appsCard,
-                binding.settingsGroupProtection,
-                binding.hardcoreCard,
-                binding.settingsGroupServices,
-                binding.appSettingsCard,
-                binding.paypalCard
-        };
-        for (View card : order) container.removeView(card);
-        for (int index = 0; index < order.length; index++) {
-            View card = order[index];
-            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) card.getLayoutParams();
-            boolean groupLabel = isSettingsGroupLabel(card);
-            boolean followsGroupLabel = index > 0 && isSettingsGroupLabel(order[index - 1]);
-            params.topMargin = groupLabel
-                    ? getResources().getDimensionPixelSize(index == 0
-                            ? R.dimen.settings_first_group_gap : R.dimen.settings_group_gap)
-                    : (followsGroupLabel ? 0
-                            : getResources().getDimensionPixelSize(R.dimen.settings_card_gap));
-            params.bottomMargin = groupLabel
-                    ? getResources().getDimensionPixelSize(R.dimen.settings_group_label_gap) : 0;
-            card.setLayoutParams(params);
-            container.addView(card);
-        }
-        binding.hardcoreCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-        LinearLayout.LayoutParams header =
-                (LinearLayout.LayoutParams) PrimaryHeader.view(binding.getRoot()).getLayoutParams();
-        header.bottomMargin = dp(8);
-        PrimaryHeader.view(binding.getRoot()).setLayoutParams(header);
+        View header = PrimaryHeader.view(binding.getRoot());
+        // Keep the existing controls and their bindings; only their presentation moves.
+        container.removeAllViews();
+        if (header.getParent() != null) ((android.view.ViewGroup) header.getParent()).removeView(header);
+        container.addView(header);
+        categoryMenu = new LinearLayout(this); categoryMenu.setOrientation(LinearLayout.VERTICAL);
+        container.addView(categoryMenu, new LinearLayout.LayoutParams(-1, -2));
+        groupBack = settingsAction(getString(R.string.settings_all), () -> { selectedGroup = ""; displayGroup(); });
+        container.addView(groupBack);
+        addGroup("features", R.string.settings_features, binding.featureAreasCard);
+        addGroup("apps", R.string.settings_apps, binding.appsCard);
+        addGroup("pacts", R.string.settings_pacts, binding.hardcoreCard);
+        focusedGroups.get("pacts").addView(settingsAction(getString(R.string.keyholder_view_lock), () -> startActivity(new Intent(this, CommitmentActivity.class))));
+        addGroup("privacy", R.string.privacy_title, settingsAction(getString(R.string.privacy_title), () -> startActivity(new Intent(this, com.subhub.app.privacy.PrivacyActivity.class))));
+        addGroup("appearance", R.string.settings_appearance, binding.buttonPacks);
+        addGroup("services", R.string.settings_services, binding.paypalCard);
+        addGroup("help", R.string.settings_help, binding.buttonHelp, binding.buttonDiagnostics);
+        focusedGroups.get("help").addView(settingsAction(getString(R.string.settings_updates), () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (!selectedGroup.isEmpty()) { selectedGroup = ""; displayGroup(); }
+                else { setEnabled(false); getOnBackPressedDispatcher().onBackPressed(); }
+            }
+        });
+        selectedGroup = getIntent().getStringExtra("settings_group");
+        if (selectedGroup == null) selectedGroup = "";
     }
-
-    private boolean isSettingsGroupLabel(View view) {
-        return view == binding.settingsGroupProtection
-                || view == binding.settingsGroupCoverage
-                || view == binding.settingsGroupServices;
+    private TextView settingsAction(String title, Runnable action) {
+        TextView row = new TextView(this); row.setText(title); row.setTextSize(15); row.setTextColor(getColor(R.color.text_primary));
+        row.setGravity(Gravity.CENTER_VERTICAL); row.setMinHeight(dp(52)); row.setPadding(dp(14), dp(10), dp(14), dp(10));
+        row.setBackgroundResource(R.drawable.bg_outline_button); row.setOnClickListener(v -> action.run());
+        return row;
+    }
+    private void addGroup(String key, int title, View... controls) {
+        LinearLayout group = new LinearLayout(this); group.setOrientation(LinearLayout.VERTICAL);
+        for (View control : controls) {
+            if (control.getParent() != null) ((android.view.ViewGroup) control.getParent()).removeView(control);
+            group.addView(control, new LinearLayout.LayoutParams(-1, -2));
+        }
+        focusedGroups.put(key, group); binding.settingsSections.addView(group, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL); card.setPadding(dp(16), dp(12), dp(16), dp(12));
+        card.setBackgroundResource(R.drawable.bg_card); card.setMinimumHeight(dp(76));
+        TextView label = new TextView(this); label.setText(title); label.setTextSize(16); label.setTypeface(null, android.graphics.Typeface.BOLD);
+        label.setTextColor(getColor(R.color.text_primary)); card.addView(label);
+        TextView summary = new TextView(this); summary.setTextSize(12); summary.setTextColor(getColor(R.color.text_secondary)); summary.setPadding(0, dp(5), 0, 0); card.addView(summary);
+        groupSummaries.put(key, summary);
+        card.setFocusable(true); card.setOnClickListener(v -> {
+            Runnable open = () -> { selectedGroup = key; applyEditState(); displayGroup(); };
+            if (protectedGroup(key)) ControllerPinGate.require(this, open, false); else open.run();
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(10); categoryMenu.addView(card, params);
+    }
+    private boolean protectedGroup(String key) { return key.equals("features") || key.equals("apps") || key.equals("pacts") || key.equals("services"); }
+    private void displayGroup() {
+        if (categoryMenu == null) return;
+        if (!focusedGroups.containsKey(selectedGroup) || protectedGroup(selectedGroup) && !ControllerPinManager.isDomModeActive()) selectedGroup = "";
+        categoryMenu.setVisibility(selectedGroup.isEmpty() ? View.VISIBLE : View.GONE);
+        groupBack.setVisibility(selectedGroup.isEmpty() ? View.GONE : View.VISIBLE);
+        for (Map.Entry<String, LinearLayout> group : focusedGroups.entrySet()) group.getValue().setVisibility(group.getKey().equals(selectedGroup) ? View.VISIBLE : View.GONE);
+        if (modules == null) return;
+        groupSummaries.get("features").setText(getString(R.string.settings_features_summary,
+                (modules.isCensorEnabled() ? 1 : 0) + (modules.isLimitsEnabled() ? 1 : 0) + (modules.isWalletEnabled() ? 1 : 0)));
+        groupSummaries.get("apps").setText(getString(appMode.isAccessibilityEnabled() ? R.string.settings_apps_ready : R.string.settings_apps_setup));
+        groupSummaries.get("pacts").setText(getString(com.subhub.app.commitment.CommitmentManager.isActive(this) ? R.string.settings_pact_active : R.string.settings_pact_none));
+        com.subhub.app.privacy.PrivacyManager privacy = new com.subhub.app.privacy.PrivacyManager(this);
+        groupSummaries.get("privacy").setText(getString(R.string.settings_privacy_summary, getString(privacy.isDiscreet() ? R.string.atmosphere_state_on : R.string.atmosphere_state_off), getString(privacy.isAppLockEnabled() ? R.string.atmosphere_state_on : R.string.atmosphere_state_off)));
+        groupSummaries.get("appearance").setText(R.string.settings_appearance_summary);
+        groupSummaries.get("services").setText(getString(paypalCredentials.hasVerifiedCredentials() ? R.string.settings_services_ready : R.string.settings_services_setup));
+        groupSummaries.get("help").setText(R.string.settings_help_summary);
     }
 
     @Override protected void onResume() {
@@ -332,6 +371,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
         binding.buttonPacks.setVisibility(View.VISIBLE);
+        displayGroup();
     }
 
     private void saveRecognition() {

@@ -1,0 +1,22 @@
+<resources>
+    <string name="privacy_title">Privacy</string>
+    <string name="privacy_discreet_name">Screen Filter</string>
+    <string name="privacy_discreet_heading">Keep things discreet</string>
+    <string name="privacy_discreet_mode">Discreet mode</string>
+    <string name="privacy_discreet_help">Use a neutral name and icon on your home screen, plain notification text, and hidden previews in recent apps.</string>
+    <string name="privacy_system_identity">Android settings and system notification labels may still identify SubHub.</string>
+    <string name="privacy_app_lock">App lock</string>
+    <string name="privacy_lock_help">Ask for your fingerprint, face, or device screen lock when you open the app or return to it. Background service and exports keep running.</string>
+    <string name="privacy_dom_separate">Opening the app does not unlock Dom controls. They still use your Dom PIN or keyholder code.</string>
+    <string name="privacy_save_failed">This privacy setting could not be saved.</string>
+    <string name="privacy_locked">Your app is locked</string>
+    <string name="privacy_unlock">Unlock app</string>
+    <string name="privacy_unlock_help">Use your biometric or device screen lock to continue.</string>
+    <string name="privacy_no_device_lock">Set up a secure device screen lock in Android settings, then return here to unlock.</string>
+    <string name="privacy_security_settings">Android screen lock settings</string>
+    <string name="privacy_enable_lock">Confirm app lock</string>
+    <string name="privacy_notification_body">Active · Open the app for details</string>
+    <item name="privacy_unlock_button" type="id" />
+    <item name="privacy_discreet_toggle" type="id" />
+    <item name="privacy_lock_toggle" type="id" />
+</resources>

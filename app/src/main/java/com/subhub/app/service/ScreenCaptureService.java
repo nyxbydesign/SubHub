@@ -380,7 +380,7 @@ public final class ScreenCaptureService extends Service {
         if (ProtectionStopPolicy.showNotificationStop(this)) {
             builder.addAction(0, getString(R.string.notification_stop), stop);
         }
-        return builder.build();
+        return com.subhub.app.privacy.PrivacyNotifications.present(this, NOTIFICATION_ID, builder.build());
     }
 
     private void createNotificationChannel() {

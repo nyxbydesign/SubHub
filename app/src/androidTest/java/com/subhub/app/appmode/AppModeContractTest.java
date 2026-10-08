@@ -235,12 +235,12 @@ public final class AppModeContractTest {
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.app_list_card).getVisibility());
                 ViewGroup sections = activity.findViewById(R.id.settings_sections);
-                View protection = activity.findViewById(R.id.settings_group_protection);
                 View hardcore = activity.findViewById(R.id.hardcore_card);
-                assertEquals(sections, hardcore.getParent());
-                assertTrue(sections.indexOfChild(protection) < sections.indexOfChild(hardcore));
+                assertEquals(sections, ((View) hardcore.getParent()).getParent());
+                assertFalse(hardcore.isShown());
                 View apps = activity.findViewById(R.id.apps_card);
-                assertEquals(sections, apps.getParent());
+                assertEquals(sections, ((View) apps.getParent()).getParent());
+                assertFalse(apps.isShown());
                 for (int id : new int[] {R.id.recognition_card, R.id.app_list_card,
                         R.id.android_access_card}) {
                     assertEquals(apps, activity.findViewById(id).getParent());
@@ -294,7 +294,7 @@ public final class AppModeContractTest {
     @Test public void launcherPickerUsesCompactRowsWithIndependentModuleTargets() throws Exception {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<GlobalSettingsActivity> scenario =
-                     ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                     ActivityScenario.launch(new Intent(context, GlobalSettingsActivity.class).putExtra("settings_group", "apps"))) {
             scenario.onActivity(activity ->
                     activity.findViewById(R.id.button_toggle_apps).performClick());
             Thread.sleep(750L);

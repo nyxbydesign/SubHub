@@ -58,7 +58,7 @@ public final class ResumeNotificationManager {
         if (ProtectionStopPolicy.showNotificationStop(context)) {
             builder.addAction(0, context.getString(R.string.app_mode_disarm), disarm);
         }
-        notifications.notify(NOTIFICATION_ID, builder.build());
+        notifications.notify(NOTIFICATION_ID, com.subhub.app.privacy.PrivacyNotifications.present(context, NOTIFICATION_ID, builder.build()));
     }
 
     public static void cancel(Context context) {

@@ -531,7 +531,7 @@ public final class CensorLabRecordingService extends Service {
                 .setOngoing(true)
                 .setSilent(true);
         if (active) builder.addAction(0, getString(R.string.diagnostics_lab_stop), stop);
-        return builder.build();
+        return com.subhub.app.privacy.PrivacyNotifications.present(this, NOTIFICATION_ID, builder.build());
     }
 
     private void publishReadyNotification() {
@@ -547,7 +547,7 @@ public final class CensorLabRecordingService extends Service {
                 .setSilent(true)
                 .build();
         NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager != null) manager.notify(NOTIFICATION_ID, ready);
+        if (manager != null) manager.notify(NOTIFICATION_ID, com.subhub.app.privacy.PrivacyNotifications.present(this, NOTIFICATION_ID, ready));
     }
 
     private void createNotificationChannel() {

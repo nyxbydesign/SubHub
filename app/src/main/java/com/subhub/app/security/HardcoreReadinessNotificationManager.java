@@ -42,13 +42,13 @@ public final class HardcoreReadinessNotificationManager {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         notifications.notify(NOTIFICATION_ID,
-                new NotificationCompat.Builder(app, CHANNEL_ID)
+                com.subhub.app.privacy.PrivacyNotifications.present(app, NOTIFICATION_ID, new NotificationCompat.Builder(app, CHANNEL_ID)
                         .setSmallIcon(R.drawable.ic_launcher_foreground)
                         .setContentTitle(app.getString(R.string.hardcore_repair_title))
                         .setContentText(app.getString(R.string.hardcore_repair_body))
                         .setContentIntent(open)
                         .setOngoing(true)
                         .setSilent(true)
-                        .build());
+                        .build()));
     }
 }

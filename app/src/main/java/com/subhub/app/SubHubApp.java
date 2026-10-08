@@ -23,6 +23,7 @@ public final class SubHubApp extends Application {
     public void onCreate() {
         super.onCreate();
         com.subhub.app.capture.export.ExportJobStore.recoverProcess(this);
+        com.subhub.app.privacy.PrivacyLifecycle.install(this);
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
             public void onActivityPreCreated(@NonNull Activity activity, @Nullable Bundle state) {

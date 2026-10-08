@@ -26,28 +26,28 @@ public final class UpdateNotifications {
         UpdateStateStore state = new UpdateStateStore(context);
         if (candidate.prerelease && !state.devUpdates()) return;
         if (!state.markNotified(candidate.manifest.versionName) || !canNotify(context)) return;
-        manager(context).notify(AVAILABLE_ID, builder(context)
+        manager(context).notify(AVAILABLE_ID, com.subhub.app.privacy.PrivacyNotifications.present(context, AVAILABLE_ID, builder(context)
                 .setContentTitle(context.getString(R.string.update_available_title,
                         candidate.manifest.versionName))
                 .setContentText(context.getString(R.string.update_available_body))
-                .setContentIntent(intent(context)).build());
+                .setContentIntent(intent(context)).build()));
     }
 
     public static void ready(Context context, UpdateCandidate candidate) {
         if (!canNotify(context)) return;
-        manager(context).notify(READY_ID, builder(context)
+        manager(context).notify(READY_ID, com.subhub.app.privacy.PrivacyNotifications.present(context, READY_ID, builder(context)
                 .setContentTitle(context.getString(R.string.update_ready_title,
                         candidate.manifest.versionName))
                 .setContentText(context.getString(R.string.update_ready_body))
-                .setContentIntent(intent(context)).build());
+                .setContentIntent(intent(context)).build()));
     }
 
     public static void failed(Context context) {
         if (!canNotify(context)) return;
-        manager(context).notify(READY_ID, builder(context)
+        manager(context).notify(READY_ID, com.subhub.app.privacy.PrivacyNotifications.present(context, READY_ID, builder(context)
                 .setContentTitle(context.getString(R.string.update_failed_title))
                 .setContentText(context.getString(R.string.update_failed_body))
-                .setContentIntent(intent(context)).build());
+                .setContentIntent(intent(context)).build()));
     }
 
     private static NotificationCompat.Builder builder(Context context) {
