@@ -8,6 +8,12 @@ matching PayPal Client ID and secret for this installation. Both values are encr
 an Android Keystore AES-GCM key and are never compiled into the APK. An optional PayPal.Me or other
 PayPal-hosted payment link remains available as a fallback.
 
+Studio can optionally transfer that merchant client ID, secret, environment, and fallback link
+inside a passphrase-encrypted arrangement attachment. See [pack format and activation safeguards](subhubpack-format.md#optional-encrypted-paypal-attachment).
+This does not transfer saved payer tokens, verification, checkout state, or automatic-payment
+authorization. Only trusted recipients should receive merchant credentials: encryption does not
+hide the secret from the recipient after they unlock it.
+
 The environment toggle is an authorization boundary. Changing Sandbox/Live or changing the Client
 ID clears the old credentials and saved-wallet state and cancels any active checkout. The Orders
 client only accepts the two compiled PayPal API hosts; there is no user-editable server origin.

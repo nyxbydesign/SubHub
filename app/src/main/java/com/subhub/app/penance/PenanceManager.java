@@ -47,7 +47,7 @@ public final class PenanceManager {
     private static final String KEY_EVENTS = "events_v1";
     private static final String KEY_TOTAL_PAID_CENTS = "total_paid_cents_v1";
     private static final String LEGACY_KEY_BACKEND_URL = "paypal_backend_url";
-    private static final String KEY_PAYPAL_LINK = "paypal_payment_link";
+    public static final String KEY_PAYPAL_LINK = "paypal_payment_link";
     private static final String KEY_ORDER_ID = "active_order_id";
     private static final String KEY_APPROVAL_URL = "active_approval_url";
     private static final String KEY_PAYPAL_BOUNDARY = "active_paypal_boundary";

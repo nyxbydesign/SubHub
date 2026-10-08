@@ -7,6 +7,8 @@ import android.net.Uri;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.capture.CustomImageManager;
 import com.subhub.app.penance.PenanceManager;
+import com.subhub.app.penance.PayPalCredentialStore;
+import com.subhub.app.penance.PayPalEnvironment;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsRepository;
@@ -43,6 +45,7 @@ public final class SubHubPackManager {
     private static final String KEY_JOURNAL = "activation_journal";
     private static final String KEY_ACTIVE_SECTIONS = "active_sections";
     private static final String KEY_DEVICE_ID = "creator_device_id";
+    private static final String LOCAL_PAYPAL_BACKUP = "_local_encrypted_paypal";
     private static final Set<String> STRING_SET_KEYS = Set.of(
             SettingsRepository.KEY_ENABLED_CATEGORIES,
             SettingsRepository.KEY_TEXT_SMUT_CATEGORIES,
@@ -148,6 +151,10 @@ public final class SubHubPackManager {
                 throw new IOException("Arrangement identity differs; unlock Dom Space to replace it");
             }
             if (pack.getId().equals(activePackId())) {
+                if (pack.hasEncryptedPayPal() || activeHasPayPalBackup()
+                        || (installed != null && installed.hasEncryptedPayPal())) {
+                    throw new IOException("Deactivate in Dom Space before updating an encrypted PayPal arrangement");
+                }
                 if (installed == null || !samePackIdentity(installed, pack)) {
                     throw new IOException("Active arrangement identity does not match this update");
                 }
@@ -184,7 +191,7 @@ public final class SubHubPackManager {
         if (id != null && id.equals(activePackId()) && !ControllerPinManager.isDomModeActive()) {
             return false;
         }
-        if (id != null && id.equals(activePackId())) deactivate();
+        if (id != null && id.equals(activePackId()) && !deactivate()) return false;
         return deleteFile(fileFor(library, id));
     }
 
@@ -220,6 +227,10 @@ public final class SubHubPackManager {
             }
             if (!changed.isEmpty()) result.add(title(section) + ": " + String.join(", ", changed));
         }
+        if (selected.contains(SubHubPackSchema.WALLET) && pack.hasEncryptedPayPal()) {
+            result.add("PayPal: encrypted merchant credentials and recipient link. Unlock and confirm "
+                    + "before activation. Existing payer authorization will not be reused.");
+        }
         if (result.isEmpty()) result.add("No setting values would change.");
         JSONObject recommendations = pack.getRecommendations();
         if (recommendations.optBoolean("hardcoreSuggested", false)) {
@@ -234,11 +245,46 @@ public final class SubHubPackManager {
     }
 
     public synchronized boolean activate(SubHubPack pack, Set<String> requestedSections) {
+        return activate(pack, requestedSections, null);
+    }
+
+    /** Run on a worker: no state changes or network calls while deriving the key. */
+    public UnlockedPayPal unlockPayPal(SubHubPack pack, char[] password)
+            throws java.security.GeneralSecurityException {
+        if (!ControllerPinManager.isDomModeActive() || pack == null || !pack.hasEncryptedPayPal()) {
+            throw new java.security.GeneralSecurityException("Unlock Dom Space first");
+        }
+        JSONObject envelope = pack.getEncryptedPayPal();
+        return new UnlockedPayPal(pack.getId(), pack.getOriginDeviceId(), envelope.toString(),
+                PackPayPalCipher.decrypt(pack.getId(), pack.getOriginDeviceId(), envelope, password));
+    }
+
+    public static final class UnlockedPayPal implements AutoCloseable {
+        private final String id, origin, envelope;
+        private PackPayPalCipher.Payload payload;
+        private UnlockedPayPal(String id, String origin, String envelope, PackPayPalCipher.Payload payload) {
+            this.id = id; this.origin = origin; this.envelope = envelope; this.payload = payload;
+        }
+        public String summary() { return payload == null ? "Locked" : payload.summary(); }
+        private boolean matches(SubHubPack pack) {
+            return payload != null && id.equals(pack.getId()) && origin.equals(pack.getOriginDeviceId())
+                    && envelope.equals(String.valueOf(pack.getEncryptedPayPal()));
+        }
+        @Override public void close() { if (payload != null) payload.close(); payload = null; }
+        @Override public String toString() { return "Unlocked PayPal [redacted]"; }
+    }
+
+    public synchronized boolean activate(SubHubPack pack, Set<String> requestedSections,
+            UnlockedPayPal unlocked) {
         if (pack == null || !isCompatible(pack) || !ControllerPinManager.isDomModeActive()) {
             return false;
         }
         Set<String> selected = sanitizeSelected(pack, requestedSections);
         if (selected.isEmpty()) return false;
+        boolean usePayPal = selected.contains(SubHubPackSchema.WALLET) && pack.hasEncryptedPayPal();
+        if (usePayPal && (unlocked == null || !unlocked.matches(pack) || !canChangeMerchant())) return false;
+        // Failed recovery must retain its journal and block another activation.
+        if (state.contains(KEY_JOURNAL)) return false;
         if (activePackId() != null && !deactivate()) return false;
         new PackManager(context).deactivate();
         try {
@@ -247,9 +293,9 @@ public final class SubHubPackManager {
             journal.put("pending", true);
             journal.put("backup", backup);
             if (!state.edit().putString(KEY_JOURNAL, journal.toString()).commit()) return false;
-            if (!apply(pack, selected)) {
-                restore(backup);
-                state.edit().remove(KEY_JOURNAL).commit();
+            if (!ControllerPinManager.isDomModeActive() || !applyPayPal(usePayPal, unlocked)
+                    || !apply(pack, selected)) {
+                if (restore(backup)) state.edit().remove(KEY_JOURNAL).commit();
                 return false;
             }
             installAssets(pack);
@@ -262,10 +308,16 @@ public final class SubHubPackManager {
                     .putStringSet(KEY_ACTIVE_SECTIONS, selected)
                     .remove(KEY_JOURNAL).commit();
             if (!committed) {
-                restore(backup);
-                clearActiveAssets();
-                SubHubPackLocks.clear(context);
-                LockedSettings.clear();
+                // SharedPreferences updates memory even when its disk commit fails. Reinsert
+                // recovery state before another operation can flush a journal-free snapshot.
+                state.edit().putString(KEY_JOURNAL, journal.toString()).commit();
+                if (restore(backup)) {
+                    clearActiveAssets();
+                    SubHubPackLocks.clear(context);
+                    LockedSettings.clear();
+                    state.edit().remove(KEY_ACTIVE_ID).remove(KEY_ACTIVE_BACKUP)
+                            .remove(KEY_ACTIVE_SECTIONS).remove(KEY_JOURNAL).commit();
+                }
             }
             return committed;
         } catch (Exception error) {
@@ -278,7 +330,12 @@ public final class SubHubPackManager {
         if (activePackId() == null) return true;
         if (!ControllerPinManager.isDomModeActive()) return false;
         String raw = state.getString(KEY_ACTIVE_BACKUP, null);
-        if (raw != null) try { restore(new JSONObject(raw)); } catch (Exception ignored) {}
+        if (raw == null) return false;
+        try {
+            JSONObject backup = new JSONObject(raw);
+            if (backup.has(LOCAL_PAYPAL_BACKUP) && !canChangeMerchant()) return false;
+            if (!restore(backup)) return false;
+        } catch (Exception ignored) { return false; }
         clearActiveAssets();
         SubHubPackLocks.clear(context);
         LockedSettings.clear();
@@ -288,6 +345,8 @@ public final class SubHubPackManager {
 
     /** Replaces an active pack without releasing its original pre-pack backup or requiring Dom. */
     private boolean replaceActivePack(SubHubPack installed, SubHubPack update) {
+        if (installed.hasEncryptedPayPal() || update.hasEncryptedPayPal() || activeHasPayPalBackup()
+                || state.contains(KEY_JOURNAL)) return false;
         Set<String> previousSections = activeSections();
         Set<String> updatedSections = new LinkedHashSet<>(previousSections);
         updatedSections.retainAll(update.getIncludedSections());
@@ -303,7 +362,7 @@ public final class SubHubPackManager {
             mergeMissingBackup(currentSnapshot, backup(update, updatedSections));
             mergeMissingBackup(originalBackup, backup(update, updatedSections));
 
-            restore(originalBackup);
+            if (!restore(originalBackup)) return false;
             if (!apply(update, updatedSections)) {
                 restore(currentSnapshot);
                 return false;
@@ -372,6 +431,28 @@ public final class SubHubPackManager {
         return true;
     }
 
+    private boolean applyPayPal(boolean use, UnlockedPayPal unlocked) {
+        if (!use) return true;
+        if (!ControllerPinManager.isDomModeActive() || unlocked == null || unlocked.payload == null) return false;
+        PackPayPalCipher.Payload value = unlocked.payload;
+        return new PayPalCredentialStore(context).saveImported(PayPalEnvironment.valueOf(value.environment()),
+                value.clientId(), value.secret())
+                && preferences(PenanceManager.PREFS_NAME).edit()
+                .putString(PenanceManager.KEY_PAYPAL_LINK, value.recipientLink()).commit();
+    }
+
+    private boolean canChangeMerchant() {
+        return new PenanceManager(context).getActiveSettlementId().isEmpty()
+                && !new com.subhub.app.penance.HardcoreAutoPayManager(context).isConfigured();
+    }
+
+    private boolean activeHasPayPalBackup() {
+        String raw = state.getString(KEY_ACTIVE_BACKUP, null);
+        if (raw == null) return false;
+        try { return new JSONObject(raw).has(LOCAL_PAYPAL_BACKUP); }
+        catch (Exception ignored) { return true; }
+    }
+
     private JSONObject backup(SubHubPack pack, Set<String> selected) throws Exception {
         JSONObject root = new JSONObject();
         for (String section : selected) {
@@ -392,13 +473,29 @@ public final class SubHubPackManager {
                 storeBackup.put(key, item);
             }
         }
+        if (selected.contains(SubHubPackSchema.WALLET) && pack.hasEncryptedPayPal()) {
+            root.put(LOCAL_PAYPAL_BACKUP, new PayPalCredentialStore(context).encryptedLocalSnapshot());
+            JSONObject item = new JSONObject();
+            SharedPreferences wallet = preferences(PenanceManager.PREFS_NAME);
+            item.put("present", wallet.contains(PenanceManager.KEY_PAYPAL_LINK));
+            if (wallet.contains(PenanceManager.KEY_PAYPAL_LINK)) {
+                encode(item, wallet.getString(PenanceManager.KEY_PAYPAL_LINK, ""));
+            }
+            root.getJSONObject(PenanceManager.PREFS_NAME).put(PenanceManager.KEY_PAYPAL_LINK, item);
+        }
         return root;
     }
 
-    private void restore(JSONObject backup) {
+    private boolean restore(JSONObject backup) {
+        boolean restored = true;
         Iterator<String> stores = backup.keys();
         while (stores.hasNext()) {
             String store = stores.next();
+            if (LOCAL_PAYPAL_BACKUP.equals(store)) {
+                restored &= new PayPalCredentialStore(context)
+                        .restoreEncryptedLocalSnapshot(backup.optJSONObject(store));
+                continue;
+            }
             JSONObject values = backup.optJSONObject(store);
             if (values == null) continue;
             SharedPreferences.Editor editor = preferences(store).edit();
@@ -409,8 +506,9 @@ public final class SubHubPackManager {
                 if (item == null || !item.optBoolean("present")) editor.remove(key);
                 else applyEncoded(editor, key, item);
             }
-            editor.commit();
+            restored &= editor.commit();
         }
+        return restored;
     }
 
     private void recoverInterruptedActivation() {
@@ -419,8 +517,8 @@ public final class SubHubPackManager {
         try {
             JSONObject journal = new JSONObject(raw);
             JSONObject backup = journal.optJSONObject("backup");
-            if (backup != null) restore(backup);
-        } catch (Exception ignored) {}
+            if (backup == null || !restore(backup)) return;
+        } catch (Exception ignored) { return; }
         clearActiveAssets();
         SubHubPackLocks.clear(context);
         LockedSettings.clear();

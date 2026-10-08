@@ -59,6 +59,7 @@ public final class StudioActivity extends AppCompatActivity {
 
     private ActivityStudioBinding binding;
     private SubHubPackManager manager;
+    private StudioPayPalTransfer payPalTransfer;
     private SubHubPack draft;
     private boolean suppressEvents;
     private String assetTarget = "censor";
@@ -76,6 +77,7 @@ public final class StudioActivity extends AppCompatActivity {
         binding = ActivityStudioBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         manager = new SubHubPackManager(this);
+        payPalTransfer = new StudioPayPalTransfer(this, manager);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         binding.studioMode.setText(ControllerPinManager.isDomModeActive()
                 ? R.string.studio_dom_space : R.string.studio_sub_space);
@@ -100,6 +102,16 @@ public final class StudioActivity extends AppCompatActivity {
                     ? R.string.studio_dom_space : R.string.studio_sub_space);
             applySpaceVisibility();
         }
+    }
+
+    @Override protected void onPause() {
+        if (payPalTransfer != null) payPalTransfer.pause();
+        super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        if (payPalTransfer != null) payPalTransfer.destroy();
+        super.onDestroy();
     }
 
     private void setupTabs() {
@@ -194,11 +206,25 @@ public final class StudioActivity extends AppCompatActivity {
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
             refreshParams.topMargin = dp(4);
             card.addView(refresh, refreshParams);
+            if (SubHubPackSchema.WALLET.equals(section)) {
+                Button attach = outlineButton("Encrypt current PayPal into pack");
+                attach.setOnClickListener(view -> payPalTransfer.attach(draft, this::saveEditor));
+                card.addView(attach);
+                Button remove = outlineButton("Remove encrypted PayPal");
+                remove.setOnClickListener(view -> {
+                    if (draft == null || !ControllerPinManager.isDomModeActive()) return;
+                    payPalTransfer.pause();
+                    try { draft.setEncryptedPayPal(null); saveEditor(); }
+                    catch (java.security.GeneralSecurityException ignored) { }
+                });
+                card.addView(remove);
+            }
             binding.sectionList.addView(card);
             includes.put(section, include);
             locks.put(section, lock);
             include.setOnCheckedChangeListener((button, checked) -> {
                 if (suppressEvents || draft == null) return;
+                if (!checked && SubHubPackSchema.WALLET.equals(section)) payPalTransfer.pause();
                 draft.setSection(section, checked ? manager.captureSection(section) : null);
                 lock.setEnabled(checked);
                 if (!checked) { lock.setChecked(false); draft.setGroupLocked(section, false); }
@@ -220,6 +246,7 @@ public final class StudioActivity extends AppCompatActivity {
     }
 
     private void openDraft(SubHubPack value) {
+        if (payPalTransfer != null) payPalTransfer.pause();
         draft = value;
         suppressEvents = true;
         binding.packName.setText(value.getName());
@@ -286,7 +313,9 @@ public final class StudioActivity extends AppCompatActivity {
                 : draft.getLockGroups().size() + " Dom lock group(s)";
         binding.previewText.setText(draft.getName() + " · v" + draft.getPackVersion() + "\n"
                 + creator + "\n" + draft.getIncludedSections().size() + " feature section(s) · "
-                + locksText + "\n" + getString(R.string.studio_no_secrets));
+                + locksText + "\n" + (draft.hasEncryptedPayPal()
+                ? "Encrypted PayPal attached · passphrase required · no payer authorization"
+                : getString(R.string.studio_no_secrets)));
     }
 
     private void renderLibrary() {
@@ -310,7 +339,7 @@ public final class StudioActivity extends AppCompatActivity {
             Button edit = outlineButton(getString(R.string.studio_edit));
             edit.setOnClickListener(view -> openDraft(record.pack));
             Button duplicate = outlineButton(getString(R.string.studio_duplicate));
-            duplicate.setOnClickListener(view -> openDraft(record.pack.duplicate()));
+            duplicate.setOnClickListener(view -> duplicatePack(record.pack));
             Button share = outlineButton(getString(R.string.studio_share));
             share.setOnClickListener(view -> share(record.pack));
             actions.addView(edit, weighted()); actions.addView(duplicate, weighted());
@@ -336,13 +365,15 @@ public final class StudioActivity extends AppCompatActivity {
             if (!ControllerPinManager.isDomModeActive()) {
                 toast(getString(R.string.studio_unlock_required));
             } else if (record.active) {
-                manager.deactivate(); renderLibrary();
+                if (!manager.deactivate()) toast("Could not deactivate. Turn off automatic settlement "
+                        + "and finish or cancel any pending checkout first.");
+                renderLibrary();
             } else review(record.pack);
         });
         Button share = outlineButton(getString(R.string.studio_share));
         share.setOnClickListener(view -> share(record.pack));
         Button duplicate = outlineButton(getString(R.string.studio_duplicate));
-        duplicate.setOnClickListener(view -> openDraft(record.pack.duplicate()));
+        duplicate.setOnClickListener(view -> duplicatePack(record.pack));
         Button delete = outlineButton(getString(R.string.studio_delete));
         delete.setOnClickListener(view -> new AlertDialog.Builder(this)
                 .setTitle(R.string.studio_delete_title)
@@ -394,7 +425,6 @@ public final class StudioActivity extends AppCompatActivity {
         CharSequence[] labels = new CharSequence[included.size()];
         for (int index = 0; index < labels.length; index++) labels[index] = sectionTitle(included.get(index));
         new AlertDialog.Builder(this).setTitle(R.string.studio_review_title)
-                .setMessage(R.string.studio_review_sections)
                 .setMultiChoiceItems(labels, selected, (dialog, which, checked) -> selected[which] = checked)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.studio_apply, (dialog, which) -> {
@@ -412,13 +442,30 @@ public final class StudioActivity extends AppCompatActivity {
         new AlertDialog.Builder(this).setTitle(pack.getName()).setMessage(message)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.studio_apply_confirm, (dialog, which) -> {
+                    if (pack.hasEncryptedPayPal() && sections.contains(SubHubPackSchema.WALLET)) {
+                        payPalTransfer.activate(pack, sections, this::renderLibrary);
+                        return;
+                    }
                     boolean applied = manager.activate(pack, sections);
                     toast(getString(applied ? R.string.studio_applied : R.string.studio_apply_failed));
                     renderLibrary();
                 }).show();
     }
 
+    private void duplicatePack(SubHubPack source) {
+        if (source.hasEncryptedPayPal()) {
+            new AlertDialog.Builder(this).setTitle("Duplicate without PayPal?")
+                    .setMessage("The copy has a new identity. Its encrypted PayPal attachment is removed; "
+                            + "attach and encrypt again if needed. The original is unchanged.")
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton("Duplicate", (d, w) -> {
+                        openDraft(source.duplicate());
+                    }).show();
+        } else openDraft(source.duplicate());
+    }
+
     private void publishDraft() {
+        if (payPalTransfer.isWorking()) { toast("Wait for PayPal encryption to finish."); return; }
         saveEditor();
         if (draft == null || draft.getIncludedSections().isEmpty()) {
             toast(getString(R.string.studio_no_sections)); return;
@@ -433,6 +480,7 @@ public final class StudioActivity extends AppCompatActivity {
 
     private void deleteDraft() {
         if (draft == null) return;
+        payPalTransfer.pause();
         manager.deleteDraft(draft.getId());
         draft = null;
         renderDrafts();
@@ -459,6 +507,7 @@ public final class StudioActivity extends AppCompatActivity {
 
     private void share(SubHubPack pack) {
         if (pack == null) return;
+        if (payPalTransfer.isWorking()) { toast("Wait for PayPal encryption to finish."); return; }
         try {
             File file = manager.exportForShare(pack);
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".updates", file);
@@ -516,6 +565,7 @@ public final class StudioActivity extends AppCompatActivity {
         card.addView(label(byline, false));
         if (!pack.getDescription().isBlank()) card.addView(label(pack.getDescription(), false));
         card.addView(label(detail, false));
+        if (pack.hasEncryptedPayPal()) card.addView(label("Encrypted PayPal · passphrase required", false));
         return card;
     }
 

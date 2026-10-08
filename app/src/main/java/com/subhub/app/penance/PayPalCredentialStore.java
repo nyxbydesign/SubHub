@@ -105,6 +105,48 @@ public final class PayPalCredentialStore {
         return editor.commit();
     }
 
+    /** Imports merchant credentials without retaining any local verification or payer state. */
+    public boolean saveImported(PayPalEnvironment environment, String clientId, String secret) {
+        if (environment == null || clientId == null || clientId.isEmpty()
+                || secret == null || secret.isEmpty()) return false;
+        String encryptedId = encrypt(clientId);
+        String encryptedSecret = encrypt(secret);
+        if (encryptedId.isEmpty() || encryptedSecret.isEmpty()) return false;
+        // Even the same merchant must not inherit this device's old payer authorization.
+        return preferences().edit().clear().putString(KEY_ENVIRONMENT, environment.name())
+                .putString(KEY_CLIENT_ID, encryptedId).putString(KEY_SECRET, encryptedSecret).commit();
+    }
+
+    /** Local rollback only: values remain Android-Keystore ciphertext; never put this in a pack. */
+    public org.json.JSONObject encryptedLocalSnapshot() throws org.json.JSONException {
+        org.json.JSONObject snapshot = new org.json.JSONObject();
+        for (String key : localKeys()) {
+            Object value = preferences().getAll().get(key);
+            if (value instanceof String) snapshot.put(key, value);
+        }
+        return snapshot;
+    }
+
+    public boolean restoreEncryptedLocalSnapshot(org.json.JSONObject snapshot) {
+        if (snapshot == null) return false;
+        SharedPreferences.Editor editor = preferences().edit().clear();
+        java.util.Iterator<String> keys = snapshot.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!localKeys().contains(key) || !(snapshot.opt(key) instanceof String)) return false;
+            editor.putString(key, snapshot.optString(key));
+        }
+        return editor.commit();
+    }
+
+    private static java.util.Set<String> localKeys() {
+        return java.util.Set.of(KEY_ENVIRONMENT, KEY_CLIENT_ID, KEY_SECRET, KEY_VERIFIED_BOUNDARY,
+                KEY_VAULT_STATUS, KEY_VAULT_ID, KEY_CUSTOMER_ID, KEY_PAYER_EMAIL,
+                KEY_PAYER_ACCOUNT_ID, KEY_VAULT_BOUNDARY, KEY_SETUP_TOKEN_ID,
+                KEY_SETUP_CUSTOMER_ID, KEY_SETUP_METADATA_ID, KEY_SETUP_APPROVAL_URL,
+                KEY_SETUP_BOUNDARY);
+    }
+
     /** Disconnects credentials and vault state while retaining the selected environment. */
     public void clear() {
         PayPalEnvironment selected = selectedEnvironment();

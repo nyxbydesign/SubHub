@@ -23,7 +23,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-/** Strict ZIP codec for schema-v1 .subhubpack archives. */
+/** Strict ZIP codec for legacy v1 and optional encrypted-merchant v2 .subhubpack archives. */
 public final class SubHubPackArchive {
     public static final String EXTENSION = ".subhubpack";
     private static final int MAX_MANIFEST_BYTES = 512 * 1024;

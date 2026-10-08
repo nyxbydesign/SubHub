@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.nio.charset.StandardCharsets;
 
-/** In-memory representation of the portable, account-free SubHub pack format. */
+/** Portable settings with an optional, opaque passphrase-encrypted merchant attachment. */
 public final class SubHubPack {
     public static final String FORMAT = "subhub-pack";
     public static final int SCHEMA_VERSION = 1;
@@ -32,6 +32,7 @@ public final class SubHubPack {
     private final Set<String> lockGroups;
     private JSONObject recommendations;
     private final Map<String, byte[]> assets;
+    private JSONObject encryptedPayPal;
 
     public SubHubPack(String id, String name, String author, String description,
             String packVersion, long createdAt, long updatedAt, String minimumSubHubVersion,
@@ -86,12 +87,27 @@ public final class SubHubPack {
 
     public SubHubPack duplicate() {
         long now = System.currentTimeMillis();
+        // A new ID cannot authenticate the original attachment's AAD. UI explains its omission.
         return new SubHubPack(UUID.randomUUID().toString(), originDeviceId, name + " copy",
                 author, description, packVersion, now, now, minimumSubHubVersion, sections, lockGroups,
                 recommendations, assets);
     }
 
     public String getId() { return id; }
+    public boolean hasEncryptedPayPal() { return encryptedPayPal != null; }
+    public JSONObject getEncryptedPayPal() {
+        return encryptedPayPal == null ? null : copy(encryptedPayPal);
+    }
+    public void setEncryptedPayPal(JSONObject value) throws java.security.GeneralSecurityException {
+        if (value != null) {
+            if (!sections.containsKey(SubHubPackSchema.WALLET)) {
+                throw new java.security.GeneralSecurityException("Include Wallet before adding PayPal");
+            }
+            PackPayPalCipher.validateEnvelope(value);
+        }
+        encryptedPayPal = value == null ? null : copy(value);
+        touch();
+    }
     public String getOriginDeviceId() { return originDeviceId; }
     public String getName() { return name; }
     public String getAuthor() { return author; }
@@ -129,7 +145,10 @@ public final class SubHubPack {
 
     public void setSection(String section, JSONObject values) {
         if (!SubHubPackSchema.SECTIONS.contains(section)) return;
-        if (values == null) sections.remove(section);
+        if (values == null) {
+            sections.remove(section);
+            if (SubHubPackSchema.WALLET.equals(section)) encryptedPayPal = null;
+        }
         else sections.put(section, SubHubPackSchema.sanitizeSection(section, values));
         touch();
     }
@@ -159,7 +178,8 @@ public final class SubHubPack {
     JSONObject manifestWithoutIntegrity(Map<String, String> assetHashes) throws JSONException {
         JSONObject manifest = new JSONObject();
         manifest.put("format", FORMAT);
-        manifest.put("schemaVersion", SCHEMA_VERSION);
+        manifest.put("schemaVersion", hasEncryptedPayPal() ? 2 : SCHEMA_VERSION);
+        if (hasEncryptedPayPal()) manifest.put("encryptedPayPal", getEncryptedPayPal());
         manifest.put("id", id);
         manifest.put("originDeviceId", originDeviceId);
         manifest.put("name", name);
@@ -186,18 +206,30 @@ public final class SubHubPack {
         if (!FORMAT.equals(manifest.optString("format"))) {
             throw new JSONException("Not a SubHub pack");
         }
-        if (manifest.optInt("schemaVersion", -1) != SCHEMA_VERSION) {
+        int schema = manifest.optInt("schemaVersion", -1);
+        if ((schema != SCHEMA_VERSION && schema != 2)
+                || (schema == 1 && manifest.has("encryptedPayPal"))
+                || (schema == 2 && !manifest.has("encryptedPayPal"))) {
             throw new JSONException("Unsupported SubHub pack schema");
         }
         Set<String> locks = jsonStrings(manifest.optJSONArray("lockGroups"));
         String id = manifest.optString("id");
         String origin = manifest.optString("originDeviceId", legacyOriginId(id));
-        return new SubHubPack(id, origin, manifest.optString("name"),
+        SubHubPack pack = new SubHubPack(id, origin, manifest.optString("name"),
                 manifest.optString("author"), manifest.optString("description"),
                 manifest.optString("packVersion"), manifest.optLong("createdAt", 1L),
                 manifest.optLong("updatedAt", 1L),
                 manifest.optString("minimumSubHubVersion", "0.6.0"), sections, locks,
                 manifest.optJSONObject("recommendations"), assets);
+        if (schema == 2) try {
+            // Reject normalized/replaced identities before authenticated decryption is offered.
+            if (!pack.id.equals(id) || !pack.originDeviceId.equals(origin)) {
+                throw new IllegalArgumentException();
+            }
+            pack.setEncryptedPayPal(manifest.getJSONObject("encryptedPayPal"));
+            pack.updatedAt = Math.max(pack.createdAt, manifest.optLong("updatedAt", 1L));
+        } catch (Exception ignored) { throw new JSONException("Invalid encrypted PayPal attachment"); }
+        return pack;
     }
 
     private void touch() { updatedAt = System.currentTimeMillis(); }
