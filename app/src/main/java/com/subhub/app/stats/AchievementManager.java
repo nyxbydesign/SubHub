@@ -212,7 +212,8 @@ public final class AchievementManager {
                 return new PaidPauseManager(context).isEnabled() ? 1 : 0;
             case "wallet_paid_10": case "wallet_paid_100":
             case "wallet_paid_500": case "wallet_paid_1000":
-                return new PenanceManager(context).getTotalPaidCents();
+                return Math.max(new PenanceManager(context).getTotalPaidCents("EUR"),
+                        new PenanceManager(context).getTotalPaidCents("USD"));
             case "subliminal_1": case "subliminal_100": case "subliminal_1000":
             case "subliminal_10000": return stats.getSubliminalImpressions();
             default: return isUnlocked(id) ? 1 : 0;

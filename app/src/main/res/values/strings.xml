@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="wallet_currency_label">Wallet currency</string>
+    <string name="wallet_currency_eur">Euro (EUR)</string>
+    <string name="wallet_currency_usd">US dollar (USD)</string>
+    <string name="wallet_currency_help">Choose EUR or USD when PayPal cannot report its primary currency. Settle unpaid amounts before switching. Existing amounts are not converted; auto-pay turns off until reviewed.</string>
+    <string name="wallet_currency_primary">PayPal primary: %1$s. Wallet: %2$s. Unpaid amounts must be settled before a change.</string>
+    <string name="wallet_currency_refresh">Read PayPal currency</string>
+    <string name="wallet_currency_blocked">Settle unpaid amounts before changing currency.</string>
+    <string name="wallet_currency_changed">Currency updated. Review costs and re-enable auto-pay if wanted.</string>
+    <string name="wallet_currency_unavailable">Primary currency unavailable. Choose EUR or USD.</string>
     <string name="app_name">SubHub</string>
     <string name="nav_home">Home</string>
     <string name="nav_censor">Censor</string>
@@ -469,10 +478,10 @@ Maximum coverage · flagship devices</string>
     <string name="achievement_desc_tribute_rulesmith">Enable 3 different tribute triggers</string>
     <string name="achievement_desc_paypal_vault">Authorize a payer wallet for future payments</string>
     <string name="achievement_desc_paid_pause">Offer a buyout break while stopping service is locked</string>
-    <string name="achievement_desc_wallet_paid_10">Send €10 through confirmed Wallet payments</string>
-    <string name="achievement_desc_wallet_paid_100">Send €250 through confirmed Wallet payments</string>
-    <string name="achievement_desc_wallet_paid_500">Send €1,000 through confirmed Wallet payments</string>
-    <string name="achievement_desc_wallet_paid_1000">Send €10,000 through confirmed Wallet payments</string>
+    <string name="achievement_desc_wallet_paid_10">Send 10 in one currency through confirmed Wallet payments</string>
+    <string name="achievement_desc_wallet_paid_100">Send 250 in one currency through confirmed Wallet payments</string>
+    <string name="achievement_desc_wallet_paid_500">Send 1,000 in one currency through confirmed Wallet payments</string>
+    <string name="achievement_desc_wallet_paid_1000">Send 10,000 in one currency through confirmed Wallet payments</string>
     <string name="achievement_desc_legend">Unlock all other achievements</string>
     <string name="popup_title">Popup Storm</string>
     <string name="popup_subtitle">Let the screen fight for your attention while protection runs.</string>
@@ -654,14 +663,14 @@ Maximum coverage · flagship devices</string>
     <string name="penance_rule_tamper_price_help">Tribute for one rate-limited attempt.</string>
     <string name="penance_tamper_cooldown_label">Cooldown (Minutes)</string>
     <string name="penance_tamper_cooldown_help">Repeated attempts inside this window count once.</string>
-    <string name="penance_rule_cost_label">Tribute Due (€)</string>
+    <string name="penance_rule_cost_label">Tribute Due</string>
     <string name="penance_detection_batch_label">Every N Censors</string>
     <string name="penance_safety_limits_title">Tribute Boundaries</string>
     <string name="penance_dwell_seconds_label">Still for (Sec)</string>
     <string name="penance_dwell_seconds_help">How long one censor must stay still before tribute is due: 3–60.</string>
-    <string name="penance_daily_label">Daily Tribute Limit (€)</string>
+    <string name="penance_daily_label">Daily Tribute Limit</string>
     <string name="penance_daily_help">The most tribute that can be owed in one day.</string>
-    <string name="penance_weekly_label">Weekly Tribute Limit (€)</string>
+    <string name="penance_weekly_label">Weekly Tribute Limit</string>
     <string name="penance_weekly_help">The most tribute that can be owed in one week.</string>
     <string name="penance_mercy_label_input">Dom’s Mercy (Minutes)</string>
     <string name="penance_mercy_help">How long Dom mode can forgive a mistaken tribute.</string>
@@ -895,7 +904,7 @@ Maximum coverage · flagship devices</string>
     <string name="paid_pause_config_title">Buyout Break</string>
     <string name="paid_pause_config_help">Let Sub mode buy a short release while stopping service is locked.</string>
     <string name="paid_pause_enabled">Offer a buyout break</string>
-    <string name="paid_pause_price_label">Buyout (€)</string>
+    <string name="paid_pause_price_label">Buyout</string>
     <string name="paid_pause_price_help">Tribute required for one release.</string>
     <string name="paid_pause_minutes_label">Break (Minutes)</string>
     <string name="paid_pause_minutes_help">Service resumes when time is up.</string>

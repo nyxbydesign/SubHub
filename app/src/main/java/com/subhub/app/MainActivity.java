@@ -420,9 +420,9 @@ public final class MainActivity extends AppCompatActivity {
             binding.penanceCard.setVisibility(View.GONE);
             binding.penanceStatus.setText(penance.isEnabled()
                     ? getString(R.string.penance_home_status,
-                            PenanceManager.formatMoney(penance.getDueCents()),
-                            PenanceManager.formatMoney(penance.getMercyCents()),
-                            PenanceManager.formatMoney(penance.getPaidCents()))
+                            new PenanceManager(this).money(penance.getDueCents()),
+                            new PenanceManager(this).money(penance.getMercyCents()),
+                            new PenanceManager(this).money(penance.getPaidCents()))
                     : getString(R.string.penance_home_inactive));
             showProgressUnlocks(new StatsRepository(this).load());
             renderAchievementsPreview(new StatsRepository(this).load());
@@ -660,7 +660,7 @@ public final class MainActivity extends AppCompatActivity {
                     ? getString(R.string.paid_pause_active,
                             CommitmentActivity.formatDuration(paidPause.remainingMillis()))
                     : getString(R.string.paid_pause_buy, paidPause.getDurationMinutes(),
-                            PenanceManager.formatMoney(paidPause.getPriceCents())));
+                            new PenanceManager(this).money(paidPause.getPriceCents())));
         }
 
     }
@@ -780,18 +780,18 @@ public final class MainActivity extends AppCompatActivity {
             }
             rules.add(getString(R.string.arrangement_tribute_rule,
                     trigger,
-                    PenanceManager.formatMoney(wallet.getInfractionCents(infraction))));
+                    wallet.money(wallet.getInfractionCents(infraction))));
         }
         List<String> lines = new ArrayList<>();
         lines.add(detailLine(R.string.arrangement_wallet_balance,
-                PenanceManager.formatMoney(snapshot.getDueCents())));
+                wallet.money(snapshot.getDueCents())));
         lines.add(detailLine(R.string.arrangement_wallet_rules,
                 rules.isEmpty() ? getString(R.string.arrangement_none_selected)
                         : android.text.TextUtils.join("\n", rules)));
         lines.add(detailLine(R.string.arrangement_wallet_caps,
                 getString(R.string.arrangement_wallet_cap_values,
-                        PenanceManager.formatMoney(wallet.getDailyCapCents()),
-                        PenanceManager.formatMoney(wallet.getWeeklyCapCents()))));
+                        wallet.money(wallet.getDailyCapCents()),
+                        wallet.money(wallet.getWeeklyCapCents()))));
         return joinDetails(lines);
     }
 
@@ -1088,8 +1088,8 @@ public final class MainActivity extends AppCompatActivity {
                 new Metric(R.string.stats_activity,
                         formatCount(stats.getCurrentSessionActivityEvents())),
                 new Metric(R.string.stats_tribute_value,
-                        PenanceManager.formatMoney((int) Math.min(Integer.MAX_VALUE,
-                                stats.getCurrentSessionTributeCents()))));
+                        new PenanceManager(this).money(new StatsRepository(this).tributeCents(
+                                new PenanceManager(this).getCurrency(), true))));
         renderMetricRows(binding.homeSessionMetrics, service, 3);
 
         List<Metric> lifetime = Arrays.asList(
@@ -1102,8 +1102,8 @@ public final class MainActivity extends AppCompatActivity {
                 new Metric(R.string.stats_limited_app_time,
                         formatMillis(stats.getLimitedAppMillis())),
                 new Metric(R.string.stats_paid,
-                        PenanceManager.formatMoney((int) Math.min(Integer.MAX_VALUE,
-                                new PenanceManager(this).getTotalPaidCents()))));
+                        new PenanceManager(this).money(
+                                new PenanceManager(this).getTotalPaidCents())));
         renderMetricRows(binding.homeLifetimeMetrics, lifetime, 3);
     }
 

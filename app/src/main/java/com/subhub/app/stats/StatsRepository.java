@@ -92,6 +92,7 @@ public final class StatsRepository {
                     .putLong(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS, 0L)
                     .putLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS, 0L)
                     .putLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS, 0L)
+                    .putLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS + "_USD", 0L)
                     .putLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS, 0L)
                     .putLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS, 0L)
                     .putInt(KEY_SESSIONS_COUNT, preferences.getInt(KEY_SESSIONS_COUNT, 0) + 1)
@@ -172,6 +173,7 @@ public final class StatsRepository {
                     .remove(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS)
                     .remove(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS)
                     .remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS)
+                    .remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS + "_USD")
                     .remove(KEY_ACTIVE_SESSION_TAMPER_EVENTS)
                     .remove(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS).apply();
             sessionStartMs = 0;
@@ -311,6 +313,26 @@ public final class StatsRepository {
                 KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS, 1L);
     }
     public void recordTributeEvent(int amountCents, boolean tamper) {
+        recordTributeEvent(amountCents, tamper, "EUR");
+    }
+
+    private static String currencyKey(String key, String currency) {
+        com.subhub.app.penance.WalletCurrency.requireSupported(currency);
+        return "EUR".equals(currency) ? key : key + "_" + currency;
+    }
+
+    public long tributeCents(String currency, boolean currentSession) {
+        synchronized (SESSION_LOCK) {
+            restoreActiveSession();
+            String key = currencyKey(currentSession ? KEY_ACTIVE_SESSION_TRIBUTE_CENTS
+                    : KEY_TRIBUTE_CENTS, currency);
+            return currentSession ? activeLong(key) : preferences.getLong(key, 0L);
+        }
+    }
+
+    public void recordTributeEvent(int amountCents, boolean tamper, String currency) {
+        String totalKey = currencyKey(KEY_TRIBUTE_CENTS, currency);
+        String sessionKey = currencyKey(KEY_ACTIVE_SESSION_TRIBUTE_CENTS, currency);
         if (amountCents <= 0) return;
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
@@ -320,10 +342,10 @@ public final class StatsRepository {
                             safeAdd(preferences.getLong(KEY_TRIBUTE_EVENTS, 0L), 1L))
                     .putLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS,
                             safeAdd(activeLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS), 1L))
-                    .putLong(KEY_TRIBUTE_CENTS,
-                            safeAdd(preferences.getLong(KEY_TRIBUTE_CENTS, 0L), amountCents))
-                    .putLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS,
-                            safeAdd(activeLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS), amountCents));
+                    .putLong(totalKey,
+                            safeAdd(preferences.getLong(totalKey, 0L), amountCents))
+                    .putLong(sessionKey,
+                            safeAdd(activeLong(sessionKey), amountCents));
             if (tamper) {
                 editor.putLong(KEY_TAMPER_EVENTS,
                                 safeAdd(preferences.getLong(KEY_TAMPER_EVENTS, 0L), 1L))

@@ -14,6 +14,7 @@ public final class PenanceEvent {
     private final PenanceInfraction infraction;
     private final Status status;
     private final String settlementId;
+    private final String currency;
 
     public PenanceEvent(String id, long createdAtMillis, long mercyEndsAtMillis,
             int amountCents, int strikeCount, Status status, String settlementId) {
@@ -24,6 +25,13 @@ public final class PenanceEvent {
     public PenanceEvent(String id, long createdAtMillis, long mercyEndsAtMillis,
             int amountCents, int strikeCount, PenanceInfraction infraction,
             Status status, String settlementId) {
+        this(id, createdAtMillis, mercyEndsAtMillis, amountCents, strikeCount,
+                infraction, status, settlementId, "EUR");
+    }
+
+    public PenanceEvent(String id, long createdAtMillis, long mercyEndsAtMillis,
+            int amountCents, int strikeCount, PenanceInfraction infraction,
+            Status status, String settlementId, String currency) {
         this.id = Objects.requireNonNull(id);
         this.createdAtMillis = createdAtMillis;
         this.mercyEndsAtMillis = mercyEndsAtMillis;
@@ -33,6 +41,7 @@ public final class PenanceEvent {
                 ? PenanceInfraction.NEW_DETECTION : infraction;
         this.status = Objects.requireNonNull(status);
         this.settlementId = settlementId == null ? "" : settlementId;
+        this.currency = WalletCurrency.requireSupported(currency);
     }
 
     public String getId() { return id; }
@@ -43,6 +52,7 @@ public final class PenanceEvent {
     public PenanceInfraction getInfraction() { return infraction; }
     public Status getStatus() { return status; }
     public String getSettlementId() { return settlementId; }
+    public String getCurrency() { return currency; }
 
     public boolean isInMercy(long nowMillis) {
         return status == Status.OPEN && mercyEndsAtMillis > nowMillis;
@@ -58,6 +68,6 @@ public final class PenanceEvent {
 
     public PenanceEvent withStatus(Status next, String nextSettlementId) {
         return new PenanceEvent(id, createdAtMillis, mercyEndsAtMillis, amountCents,
-                strikeCount, infraction, next, nextSettlementId);
+                strikeCount, infraction, next, nextSettlementId, currency);
     }
 }

@@ -115,7 +115,7 @@ public final class HardcoreAutoPayManager {
         if (penance.getActiveCheckoutMode() == PenanceManager.CheckoutMode.HARDCORE_AUTO) {
             trigger = now + RETRY_DELAY_MS;
         } else {
-            trigger = penance.nextDueAtMillis();
+            trigger = penance.nextAutomaticDueAtMillis(now);
             if (trigger <= 0L) return;
             trigger = Math.max(now + 1_000L, trigger);
         }

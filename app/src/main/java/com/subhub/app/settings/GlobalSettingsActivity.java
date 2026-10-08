@@ -75,6 +75,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private boolean updatingPaypalEnvironment;
     private boolean updatingAutoPay;
     private boolean paypalConnecting;
+    private boolean updatingWalletCurrency;
+    private boolean currencyReading;
     private boolean paypalVaultBusy;
     private boolean paypalApprovalLaunched;
     private boolean editingUnlocked;
@@ -158,6 +160,29 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.paypalEnvironment.setOnCheckedChangeListener((group, checkedId) -> {
             if (!updatingPaypalEnvironment) changePayPalEnvironment(checkedId);
         });
+        binding.walletCurrency.setOnCheckedChangeListener((group, checkedId) -> {
+            if (updatingWalletCurrency) return;
+            if (!editingUnlocked || !paypalCredentials.primaryCurrency().isEmpty()) {
+                refreshWalletCurrency();
+                return;
+            }
+            String currency = checkedId == R.id.wallet_currency_usd ? "USD" : "EUR";
+            PenanceManager wallet = new PenanceManager(this);
+            if (currency.equals(wallet.getCurrency())) return;
+            new AlertDialog.Builder(this).setTitle(R.string.wallet_currency_label)
+                    .setMessage(R.string.wallet_currency_help)
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> refreshWalletCurrency())
+                    .setOnCancelListener(dialog -> refreshWalletCurrency())
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                        if (editingUnlocked) {
+                            Toast.makeText(this, wallet.changeCurrency(currency)
+                                    ? R.string.wallet_currency_changed : R.string.wallet_currency_blocked,
+                                    Toast.LENGTH_LONG).show();
+                        }
+                        refreshPayPalSandboxState();
+                    }).show();
+        });
+        binding.buttonRefreshWalletCurrency.setOnClickListener(view -> readWalletCurrency());
         binding.paypalAutoPayEnabled.setOnCheckedChangeListener((button, checked) -> {
             if (!updatingAutoPay) changeAutoPay(checked);
         });
@@ -374,6 +399,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             }
             Toast.makeText(this, R.string.paypal_sandbox_saved, Toast.LENGTH_LONG).show();
             refreshPayPalSandboxState();
+            readWalletCurrency();
         });
     }
 
@@ -389,6 +415,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
 
     private void refreshPayPalSandboxState() {
         if (binding == null || paypalCredentials == null) return;
+        refreshWalletCurrency();
         PayPalEnvironment environment = paypalCredentials.selectedEnvironment();
         binding.paypalSandboxStatus.setText(getString(
                 paypalCredentials.hasVerifiedCredentials()
@@ -429,6 +456,50 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             binding.paypalAutoPayStatus.setText(getString(
                     R.string.paypal_auto_pay_paused_status, autoPayError));
         }
+    }
+
+    private void refreshWalletCurrency() {
+        PenanceManager wallet = new PenanceManager(this);
+        String primary = paypalCredentials.primaryCurrency();
+        updatingWalletCurrency = true;
+        binding.walletCurrency.check("USD".equals(wallet.getCurrency())
+                ? R.id.wallet_currency_usd : R.id.wallet_currency_eur);
+        updatingWalletCurrency = false;
+        binding.walletCurrencyEur.setEnabled(editingUnlocked && primary.isEmpty());
+        binding.walletCurrencyUsd.setEnabled(editingUnlocked && primary.isEmpty());
+        binding.buttonRefreshWalletCurrency.setEnabled(editingUnlocked && !currencyReading
+                && paypalCredentials.hasVerifiedCredentials());
+        binding.walletCurrencyStatus.setText(primary.isEmpty()
+                ? getString(R.string.wallet_currency_help)
+                : getString(R.string.wallet_currency_primary, primary, wallet.getCurrency()));
+    }
+
+    private void readWalletCurrency() {
+        if (!editingUnlocked || currencyReading || !paypalCredentials.hasVerifiedCredentials()) return;
+        currencyReading = true;
+        PayPalCredentialStore.Credentials credentials = paypalCredentials.load();
+        refreshWalletCurrency();
+        paypalClient.readPrimaryCurrency(credentials, result -> {
+            currencyReading = false;
+            if (binding == null) return;
+            if (!credentials.boundaryId().equals(paypalCredentials.load().boundaryId())) {
+                refreshPayPalSandboxState();
+                return;
+            }
+            String primary = result.isSuccess() ? result.value() : "";
+            paypalCredentials.recordPrimaryCurrency(credentials, primary);
+            if (!primary.isEmpty() && editingUnlocked) {
+                PenanceManager wallet = new PenanceManager(this);
+                if (!primary.equals(wallet.getCurrency())) {
+                    Toast.makeText(this, wallet.changeCurrency(primary)
+                            ? R.string.wallet_currency_changed : R.string.wallet_currency_blocked,
+                            Toast.LENGTH_LONG).show();
+                }
+            } else if (primary.isEmpty()) {
+                Toast.makeText(this, R.string.wallet_currency_unavailable, Toast.LENGTH_SHORT).show();
+            }
+            refreshPayPalSandboxState();
+        });
     }
 
     private void linkPayPalWallet() {

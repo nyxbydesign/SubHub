@@ -65,6 +65,14 @@ public final class PayPalOrdersClient {
     public void createOrder(PayPalCredentialStore.Credentials credentials,
             String settlementId, int amountCents, boolean requestVault,
             List<OrderItem> orderItems, Callback<Order> callback) {
+        createOrder(credentials, settlementId, amountCents, PenanceManager.CURRENCY,
+                requestVault, orderItems, callback);
+    }
+
+    public void createOrder(PayPalCredentialStore.Credentials credentials,
+            String settlementId, int amountCents, String currency, boolean requestVault,
+            List<OrderItem> orderItems, Callback<Order> callback) {
+        WalletCurrency.requireSupported(currency);
         List<OrderItem> items = orderItems == null
                 ? Collections.emptyList() : new ArrayList<>(orderItems);
         network.execute(() -> {
@@ -76,13 +84,13 @@ public final class PayPalOrdersClient {
                 }
                 String token = accessToken(credentials);
                 JSONObject amount = new JSONObject()
-                        .put("currency_code", PenanceManager.CURRENCY)
+                        .put("currency_code", currency)
                         .put("value", decimalAmount(amountCents));
                 JSONObject unit = new JSONObject()
                         .put("reference_id", settlementId)
                         .put("custom_id", settlementId)
                         .put("amount", amount);
-                addOrderItems(unit, amount, amountCents, items);
+                addOrderItems(unit, amount, amountCents, currency, items);
                 boolean vaultRequested = requestVault;
                 JSONObject response;
                 try {
@@ -269,6 +277,14 @@ public final class PayPalOrdersClient {
     public void captureOrder(PayPalCredentialStore.Credentials credentials,
             String orderId, String settlementId, int expectedAmountCents,
             String clientMetadataId, Callback<Capture> callback) {
+        captureOrder(credentials, orderId, settlementId, expectedAmountCents,
+                PenanceManager.CURRENCY, clientMetadataId, callback);
+    }
+
+    public void captureOrder(PayPalCredentialStore.Credentials credentials,
+            String orderId, String settlementId, int expectedAmountCents, String currency,
+            String clientMetadataId, Callback<Capture> callback) {
+        WalletCurrency.requireSupported(currency);
         network.execute(() -> {
             try {
                 String token = accessToken(credentials);
@@ -284,7 +300,7 @@ public final class PayPalOrdersClient {
                         "/v2/checkout/orders/" + orderId + "/capture", token, "{}",
                         PayPalRequestPolicy.captureRequestId(settlementId), metadata);
                 deliver(callback, Result.success(parseCapture(
-                        response, settlementId, expectedAmountCents)));
+                        response, settlementId, expectedAmountCents, currency)));
             } catch (Exception error) {
                 deliver(callback, Result.failure(safeMessage(error), classify(error)));
             }
@@ -295,6 +311,14 @@ public final class PayPalOrdersClient {
     public void createStoredWalletPayment(PayPalCredentialStore.Credentials credentials,
             String settlementId, int amountCents, String vaultId,
             Callback<Capture> callback) {
+        createStoredWalletPayment(credentials, settlementId, amountCents,
+                PenanceManager.CURRENCY, vaultId, callback);
+    }
+
+    public void createStoredWalletPayment(PayPalCredentialStore.Credentials credentials,
+            String settlementId, int amountCents, String currency, String vaultId,
+            Callback<Capture> callback) {
+        WalletCurrency.requireSupported(currency);
         network.execute(() -> {
             try {
                 PayPalRequestPolicy.StoredWalletRequest stored;
@@ -314,7 +338,7 @@ public final class PayPalOrdersClient {
                         .put("reference_id", settlementId)
                         .put("custom_id", settlementId)
                         .put("amount", new JSONObject()
-                                .put("currency_code", PenanceManager.CURRENCY)
+                                .put("currency_code", currency)
                                 .put("value", decimalAmount(amountCents)));
                 JSONObject paypal = new JSONObject()
                         .put("vault_id", stored.vaultId())
@@ -343,15 +367,15 @@ public final class PayPalOrdersClient {
                             "PayPal did not complete the automatic wallet payment");
                 }
                 deliver(callback, Result.success(parseCapture(
-                        response, settlementId, amountCents)));
+                        response, settlementId, amountCents, currency)));
             } catch (Exception error) {
                 deliver(callback, Result.failure(safeMessage(error), classify(error)));
             }
         });
     }
 
-    private static void addOrderItems(JSONObject unit, JSONObject amount, int amountCents,
-            List<OrderItem> items) throws Exception {
+    static void addOrderItems(JSONObject unit, JSONObject amount, int amountCents,
+            String currency, List<OrderItem> items) throws Exception {
         if (items == null || items.isEmpty()) return;
         if (items.size() > 200) {
             throw new IllegalArgumentException("PayPal order contains too many ledger entries");
@@ -365,7 +389,7 @@ public final class PayPalOrdersClient {
                     .put("name", bounded(item.name, 127, "SubHub tribute"))
                     .put("description", bounded(item.description, 2048, ""))
                     .put("unit_amount", new JSONObject()
-                            .put("currency_code", PenanceManager.CURRENCY)
+                            .put("currency_code", currency)
                             .put("value", decimalAmount(item.amountCents)))
                     .put("quantity", "1");
             encoded.put(encodedItem);
@@ -375,7 +399,7 @@ public final class PayPalOrdersClient {
             throw new IllegalArgumentException("PayPal ledger items do not match the total");
         }
         amount.put("breakdown", new JSONObject().put("item_total", new JSONObject()
-                .put("currency_code", PenanceManager.CURRENCY)
+                .put("currency_code", currency)
                 .put("value", decimalAmount(itemTotal))));
         unit.put("items", encoded);
     }
@@ -386,27 +410,27 @@ public final class PayPalOrdersClient {
         return clean.length() <= maximum ? clean : clean.substring(0, maximum);
     }
 
-    private static Capture parseCapture(JSONObject response, String settlementId,
-            int expectedAmountCents) throws Exception {
+    static Capture parseCapture(JSONObject response, String settlementId,
+            int expectedAmountCents, String currency) throws Exception {
         if (!"COMPLETED".equalsIgnoreCase(response.optString("status"))) {
             throw new IllegalStateException("PayPal order is not completed");
         }
         JSONArray units = response.optJSONArray("purchase_units");
-        JSONObject unit = units == null || units.length() == 0
+        JSONObject unit = units == null || units.length() != 1
                 ? null : units.optJSONObject(0);
         if (unit == null || !settlementId.equals(unit.optString("custom_id"))) {
             throw new IllegalStateException("PayPal settlement reference did not match");
         }
         JSONObject payments = unit.optJSONObject("payments");
         JSONArray captures = payments == null ? null : payments.optJSONArray("captures");
-        JSONObject capture = captures == null || captures.length() == 0
+        JSONObject capture = captures == null || captures.length() != 1
                 ? null : captures.optJSONObject(0);
         if (capture == null || !"COMPLETED".equalsIgnoreCase(capture.optString("status"))) {
             throw new IllegalStateException("PayPal capture is not completed");
         }
         JSONObject amount = capture.optJSONObject("amount");
         if (amount == null
-                || !PenanceManager.CURRENCY.equalsIgnoreCase(amount.optString("currency_code"))
+                || !currency.equals(amount.optString("currency_code"))
                 || expectedAmountCents != cents(amount.optString("value"))) {
             throw new IllegalStateException("PayPal capture amount did not match");
         }
@@ -430,6 +454,34 @@ public final class PayPalOrdersClient {
                 vault == null ? "" : vault.optString("id"),
                 customer == null ? "" : customer.optString("id"),
                 payerEmail, payerAccountId);
+    }
+
+    /** Optional merchant metadata; never creates a payer session or payment. */
+    public void readPrimaryCurrency(PayPalCredentialStore.Credentials credentials,
+            Callback<String> callback) {
+        network.execute(() -> {
+            try {
+                JSONObject response = request(credentials.environment(), "GET",
+                        "/v1/reporting/balances", accessToken(credentials), "", "", "");
+                deliver(callback, Result.success(primaryCurrency(response)));
+            } catch (Exception error) {
+                deliver(callback, Result.failure("Primary currency unavailable", classify(error)));
+            }
+        });
+    }
+
+    static String primaryCurrency(JSONObject response) {
+        JSONArray balances = response.optJSONArray("balances");
+        String primary = "";
+        int count = 0;
+        if (balances == null) return "";
+        for (int index = 0; index < balances.length(); index++) {
+            JSONObject balance = balances.optJSONObject(index);
+            if (balance == null || !Boolean.TRUE.equals(balance.opt("primary"))) continue;
+            count++;
+            primary = balance.optString("currency", "");
+        }
+        return count == 1 && WalletCurrency.isSupported(primary) ? primary : "";
     }
 
     private String accessToken(PayPalCredentialStore.Credentials credentials)

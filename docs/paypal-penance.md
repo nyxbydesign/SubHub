@@ -18,7 +18,7 @@ The environment toggle is an authorization boundary. Changing Sandbox/Live or ch
 ID clears the old credentials and saved-wallet state and cancels any active checkout. The Orders
 client only accepts the two compiled PayPal API hosts; there is no user-editable server origin.
 
-For a payment, SubHub obtains an OAuth token, creates an Orders v2 order for the exact bounded EUR
+For a payment, SubHub obtains an OAuth token, creates an Orders v2 order for the exact bounded EUR/USD
 settlement, and opens PayPal's approval page. On return it captures the order and accepts completion
 only if the environment boundary, local settlement reference, PayPal order, currency, amount, and
 capture status all match.
@@ -64,6 +64,27 @@ Manual settlement remains payer-present. Interactive order state cannot be reuse
 settlement, and enabling automatic settlement clears any stale interactive checkout before a new
 background attempt. The app never falls back from configured auto-pay to an unnoticed interactive
 approval page.
+
+New background automatic cashouts have an internal 15.00 minimum in the selected currency. Smaller balances remain
+open and accumulate; scheduling waits until enough entries have passed their mercy windows.
+Explicit manual cashouts (including the existing saved-wallet button route) have no minimum.
+Already-submitted automatic settlements retain their original ID and can reconcile below the floor.
+
+## Wallet currency
+
+Dom Settings reads the merchant's primary currency through the optional, read-only
+`GET /v1/reporting/balances` endpoint after connecting credentials. Only one supported primary
+EUR/USD code is retained, encrypted and bound to the verified merchant/environment; account
+balances and identifiers are not retained. Missing permissions, malformed metadata, or an unsupported
+primary leave the EUR/USD selector available without disconnecting valid payment credentials.
+The read can be repeated with **Read PayPal currency**; it never creates a payment.
+
+Changing currency requires all unpaid entries to be settled or explicitly forgiven and no checkout
+to be active. Costs and caps retain their nominal values; no amount is converted. Auto-pay is disabled
+on an actual change and must be explicitly re-enabled after reviewing the new denomination.
+Legacy ledger rows and totals remain EUR. New rows, settlements, caps, paid totals, display amounts,
+and PayPal requests keep their denomination, while historical entries retain their original labels.
+Primary-currency metadata is local and is not included in arrangement credential transfers.
 
 For payment-link fallback, PayPal.Me links receive the exact EUR amount using PayPal's documented
 `paypal.me/name/10.00EUR` form. The payer returns to SubHub and marks only the local ledger paid; the

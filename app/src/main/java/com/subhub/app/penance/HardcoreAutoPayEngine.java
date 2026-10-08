@@ -18,6 +18,10 @@ final class HardcoreAutoPayEngine {
     private HardcoreAutoPayEngine() {}
 
     static void run(Context context, Runnable finished) {
+        run(context, false, finished);
+    }
+
+    static void run(Context context, boolean manualCashout, Runnable finished) {
         Context app = context.getApplicationContext();
         if (!RUNNING.compareAndSet(false, true)) {
             finished.run();
@@ -39,8 +43,9 @@ final class HardcoreAutoPayEngine {
             done(finished);
             return;
         }
-        PenanceManager.Settlement settlement = penance.beginSettlement(
-                System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        PenanceManager.Settlement settlement = manualCashout ? penance.beginSettlement(now)
+                : penance.beginAutomaticSettlement(now);
         if (settlement == null) {
             HardcoreAutoPayManager.schedule(app);
             done(finished);
@@ -59,14 +64,14 @@ final class HardcoreAutoPayEngine {
         penance.markAutomaticSettlement(settlement.getId(), credentials.boundaryId());
         PayPalOrdersClient client = new PayPalOrdersClient(app);
         client.createStoredWalletPayment(credentials, settlement.getId(),
-                settlement.getAmountCents(), vault.vaultId(), result -> {
+                settlement.getAmountCents(), settlement.getCurrency(), vault.vaultId(), result -> {
                     try {
                         if (result.isSuccess()) {
                             if (penance.completeSettlement(
                                     settlement.getId(), settlement.getAmountCents())) {
                                 policy.markPaid();
                                 notify(app, true, "Wallet payment completed · "
-                                        + PenanceManager.formatMoney(
+                                        + WalletCurrency.format(settlement.getCurrency(),
                                                 settlement.getAmountCents()));
                             } else {
                                 policy.pause("The local settlement no longer matched");

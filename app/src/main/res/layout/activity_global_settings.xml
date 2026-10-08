@@ -363,6 +363,29 @@
                     android:textSize="11sp"
                     android:textStyle="bold" />
                 <TextView style="@style/Widget.SubHub.FieldLabel"
+                    android:text="@string/wallet_currency_label" />
+                <RadioGroup
+                    android:id="@+id/wallet_currency"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <RadioButton android:id="@+id/wallet_currency_eur"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:minHeight="48dp"
+                        android:text="@string/wallet_currency_eur" />
+                    <RadioButton android:id="@+id/wallet_currency_usd"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:minHeight="48dp"
+                        android:text="@string/wallet_currency_usd" />
+                </RadioGroup>
+                <TextView android:id="@+id/wallet_currency_status"
+                    style="@style/Widget.SubHub.FieldHelp"
+                    android:text="@string/wallet_currency_help" />
+                <Button android:id="@+id/button_refresh_wallet_currency"
+                    style="@style/Widget.SubHub.CompactOutlineButton"
+                    android:layout_width="match_parent"
+                    android:text="@string/wallet_currency_refresh" />
+                <TextView android:labelFor="@id/paypal_client_id" style="@style/Widget.SubHub.FieldLabel"
                     android:text="@string/paypal_client_id_label" />
                 <EditText
                     android:id="@+id/paypal_client_id"

@@ -22,6 +22,8 @@ public final class PayPalCredentialStore {
     private static final String KEY_CLIENT_ID = "client_id";
     private static final String KEY_SECRET = "client_secret";
     private static final String KEY_VERIFIED_BOUNDARY = "verified_boundary";
+    private static final String KEY_PRIMARY_CURRENCY = "primary_currency";
+    private static final String KEY_PRIMARY_BOUNDARY = "primary_currency_boundary";
     private static final String LEGACY_KEY_VAULT_REQUESTED = "vault_requested";
     private static final String KEY_VAULT_STATUS = "vault_status";
     private static final String KEY_VAULT_ID = "vault_id";
@@ -84,6 +86,29 @@ public final class PayPalCredentialStore {
                 .putString(KEY_VERIFIED_BOUNDARY, verified).commit();
     }
 
+    public String primaryCurrency() {
+        if (!hasVerifiedCredentials()) return "";
+        Credentials credentials = load();
+        if (!credentials.boundaryId().equals(decrypt(preferences().getString(
+                KEY_PRIMARY_BOUNDARY, "")))) return "";
+        String currency = decrypt(preferences().getString(KEY_PRIMARY_CURRENCY, ""));
+        return WalletCurrency.isSupported(currency) ? currency : "";
+    }
+
+    public boolean recordPrimaryCurrency(Credentials credentials, String currency) {
+        if (credentials == null || !hasVerifiedCredentials()
+                || !load().boundaryId().equals(credentials.boundaryId())) return false;
+        if (!WalletCurrency.isSupported(currency)) {
+            return preferences().edit().remove(KEY_PRIMARY_CURRENCY)
+                    .remove(KEY_PRIMARY_BOUNDARY).commit();
+        }
+        String encryptedCode = encrypt(currency);
+        String encryptedBoundary = encrypt(credentials.boundaryId());
+        return !encryptedCode.isEmpty() && !encryptedBoundary.isEmpty()
+                && preferences().edit().putString(KEY_PRIMARY_CURRENCY, encryptedCode)
+                .putString(KEY_PRIMARY_BOUNDARY, encryptedBoundary).commit();
+    }
+
     public boolean save(PayPalEnvironment environment, String clientId, String secret) {
         PayPalEnvironment selected = environment == null
                 ? PayPalEnvironment.SANDBOX : environment;
@@ -100,7 +125,8 @@ public final class PayPalCredentialStore {
                 .putString(KEY_ENVIRONMENT, selected.name())
                 .putString(KEY_CLIENT_ID, encryptedId)
                 .putString(KEY_SECRET, encryptedSecret)
-                .remove(KEY_VERIFIED_BOUNDARY);
+                .remove(KEY_VERIFIED_BOUNDARY).remove(KEY_PRIMARY_CURRENCY)
+                .remove(KEY_PRIMARY_BOUNDARY);
         if (boundaryChanged) clearVault(editor);
         return editor.commit();
     }
@@ -141,6 +167,7 @@ public final class PayPalCredentialStore {
 
     private static java.util.Set<String> localKeys() {
         return java.util.Set.of(KEY_ENVIRONMENT, KEY_CLIENT_ID, KEY_SECRET, KEY_VERIFIED_BOUNDARY,
+                KEY_PRIMARY_CURRENCY, KEY_PRIMARY_BOUNDARY,
                 KEY_VAULT_STATUS, KEY_VAULT_ID, KEY_CUSTOMER_ID, KEY_PAYER_EMAIL,
                 KEY_PAYER_ACCOUNT_ID, KEY_VAULT_BOUNDARY, KEY_SETUP_TOKEN_ID,
                 KEY_SETUP_CUSTOMER_ID, KEY_SETUP_METADATA_ID, KEY_SETUP_APPROVAL_URL,

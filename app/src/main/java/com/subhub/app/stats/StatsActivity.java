@@ -95,11 +95,10 @@ public final class StatsActivity extends AppCompatActivity {
         lines.add(getString(R.string.stats_limit_stops) + ": "
                 + stats.getLimitInterventions());
         lines.add(getString(R.string.stats_tributes) + ": " + stats.getTributeEvents()
-                + " · " + PenanceManager.formatMoney((int) Math.min(
-                Integer.MAX_VALUE, stats.getTributeCents())) + " added");
+                + " · " + new PenanceManager(this).money(new StatsRepository(this).tributeCents(
+                new PenanceManager(this).getCurrency(), false)) + " added");
         lines.add(getString(R.string.stats_paid) + ": "
-                + PenanceManager.formatMoney((int) Math.min(Integer.MAX_VALUE,
-                new PenanceManager(this).getTotalPaidCents())));
+                + new PenanceManager(this).money(new PenanceManager(this).getTotalPaidCents()));
         lines.add(getString(R.string.stats_whispers) + ": "
                 + stats.getSubliminalImpressions());
         lines.add(getString(R.string.stats_popups) + ": " + stats.getPopupImpressions());

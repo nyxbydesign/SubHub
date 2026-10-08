@@ -15,7 +15,6 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -34,6 +33,7 @@ public final class PenanceManager {
     public static final int MIN_TAMPER_COOLDOWN_MINUTES = 1;
     public static final int MAX_TAMPER_COOLDOWN_MINUTES = 1_440;
     public static final String CURRENCY = "EUR";
+    private static final String KEY_CURRENCY = "wallet_currency";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_STRIKE_CENTS = "strike_cents";
     private static final String KEY_DAILY_CAP_CENTS = "daily_cap_cents";
@@ -46,6 +46,50 @@ public final class PenanceManager {
     private static final String KEY_LAST_TAMPER_AT = "last_tamper_at";
     private static final String KEY_EVENTS = "events_v1";
     private static final String KEY_TOTAL_PAID_CENTS = "total_paid_cents_v1";
+
+    public String getCurrency() {
+        String code = preferences.getString(KEY_CURRENCY, CURRENCY);
+        return WalletCurrency.isSupported(code) ? code : CURRENCY;
+    }
+
+    public String money(long cents) { return WalletCurrency.format(getCurrency(), cents); }
+
+    /** No unpaid balance or in-flight payment may be re-denominated. */
+    public boolean changeCurrency(String code) {
+        WalletCurrency.requireSupported(code);
+        synchronized (LOCK) {
+            if (code.equals(getCurrency())) return true;
+            if (!getActiveOrderId().isEmpty() || !getActiveSettlementId().isEmpty()
+                    || getActiveCheckoutMode() != CheckoutMode.NONE) return false;
+            for (PenanceEvent event : loadEvents()) {
+                if (event.getStatus() == PenanceEvent.Status.OPEN
+                        || event.getStatus() == PenanceEvent.Status.CHECKOUT) return false;
+            }
+            // Preserve a legacy denomination's lifetime sum before later history trimming.
+            totalPaidCentsLocked(loadEvents());
+            // Consent must be reviewed again in the new denomination before scheduling resumes.
+            new HardcoreAutoPayManager(context).disable();
+            return preferences.edit().putString(KEY_CURRENCY, code)
+                    .putInt(KEY_DETECTION_REMAINDER, 0).commit();
+        }
+    }
+
+    private List<PenanceEvent> currentCurrencyEvents(List<PenanceEvent> events) {
+        List<PenanceEvent> selected = new ArrayList<>();
+        for (PenanceEvent event : events) {
+            if (getCurrency().equals(event.getCurrency())) selected.add(event);
+        }
+        return selected;
+    }
+
+    private String totalPaidKey() {
+        return totalPaidKey(getCurrency());
+    }
+
+    private static String totalPaidKey(String currency) {
+        return CURRENCY.equals(currency) ? KEY_TOTAL_PAID_CENTS
+                : KEY_TOTAL_PAID_CENTS + "_" + currency;
+    }
     private static final String LEGACY_KEY_BACKEND_URL = "paypal_backend_url";
     public static final String KEY_PAYPAL_LINK = "paypal_payment_link";
     private static final String KEY_ORDER_ID = "active_order_id";
@@ -125,7 +169,7 @@ public final class PenanceManager {
     public int getDailyRemainingCents(long nowMillis) {
         synchronized (LOCK) {
             int used = PenancePolicy.periodTotal(
-                    loadEvents(), nowMillis, ZoneId.systemDefault(), true);
+                    currentCurrencyEvents(loadEvents()), nowMillis, ZoneId.systemDefault(), true);
             return Math.max(0, getDailyCapCents() - used);
         }
     }
@@ -133,7 +177,7 @@ public final class PenanceManager {
     public int getWeeklyRemainingCents(long nowMillis) {
         synchronized (LOCK) {
             int used = PenancePolicy.periodTotal(
-                    loadEvents(), nowMillis, ZoneId.systemDefault(), false);
+                    currentCurrencyEvents(loadEvents()), nowMillis, ZoneId.systemDefault(), false);
             return Math.max(0, getWeeklyCapCents() - used);
         }
     }
@@ -235,16 +279,16 @@ public final class PenanceManager {
             List<PenanceEvent> events = loadEvents();
             trimHistoryForInsertion(events);
             if (events.size() >= MAX_EVENTS) return 0;
-            int amount = PenancePolicy.boundedCharge(events, nowMillis, billableCount,
+            int amount = PenancePolicy.boundedCharge(currentCurrencyEvents(events), nowMillis, billableCount,
                     getInfractionCents(infraction), getDailyCapCents(), getWeeklyCapCents(),
                     ZoneId.systemDefault());
             if (amount <= 0) return 0;
             long mercyEnds = nowMillis + getMercyMinutes() * 60_000L;
             events.add(new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
-                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, ""));
+                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency()));
             saveEvents(events);
             new StatsRepository(context).recordTributeEvent(amount,
-                    infraction == PenanceInfraction.TAMPER_ATTEMPT);
+                    infraction == PenanceInfraction.TAMPER_ATTEMPT, getCurrency());
             if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
                 preferences.edit().putLong(KEY_LAST_TAMPER_AT, nowMillis).apply();
             }
@@ -280,9 +324,9 @@ public final class PenanceManager {
             if (events.size() >= MAX_EVENTS) return false;
             events.add(new PenanceEvent(UUID.randomUUID().toString(), nowMillis, nowMillis,
                     pause.getPriceCents(), 1, PenanceInfraction.PAID_PAUSE,
-                    PenanceEvent.Status.OPEN, ""));
+                    PenanceEvent.Status.OPEN, "", getCurrency()));
             saveEvents(events);
-            new StatsRepository(context).recordTributeEvent(pause.getPriceCents(), false);
+            new StatsRepository(context).recordTributeEvent(pause.getPriceCents(), false, getCurrency());
             return true;
         }
     }
@@ -303,6 +347,7 @@ public final class PenanceManager {
             int checkout = 0;
             int paid = 0;
             for (PenanceEvent event : events) {
+                if (!getCurrency().equals(event.getCurrency())) continue;
                 if (event.isDue(nowMillis)) due += event.getAmountCents();
                 else if (event.isInMercy(nowMillis)) mercy += event.getAmountCents();
                 else if (event.getStatus() == PenanceEvent.Status.CHECKOUT) {
@@ -325,6 +370,13 @@ public final class PenanceManager {
     public long getTotalPaidCents() {
         synchronized (LOCK) {
             return totalPaidCentsLocked(loadEvents());
+        }
+    }
+
+    public long getTotalPaidCents(String currency) {
+        WalletCurrency.requireSupported(currency);
+        synchronized (LOCK) {
+            return totalPaidCentsLocked(loadEvents(), currency);
         }
     }
 
@@ -362,6 +414,14 @@ public final class PenanceManager {
     }
 
     public Settlement beginSettlement(long nowMillis) {
+        return beginSettlement(nowMillis, 0);
+    }
+
+    Settlement beginAutomaticSettlement(long nowMillis) {
+        return beginSettlement(nowMillis, AutoCashoutPolicy.MINIMUM_CENTS);
+    }
+
+    private Settlement beginSettlement(long nowMillis, int minimumCents) {
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
             String existingId = "";
@@ -370,19 +430,28 @@ public final class PenanceManager {
                     existingId = event.getSettlementId();
                 }
             }
-            if (!existingId.isEmpty()) return settlement(events, existingId);
+            if (!existingId.isEmpty()) {
+                Settlement existing = settlement(events, existingId);
+                // An already-submitted automatic payment must reconcile with the same ID,
+                // even if it predates this minimum. Never cancel/recreate an ambiguous charge.
+                if (existing != null && existing.getAmountCents() < minimumCents
+                        && getActiveCheckoutMode() != CheckoutMode.HARDCORE_AUTO) return null;
+                return existing;
+            }
 
-            String settlementId = UUID.randomUUID().toString();
             int amount = 0;
+            for (PenanceEvent event : events) {
+                if (event.isDue(nowMillis)) amount += event.getAmountCents();
+            }
+            if (amount <= 0 || amount < minimumCents) return null;
+            String settlementId = UUID.randomUUID().toString();
             for (int index = 0; index < events.size(); index++) {
                 PenanceEvent event = events.get(index);
                 if (event.isDue(nowMillis)) {
-                    amount += event.getAmountCents();
                     events.set(index, event.withStatus(
                             PenanceEvent.Status.CHECKOUT, settlementId));
                 }
             }
-            if (amount <= 0) return null;
             saveEvents(events);
             clearOrderState();
             return settlement(events, settlementId);
@@ -513,6 +582,8 @@ public final class PenanceManager {
         if (settlementId == null || settlementId.isEmpty() || paidAmountCents <= 0) return false;
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
+            Settlement selected = settlement(events, settlementId);
+            if (selected == null || !getCurrency().equals(selected.getCurrency())) return false;
             long paidBeforeSettlement = totalPaidCentsLocked(events);
             int expected = 0;
             boolean activatesPause = false;
@@ -536,7 +607,7 @@ public final class PenanceManager {
             saveEvents(events);
             long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
                     ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
-            preferences.edit().putLong(KEY_TOTAL_PAID_CENTS, updatedTotal).apply();
+            preferences.edit().putLong(totalPaidKey(), updatedTotal).apply();
             clearOrderState();
             HardcoreAutoPayManager.schedule(context);
             return true;
@@ -544,17 +615,23 @@ public final class PenanceManager {
     }
 
     private long totalPaidCentsLocked(List<PenanceEvent> events) {
-        if (preferences.contains(KEY_TOTAL_PAID_CENTS)) {
-            return Math.max(0L, preferences.getLong(KEY_TOTAL_PAID_CENTS, 0L));
+        return totalPaidCentsLocked(events, getCurrency());
+    }
+
+    private long totalPaidCentsLocked(List<PenanceEvent> events, String currency) {
+        String key = totalPaidKey(currency);
+        if (preferences.contains(key)) {
+            return Math.max(0L, preferences.getLong(key, 0L));
         }
         long migratedTotal = 0L;
         for (PenanceEvent event : events) {
-            if (event.getStatus() != PenanceEvent.Status.PAID) continue;
+            if (event.getStatus() != PenanceEvent.Status.PAID
+                    || !currency.equals(event.getCurrency())) continue;
             long amount = Math.max(0, event.getAmountCents());
             migratedTotal = migratedTotal > Long.MAX_VALUE - amount
                     ? Long.MAX_VALUE : migratedTotal + amount;
         }
-        preferences.edit().putLong(KEY_TOTAL_PAID_CENTS, migratedTotal).apply();
+        preferences.edit().putLong(key, migratedTotal).apply();
         return migratedTotal;
     }
 
@@ -578,21 +655,28 @@ public final class PenanceManager {
         }
     }
 
+    long nextAutomaticDueAtMillis(long nowMillis) {
+        synchronized (LOCK) {
+            return AutoCashoutPolicy.nextEligibleAt(loadEvents(), nowMillis);
+        }
+    }
+
     private List<PenanceEvent> loadEvents() {
         String raw = preferences.getString(KEY_EVENTS, "");
         List<PenanceEvent> events = new ArrayList<>();
         if (raw == null || raw.trim().isEmpty()) return events;
         for (String line : raw.split(";")) {
             String[] parts = line.split(",", -1);
-            if (parts.length != 7 && parts.length != 8) continue;
+            if (parts.length != 7 && parts.length != 8 && parts.length != 9) continue;
             try {
                 PenanceEvent.Status status = PenanceEvent.Status.valueOf(parts[5]);
-                PenanceInfraction infraction = parts.length == 8
+                PenanceInfraction infraction = parts.length >= 8
                         ? PenanceInfraction.valueOf(parts[7])
                         : PenanceInfraction.NEW_DETECTION;
                 events.add(new PenanceEvent(parts[0], Long.parseLong(parts[1]),
                         Long.parseLong(parts[2]), Integer.parseInt(parts[3]),
-                        Integer.parseInt(parts[4]), infraction, status, parts[6]));
+                        Integer.parseInt(parts[4]), infraction, status, parts[6],
+                        parts.length == 9 ? parts[8] : CURRENCY));
             } catch (IllegalArgumentException ignored) {
                 // Ignore malformed private preference entries without losing valid history.
             }
@@ -610,7 +694,7 @@ public final class PenanceManager {
                     Integer.toString(event.getAmountCents()),
                     Integer.toString(event.getStrikeCount()),
                     event.getStatus().name(), event.getSettlementId(),
-                    event.getInfraction().name()));
+                    event.getInfraction().name(), event.getCurrency()));
         }
         preferences.edit().putString(KEY_EVENTS, String.join(";", encoded)).apply();
     }
@@ -670,6 +754,8 @@ public final class PenanceManager {
         for (PenanceEvent event : events) {
             if (event.getStatus() == PenanceEvent.Status.CHECKOUT
                     && settlementId.equals(event.getSettlementId())) {
+                if (!included.isEmpty()
+                        && !included.get(0).getCurrency().equals(event.getCurrency())) return null;
                 included.add(event);
                 amount += event.getAmountCents();
             }
@@ -685,7 +771,7 @@ public final class PenanceManager {
     public enum CheckoutMode { NONE, LINK, API_APPROVAL, HARDCORE_AUTO }
 
     public static String formatMoney(int cents) {
-        return String.format(Locale.ROOT, "€%.2f", Math.max(0, cents) / 100.0);
+        return WalletCurrency.format(CURRENCY, cents);
     }
 
     public static final class Settlement {
@@ -702,5 +788,8 @@ public final class PenanceManager {
         public String getId() { return id; }
         public int getAmountCents() { return amountCents; }
         public List<PenanceEvent> getEvents() { return events; }
+        public String getCurrency() {
+            return events.isEmpty() ? CURRENCY : events.get(0).getCurrency();
+        }
     }
 }

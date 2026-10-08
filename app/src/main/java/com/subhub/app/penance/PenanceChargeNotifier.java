@@ -21,8 +21,8 @@ public final class PenanceChargeNotifier {
                 + snapshot.getMercyCents()
                 + snapshot.getCheckoutCents();
         String message = context.getString(R.string.penance_charge_toast,
-                label(context, infraction), PenanceManager.formatMoney(amountCents),
-                PenanceManager.formatMoney(unsettledCents));
+                label(context, infraction), manager.money(amountCents),
+                manager.money(unsettledCents));
         Context app = context.getApplicationContext();
         new Handler(Looper.getMainLooper()).post(() -> {
             if (activeToast != null) activeToast.cancel();

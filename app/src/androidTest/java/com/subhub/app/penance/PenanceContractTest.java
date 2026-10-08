@@ -69,6 +69,30 @@ public final class PenanceContractTest {
         assertTrue(manager.snapshot(now).getEvents().isEmpty());
     }
 
+    @Test public void automaticMinimumLeavesSmallBalanceOpenButManualCashoutStillWorks() {
+        long now = System.currentTimeMillis();
+        manager.configure(true, 1499, 10000, 20000, 0);
+        assertEquals(1499, manager.recordStrikes(1, now));
+        org.junit.Assert.assertNull(manager.beginAutomaticSettlement(now));
+        assertEquals(0, manager.nextAutomaticDueAtMillis(now));
+        assertEquals(PenanceEvent.Status.OPEN, manager.snapshot(now).getEvents().get(0).getStatus());
+        assertEquals(1499, manager.beginSettlement(now).getAmountCents());
+    }
+
+    @Test public void exactAutomaticMinimumSettlesAndExistingSmallerAutomaticRetryKeepsItsId() {
+        long now = System.currentTimeMillis();
+        manager.configure(true, 1500, 10000, 20000, 0);
+        manager.recordStrikes(1, now);
+        assertEquals(1500, manager.beginAutomaticSettlement(now).getAmountCents());
+        manager.forgiveAllUnpaid();
+        manager.configure(true, 100, 10000, 20000, 0);
+        manager.recordStrikes(1, now + 1);
+        PenanceManager.Settlement existing = manager.beginSettlement(now + 1);
+        manager.markAutomaticSettlement(existing.getId(), "test-boundary");
+        assertEquals(existing.getId(), manager.beginAutomaticSettlement(now + 2).getId());
+        assertEquals(100, manager.beginAutomaticSettlement(now + 2).getAmountCents());
+    }
+
     @Test public void paidPauseUsesItsExactConfiguredCheckoutAndStartsAfterPayment() {
         long now = System.currentTimeMillis();
         manager.configure(true, 100, 500, 2_000, 0);
