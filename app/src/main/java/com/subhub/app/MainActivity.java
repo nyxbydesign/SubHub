@@ -121,6 +121,8 @@ public final class MainActivity extends AppCompatActivity {
         }
     };
 
+    private com.subhub.app.stats.DailyStatsPanel dailyStats;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -132,6 +134,10 @@ public final class MainActivity extends AppCompatActivity {
         }
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        dailyStats = new com.subhub.app.stats.DailyStatsPanel(this, true);
+        android.widget.LinearLayout homeContent = findViewById(R.id.page_content);
+        android.widget.LinearLayout.LayoutParams dailyParams = new android.widget.LinearLayout.LayoutParams(-1, -2); dailyParams.topMargin = dp(12);
+        homeContent.addView(dailyStats, Math.min(3, homeContent.getChildCount()), dailyParams);
         findViewById(R.id.keyholder_intro_open).setOnClickListener(view -> {
             getSharedPreferences("subhub_home", MODE_PRIVATE).edit().putBoolean("keyholder_intro_dismissed", true).apply();
             findViewById(R.id.keyholder_intro).setVisibility(View.GONE);
@@ -1114,29 +1120,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void renderStats(StatsSnapshot stats) {
-        List<Metric> service = Arrays.asList(
-                new Metric(R.string.stats_service_time,
-                        StatsSnapshot.formatClock(stats.getCurrentSessionSeconds())),
-                new Metric(R.string.stats_activity,
-                        formatCount(stats.getCurrentSessionActivityEvents())),
-                new Metric(R.string.stats_tribute_value,
-                        new PenanceManager(this).money(new StatsRepository(this).tributeCents(
-                                new PenanceManager(this).getCurrency(), true))));
-        renderMetricRows(binding.homeSessionMetrics, service, 3);
-
-        List<Metric> lifetime = Arrays.asList(
-                new Metric(R.string.stats_services, formatCount(stats.getSessions())),
-                new Metric(R.string.stats_total_protected_short,
-                        StatsSnapshot.formatDuration(stats.getTotalProtectedSeconds())),
-                new Metric(R.string.stats_streak,
-                        getString(R.string.stats_streak_days, stats.getCurrentStreak())),
-                new Metric(R.string.stats_censors, formatCount(stats.getTotalBlocks())),
-                new Metric(R.string.stats_limited_app_time,
-                        formatMillis(stats.getLimitedAppMillis())),
-                new Metric(R.string.stats_paid,
-                        new PenanceManager(this).money(
-                                new PenanceManager(this).getTotalPaidCents())));
-        renderMetricRows(binding.homeLifetimeMetrics, lifetime, 3);
+        if (dailyStats != null) dailyStats.refreshIfNeeded();
     }
 
     private void renderMetricRows(LinearLayout container, List<Metric> metrics, int columns) {

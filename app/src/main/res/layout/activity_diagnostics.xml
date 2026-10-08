@@ -18,10 +18,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
-        <TextView style="@style/Widget.SubHub.FieldHelp"
-            android:layout_marginTop="8dp"
-            android:text="@string/diagnostics_desc" />
-
         <LinearLayout
             android:id="@+id/censor_lab_card"
             android:layout_width="match_parent"
@@ -37,14 +33,6 @@
                 android:text="@string/diagnostics_lab_title"
                 android:textColor="@color/accent"
                 android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="@string/diagnostics_lab_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/censor_lab_status"

@@ -1,0 +1,36 @@
+<resources>
+    <string name="daily_today">Activity</string>
+    <string name="daily_activity">Activity</string>
+    <string name="daily_7">7 days</string>
+    <string name="daily_30">30 days</string>
+    <string name="daily_year">Year</string>
+    <string name="daily_service">Recorded service time</string>
+    <string name="daily_censors">Censor · detections</string>
+    <string name="daily_limits_time">Limits · app time</string>
+    <string name="daily_limits_stops">Limits · interventions</string>
+    <string name="daily_whispers">Rituals · whispers</string>
+    <string name="daily_popups">Rituals · popups</string>
+    <string name="daily_photos">Exports · photos</string>
+    <string name="daily_videos">Exports · videos</string>
+    <string name="daily_assessed_eur">Wallet · assessed EUR</string>
+    <string name="daily_assessed_usd">Wallet · assessed USD</string>
+    <string name="daily_paid_eur">Wallet · paid EUR</string>
+    <string name="daily_paid_usd">Wallet · paid USD</string>
+    <string name="daily_filter">Calendar and trend measure</string>
+    <string name="daily_trend">Trend for the selected daily measure</string>
+    <string name="daily_week_help">Past 7 days · colour shows recorded service time</string>
+    <string name="daily_no_history">Daily detail unavailable</string>
+    <string name="daily_unavailable">Daily statistics are temporarily unavailable. Your lifetime totals are retained.</string>
+    <string name="daily_history_note">Daily history starts %1$s.</string>
+    <string name="daily_open">Statistics</string>
+    <string name="daily_summary">Service %1$s · Censor detections: %2$d\nLimits %3$s · Interventions: %4$d\nWhispers: %5$d · Popups: %6$d\nExported photos: %7$d · Videos: %8$d</string>
+    <string name="daily_wallet_summary">Assessed %1$s · %2$s\nPaid %3$s · %4$s</string>
+    <item name="daily_statistics_panel" type="id" />
+    <item name="daily_day_summary" type="id" />
+    <item name="daily_range_7" type="id" />
+    <item name="daily_range_30" type="id" />
+    <item name="daily_range_year" type="id" />
+    <item name="daily_metric_filter" type="id" />
+    <item name="daily_open_statistics" type="id" />
+    <string name="daily_compact_summary">%1$s service · %2$d detections</string>
+</resources>

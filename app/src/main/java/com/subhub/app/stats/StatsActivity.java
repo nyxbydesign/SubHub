@@ -23,11 +23,16 @@ import java.util.Locale;
 /** Full local statistics, trends, and milestones. */
 public final class StatsActivity extends AppCompatActivity {
     private ActivityStatsBinding binding;
+    private DailyStatsPanel daily;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = ActivityStatsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        daily = new DailyStatsPanel(this, false); daily.restore(savedInstanceState);
+        android.widget.LinearLayout content = (android.widget.LinearLayout) ((android.widget.ScrollView) binding.getRoot()).getChildAt(0);
+        android.widget.LinearLayout.LayoutParams dailyParams = new android.widget.LinearLayout.LayoutParams(-1,-2); dailyParams.topMargin = dp(14);
+        content.addView(daily, 1, dailyParams);
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.statistics_title, false);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
     }
@@ -35,6 +40,7 @@ public final class StatsActivity extends AppCompatActivity {
     @Override protected void onResume() {
         super.onResume();
         render();
+        daily.refresh();
     }
 
     private void render() {
@@ -56,7 +62,7 @@ public final class StatsActivity extends AppCompatActivity {
         binding.historyList.removeAllViews();
         List<StatsRepository.SessionEntry> reverse = new ArrayList<>(history);
         Collections.reverse(reverse);
-        for (int index = 0; index < Math.min(10, reverse.size()); index++) {
+        for (int index = 0; index < reverse.size(); index++) {
             StatsRepository.SessionEntry entry = reverse.get(index);
             TextView row = new TextView(this);
             row.setText(getString(R.string.statistics_session_row,
@@ -72,6 +78,8 @@ public final class StatsActivity extends AppCompatActivity {
         }
         binding.historyEmpty.setVisibility(history.isEmpty() ? View.VISIBLE : View.GONE);
     }
+
+    @Override protected void onSaveInstanceState(Bundle state) { daily.save(state); super.onSaveInstanceState(state); }
 
     @Override protected void onDestroy() {
         binding = null;
@@ -91,11 +99,13 @@ public final class StatsActivity extends AppCompatActivity {
                 + StatsSnapshot.formatDuration(stats.getLimitedAppMillis() / 1_000L));
         lines.add(getString(R.string.stats_limit_stops) + ": "
                 + stats.getLimitInterventions());
-        lines.add(getString(R.string.stats_tributes) + ": " + stats.getTributeEvents()
-                + " · " + new PenanceManager(this).money(new StatsRepository(this).tributeCents(
-                new PenanceManager(this).getCurrency(), false)) + " added");
-        lines.add(getString(R.string.stats_paid) + ": "
-                + new PenanceManager(this).money(new PenanceManager(this).getTotalPaidCents()));
+        lines.add(getString(R.string.stats_tributes) + ": " + stats.getTributeEvents());
+        for (String currency : new String[]{"EUR","USD"}) {
+            lines.add(getString(currency.equals("EUR") ? R.string.daily_assessed_eur : R.string.daily_assessed_usd) + ": "
+                    + com.subhub.app.penance.WalletCurrency.format(currency,new StatsRepository(this).tributeCents(currency,false)));
+            lines.add(getString(currency.equals("EUR") ? R.string.daily_paid_eur : R.string.daily_paid_usd) + ": "
+                    + com.subhub.app.penance.WalletCurrency.format(currency,new PenanceManager(this).getTotalPaidCents(currency)));
+        }
         lines.add(getString(R.string.stats_whispers) + ": "
                 + stats.getSubliminalImpressions());
         lines.add(getString(R.string.stats_popups) + ": " + stats.getPopupImpressions());

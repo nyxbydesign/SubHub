@@ -203,10 +203,10 @@ public final class PrimaryHeaderContractTest {
                     assertEquals(dp(activity, 44), icon.getWidth());
                 }
                 assertEquals(activity.getString(titleRes), title.getText().toString());
-                assertEquals(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
-                        activity.getResources().getDisplayMetrics()), title.getTextSize(), 0.3f);
-                assertEquals(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
-                        activity.getResources().getDisplayMetrics()), subtitle.getTextSize(), 0.3f);
+                assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
+                        activity.getResources().getDisplayMetrics())), title.getTextSize(), 0.01f);
+                assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
+                        activity.getResources().getDisplayMetrics())), subtitle.getTextSize(), 0.01f);
                 assertEquals(activityClass == PenanceActivity.class ? View.VISIBLE : View.GONE,
                         subtitle.getVisibility());
                 assertTrue(ViewCompat.isAccessibilityHeading(title));

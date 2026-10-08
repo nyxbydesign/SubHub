@@ -60,12 +60,10 @@ public final class ControllerEditSessionTest {
                 assertTrue(activity.findViewById(R.id.button_protection).isEnabled());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.commitment_card).getVisibility());
-                assertEquals(View.VISIBLE,
+                assertEquals(View.GONE,
                         activity.findViewById(R.id.home_session_metrics).getVisibility());
-                assertEquals(1, ((ViewGroup) activity.findViewById(
-                        R.id.home_session_metrics)).getChildCount());
-                assertEquals(2, ((ViewGroup) activity.findViewById(
-                        R.id.home_lifetime_metrics)).getChildCount());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.daily_statistics_panel).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.home_lifetime_stats).getVisibility());
             });
         }
     }
@@ -88,7 +86,7 @@ public final class ControllerEditSessionTest {
                         activity.findViewById(R.id.button_protection).getVisibility());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.commitment_card).getVisibility());
-                assertEquals(View.VISIBLE,
+                assertEquals(View.GONE,
                         activity.findViewById(R.id.home_session_metrics).getVisibility());
                 assertFalse(activity.findViewById(R.id.button_censor_settings).isShown());
             });
