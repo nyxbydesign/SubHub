@@ -38,9 +38,15 @@ public final class CensorRenderer implements AutoCloseable {
     private final Paint redShift = new Paint(Paint.FILTER_BITMAP_FLAG);
 
     public CensorRenderer(Context context) {
+        this(context, null);
+    }
+
+    /** A non-null image list freezes custom artwork for an export job. */
+    public CensorRenderer(Context context, List<Bitmap> frozenImages) {
         this.context = context.getApplicationContext();
-        customImages = new CustomImagePool(this.context);
-        customImages.reload();
+        customImages = frozenImages == null ? new CustomImagePool(this.context)
+                : new CustomImagePool(this.context, frozenImages);
+        if (frozenImages == null) customImages.reload();
         border.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
         text.setFakeBoldText(true);

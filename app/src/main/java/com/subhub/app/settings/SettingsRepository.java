@@ -46,6 +46,11 @@ public final class SettingsRepository {
 
     private final SharedPreferences preferences;
 
+    /** Explicit settings source for isolated exports; the default constructor remains live. */
+    public SettingsRepository(SharedPreferences preferences) {
+        this.preferences = preferences;
+    }
+
     public SettingsRepository(Context context) {
         preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
     }

@@ -1,0 +1,5 @@
+<resources>
+    <string name="export_notification_channel">Media exports</string>
+    <string name="export_notification_title">Processing media</string>
+    <string name="export_notification_progress">Item %1$d of %2$d · Tap for progress</string>
+</resources>

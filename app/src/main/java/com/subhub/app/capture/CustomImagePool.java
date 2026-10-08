@@ -35,6 +35,12 @@ public final class CustomImagePool implements AutoCloseable {
         settings = new SettingsRepository(context);
     }
 
+    /** Takes ownership of job-local bitmaps; no live image-store reads occur. */
+    public CustomImagePool(Context context, List<Bitmap> frozenImages) {
+        this(context);
+        for (Bitmap image : frozenImages) images.add(new PreparedImage(image));
+    }
+
     public synchronized boolean isEmpty() { return images.isEmpty(); }
 
     /** Synchronous load for one-shot export rendering, which already runs off the UI thread. */
