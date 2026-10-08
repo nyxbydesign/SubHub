@@ -29,14 +29,26 @@ public final class CommitmentManager {
     public static boolean start(Context context, long requestedDurationMs) {
         long duration = Math.max(MIN_DURATION_MS,
                 Math.min(MAX_DURATION_MS, requestedDurationMs));
+        return start(context, duration, duration, false);
+    }
+
+    /** Selects once; neither UI recreation nor reboot draws another duration. */
+    public static synchronized boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
+        if (isActive(context)) return false;
+        long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
         long now = System.currentTimeMillis();
         long endsAt = now + duration;
-        preferences(context).edit()
+        boolean saved = preferences(context).edit()
                 .putLong(KEY_STARTED_AT, now)
                 .putLong(KEY_ENDS_AT, endsAt)
                 .putLong(KEY_DURATION, duration)
+                .putBoolean("commitment_hide_countdown", hideCountdown)
+                .putLong("commitment_range_min", minimum).putLong("commitment_range_max", maximum)
+                .putLong("commitment_ends_elapsed", android.os.SystemClock.elapsedRealtime() + duration)
+                .putInt("commitment_boot", android.provider.Settings.Global.getInt(context.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1))
                 .remove(KEY_SALT).remove(KEY_HASH)
-                .apply();
+                .commit();
+        if (!saved) return false;
         scheduleExpiry(context, endsAt);
         reinforceProtection(context);
         HardcoreAutoPayManager.schedule(context);
@@ -51,7 +63,7 @@ public final class CommitmentManager {
     public static boolean isActive(Context context) {
         SharedPreferences values = preferences(context);
         long end = values.getLong(KEY_ENDS_AT, 0L);
-        if (end <= System.currentTimeMillis()) {
+        if (remaining(values, context) <= 0) {
             if (end != 0L) expire(context);
             return false;
         }
@@ -60,9 +72,26 @@ public final class CommitmentManager {
 
     public static long remainingMillis(Context context) {
         return isActive(context)
-                ? Math.max(0L, preferences(context).getLong(KEY_ENDS_AT, 0L)
-                        - System.currentTimeMillis())
+                ? Math.max(0L, remaining(preferences(context), context))
                 : 0L;
+    }
+
+    private static long remaining(SharedPreferences values, Context context) {
+        if (values.getLong(KEY_ENDS_AT, 0L) == 0) return 0;
+        int boot = android.provider.Settings.Global.getInt(context.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1);
+        if (boot >= 0 && values.contains("commitment_ends_elapsed") && values.getInt("commitment_boot", -2) == boot)
+            return values.getLong("commitment_ends_elapsed", 0) - android.os.SystemClock.elapsedRealtime();
+        return values.getLong(KEY_ENDS_AT, 0) - System.currentTimeMillis();
+    }
+
+    public static boolean isCountdownHidden(Context context) {
+        return isActive(context) && preferences(context).getBoolean("commitment_hide_countdown", false)
+                && !com.subhub.app.security.ControllerPinManager.isDomModeActive();
+    }
+
+    public static String countdownLabel(Context context) {
+        return isCountdownHidden(context) ? context.getString(com.subhub.app.R.string.pact_time_hidden)
+                : CommitmentActivity.formatDuration(remainingMillis(context));
     }
 
     public static boolean verifyAndRelease(Context context, String code) {
@@ -104,6 +133,8 @@ public final class CommitmentManager {
     static void expire(Context context) {
         preferences(context).edit()
                 .remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
+                .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
+                .remove("commitment_ends_elapsed").remove("commitment_boot")
                 .remove(KEY_SALT).remove(KEY_HASH).apply();
         cancelExpiry(context);
         new AppModeManager(context).setArmed(false);
@@ -119,7 +150,9 @@ public final class CommitmentManager {
 
     private static void scheduleExpiry(Context context, long endsAt) {
         alarm(context).setAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, endsAt, expiryIntent(context));
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                android.os.SystemClock.elapsedRealtime() + Math.max(0, remaining(preferences(context), context)),
+                expiryIntent(context));
     }
 
     private static void cancelExpiry(Context context) {

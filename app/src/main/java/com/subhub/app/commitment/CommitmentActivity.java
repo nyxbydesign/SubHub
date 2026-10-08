@@ -80,8 +80,7 @@ public final class CommitmentActivity extends AppCompatActivity {
         if (binding == null) return;
         boolean active = CommitmentManager.isActive(this);
         binding.activePanel.setVisibility(active ? View.VISIBLE : View.GONE);
-        if (active) binding.countdown.setText(formatDuration(
-                CommitmentManager.remainingMillis(this)));
+        if (active) binding.countdown.setText(CommitmentManager.countdownLabel(this));
         applyEditState();
     }
 

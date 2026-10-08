@@ -70,6 +70,7 @@ public final class ControllerPinGate {
         panel.addView(title(activity, activity.getString(R.string.controller_pin_unlock_title)));
         panel.addView(explainer(activity, activity.getString(R.string.controller_pin_unlock_body)));
         EditText pin = pinInput(activity, R.string.controller_pin_label);
+        ControllerCredentialChoice credential = new ControllerCredentialChoice(activity, panel, pin);
         panel.addView(pin);
         AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setView(panel)
@@ -84,10 +85,7 @@ public final class ControllerPinGate {
         dialog.setOnShowListener(ignored -> {
             styleDialog(activity, dialog);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                    if (!ControllerPinManager.verify(activity, pin.getText().toString())) {
-                        TamperTributeReporter.record(activity);
-                        pin.setError(activity.getString(R.string.controller_pin_wrong));
-                    } else {
+                    if (credential.verify()) {
                         dialog.dismiss();
                         authorized.run();
                     }

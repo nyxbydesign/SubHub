@@ -1,0 +1,39 @@
+<resources>
+    <string name="ux_off">Off</string>
+    <string name="ux_on">On</string>
+    <string name="authenticator_title">Controller authenticator</string>
+    <string name="authenticator_description">An authenticator code can unlock every control that accepts your Dom PIN. Your PIN remains available. Share a code with your partner when you want to grant Dom access; there is no remote connection.</string>
+    <string name="authenticator_paired">Authenticator paired</string>
+    <string name="authenticator_unpaired">No authenticator paired</string>
+    <string name="authenticator_pair">Pair an authenticator</string>
+    <string name="authenticator_replace">Replace authenticator</string>
+    <string name="authenticator_remove">Remove authenticator</string>
+    <string name="authenticator_remove_message">Codes from the paired authenticator will stop working. The Dom PIN will still work.</string>
+    <string name="authenticator_setup_help">On the controller’s phone, scan this QR code with Google Authenticator or another authenticator app. You can also enter the key manually. Keep the key private. Pairing is not active until you confirm a code below.</string>
+    <string name="authenticator_qr">Authenticator pairing QR code</string>
+    <string name="authenticator_manual_help">Enter the displayed key manually in your authenticator.</string>
+    <string name="authenticator_code">Six-digit authenticator code</string>
+    <string name="authenticator_confirm">Confirm pairing</string>
+    <string name="authenticator_pair_success">Paired. Wait for the next code before unlocking.</string>
+    <string name="authenticator_invalid">Code expired, already used, or incorrect. Check automatic time on both phones and try a fresh code.</string>
+    <string name="authenticator_throttled">Too many attempts. Wait before trying another code, or use the Dom PIN.</string>
+    <string name="authenticator_unavailable">Authenticator unavailable. Use the Dom PIN to pair it again.</string>
+    <string name="authenticator_method_pin">Dom PIN</string>
+    <string name="authenticator_method_code">Authenticator</string>
+    <item name="authenticator_confirmation" type="id" />
+    <item name="authenticator_confirm_button" type="id" />
+    <string name="pact_time_hidden">Time remaining is hidden</string>
+    <string name="pact_options_title">Pact options</string>
+    <string name="pact_options_help">Choose a fixed duration or agree to a random time within the range below. The duration is chosen once when the Pact starts. Hiding the countdown conceals it in Sub mode; the controller can still inspect it.</string>
+    <string name="pact_random_duration">Random duration</string>
+    <string name="pact_hide_countdown">Hide countdown</string>
+    <string name="pact_minimum_hours">Minimum hours</string>
+    <string name="pact_maximum_hours">Maximum hours</string>
+    <string name="pact_confirm_start">Use these options</string>
+    <string name="pact_range_invalid">Use an ordered range between 0.5 and 720 hours.</string>
+    <string name="pact_start_unavailable">A Pact is already active, or the new Pact could not be saved.</string>
+    <string name="pact_selection_range">Between %1$s and %2$s</string>
+    <string name="pact_selection_summary">%1$s · %2$s</string>
+    <string name="pact_selection_hidden">Countdown hidden</string>
+    <string name="pact_selection_visible">Countdown visible</string>
+</resources>

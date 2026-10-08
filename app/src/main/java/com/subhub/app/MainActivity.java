@@ -109,6 +109,9 @@ public final class MainActivity extends AppCompatActivity {
     private final EnumSet<HomePermissionPolicy.Requirement> attemptedPermissions =
             EnumSet.noneOf(HomePermissionPolicy.Requirement.class);
     private long selectedPactDurationMs = PACT_UNTIL_RELEASED;
+    private long selectedPactMinimumMs, selectedPactMaximumMs;
+    private boolean selectedPactHidden;
+    private TextView pactSelectionSummary;
     private String achievementPreviewFingerprint = "";
     private final Handler uiTimer = new Handler(Looper.getMainLooper());
     private final Runnable uiTick = new Runnable() {
@@ -121,6 +124,12 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            selectedPactDurationMs = savedInstanceState.getLong("ux_pact_selection", PACT_UNTIL_RELEASED);
+            selectedPactMinimumMs = savedInstanceState.getLong("ux_pact_min", 0);
+            selectedPactMaximumMs = savedInstanceState.getLong("ux_pact_max", 0);
+            selectedPactHidden = savedInstanceState.getBoolean("ux_pact_hidden", false);
+        }
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_home, R.string.app_name,
@@ -357,15 +366,34 @@ public final class MainActivity extends AppCompatActivity {
 
     private void selectPactDuration(long durationMillis) {
         if (CommitmentManager.isActive(this)) return;
+        if (durationMillis > 0) {
+            com.subhub.app.commitment.PactStartDialog.show(this, durationMillis, (minimum, maximum, hidden) -> {
+                selectedPactDurationMs = durationMillis;
+                selectedPactMinimumMs = minimum; selectedPactMaximumMs = maximum; selectedPactHidden = hidden;
+                renderPactSelection();
+            });
+            return;
+        }
         selectedPactDurationMs = durationMillis;
+        selectedPactMinimumMs = selectedPactMaximumMs = 0; selectedPactHidden = false;
         renderPactSelection();
     }
 
     private void startSelectedPact() {
         if (CommitmentManager.isActive(this)) return;
         if (selectedPactDurationMs > 0L) {
-            CommitmentManager.start(this, selectedPactDurationMs);
+            boolean started = CommitmentManager.start(this,
+                    selectedPactMinimumMs > 0 ? selectedPactMinimumMs : selectedPactDurationMs,
+                    selectedPactMaximumMs > 0 ? selectedPactMaximumMs : selectedPactDurationMs,
+                    selectedPactHidden);
+            if (!started) {
+                new AppModeManager(this).setArmed(false);
+                startService(ScreenCaptureService.stopIntent(this));
+                showStatus(R.string.pact_start_unavailable);
+                return;
+            }
             selectedPactDurationMs = PACT_UNTIL_RELEASED;
+            selectedPactMinimumMs = selectedPactMaximumMs = 0; selectedPactHidden = false;
         }
         renderCommitmentState();
     }
@@ -376,6 +404,21 @@ public final class MainActivity extends AppCompatActivity {
         pactButton(binding.commitmentTimer7d, 7L * 24L * 60L * 60L * 1000L);
         pactButton(binding.commitmentTimer30d, 30L * 24L * 60L * 60L * 1000L);
         pactButton(binding.commitmentTimerPermanent, PACT_UNTIL_RELEASED);
+        if (pactSelectionSummary == null) {
+            pactSelectionSummary = new TextView(this);
+            pactSelectionSummary.setTextColor(getColor(R.color.text_secondary));
+            pactSelectionSummary.setPadding(0, dp(8), 0, dp(4));
+            binding.commitmentStartPanel.addView(pactSelectionSummary);
+        }
+        pactSelectionSummary.setVisibility(selectedPactDurationMs > 0 ? View.VISIBLE : View.GONE);
+        if (selectedPactDurationMs > 0) {
+            long minimum = selectedPactMinimumMs > 0 ? selectedPactMinimumMs : selectedPactDurationMs;
+            long maximum = selectedPactMaximumMs > 0 ? selectedPactMaximumMs : selectedPactDurationMs;
+            String duration = minimum == maximum ? CommitmentActivity.formatDuration(minimum)
+                    : getString(R.string.pact_selection_range, CommitmentActivity.formatDuration(minimum), CommitmentActivity.formatDuration(maximum));
+            pactSelectionSummary.setText(getString(R.string.pact_selection_summary, duration,
+                    getString(selectedPactHidden ? R.string.pact_selection_hidden : R.string.pact_selection_visible)));
+        }
     }
 
     private void pactButton(TextView button, long duration) {
@@ -401,9 +444,9 @@ public final class MainActivity extends AppCompatActivity {
         binding.commitmentCard.setVisibility(View.VISIBLE);
         binding.commitmentStartPanel.setVisibility(!active ? View.VISIBLE : View.GONE);
         binding.commitmentActivePanel.setVisibility(active ? View.VISIBLE : View.GONE);
-        if (active) binding.commitmentStatus.setText(getString(
-                R.string.commitment_active_remaining,
-                CommitmentActivity.formatDuration(CommitmentManager.remainingMillis(this))));
+        if (active) binding.commitmentStatus.setText(CommitmentManager.isCountdownHidden(this)
+                ? getString(R.string.pact_time_hidden)
+                : getString(R.string.commitment_active_remaining, CommitmentManager.countdownLabel(this)));
         renderPactSelection();
     }
 
@@ -1269,6 +1312,14 @@ public final class MainActivity extends AppCompatActivity {
                         view -> startActivity(new Intent(this, AchievementsActivity.class)));
         notice.setAnchorViewLayoutListenerEnabled(true);
         notice.show();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putLong("ux_pact_selection", selectedPactDurationMs);
+        state.putLong("ux_pact_min", selectedPactMinimumMs);
+        state.putLong("ux_pact_max", selectedPactMaximumMs);
+        state.putBoolean("ux_pact_hidden", selectedPactHidden);
+        super.onSaveInstanceState(state);
     }
 
     @Override
