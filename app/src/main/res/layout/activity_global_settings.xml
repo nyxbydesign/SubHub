@@ -112,6 +112,9 @@
                     android:text="@string/global_feature_wallet" />
                 <TextView style="@style/Widget.SubHub.FieldHelp"
                     android:text="@string/global_feature_wallet_help" />
+                <com.subhub.app.util.StateToggle android:id="@+id/switch_module_whispers"
+                    style="@style/Widget.SubHub.SettingsToggle" android:layout_width="match_parent"
+                    android:text="@string/stats_whispers" />
             </LinearLayout>
 
             <TextView

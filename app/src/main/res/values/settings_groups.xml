@@ -1,20 +1,27 @@
 <resources>
     <string name="settings_all">‹ All settings</string>
     <string name="settings_features">Features</string>
-    <string name="settings_apps">Apps &amp; permissions</string>
-    <string name="settings_pacts">Protection &amp; Pacts</string>
+    <string name="settings_apps">Apps</string>
+    <string name="settings_pacts">Arrangements &amp; protection</string>
     <string name="settings_appearance">Appearance</string>
-    <string name="settings_services">Services</string>
+    <string name="settings_services">Wallet &amp; PayPal</string>
     <string name="settings_help">Help &amp; about</string>
     <string name="settings_updates">App updates</string>
-    <string name="settings_features_summary">%1$d of 3 core features enabled</string>
+    <string name="settings_features_summary">%1$d enabled</string>
     <string name="settings_apps_ready">Accessibility enabled · Manage app assignments</string>
     <string name="settings_apps_setup">Accessibility needs setup · Manage app assignments</string>
-    <string name="settings_pact_active">Pact active · Protection and Hardcore controls</string>
-    <string name="settings_pact_none">No active Pact · Protection and Hardcore controls</string>
+    <string name="settings_pact_active">Pact active</string>
+    <string name="settings_pact_none">No active Pact</string>
     <string name="settings_privacy_summary">Discreet mode %1$s · App lock %2$s</string>
     <string name="settings_appearance_summary">Studio arrangements, styles and custom assets</string>
-    <string name="settings_services_ready">PayPal connected · Manage Wallet services</string>
-    <string name="settings_services_setup">PayPal setup · Wallet services</string>
+    <string name="settings_services_ready">PayPal connected</string>
+    <string name="settings_services_setup">PayPal not connected</string>
     <string name="settings_help_summary">Guides, diagnostics and app updates</string>
+<string name="settings_permissions">Permissions</string>
+<string name="settings_overlay">Display over other apps</string>
+<string name="settings_battery">Battery optimisation</string>
+<string name="settings_apps_count">Censor %1$d · Limits %2$d · Whispers %3$d apps</string>
+<string name="settings_permission_status">%1$d of 3 access settings ready</string>
+<string name="settings_apps_all">Censor all apps · Limits %1$d · Whispers %2$d</string>
+<string name="settings_notifications">Notifications</string>
 </resources>

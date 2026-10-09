@@ -128,6 +128,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleCensor.setChecked(modules.isCensorEnabled());
         binding.switchModuleLimits.setChecked(modules.isLimitsEnabled());
         binding.switchModuleWallet.setChecked(modules.isWalletEnabled());
+        binding.switchModuleWhispers.setChecked(modules.isSubliminalEnabled());
         binding.armed.setChecked(appMode.isArmed());
         binding.modeGroup.check(appMode.getMode() == AppModePolicy.Mode.SELECTED_APPS
                 ? R.id.mode_selected : R.id.mode_always);
@@ -140,16 +141,18 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         updatingPaypalEnvironment = false;
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setOnClickListener(view -> toggleEditSession());
+        binding.buttonCommitment.setOnClickListener(view -> startActivity(new Intent(this, CommitmentActivity.class)));
         binding.buttonPacks.setOnClickListener(view ->
                 startActivity(new Intent(this, StudioActivity.class)));
         binding.buttonHelp.setOnClickListener(view ->
                 startActivity(new Intent(this, HelpActivity.class)));
         binding.buttonDiagnostics.setOnClickListener(view ->
                 startActivity(new Intent(this, DiagnosticsActivity.class)));
-        binding.buttonCommitment.setVisibility(View.GONE);
+        binding.buttonCommitment.setVisibility(View.VISIBLE);
         binding.switchModuleCensor.setOnCheckedChangeListener((button, checked) -> saveModules());
         binding.switchModuleLimits.setOnCheckedChangeListener((button, checked) -> saveModules());
         binding.switchModuleWallet.setOnCheckedChangeListener((button, checked) -> saveModules());
+        binding.switchModuleWhispers.setOnCheckedChangeListener((button,checked)->saveModules());
         binding.switchHardcoreMode.setOnCheckedChangeListener((button, checked) -> {
             if (!updatingHardcore) changeHardcoreMode(checked);
         });
@@ -241,14 +244,18 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         }
         addGroup("features", R.string.settings_features, binding.featureAreasCard);
         addGroup("apps", R.string.settings_apps, binding.appsCard);
-        addGroup("pacts", R.string.settings_pacts, binding.hardcoreCard);
-        focusedGroups.get("pacts").addView(settingsAction(getString(R.string.keyholder_view_lock), () -> startActivity(new Intent(this, CommitmentActivity.class))));
+        addGroup("permissions", R.string.settings_permissions, binding.androidAccessCard);
+        focusedGroups.get("permissions").addView(settingsAction(getString(R.string.settings_overlay), () -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:"+getPackageName())))));
+        focusedGroups.get("permissions").addView(settingsAction(getString(R.string.settings_notifications), () -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));
+        focusedGroups.get("permissions").addView(settingsAction(getString(R.string.settings_battery), () -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))));
         addGroup("privacy", R.string.privacy_title);
-        addGroup("appearance", R.string.settings_appearance, binding.buttonPacks);
+        addGroup("pacts", R.string.settings_pacts, binding.buttonCommitment, binding.buttonPacks, binding.hardcoreCard);
         addGroup("services", R.string.settings_services, binding.paypalCard);
-        addGroup("help", R.string.settings_help, binding.buttonHelp, binding.buttonDiagnostics);
+        addGroup("help", R.string.settings_help, binding.buttonHelp);
         focusedGroups.get("help").addView(settingsAction(getString(R.string.tour_replay), () -> startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class).putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY,true))));
         focusedGroups.get("help").addView(settingsAction(getString(R.string.settings_updates), () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
+        if(binding.buttonDiagnostics.getParent()!=null)((android.view.ViewGroup)binding.buttonDiagnostics.getParent()).removeView(binding.buttonDiagnostics);
+        focusedGroups.get("help").addView(binding.buttonDiagnostics);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
                 if (!selectedGroup.isEmpty()) { selectedGroup = ""; displayGroup(); }
@@ -257,6 +264,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         });
         selectedGroup = getIntent().getStringExtra("settings_group");
         if (selectedGroup == null) selectedGroup = "";
+        if (selectedGroup.equals("appearance")) selectedGroup="pacts";
     }
     private TextView settingsAction(String title, Runnable action) {
         android.widget.Button row = (android.widget.Button) getLayoutInflater().inflate(R.layout.view_ux_action,binding.settingsSections,false);
@@ -269,6 +277,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         card.setPadding(dp(14), dp(8), dp(14), dp(10)); card.setBackgroundResource(R.drawable.bg_card);
         LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.HORIZONTAL); header.setGravity(Gravity.CENTER_VERTICAL); header.setMinimumHeight(dp(56));
         header.setTag("settings:" + key); header.setFocusable(true); card.addView(header, new LinearLayout.LayoutParams(-1,-2));
+        android.widget.ImageView icon = new android.widget.ImageView(this);
+        icon.setImageResource(key.equals("apps")?R.drawable.ic_settings_apps:key.equals("permissions")?R.drawable.ic_settings_permissions:key.equals("privacy")?R.drawable.ic_ux_lock:key.equals("pacts")?R.drawable.ic_nav_studio:key.equals("services")?R.drawable.ic_settings_wallet:key.equals("help")?R.drawable.ic_tab_help:R.drawable.ic_tab_settings);
+        icon.setBackgroundResource(R.drawable.bg_header_icon); icon.setPadding(dp(8),dp(8),dp(8),dp(8)); icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams iconParams=new LinearLayout.LayoutParams(dp(36),dp(36));iconParams.setMarginEnd(dp(12));header.addView(icon,iconParams);
         LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); header.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
         TextView label = new TextView(this); label.setText(title); label.setTextSize(16); label.setTypeface(null, android.graphics.Typeface.BOLD);
         label.setTextColor(getColor(R.color.text_primary)); labels.addView(label);
@@ -285,12 +297,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         }
         focusedGroups.put(key,group); card.addView(group,new LinearLayout.LayoutParams(-1,-2));
         header.setOnClickListener(v -> {
-            Runnable open = () -> { selectedGroup = key.equals(selectedGroup) ? "" : key; applyEditState(); };
+            Runnable open = () -> { selectedGroup = key.equals(selectedGroup) ? "" : key; applyEditState(); if(key.equals(selectedGroup))card.post(()->card.requestRectangleOnScreen(new android.graphics.Rect(0,0,card.getWidth(),Math.min(card.getHeight(),dp(280))),false)); };
             if (!key.equals(selectedGroup) && protectedGroup(key)) ControllerPinGate.require(this,open,false); else open.run();
         });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,-2); params.topMargin=dp(10); categoryMenu.addView(card,params);
     }
-    private boolean protectedGroup(String key) { return key.equals("features") || key.equals("apps") || key.equals("pacts") || key.equals("services"); }
+    private boolean protectedGroup(String key) { return key.equals("features") || key.equals("apps") || key.equals("permissions") || key.equals("pacts") || key.equals("services"); }
     private void displayGroup() {
         if (categoryMenu == null) return;
         if (!focusedGroups.containsKey(selectedGroup) || protectedGroup(selectedGroup) && !ControllerPinManager.isDomModeActive()) selectedGroup = "";
@@ -304,12 +316,18 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (selectedGroup.equals("privacy")) com.subhub.app.privacy.PrivacyControls.bind(this,focusedGroups.get("privacy"),this::displayGroup);
         if (modules == null) return;
         groupSummaries.get("features").setText(getString(R.string.settings_features_summary,
-                (modules.isCensorEnabled() ? 1 : 0) + (modules.isLimitsEnabled() ? 1 : 0) + (modules.isWalletEnabled() ? 1 : 0)));
-        groupSummaries.get("apps").setText(getString(appMode.isAccessibilityEnabled() ? R.string.settings_apps_ready : R.string.settings_apps_setup));
+                (modules.isCensorEnabled() ? 1 : 0) + (modules.isLimitsEnabled() ? 1 : 0) + (modules.isWalletEnabled() ? 1 : 0) + (modules.isSubliminalEnabled()?1:0)));
+        groupSummaries.get("apps").setText(getString(R.string.settings_apps_count,appMode.getSelectedPackages().size(),appMode.getTimerPackages().size(),appMode.getSubliminalPackages().size()));
+        if(appMode.getMode()==com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS)groupSummaries.get("apps").setText(getString(R.string.settings_apps_all,appMode.getTimerPackages().size(),appMode.getSubliminalPackages().size()));
+        boolean overlay=android.provider.Settings.canDrawOverlays(this);
+        boolean notification=androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled();
+        android.os.PowerManager power=(android.os.PowerManager)getSystemService(POWER_SERVICE);
+        boolean battery=power!=null&&power.isIgnoringBatteryOptimizations(getPackageName());
+        groupSummaries.get("permissions").setText(getString(R.string.settings_permission_status,(appMode.isAccessibilityEnabled()?1:0)+(overlay?1:0)+(notification?1:0)));
         groupSummaries.get("pacts").setText(getString(com.subhub.app.commitment.CommitmentManager.isActive(this) ? R.string.settings_pact_active : R.string.settings_pact_none));
         com.subhub.app.privacy.PrivacyManager privacy = new com.subhub.app.privacy.PrivacyManager(this);
         groupSummaries.get("privacy").setText(getString(R.string.settings_privacy_summary, getString(privacy.isDiscreet() ? R.string.atmosphere_state_on : R.string.atmosphere_state_off), getString(privacy.isAppLockEnabled() ? R.string.atmosphere_state_on : R.string.atmosphere_state_off)));
-        groupSummaries.get("appearance").setText(R.string.settings_appearance_summary);
+
         groupSummaries.get("services").setText(getString(paypalCredentials.hasVerifiedCredentials() ? R.string.settings_services_ready : R.string.settings_services_setup));
         groupSummaries.get("help").setText(R.string.settings_help_summary);
     }
@@ -345,6 +363,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleCensor.setEnabled(modulesEditable);
         binding.switchModuleLimits.setEnabled(modulesEditable);
         binding.switchModuleWallet.setEnabled(modulesEditable);
+        binding.switchModuleWhispers.setEnabled(modulesEditable);
         binding.switchHardcoreMode.setEnabled(editingUnlocked);
         binding.buttonHardcoreSystem.setEnabled(editingUnlocked);
         binding.buttonHardcoreRestricted.setEnabled(editingUnlocked);
@@ -380,13 +399,13 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.featureAreasCard.setVisibility(domVisibility);
         binding.settingsGroupCoverage.setVisibility(domVisibility);
         binding.appsCard.setVisibility(domVisibility);
-        binding.androidAccessCard.setVisibility(domVisibility);
+        binding.androidAccessCard.setVisibility(View.VISIBLE);
         binding.recognitionCard.setVisibility(domVisibility);
         binding.appListCard.setVisibility(domVisibility);
         binding.paypalCard.setVisibility(domVisibility);
         binding.buttonHelp.setVisibility(View.VISIBLE);
         binding.buttonDiagnostics.setVisibility(View.VISIBLE);
-        binding.buttonCommitment.setVisibility(View.GONE);
+        binding.buttonCommitment.setVisibility(domVisibility);
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
         binding.buttonPacks.setVisibility(View.VISIBLE);
@@ -891,7 +910,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (!ControllerPinManager.isSessionUnlocked()) return;
         boolean censor = binding.switchModuleCensor.isChecked();
         modules.save(censor, binding.switchModuleLimits.isChecked(),
-                binding.switchModuleWallet.isChecked());
+                binding.switchModuleWallet.isChecked(),binding.switchModuleWhispers.isChecked());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
     }
 
