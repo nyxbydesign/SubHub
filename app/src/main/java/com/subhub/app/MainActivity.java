@@ -127,7 +127,7 @@ public final class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (com.subhub.app.onboarding.OnboardingState.shouldStart(this)) {
-            startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)); finish(); return;
+            startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)); finish(); return;
         }
         if (savedInstanceState != null) {
             selectedPactDurationMs = savedInstanceState.getLong("ux_pact_selection", PACT_UNTIL_RELEASED);

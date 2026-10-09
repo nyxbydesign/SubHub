@@ -25,6 +25,10 @@ public final class CensorPreviewView extends View {
     private static final int CYAN = Color.rgb(57, 196, 226);
     private static final int INK = Color.rgb(15, 11, 20);
 
+    private android.graphics.Bitmap wideBitmap;
+    private String wideStyle;
+    private boolean widePreview;
+    public void setWidePreview(boolean wide) { widePreview = wide; invalidate(); }
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF scene = new RectF();
     private final RectF target = new RectF();
@@ -44,6 +48,7 @@ public final class CensorPreviewView extends View {
         if (width <= 0f || height <= 0f) return;
 
         String style = String.valueOf(getTag());
+        if (widePreview) { drawWidePreview(canvas, width, height, style); return; }
         float edge = Math.min(width, height) * 0.06f;
         float phoneHeight = Math.min(height - 2 * edge, (width - 2 * edge) / .54f);
         float phoneWidth = phoneHeight * .54f;
@@ -84,6 +89,33 @@ public final class CensorPreviewView extends View {
             drawBox(canvas);
         }
     }
+
+    private void drawWidePreview(Canvas canvas, float width, float height, String style) {
+        if (wideBitmap == null || !style.equals(wideStyle)) {
+            if (wideBitmap != null) wideBitmap.recycle();
+            android.graphics.Bitmap source=android.graphics.Bitmap.createBitmap(640,360,android.graphics.Bitmap.Config.ARGB_8888);
+            Canvas sample=new Canvas(source); Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG);
+            sample.drawColor(Color.rgb(26,19,34));
+            brush.setColor(Color.rgb(96,64,118));sample.drawCircle(34,30,14,brush);
+            brush.setColor(Color.rgb(183,148,206));sample.drawRoundRect(60,20,235,28,4,4,brush);
+            brush.setColor(Color.rgb(83,62,100));sample.drawRoundRect(60,35,168,41,3,3,brush);
+            brush.setShader(new LinearGradient(24,60,616,308,Color.rgb(121,90,152),Color.rgb(44,74,116),Shader.TileMode.CLAMP));sample.drawRoundRect(24,60,616,308,12,12,brush);brush.setShader(null);
+            // Harmless geometric scene with detail that makes blur and pixelation visible.
+            for(int y=0;y<8;y++)for(int x=0;x<14;x++){brush.setColor(Color.rgb(65+(x*17+y*11)%100,50+(x*7+y*19)%90,95+(x*13+y*7)%100));sample.drawCircle(45+x*42,78+y*28,8+(x+y)%5,brush);}
+            brush.setColor(Color.rgb(211,188,231));sample.drawRoundRect(24,326,310,333,3,3,brush);
+            brush.setColor(Color.rgb(87,64,106));sample.drawRoundRect(24,343,480,349,3,3,brush);
+            wideBitmap=source.copy(android.graphics.Bitmap.Config.ARGB_8888,true);
+            CensorAppearance.Type type=CensorAppearance.Type.fromPreference(style);
+            if(type==CensorAppearance.Type.CUSTOM)type=CensorAppearance.Type.BOX;
+            try(com.subhub.app.capture.CensorRenderer renderer=new com.subhub.app.capture.CensorRenderer(getContext(),java.util.Collections.emptyList())) {
+                renderer.draw(wideBitmap,source,java.util.Collections.singletonList(new com.subhub.app.detection.Detection("preview","preview",1f,new com.subhub.app.detection.BBox(136,112,368,140),false,false)),new CensorAppearance(type,65,true,false,getContext().getColor(com.subhub.app.R.color.accent_hot)));
+            } finally { source.recycle(); }
+            wideStyle=style;
+        }
+        paint.setShader(null);paint.setStyle(Paint.Style.FILL);
+        canvas.drawBitmap(wideBitmap,null,new RectF(0,0,width,height),paint);
+    }
+    @Override protected void onDetachedFromWindow() { if(wideBitmap!=null){wideBitmap.recycle();wideBitmap=null;}super.onDetachedFromWindow(); }
 
     private void drawSceneChrome(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);

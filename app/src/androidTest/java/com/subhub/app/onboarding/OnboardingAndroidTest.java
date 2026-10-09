@@ -46,7 +46,8 @@ public class OnboardingAndroidTest {
     @Test public void selectedFeaturesAndStyleSurviveRecreationAndFinishWithoutStartingService(){
         new FeatureModuleManager(context).save(true,true,true,false);
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)){
-            onView(withText(R.string.global_feature_wallet)).perform(click());
+            onView(withId(R.id.tour_next)).perform(click());
+            onView(withText(R.string.global_feature_wallet)).perform(scrollTo(),click());
             tour.onActivity(a->capture(a,"tour-features.png"));
             onView(withId(R.id.tour_next)).perform(click());
             onView(withText(R.string.style_blur)).perform(scrollTo(),click());tour.recreate();
@@ -55,6 +56,7 @@ public class OnboardingAndroidTest {
             onView(withId(R.id.tour_next)).perform(click());
             onView(withId(R.id.tour_next)).perform(click());
             onView(withId(R.id.tour_step_title)).check(matches(withText(R.string.tour_permissions)));
+            onView(withId(R.id.tour_next)).perform(click());
             onView(withId(R.id.tour_next)).perform(click());
         }
         assertFalse(new FeatureModuleManager(context).isWalletEnabled());
@@ -66,11 +68,45 @@ public class OnboardingAndroidTest {
         new FeatureModuleManager(context).save(false,true,false,true);ControllerPinManager.useWithoutKeyholder(context);OnboardingState.complete(context);
         new SettingsRepository(context).saveAppearance(CensorAppearance.Type.GLITCH,71,false,false);
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(new Intent(context,OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY,true))){
-            onView(withText(R.string.global_feature_wallet)).check(matches(org.hamcrest.Matchers.not(isEnabled())));
+            onView(withId(R.id.tour_next)).perform(click());
+            onView(withText(R.string.global_feature_wallet)).perform(scrollTo()).check(matches(isEnabled())).perform(click());
+            onView(withId(R.id.tour_next)).perform(click());
+            onView(withText(R.string.style_blur)).perform(scrollTo(),click());
             onView(withId(R.id.tour_skip)).perform(click());
         }
         FeatureModuleManager modules=new FeatureModuleManager(context);assertFalse(modules.isCensorEnabled());assertTrue(modules.isLimitsEnabled());assertFalse(modules.isWalletEnabled());assertTrue(modules.isSubliminalEnabled());
         assertEquals(CensorAppearance.Type.GLITCH,new SettingsRepository(context).loadAppearance().getType());
+    }
+    @Test public void incompleteSetupResumesAfterCredentialsAreConfigured() {
+        new FeatureModuleManager(context).save(true,true,true,false);
+        try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)) {
+            onView(withId(R.id.tour_next)).perform(click());onView(withText(R.string.global_feature_wallet)).perform(scrollTo(),click());
+            onView(withId(R.id.tour_next)).perform(click());onView(withText(R.string.style_blur)).perform(scrollTo(),click());
+        }
+        ControllerPinManager.setPin(context,"2468");assertTrue(OnboardingState.shouldStart(context));
+        try(ActivityScenario<OnboardingActivity> resumed=ActivityScenario.launch(OnboardingActivity.class)) {
+            onView(withId(R.id.tour_progress)).check(matches(withText(context.getString(R.string.tour_progress,3,6))));
+            onView(withText(R.string.style_blur)).perform(scrollTo()).check(matches(isSelected()));
+            onView(withId(R.id.tour_skip)).perform(click());
+        }
+        assertFalse(new FeatureModuleManager(context).isWalletEnabled());assertEquals(CensorAppearance.Type.BLUR,new SettingsRepository(context).loadAppearance().getType());assertFalse(OnboardingState.inProgress(context));
+    }
+    @Test public void allSixStepsExplainTheirActionsAndKeepTheFooterOutsideTheScroll() {
+        try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)) {
+            for(int i=0;i<6;i++) {
+                final int current=i;
+                tour.onActivity(a->{
+                    android.graphics.Rect footer=new android.graphics.Rect(),scroll=new android.graphics.Rect();
+                    a.findViewById(R.id.tour_next).getGlobalVisibleRect(footer);a.findViewById(R.id.tour_scroll).getGlobalVisibleRect(scroll);
+                    assertTrue("Footer must not overlap step content",footer.top>=scroll.bottom);
+                    assertEquals(a.getString(R.string.tour_progress,current+1,6),((android.widget.TextView)a.findViewById(R.id.tour_progress)).getText().toString());
+                    capture(a,"tour-quality-"+current+".png");
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                if(i<5)onView(withId(R.id.tour_next)).perform(click());
+            }
+            onView(withId(R.id.tour_skip)).perform(click());
+        }
     }
     private static void capture(android.app.Activity a,String name){
         View root=a.getWindow().getDecorView();root.post(()->{Bitmap bitmap=Bitmap.createBitmap(root.getWidth(),root.getHeight(),Bitmap.Config.ARGB_8888);root.draw(new Canvas(bitmap));

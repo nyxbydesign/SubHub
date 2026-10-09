@@ -1,0 +1,39 @@
+<resources>
+    <string name="tour_welcome">How SubHub works</string>
+    <string name="tour_intro">Configure Censor, app limits and Wallet rules, then run your arrangement from Home.</string>
+    <string name="tour_dom_title">Dom mode</string>
+    <string name="tour_dom_help">Choose features, assign apps and edit your arrangement. Keyholder can protect access with a PIN or an authenticator code.</string>
+    <string name="tour_sub_title">Sub mode</string>
+    <string name="tour_sub_help">Use the saved arrangement. Enter Service on Home starts protection; an active Pact can restrict when you leave.</string>
+    <string name="tour_choose_features">Choose features</string>
+    <string name="tour_feature_instruction">Enable the parts you want to use. You can change these later in Settings.</string>
+    <string name="tour_censor_help">Detect selected body areas and phrases, then cover them in assigned apps. Gallery exports create censored photo and video copies.</string>
+    <string name="tour_limits_help">Set daily allowances for selected apps. When time runs out, SubHub blocks access according to your saved limits.</string>
+    <string name="tour_wallet_help">Track tributes and payments. Connect PayPal in Settings before setting up payment rules.</string>
+    <string name="tour_whispers_help">Show subliminal messages in assigned apps. Configure messages and popup effects in Rituals.</string>
+    <string name="tour_apps_help">Assign apps separately to Censor, Limits and Whispers. Selecting an app does not start the service.</string>
+    <string name="tour_choose_apps">Choose apps</string>
+    <string name="tour_choose_style">Choose a censor style</string>
+    <string name="tour_style_help">Preview how detected content is covered. More styles, colours and categories are available in Censor.</string>
+    <string name="tour_keyholder_explanation">Optional: let a keyholder approve Dom access. You can use either method, both, or neither.</string>
+    <string name="tour_pin_help">Your keyholder sets a private PIN. They enter it on this phone when approving access to Dom controls.</string>
+    <string name="tour_remote_help">Your keyholder adds your setup key to Google Authenticator on their phone. Ask for their current six-digit code to open Dom controls. They do not need SubHub.</string>
+    <string name="tour_permissions_explanation">Grant access for your selected features. You can skip this and finish permissions when starting a service.</string>
+    <string name="tour_accessibility_help">Recognize content and enforce app limits in the apps you select. Enable SubHub in Android’s Accessibility settings.</string>
+    <string name="tour_overlay_help">Place censor overlays and effects over other apps.</string>
+    <string name="tour_notifications_help">Show service status, export progress and alerts. Android keeps a notification while a service is running.</string>
+    <string name="tour_no_permissions">No background features selected. Gallery exports will ask for access when needed.</string>
+    <string name="tour_review">Review your setup</string>
+    <string name="tour_get_started">Get started</string>
+    <string name="tour_open_home">Open Home</string>
+    <string name="tour_features_none">No features selected</string>
+    <string name="tour_app_counts">Assigned apps: %1$d Censor · %2$d Limits</string>
+    <string name="tour_keyholder_ready">Keyholder configured</string>
+    <string name="tour_keyholder_optional">Keyholder not configured — Dom access remains available</string>
+    <string name="tour_start_service">Start from Home</string>
+    <string name="tour_start_help">Choose a Pact duration, then tap Enter Service. Setup itself does not start protection or create a payment.</string>
+    <string name="tour_more_settings">Configure the details</string>
+    <string name="tour_more_help">Censor sets content and appearance. Limits sets allowances. Rituals contains Keyholder and effects. Settings manages apps, privacy and Wallet connections.</string>
+<string name="tour_replay_preview_help">Explore feature and style previews. Your saved choices stay intact.</string>
+<string name="tour_accessibility_title">Accessibility</string><string name="tour_overlay_title">Display over other apps</string><string name="tour_notifications_title">Notifications</string>
+</resources>
