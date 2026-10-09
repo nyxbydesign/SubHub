@@ -281,6 +281,9 @@ public final class MainActivity extends AppCompatActivity {
             }
             if (CommitmentManager.isActive(this) && ControllerPinManager.isDomModeActive()) {
                 CommitmentManager.emergencyRelease(this);
+                updateProtectionButton(false);
+                renderCommitmentState();
+                return;
             }
         }
         if (ScreenCaptureService.isRunning()) {
@@ -418,6 +421,8 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void updateProtectionButton(boolean running) {
+        binding.buttonProtection.setAlpha(1f);
+        androidx.core.view.ViewCompat.setStateDescription(binding.buttonProtection, null);
         PaidPauseManager paidPause = new PaidPauseManager(this);
         if (paidPause.isActive()) {
             binding.buttonProtection.setEnabled(false);
@@ -430,6 +435,7 @@ public final class MainActivity extends AppCompatActivity {
         binding.buttonProtection.setEnabled(true);
         binding.buttonProtection.setText(
                 running || appModeRunning ? R.string.stop_protection : R.string.start_protection);
+        if (running || appModeRunning) ControllerPinGate.markLocked(binding.buttonProtection);
     }
 
     @Override

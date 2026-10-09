@@ -123,6 +123,73 @@ public final class ServiceCountdownAndroidTest {
             });
         }
     }
+    @Test public void subCannotLeavePermanentServiceAndDomCanStopItNormally() {
+        new AppModeManager(context).setArmed(true);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<MainActivity> page = launch()) {
+            page.onActivity(a -> {
+                View stop = a.findViewById(R.id.button_protection);
+                assertEquals(.45f, stop.getAlpha(), .01f);
+                stop.performClick();
+                assertTrue(new AppModeManager(context).isArmed());
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertFalse(com.subhub.app.security.ProtectionStopPolicy.showNotificationStop(context));
+                assertTrue(a.findViewById(R.id.commitment_active_panel).isShown());
+            });
+            androidx.test.espresso.Espresso.onView(
+                    androidx.test.espresso.matcher.ViewMatchers.withHint(R.string.controller_pin_label))
+                    .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist());
+            ControllerPinManager.enterDomMode();
+            page.recreate();
+            page.onActivity(a -> {
+                View stop = a.findViewById(R.id.button_protection);
+                assertEquals(1f, stop.getAlpha(), .01f);
+                stop.performClick();
+                assertFalse(new AppModeManager(context).isArmed());
+                assertFalse(CommitmentManager.isActive(context));
+            });
+        }
+    }
+
+    @Test public void authorizedLeaveStopsTimedServiceWithoutStartingAnotherSession() {
+        new FeatureModuleManager(context).setCensorEnabled(false);
+        assertTrue(CommitmentManager.start(context, 3600000, 3600000, false));
+        androidx.test.espresso.intent.Intents.init();
+        try {
+            androidx.test.espresso.intent.Intents.intending(
+                    androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(
+                            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    .respondWith(new android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_CANCELED, null));
+            try (ActivityScenario<MainActivity> page = launch()) {
+                page.onActivity(a -> a.findViewById(R.id.button_protection).performClick());
+                page.onActivity(a -> {
+                    assertFalse(CommitmentManager.isActive(context));
+                    assertFalse(new AppModeManager(context).isArmed());
+                });
+                AtomicBoolean inactive = new AtomicBoolean();
+                long until = SystemClock.uptimeMillis() + 3000;
+                do {
+                    page.onActivity(a -> inactive.set(
+                            a.findViewById(R.id.commitment_active_panel).getVisibility() == View.GONE));
+                    if (inactive.get()) break;
+                    SystemClock.sleep(30);
+                } while (SystemClock.uptimeMillis() < until);
+                assertTrue("The stop transition must finish on the duration choices", inactive.get());
+                page.onActivity(a -> {
+                    assertTrue(a.findViewById(R.id.commitment_start_panel).isShown());
+                    assertFalse(a.findViewById(R.id.commitment_active_panel).isShown());
+                    assertEquals(a.getString(R.string.start_protection),
+                            ((android.widget.TextView) a.findViewById(R.id.button_protection)).getText().toString());
+                });
+                page.recreate();
+                page.onActivity(a -> assertTrue(a.findViewById(R.id.commitment_start_panel).isShown()));
+                androidx.test.espresso.intent.Intents.intended(
+                        androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(
+                                android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                        androidx.test.espresso.intent.VerificationModes.times(0));
+            }
+        } finally { androidx.test.espresso.intent.Intents.release(); }
+    }
     private static Bitmap center(View view) {
         Bitmap whole = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
         view.draw(new Canvas(whole));
