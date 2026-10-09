@@ -25,7 +25,7 @@ public final class ServiceDurationView extends LinearLayout {
         HOUR, 24 * HOUR, 7 * 24 * HOUR, 30 * 24 * HOUR, PERMANENT, RANDOM
     };
     private final EditText minimum, maximum;
-    private final CheckBox hidden;
+    private final com.subhub.app.util.StateToggle hidden;
     private final View range;
     private long selected = PERMANENT, savedMin = HOUR, savedMax = 24 * HOUR;
     private boolean updating, editing = true;
@@ -170,6 +170,7 @@ public final class ServiceDurationView extends LinearLayout {
 
     private void render() {
         range.setVisibility(selected == RANDOM ? VISIBLE : GONE);
+        hidden.setVisibility(selected == PERMANENT ? GONE : VISIBLE);
         for (int index = 0; index < choices.length; index++) {
             TextView button = choices[index];
             boolean checked = selected == durations[index];

@@ -77,7 +77,7 @@ public class ServiceDurationUiAndroidTest {
                         assertTrue(
                                 activity.findViewById(R.id.service_duration_random).isSelected());
                         assertTrue(
-                                ((CheckBox) activity.findViewById(R.id.service_duration_hide))
+                                ((CompoundButton) activity.findViewById(R.id.service_duration_hide))
                                         .isChecked());
                         assertEquals(
                                 "2",
@@ -92,7 +92,7 @@ public class ServiceDurationUiAndroidTest {
                         assertTrue(
                                 activity.findViewById(R.id.service_duration_random).isSelected());
                         assertTrue(
-                                ((CheckBox) activity.findViewById(R.id.service_duration_hide))
+                                ((CompoundButton) activity.findViewById(R.id.service_duration_hide))
                                         .isChecked());
                         ((EditText) activity.findViewById(R.id.service_duration_min_hours))
                                 .setText("6");
@@ -109,6 +109,7 @@ public class ServiceDurationUiAndroidTest {
                                 activity.findViewById(R.id.commitment_timer_permanent)
                                         .isSelected());
                         assertFalse(activity.findViewById(R.id.service_duration_range).isShown());
+                        assertFalse(activity.findViewById(R.id.service_duration_hide).isShown());
                         capture(activity, "duration-home-fixed.png");
                     });
         }

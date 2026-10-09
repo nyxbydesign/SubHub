@@ -141,16 +141,7 @@ public final class CensorPreviewView extends View {
                             Shader.TileMode.CLAMP));
             sample.drawRoundRect(16, 76, 224, 364, 10, 10, brush);
             brush.setShader(null);
-            // Synthetic portrait feed: enough detail to demonstrate actual blur and pixelation.
-            for (int y = 0; y < 12; y++)
-                for (int x = 0; x < 8; x++) {
-                    brush.setColor(
-                            Color.rgb(
-                                    65 + (x * 17 + y * 11) % 100,
-                                    50 + (x * 7 + y * 19) % 90,
-                                    95 + (x * 13 + y * 7) % 100));
-                    sample.drawCircle(29 + x * 26, 91 + y * 23, 6, brush);
-                }
+            drawDemoFigure(sample, brush);
             brush.setColor(Color.rgb(211, 188, 231));
             sample.drawRoundRect(16, 388, 172, 395, 3, 3, brush);
             brush.setColor(Color.rgb(87, 64, 106));
@@ -167,20 +158,36 @@ public final class CensorPreviewView extends View {
                 renderer.draw(
                         phoneBitmap,
                         source,
-                        java.util.Collections.singletonList(
+                        java.util.Arrays.asList(
                                 new com.subhub.app.detection.Detection(
-                                        "preview",
+                                        "preview-chest",
                                         "preview",
                                         1f,
-                                        new com.subhub.app.detection.BBox(40, 133, 160, 183),
+                                        new com.subhub.app.detection.BBox(94, 166, 52, 25),
+                                        false,
+                                        false),
+                                new com.subhub.app.detection.Detection(
+                                        "preview-pelvis",
+                                        "preview",
+                                        1f,
+                                        new com.subhub.app.detection.BBox(102, 227, 42, 24),
                                         false,
                                         false)),
                         new CensorAppearance(
                                 type,
                                 65,
+                                0f,
                                 true,
                                 false,
-                                getContext().getColor(com.subhub.app.R.color.accent_hot)));
+                                CensorAppearance.BorderEffect.CLASSIC,
+                                false,
+                                getContext().getColor(com.subhub.app.R.color.accent_hot),
+                                java.util.Collections.emptyList(),
+                                false,
+                                100,
+                                "rectangle",
+                                "SubHub",
+                                "Access blocked."));
             } finally {
                 source.recycle();
             }
@@ -197,6 +204,64 @@ public final class CensorPreviewView extends View {
                 null,
                 new RectF(left, top, left + phoneWidth, top + phoneHeight),
                 paint);
+    }
+
+    /** A posed, non-explicit line figure keeps head, waist and legs visible around the masks. */
+    private static void drawDemoFigure(Canvas canvas, Paint brush) {
+        brush.setShader(null);
+        brush.setColor(Color.rgb(230, 184, 222));
+        brush.setStyle(Paint.Style.STROKE);
+        brush.setStrokeWidth(5);
+        brush.setStrokeCap(Paint.Cap.ROUND);
+        brush.setStrokeJoin(Paint.Join.ROUND);
+        Path hair = new Path();
+        hair.moveTo(103, 136);
+        hair.cubicTo(89, 108, 100, 96, 122, 99);
+        hair.cubicTo(144, 95, 153, 120, 140, 151);
+        brush.setColor(Color.rgb(198, 107, 190));
+        canvas.drawPath(hair, brush);
+        brush.setColor(Color.rgb(240, 207, 226));
+        canvas.drawOval(108, 108, 134, 138, brush);
+        canvas.drawLine(120, 139, 120, 155, brush);
+        Path torso = new Path();
+        torso.moveTo(101, 161);
+        torso.cubicTo(91, 172, 99, 188, 108, 204);
+        torso.cubicTo(111, 215, 95, 225, 103, 246);
+        torso.quadTo(122, 254, 143, 242);
+        torso.cubicTo(148, 229, 131, 215, 131, 203);
+        torso.cubicTo(145, 183, 151, 171, 138, 162);
+        torso.quadTo(120, 151, 101, 161);
+        canvas.drawPath(torso, brush);
+        Path arms = new Path();
+        arms.moveTo(100, 163);
+        arms.lineTo(76, 139);
+        arms.lineTo(98, 106);
+        arms.moveTo(139, 164);
+        arms.lineTo(163, 193);
+        arms.lineTo(139, 212);
+        canvas.drawPath(arms, brush);
+        Path legs = new Path();
+        legs.moveTo(108, 249);
+        legs.lineTo(113, 284);
+        legs.lineTo(96, 339);
+        legs.moveTo(137, 247);
+        legs.lineTo(151, 289);
+        legs.lineTo(136, 339);
+        canvas.drawPath(legs, brush);
+        brush.setColor(Color.rgb(208, 125, 209));
+        canvas.drawLine(96, 339, 113, 344, brush);
+        canvas.drawLine(96, 339, 94, 348, brush);
+        canvas.drawLine(136, 339, 153, 344, brush);
+        canvas.drawLine(136, 339, 134, 348, brush);
+        brush.setStyle(Paint.Style.FILL);
+        brush.setColor(Color.rgb(62, 32, 73));
+        canvas.drawCircle(117, 120, 1.5f, brush);
+        canvas.drawCircle(128, 120, 1.5f, brush);
+        brush.setStyle(Paint.Style.STROKE);
+        brush.setStrokeWidth(2);
+        canvas.drawArc(118, 121, 129, 130, 15, 150, false, brush);
+        canvas.drawArc(112, 209, 126, 217, 20, 120, false, brush);
+        brush.setStyle(Paint.Style.FILL);
     }
 
     @Override
