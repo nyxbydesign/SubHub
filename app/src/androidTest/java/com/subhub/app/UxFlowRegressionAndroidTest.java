@@ -3,6 +3,7 @@ package com.subhub.app;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
@@ -206,20 +207,20 @@ public final class UxFlowRegressionAndroidTest {
         }
     }
 
-    @Test public void settingsFollowSetupBeforeHardcoreAndPayments() {
-        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                ViewGroup sections = activity.findViewById(R.id.settings_sections);
-                int previous = -1;
-                for (int id : new int[] {R.id.feature_areas_card, R.id.apps_card,
-                        R.id.hardcore_card, R.id.app_settings_card, R.id.paypal_card}) {
-                    View card = activity.findViewById(id);
-                    assertEquals(sections, card.getParent());
-                    assertTrue(sections.indexOfChild(card) > previous);
-                    previous = sections.indexOfChild(card);
-                }
-                assertEquals(activity.findViewById(R.id.apps_card),
-                        activity.findViewById(R.id.android_access_card).getParent());
+    @Test public void settingsExposeAppsAndDirectPrivacyAndHelpSections() {
+        try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            page.onActivity(a -> {
+                View apps = a.findViewById(android.R.id.content).findViewWithTag("settings:apps");
+                View privacy = a.findViewById(android.R.id.content).findViewWithTag("settings:privacy");
+                View help = a.findViewById(android.R.id.content).findViewWithTag("settings:help");
+                ViewGroup groups = (ViewGroup) apps.getParent().getParent();
+                assertTrue(groups.indexOfChild((View) apps.getParent()) < groups.indexOfChild((View) privacy.getParent()));
+                assertTrue(groups.indexOfChild((View) privacy.getParent()) < groups.indexOfChild((View) help.getParent()));
+                assertFalse(privacy.isClickable());
+                assertFalse(help.isClickable());
+                assertNull(a.findViewById(R.id.feature_areas_card));
+                assertNull(a.findViewById(R.id.paypal_card));
+                assertNotNull(a.findViewById(R.id.hardcore_card));
             });
         }
     }

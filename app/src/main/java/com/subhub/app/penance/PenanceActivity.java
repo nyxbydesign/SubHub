@@ -52,6 +52,7 @@ public final class PenanceActivity extends AppCompatActivity {
     private String expandedWalletSection = "";
     private final Handler ruleSaveHandler = new Handler(Looper.getMainLooper());
     private final Runnable persistRules = () -> saveRules(false);
+    private boolean dirtyRules;
     private final TextWatcher ruleMathWatcher = new TextWatcher() {
         @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
         @Override public void onTextChanged(CharSequence value, int start, int before, int count) {}
@@ -74,9 +75,6 @@ public final class PenanceActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
                 R.string.penance_title, 0);
-        if (!Intent.ACTION_VIEW.equals(getIntent().getAction())
-                && !getIntent().getBooleanExtra(EXTRA_SHOW_CONNECTION, false)
-                && SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.MONEY)) return;
         manager = new PenanceManager(this);
         paypalCredentials = new PayPalCredentialStore(this);
         paypalClient = new PayPalOrdersClient(this);
@@ -267,7 +265,7 @@ public final class PenanceActivity extends AppCompatActivity {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);
             ControllerEditMode.enterSubMode(this);
-        } else ControllerPinGate.require(this, this::applyEditState, false);
+        } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
@@ -280,10 +278,7 @@ public final class PenanceActivity extends AppCompatActivity {
         PrimaryHeader.subtitle(binding.getRoot()).setVisibility(View.GONE);
         displayWalletSections();
         if (connection != null) connection.refresh();
-        // Dom mode must always expose the buyout setup. The Wallet master switch still
-        // gates purchasing and settlement, but it should not hide configuration.
-
-        View[] editable = {binding.ledgerEnabled, binding.ruleDetectionEnabled,
+        View[] editable = { binding.ruleDetectionEnabled,
                 binding.ruleDetectionAmount, binding.detectionBatch, binding.ruleDwellEnabled,
                 binding.ruleDwellAmount, binding.dwellSeconds,
                 binding.ruleTapEnabled, binding.ruleTapAmount,
@@ -309,7 +304,6 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void populateRules() {
         populatingRules = true;
-        binding.ledgerEnabled.setChecked(manager.isEnabled());
         populateRule(PenanceInfraction.NEW_DETECTION,
                 binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
@@ -380,19 +374,23 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void attachRuleMathListeners() {
-        binding.ledgerEnabled.setOnCheckedChangeListener((button, checked) -> {
-            renderRuleMathPreview();
-            scheduleRulesSave();
-        });
-        attachRuleToggle(binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
+        attachRuleToggle(PenanceInfraction.NEW_DETECTION, binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
-        attachRuleToggle(binding.ruleDwellEnabled, binding.ruleDwellAmount,
+        attachRuleToggle(PenanceInfraction.CENSORED_DWELL, binding.ruleDwellEnabled, binding.ruleDwellAmount,
                 binding.dwellSeconds);
-        attachRuleToggle(binding.ruleTapEnabled, binding.ruleTapAmount);
-        attachRuleToggle(binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
-        attachRuleToggle(binding.ruleTamperEnabled, binding.ruleTamperAmount,
+        attachRuleToggle(PenanceInfraction.CENSORED_TAP, binding.ruleTapEnabled, binding.ruleTapAmount);
+        attachRuleToggle(PenanceInfraction.WATCHED_APP_OPEN, binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         binding.paidPauseEnabled.setOnCheckedChangeListener((button, checked) -> {
+            if (!populatingRules && !ControllerPinManager.isSessionUnlocked()) {
+                populateRules();
+                return;
+            }
+            if (!populatingRules && !checked) {
+                PaidPauseManager pause = new PaidPauseManager(this);
+                pause.configure(false, pause.getPriceCents(), pause.getDurationMinutes());
+            }
             syncPaidPauseInputs();
             scheduleRulesSave();
         });
@@ -415,8 +413,13 @@ public final class PenanceActivity extends AppCompatActivity {
         }
     }
 
-    private void attachRuleToggle(CompoundButton toggle, EditText amount, View... dependents) {
+    private void attachRuleToggle(PenanceInfraction rule, CompoundButton toggle, EditText amount, View... dependents) {
         toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (!populatingRules && !ControllerPinManager.isSessionUnlocked()) {
+                populateRules();
+                return;
+            }
+            if (!populatingRules && !checked) manager.disableInfraction(rule);
             syncRuleInputState(toggle, amount, dependents);
             renderRuleMathPreview();
             scheduleRulesSave();
@@ -425,6 +428,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void scheduleRulesSave() {
         if (populatingRules || !ControllerPinManager.isSessionUnlocked()) return;
+        dirtyRules = true;
         ruleSaveHandler.removeCallbacks(persistRules);
         ruleSaveHandler.postDelayed(persistRules, 450L);
     }
@@ -434,6 +438,7 @@ public final class PenanceActivity extends AppCompatActivity {
         ruleSaveHandler.removeCallbacks(persistRules);
         if (!saveRules(restoreIfInvalid) && restoreIfInvalid) {
             populateRules();
+            dirtyRules = false;
             renderRuleMathPreview();
         }
     }
@@ -470,7 +475,8 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private boolean saveRules(boolean showInvalid) {
-        boolean enabled = binding.ledgerEnabled.isChecked();
+        if (binding == null || populatingRules || !ControllerPinManager.isSessionUnlocked()) return false;
+        if (!dirtyRules) return true;
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
         if (!readRule(rules, PenanceInfraction.NEW_DETECTION,
                 binding.ruleDetectionEnabled, binding.ruleDetectionAmount)
@@ -485,6 +491,7 @@ public final class PenanceActivity extends AppCompatActivity {
             if (showInvalid) toast(R.string.penance_rules_invalid);
             return false;
         }
+        boolean enabled = !rules.isEmpty();
         Integer daily = parseEuros(binding.dailyCap.getText().toString());
         Integer weekly = parseEuros(binding.weeklyCap.getText().toString());
         Integer mercy = parseInteger(binding.mercyMinutes.getText().toString());
@@ -521,6 +528,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 tamperCooldown);
         new PaidPauseManager(this).configure(binding.paidPauseEnabled.isChecked(),
                 pausePrice, pauseMinutes);
+        dirtyRules = false;
         HardcoreAutoPayManager.schedule(this);
         render();
         return true;
@@ -756,6 +764,10 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void render() {
         if (binding == null) return;
+        if (!expandedWalletSection.isEmpty()) {
+            if ("rules".equals(expandedWalletSection)) renderRuleMathPreview();
+            return;
+        }
         long now = System.currentTimeMillis();
         PenanceSnapshot snapshot = manager.snapshot(now);
         binding.dueAmount.setText(manager.money(snapshot.getDueCents()));

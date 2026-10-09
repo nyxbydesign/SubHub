@@ -18,7 +18,7 @@ public class PactOptionsAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     @Before public void setup() { CommitmentManager.emergencyRelease(context); ControllerPinManager.enterSubMode(); }
     @After public void cleanup() { CommitmentManager.emergencyRelease(context); ControllerPinManager.enterSubMode(); }
-    @Test public void randomDeadlineIsChosenOnceAndHiddenOnlyFromSub() {
+    @Test public void randomDeadlineIsChosenOnceAndRespectsHiddenChoiceInBothRoles() {
         assertTrue(CommitmentManager.start(context, PactDuration.MIN, PactDuration.MIN * 2, true));
         long duration = CommitmentManager.originalDurationMillis(context);
         long deadline = new SettingsRepository(context).preferences().getLong("commitment_ends_at", 0);
@@ -29,8 +29,8 @@ public class PactOptionsAndroidTest {
         CommitmentManager.applyBootPolicy(context);
         assertEquals(duration, CommitmentManager.originalDurationMillis(context));
         assertEquals(deadline, new SettingsRepository(context).preferences().getLong("commitment_ends_at", 0));
-        ControllerPinManager.enterDomMode(); assertFalse(CommitmentManager.isCountdownHidden(context));
-        assertNotEquals(context.getString(R.string.pact_time_hidden), CommitmentManager.countdownLabel(context));
+        ControllerPinManager.enterDomMode(); assertTrue(CommitmentManager.isCountdownHidden(context));
+        assertEquals(context.getString(R.string.pact_time_hidden), CommitmentManager.countdownLabel(context));
     }
     @Test public void monotonicExpiryClearsHiddenStateAndDoesNotExtendDeadline() {
         assertTrue(CommitmentManager.start(context, PactDuration.MIN, PactDuration.MIN, true));

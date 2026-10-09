@@ -22,14 +22,13 @@ import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsActivity;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** Feature-aware navigation: Sub Space retains Home and its safe Settings surface. */
+/** Dom feature pages stay reachable even when disabled; Sub retains its safe surfaces. */
 public final class SubHubNavigation {
     public enum Screen { HOME, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
@@ -49,11 +48,10 @@ public final class SubHubNavigation {
         View navigation = root.findViewById(R.id.bottom_navigation);
         boolean domMode = ControllerPinManager.isDomModeActive();
         setVisible(navigation, true);
-        FeatureModuleManager modules = new FeatureModuleManager(activity);
         setVisible(root.findViewById(R.id.nav_home), true);
-        setVisible(root.findViewById(R.id.nav_censor), domMode && modules.isCensorEnabled());
-        setVisible(root.findViewById(R.id.nav_limits), domMode && modules.isLimitsEnabled());
-        setVisible(root.findViewById(R.id.nav_money), domMode && modules.isWalletEnabled());
+        setVisible(root.findViewById(R.id.nav_censor), domMode);
+        setVisible(root.findViewById(R.id.nav_limits), domMode);
+        setVisible(root.findViewById(R.id.nav_money), domMode);
         setVisible(root.findViewById(R.id.nav_atmosphere), true);
         setVisible(root.findViewById(R.id.nav_settings), true);
         bindTab(activity, root.findViewById(R.id.nav_home),
@@ -193,23 +191,6 @@ public final class SubHubNavigation {
                         content.getPaddingEnd(), clearance);
             }
         }
-    }
-
-    public static boolean redirectIfDisabled(Activity activity, Screen current) {
-        FeatureModuleManager modules = new FeatureModuleManager(activity);
-        boolean enabled = current == Screen.HOME || current == Screen.SETTINGS
-                || current == Screen.ATMOSPHERE
-                        || current == Screen.CENSOR && modules.isCensorEnabled()
-                || current == Screen.LIMITS && modules.isLimitsEnabled()
-                || current == Screen.MONEY && modules.isWalletEnabled();
-        if (enabled) return false;
-        Class<? extends Activity> target = MainActivity.class;
-        activity.startActivity(new Intent(activity, target)
-                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
-        activity.finish();
-        activity.overridePendingTransition(R.anim.subhub_page_pop_enter,
-                R.anim.subhub_page_pop_exit);
-        return true;
     }
 
     private static void setVisible(View view, boolean visible) {

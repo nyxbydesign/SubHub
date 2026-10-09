@@ -30,6 +30,12 @@
                 android:accessibilityHeading="true"
                 android:text="@string/popup_configuration" />
 
+            <com.subhub.app.util.StateToggle
+                android:id="@+id/switch_popup_storm"
+                style="@style/Widget.SubHub.SettingsToggle"
+                android:layout_width="match_parent"
+                android:text="@string/atmosphere_popup_toggle" />
+
             <TextView style="@style/Widget.SubHub.FieldLabel"
                 android:text="@string/popup_presets" />
             <TextView android:id="@+id/preset_value" style="@style/Widget.SubHub.FieldLabel"

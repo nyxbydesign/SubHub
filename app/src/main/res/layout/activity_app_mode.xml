@@ -11,7 +11,7 @@
                 android:layout_marginTop="@dimen/primary_header_top" />
             <LinearLayout android:id="@+id/timer_card" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
-                android:layout_marginTop="12dp" android:background="@drawable/bg_wallet_balance"
+                android:layout_marginTop="12dp" android:background="@drawable/bg_home_flat_bubble"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:text="@string/limits_today" android:textColor="@color/text_secondary" android:textSize="13sp" />

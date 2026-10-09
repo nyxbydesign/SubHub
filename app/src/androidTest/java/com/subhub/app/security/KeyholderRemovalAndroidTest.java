@@ -31,7 +31,7 @@ public class KeyholderRemovalAndroidTest {
         ControllerPinManager.enterSubMode();
         try(ActivityScenario<MainActivity> home=ActivityScenario.launch(new Intent(context,MainActivity.class).setAction(Intent.ACTION_MAIN))) {
             home.recreate(); AtomicBoolean opened=new AtomicBoolean();
-            home.onActivity(a->ControllerPinGate.require(a,()->opened.set(true),false));
+            home.onActivity(a->ControllerPinGate.unlock(a,()->opened.set(true),false));
             assertTrue(opened.get()); assertFalse(ControllerPinManager.isConfigured(context));
         }
     }
@@ -42,7 +42,7 @@ public class KeyholderRemovalAndroidTest {
         assertFalse(ControllerPinManager.allowsUnkeyedAccess(context));
         AtomicBoolean opened=new AtomicBoolean();
         try(ActivityScenario<MainActivity> home=ActivityScenario.launch(new Intent(context,MainActivity.class).setAction(Intent.ACTION_MAIN))) {
-            home.onActivity(a->ControllerPinGate.require(a,()->opened.set(true),false));
+            home.onActivity(a->ControllerPinGate.unlock(a,()->opened.set(true),false));
             assertFalse(opened.get());
             onView(withHint(R.string.authenticator_code)).perform(replaceText(Totp.code(secret,step)),closeSoftKeyboard());
             onView(withText(R.string.controller_pin_unlock)).perform(click());

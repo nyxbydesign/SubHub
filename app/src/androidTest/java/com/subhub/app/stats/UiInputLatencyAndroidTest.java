@@ -88,15 +88,10 @@ public class UiInputLatencyAndroidTest {
             begin(GlobalSettingsActivity.class);
             tap(view(MainActivity.class, R.id.nav_settings));
             report.put("home_to_settings_first_draw_ms", awaitDraw());
-            Activity settings = activity(GlobalSettingsActivity.class);
-            instrument.runOnMainSync(
-                    () ->
-                            settings.findViewById(android.R.id.content)
-                                    .findViewWithTag("settings:features")
-                                    .performClick());
-            instrument.waitForIdleSync();
-            CompoundButton toggle =
-                    (CompoundButton) view(GlobalSettingsActivity.class, R.id.switch_module_limits);
+            begin(com.subhub.app.appmode.AppModeActivity.class);
+            tap(view(GlobalSettingsActivity.class, R.id.nav_limits));
+            awaitDraw();
+            CompoundButton toggle = (CompoundButton) view(com.subhub.app.appmode.AppModeActivity.class, R.id.total_limit_enabled);
             instrument.runOnMainSync(() -> reveal(toggle));
             instrument.waitForIdleSync();
             boolean before = toggle.isChecked();
@@ -122,7 +117,7 @@ public class UiInputLatencyAndroidTest {
                     () -> {
                         StrictMode.setThreadPolicy(previous.get());
                         assertEquals(!before, toggle.isChecked());
-                        assertEquals(!before, new FeatureModuleManager(context).isLimitsEnabled());
+                        assertEquals(!before, new com.subhub.app.appmode.AppTimerManager(context).loadSettings().totalEnabled);
                     });
             report.put("toggle_ui_disk_writes", diskWrites.get());
             begin(SettingsActivity.class);

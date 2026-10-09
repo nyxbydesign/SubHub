@@ -137,8 +137,8 @@ public final class RitualsToolsAndroidTest {
                     a -> {
                         assertTrue(a.findViewById(R.id.nav_atmosphere).isShown());
                         assertNotNull(a.findViewById(R.id.achievements_home_card));
-                        assertFalse(a.findViewById(R.id.switch_whispers).isEnabled());
-                        assertFalse(a.findViewById(R.id.switch_popup_storm).isEnabled());
+                        assertNull(a.findViewById(R.id.switch_whispers));
+                        assertNull(a.findViewById(R.id.switch_popup_storm));
                         capture(a, "rituals-sub.png");
                     });
         }

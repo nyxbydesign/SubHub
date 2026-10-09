@@ -4,7 +4,6 @@ import com.subhub.app.R;
 
 /** Canonical UI grouping, deep-link keys and controller requirements. */
 enum SettingsSection {
-    FEATURES("features", R.string.settings_features, R.drawable.ic_tab_settings, true),
     APPS("apps", R.string.settings_apps, R.drawable.ic_settings_apps, true),
     PRIVACY_PERMISSIONS("privacy", R.string.settings_privacy_permissions, R.drawable.ic_ux_lock, false),
     HELP("help", R.string.settings_help, R.drawable.ic_tab_help, false);

@@ -13,6 +13,8 @@ public final class ExpandableSectionView extends LinearLayout {
     private final LinearLayout header, content;
     private final TextView summary, arrow;
     private boolean summaryVisible = true;
+    private boolean summaryWhenExpanded;
+    private boolean collapsible = true;
 
     public ExpandableSectionView(Context context, String key, int title, int icon) {
         super(context);
@@ -47,13 +49,27 @@ public final class ExpandableSectionView extends LinearLayout {
         summaryVisible = visible;
     }
 
+    public void setSummaryWhenExpanded(boolean visible) {
+        summaryWhenExpanded = visible;
+    }
+
+    public void setCollapsible(boolean collapsible) {
+        this.collapsible = collapsible;
+        header.setClickable(collapsible);
+        header.setFocusable(collapsible);
+        ViewCompat.setScreenReaderFocusable(header, collapsible);
+        ViewCompat.setAccessibilityHeading(findViewById(R.id.section_title), !collapsible);
+    }
+
     public void setExpanded(boolean expanded) {
+        expanded = expanded || !collapsible;
         content.setVisibility(expanded ? VISIBLE : GONE);
         arrow.setText(expanded ? "⌃" : "⌄");
-        summary.setVisibility(!expanded && summaryVisible ? VISIBLE : GONE);
+        arrow.setVisibility(collapsible ? VISIBLE : GONE);
+        summary.setVisibility(summaryVisible && (!expanded || !collapsible || summaryWhenExpanded) ? VISIBLE : GONE);
         ViewCompat.setStateDescription(
                 header,
-                getContext()
+                !collapsible ? null : getContext()
                         .getString(
                                 expanded
                                         ? R.string.keyholder_expanded

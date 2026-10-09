@@ -59,6 +59,7 @@ public final class ControllerPinGate {
 
     /** Existing PINs remain valid; replacement requires the same controller authorization as pairing. */
     public static void changePin(Activity activity, Runnable changed) {
+        if (!ControllerPinManager.isDomModeActive()) { notifyLocked(activity); return; }
         if (!ControllerPinManager.hasCredentials(activity) && !ControllerPinManager.allowsUnkeyedAccess(activity)) { ensureConfigured(activity, changed); return; }
         require(activity, () -> {
             LinearLayout content = panel(activity);
@@ -84,12 +85,36 @@ public final class ControllerPinGate {
         }, false);
     }
 
-    public static void require(Activity activity, Runnable authorized, boolean finishOnCancel) {
+    /** A protected action never opens an authentication dialog or changes the current role. */
+    public static void require(Activity activity, Runnable authorized, boolean finishIfLocked) {
+        if (ControllerPinManager.isDomModeActive()) {
+            authorized.run();
+            return;
+        }
+        notifyLocked(activity);
+        if (finishIfLocked) activity.finish();
+    }
+
+    public static void notifyLocked(android.content.Context context) {
+        android.widget.Toast.makeText(context, R.string.controller_pin_unlock_title,
+                android.widget.Toast.LENGTH_SHORT).show();
+    }
+
+    /** Keep protected actions readable and tappable so their existing guard can explain the lock. */
+    public static void markLocked(android.view.View view) {
+        boolean locked = !ControllerPinManager.isDomModeActive();
+        view.setAlpha(locked ? .45f : 1f);
+        androidx.core.view.ViewCompat.setStateDescription(view,
+                locked ? view.getContext().getString(R.string.controller_pin_unlock_title) : null);
+    }
+
+    /** Used only by an explicit role-unlock control. */
+    public static void unlock(Activity activity, Runnable authorized, boolean finishOnCancel) {
         if (ControllerPinManager.allowsUnkeyedAccess(activity)) {
             ControllerPinManager.enterDomMode(); authorized.run(); return;
         }
         if (!ControllerPinManager.hasCredentials(activity)) {
-            ensureConfigured(activity, () -> require(activity, authorized, finishOnCancel));
+            ensureConfigured(activity, () -> unlock(activity, authorized, finishOnCancel));
             return;
         }
         if (ControllerPinManager.isDomModeActive()) {

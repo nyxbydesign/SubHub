@@ -63,7 +63,7 @@ public final class UiComponentContractTest {
                                 parent.indexOfChild(packs) < parent.indexOfChild(achievements));
                         org.junit.Assert.assertNull(
                                 activity.findViewById(R.id.daily_statistics_panel));
-                        assertTrue(!activity.findViewById(R.id.switch_whispers).isEnabled());
+                        org.junit.Assert.assertNull(activity.findViewById(R.id.switch_whispers));
                     });
         } finally {
             ControllerPinManager.enterDomMode();

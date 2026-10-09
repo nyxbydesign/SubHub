@@ -152,7 +152,7 @@ public final class PermissionSetupAndroidTest {
                 ActivityScenario.launch(PermissionSetupActivity.class)) {
             scenario.onActivity(
                     a -> {
-                        assertFalse(a.findViewById(R.id.permission_step_one_open).isEnabled());
+                        assertEquals(.45f, a.findViewById(R.id.permission_step_one_open).getAlpha(), .01f);
                         assertFalse(a.findViewById(R.id.permission_step_two_open).isEnabled());
                         assertFalse(a.findViewById(R.id.permission_step_three_open).isEnabled());
                         assertTrue(a.findViewById(R.id.permission_step_one_body).isShown());

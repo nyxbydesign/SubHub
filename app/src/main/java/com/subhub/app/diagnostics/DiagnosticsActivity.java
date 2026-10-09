@@ -46,6 +46,7 @@ import java.util.concurrent.Executors;
 
 /** Local runtime health plus explicit, user-shared Censor Lab bundles; no socket or secret fields. */
 public final class DiagnosticsActivity extends AppCompatActivity {
+    public static final String EXTRA_SHOW_CENSOR_LAB = "show_censor_lab";
     private final Handler refreshHandler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -108,7 +109,18 @@ public final class DiagnosticsActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityDiagnosticsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.diagnostics_title, true);
+        PrimaryHeader.bindSecondary(binding.getRoot(),
+                getIntent().getBooleanExtra(EXTRA_SHOW_CENSOR_LAB, false)
+                        ? R.string.diagnostics_lab_title : R.string.diagnostics_title, true);
+        if (getIntent().getBooleanExtra(EXTRA_SHOW_CENSOR_LAB, false)) {
+            android.view.ViewGroup stack = (android.view.ViewGroup) binding.censorLabCard.getParent();
+            View header = PrimaryHeader.view(binding.getRoot());
+            for (int i = 0; i < stack.getChildCount(); i++) {
+                View child = stack.getChildAt(i);
+                if (child != header && child != binding.censorLabCard) child.setVisibility(View.GONE);
+            }
+            binding.censorLabCard.getChildAt(0).setVisibility(View.GONE);
+        }
         settings = new SettingsRepository(this);
         projectionManager = (MediaProjectionManager)
                 getSystemService(Context.MEDIA_PROJECTION_SERVICE);

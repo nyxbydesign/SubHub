@@ -23,7 +23,6 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.HardcoreReadinessNotificationManager;
 import com.subhub.app.service.ScreenshotAccessibilityService;
-import com.subhub.app.studio.StudioActivity;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
@@ -33,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Always-available home for app-wide feature, safety, pack, and support settings. */
+/** Shared app selection, direct privacy/access controls and build/support information. */
 public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
@@ -42,22 +41,17 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private LinearLayout categoryMenu, privacyControls;
     private String selectedGroup = "";
 
-    private FeatureModuleManager modules;
     private HardcoreModeManager hardcore;
     private AppModeManager appMode;
     private ActivityResultLauncher<Intent> hardcoreActivation;
     private ActivityResultLauncher<Intent> hardcoreAccessibility;
     private boolean updatingHardcore;
     private boolean editingUnlocked;
-    private boolean appsLoaded;
-    private com.subhub.app.util.AsyncUiScope uiData;
-    private IncludedAppsAdapter includedApps;
-    private final Set<String> includedPackages = new LinkedHashSet<>();
+    private final java.util.List<View> domActions = new java.util.ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        uiData = com.subhub.app.util.AsyncUiScope.forPage(this);
         binding = ActivityGlobalSettingsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(
@@ -65,10 +59,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         arrangeSettingsSections();
         if (savedInstanceState != null)
             selectedGroup = savedInstanceState.getString("expanded_settings", "");
-        modules = new FeatureModuleManager(this);
         hardcore = new HardcoreModeManager(this);
         appMode = new AppModeManager(this);
-        includedPackages.addAll(appMode.getIncludedPackages());
+        binding.appListCard.setCountOnlyForOverride(true);
+        binding.appListCard.bind(this, ControllerPinManager::isDomModeActive, this::renderSelectedCount);
         hardcoreActivation =
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
@@ -99,35 +93,19 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                             }
                             refreshHardcoreState();
                         });
-        binding.switchModuleCensor.setChecked(modules.isCensorEnabled());
-        binding.switchModuleLimits.setChecked(modules.isLimitsEnabled());
-        binding.switchModuleWallet.setChecked(modules.isWalletEnabled());
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setOnClickListener(view -> toggleEditSession());
-        binding.buttonPacks.setOnClickListener(
-                view -> startActivity(new Intent(this, StudioActivity.class)));
         binding.buttonHelp.setOnClickListener(
                 view -> startActivity(new Intent(this, HelpActivity.class)));
         binding.buttonDiagnostics.setOnClickListener(
                 view -> startActivity(new Intent(this, DiagnosticsActivity.class)));
-        binding.switchModuleCensor.setOnCheckedChangeListener((button, checked) -> saveModules());
-        binding.switchModuleLimits.setOnCheckedChangeListener((button, checked) -> saveModules());
-        binding.switchModuleWallet.setOnCheckedChangeListener((button, checked) -> saveModules());
         binding.switchHardcoreMode.setOnCheckedChangeListener(
                 (button, checked) -> {
                     if (!updatingHardcore) changeHardcoreMode(checked);
                 });
         binding.buttonAccessibilitySettings.setOnClickListener(
-                view -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        binding.buttonToggleApps.setOnClickListener(
-                view -> {
-                    boolean show = binding.appListContent.getVisibility() != View.VISIBLE;
-                    binding.appListContent.setVisibility(show ? View.VISIBLE : View.GONE);
-                    if (show) loadApps();
-                    binding.buttonToggleApps.setText(
-                            show ? R.string.app_selection_collapse : R.string.app_selection_expand);
-                });
-        binding.appListContent.setVisibility(View.GONE);
+                view -> ControllerPinGate.require(this,
+                        () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)), false));
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         applyEditState();
     }
@@ -144,9 +122,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         getIntent().removeExtra(EXTRA_SHOW_INCLUDED_APPS);
         selectedGroup = "apps";
         displayGroup();
-        binding.appListContent.setVisibility(View.VISIBLE);
-        loadApps();
-        binding.buttonToggleApps.setText(R.string.app_selection_collapse);
         binding.appsCard.post(
                 () -> {
                     if (binding != null)
@@ -171,18 +146,13 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         categoryMenu = new LinearLayout(this);
         categoryMenu.setOrientation(LinearLayout.VERTICAL);
         container.addView(categoryMenu, new LinearLayout.LayoutParams(-1, -2));
-        for (int i = 0; i < binding.featureAreasCard.getChildCount(); i++) {
-            View child = binding.featureAreasCard.getChildAt(i);
-            if (child instanceof TextView && !(child instanceof android.widget.CompoundButton))
-                child.setVisibility(View.GONE);
-        }
-        addGroup(SettingsSection.FEATURES, binding.featureAreasCard,
-                binding.hardcoreCard,
-                binding.buttonPacks);
         addGroup(SettingsSection.APPS, binding.appsCard);
         privacyControls = new LinearLayout(this);
         privacyControls.setOrientation(LinearLayout.VERTICAL);
-        addGroup(SettingsSection.PRIVACY_PERMISSIONS, privacyControls, binding.androidAccessCard);
+        binding.hardcoreCard.setBackground(null);
+        binding.hardcoreCard.setPadding(0, dp(8), 0, dp(8));
+        binding.hardcoreCard.getChildAt(0).setVisibility(View.GONE);
+        addGroup(SettingsSection.PRIVACY_PERMISSIONS, privacyControls, binding.hardcoreCard, binding.androidAccessCard);
         sections.get("privacy")
                 .content()
                 .addView(
@@ -217,37 +187,18 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                                                 new Intent(
                                                         Settings
                                                                 .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))));
-        addGroup(SettingsSection.HELP, binding.buttonHelp);
-        sections.get("help")
-                .content()
-                .addView(
-                        settingsAction(
-                                getString(R.string.tour_replay),
-                                () ->
-                                        startActivity(
-                                                new Intent(
-                                                                this,
-                                                                com.subhub.app.onboarding
-                                                                        .OnboardingActivity.class)
-                                                        .putExtra(
-                                                                com.subhub.app.onboarding
-                                                                        .OnboardingActivity.REPLAY,
-                                                                true))));
-        sections.get("help")
-                .content()
-                .addView(
-                        settingsAction(
-                                getString(R.string.settings_updates),
-                                () ->
-                                        startActivity(
-                                                new Intent(
-                                                        this,
-                                                        com.subhub.app.update.UpdatesActivity
-                                                                .class))));
-        if (binding.buttonDiagnostics.getParent() != null)
-            ((android.view.ViewGroup) binding.buttonDiagnostics.getParent())
-                    .removeView(binding.buttonDiagnostics);
-        sections.get("help").content().addView(binding.buttonDiagnostics);
+        com.subhub.app.util.SelectionGrid helpActions = new com.subhub.app.util.SelectionGrid(this, null);
+        addGroup(SettingsSection.HELP, helpActions);
+        addHelpAction(helpActions, binding.buttonHelp);
+        addHelpAction(helpActions, settingsAction(getString(R.string.tour_replay),
+                () -> startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)
+                        .putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY, true))));
+        addHelpAction(helpActions, settingsAction(getString(R.string.settings_updates),
+                () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
+        addHelpAction(helpActions, settingsAction(getString(R.string.diagnostics_lab_title),
+                () -> startActivity(new Intent(this, DiagnosticsActivity.class)
+                        .putExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, true))));
+        addHelpAction(helpActions, binding.buttonDiagnostics);
         getOnBackPressedDispatcher()
                 .addCallback(
                         this,
@@ -266,8 +217,15 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         selectedGroup = getIntent().getStringExtra("settings_group");
         if (selectedGroup == null) selectedGroup = "";
         if (selectedGroup.equals("appearance") || selectedGroup.equals("pacts"))
-            selectedGroup = "features";
+            selectedGroup = "privacy";
         if (selectedGroup.equals("permissions")) selectedGroup = "privacy";
+    }
+
+    private void addHelpAction(com.subhub.app.util.SelectionGrid actions, View action) {
+        if (action.getParent() != null) ((android.view.ViewGroup) action.getParent()).removeView(action);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(dp(3), dp(3), dp(3), dp(3));
+        actions.addView(action, params);
     }
 
     private TextView settingsAction(String title, Runnable action) {
@@ -286,7 +244,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private TextView permissionAction(String title, Runnable action) {
-        return settingsAction(title, () -> ControllerPinGate.require(this, action, false));
+        TextView control = settingsAction(title, () -> ControllerPinGate.require(this, action, false));
+        domActions.add(control);
+        return control;
     }
 
     private void addGroup(SettingsSection definition, View... controls) {
@@ -295,9 +255,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                 new com.subhub.app.util.ExpandableSectionView(
                         this, key, definition.title, definition.icon);
         section.addControls(controls);
-        section.setSummaryVisible(!key.equals("help"));
+        boolean collapsible = key.equals("apps");
+        section.setCollapsible(collapsible);
+        section.setSummaryVisible(!key.equals("privacy"));
+        section.setSummaryWhenExpanded(key.equals("apps"));
         sections.put(key, section);
-        section.header()
+        if (collapsible) section.header()
                 .setOnClickListener(
                         view -> {
                             Runnable open =
@@ -328,29 +291,11 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         for (Map.Entry<String, com.subhub.app.util.ExpandableSectionView> section :
                 sections.entrySet())
             section.getValue().setExpanded(section.getKey().equals(selectedGroup));
-        if (selectedGroup.equals("privacy"))
-            com.subhub.app.privacy.PrivacyControls.bind(
+        if (selectedGroup.equals("apps")) binding.appListCard.load();
+        com.subhub.app.privacy.PrivacyControls.bind(
                     this, privacyControls, this::displayGroup);
-        if (modules == null) return;
-        sections.get("features")
-                .summary()
-                .setText(
-                        getString(
-                                R.string.settings_features_summary,
-                                (modules.isCensorEnabled() ? 1 : 0)
-                                        + (modules.isLimitsEnabled() ? 1 : 0)
-                                        + (modules.isWalletEnabled() ? 1 : 0)
-                                        + (hardcore.isRequested() ? 1 : 0)));
-        int appCount = appMode.getIncludedPackages().size();
-        sections.get("apps")
-                .summary()
-                .setText(
-                        getResources()
-                                .getQuantityString(
-                                        R.plurals.apps_included_count, appCount, appCount));
-        boolean overlay = android.provider.Settings.canDrawOverlays(this);
-        boolean notification =
-                androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled();
+        if (appMode == null) return;
+        renderSelectedCount();
         com.subhub.app.privacy.PrivacyManager privacy =
                 new com.subhub.app.privacy.PrivacyManager(this);
         sections.get("privacy")
@@ -365,14 +310,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                                 getString(
                                         privacy.isAppLockEnabled()
                                                 ? R.string.atmosphere_state_on
-                                                : R.string.atmosphere_state_off))
-                                + " · "
-                                + getString(
-                                        R.string.settings_permission_status,
-                                        (appMode.isAccessibilityEnabled() ? 1 : 0)
-                                                + (overlay ? 1 : 0)
-                                                + (notification ? 1 : 0)));
-        sections.get("help").summary().setText(R.string.settings_help_summary);
+                                                : R.string.atmosphere_state_off)));
+        sections.get("help").summary().setText(getString(R.string.settings_build_summary,
+                com.subhub.app.BuildConfig.VERSION_NAME, com.subhub.app.BuildConfig.BUILD_DATE));
     }
 
     @Override
@@ -386,6 +326,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         super.onResume();
         showRequestedIncludedApps();
         applyEditState();
+        if (selectedGroup.equals("apps")) binding.appListCard.reload();
         HardcoreReadinessNotificationManager.refresh(this);
     }
 
@@ -394,7 +335,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             ControllerPinManager.enterSubMode();
             applyEditState();
             SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
-        } else ControllerPinGate.require(this, this::applyEditState, false);
+        } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
@@ -402,13 +343,13 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         editingUnlocked = ControllerPinManager.isSessionUnlocked();
         applySpaceVisibility();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
-        boolean modulesEditable = editingUnlocked;
-        binding.switchModuleCensor.setEnabled(modulesEditable);
-        binding.switchModuleLimits.setEnabled(modulesEditable);
-        binding.switchModuleWallet.setEnabled(modulesEditable);
-        binding.switchHardcoreMode.setEnabled(editingUnlocked);
-        binding.buttonAccessibilitySettings.setEnabled(editingUnlocked);
-        if (includedApps != null) includedApps.setEditing(editingUnlocked);
+        binding.switchHardcoreMode.setEnabled(true);
+        binding.buttonAccessibilitySettings.setEnabled(true);
+        ControllerPinGate.markLocked(binding.switchHardcoreMode);
+        ControllerPinGate.markLocked(binding.buttonAccessibilitySettings);
+        ControllerPinGate.markLocked(sections.get("apps").header());
+        for (View control : domActions) ControllerPinGate.markLocked(control);
+        binding.appListCard.refresh();
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         refreshHardcoreState();
         refreshAccessState();
@@ -418,8 +359,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         boolean domSpace = ControllerPinManager.isDomModeActive();
         int domVisibility = domSpace ? View.VISIBLE : View.GONE;
         binding.settingsGroupProtection.setVisibility(domVisibility);
-        binding.hardcoreCard.setVisibility(domVisibility);
-        binding.featureAreasCard.setVisibility(domVisibility);
+        binding.hardcoreCard.setVisibility(View.VISIBLE);
         binding.settingsGroupCoverage.setVisibility(domVisibility);
         binding.appsCard.setVisibility(domVisibility);
         binding.androidAccessCard.setVisibility(View.VISIBLE);
@@ -428,28 +368,20 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonDiagnostics.setVisibility(View.VISIBLE);
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
-        binding.buttonPacks.setVisibility(View.VISIBLE);
         displayGroup();
-    }
-
-    private void saveIncludedApps() {
-        if (!ControllerPinManager.isDomModeActive()) return;
-        appMode.saveIncludedPackages(includedPackages);
-        renderSelectedCount();
     }
 
     private void refreshAccessState() {
         if (binding == null || appMode == null) return;
-        int status;
-        if (!appMode.isAccessibilityEnabled()) status = R.string.apps_accessibility_off;
-        else if (ScreenshotAccessibilityService.isRunning()) {
-            status = R.string.apps_accessibility_ready;
-        } else status = R.string.apps_accessibility_reconnecting;
-        binding.serviceStatus.setText(status);
+        boolean connected = appMode.isAccessibilityEnabled() && ScreenshotAccessibilityService.isRunning();
+        binding.serviceStatus.setVisibility(connected ? View.GONE : View.VISIBLE);
+        binding.serviceStatus.setText(connected ? "" : getString(appMode.isAccessibilityEnabled()
+                ? R.string.apps_accessibility_reconnecting : R.string.apps_accessibility_off));
     }
 
     private void changeHardcoreMode(boolean enabled) {
         if (!ControllerPinManager.isDomModeActive()) {
+            ControllerPinGate.notifyLocked(this);
             refreshHardcoreState();
             return;
         }
@@ -462,6 +394,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     .setPositiveButton(
                             R.string.hardcore_consent_enable,
                             (dialog, which) -> {
+                                if (!ControllerPinManager.isDomModeActive()) {
+                                    ControllerPinGate.notifyLocked(this); refreshHardcoreState(); return;
+                                }
                                 hardcore.beginActivation();
                                 refreshHardcoreState();
                                 if (appMode.isAccessibilityEnabled()) {
@@ -481,6 +416,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     .setPositiveButton(
                             R.string.hardcore_release,
                             (dialog, which) -> {
+                                if (!ControllerPinManager.isDomModeActive()) {
+                                    ControllerPinGate.notifyLocked(this); refreshHardcoreState(); return;
+                                }
                                 hardcore.disable();
                                 refreshHardcoreState();
                             })
@@ -498,71 +436,19 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (accessibilityMissing) {
             binding.hardcoreStatus.setText(R.string.hardcore_status_accessibility);
         } else if (hardcore.isGuardReady()) {
-            binding.hardcoreStatus.setText(R.string.hardcore_status_active);
+            binding.hardcoreStatus.setText("");
         } else if (hardcore.isRequested()) {
             binding.hardcoreStatus.setText(R.string.hardcore_status_pending);
         } else {
-            binding.hardcoreStatus.setText(R.string.hardcore_status_off);
+            binding.hardcoreStatus.setText("");
         }
+        binding.hardcoreStatus.setVisibility(binding.hardcoreStatus.length() == 0 ? View.GONE : View.VISIBLE);
         updatingHardcore = false;
     }
 
-    private void saveModules() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
-        boolean censor = binding.switchModuleCensor.isChecked();
-        modules.save(
-                censor,
-                binding.switchModuleLimits.isChecked(),
-                binding.switchModuleWallet.isChecked());
-        SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
-    }
-
-    private void loadApps() {
-        if (appsLoaded || binding == null || uiData.isPending("apps")) return;
-        android.content.Context app = getApplicationContext();
-        uiData.load(
-                "apps",
-                () -> InstalledAppCatalog.load(app),
-                this::renderApps,
-                failure -> {
-                    if (binding != null) {
-                        binding.loadingApps.setVisibility(View.GONE);
-                        Toast.makeText(this, R.string.settings_apps_unavailable, Toast.LENGTH_LONG)
-                                .show();
-                    }
-                });
-    }
-
-    private void renderApps(List<InstalledAppCatalog.Entry> entries) {
-        if (binding == null) return;
-        appsLoaded = true;
-        binding.loadingApps.setVisibility(View.GONE);
-        includedApps =
-                new IncludedAppsAdapter(
-                        this,
-                        entries,
-                        includedPackages,
-                        (packageName, selected) -> {
-                            if (!ControllerPinManager.isDomModeActive()) return;
-                            if (selected) includedPackages.add(packageName);
-                            else includedPackages.remove(packageName);
-                            saveIncludedApps();
-                        });
-        binding.appList.setAdapter(includedApps);
-        includedApps.setEditing(editingUnlocked);
-        renderSelectedCount();
-    }
-
     private void renderSelectedCount() {
-        String count =
-                getResources()
-                        .getQuantityString(
-                                R.plurals.apps_included_count,
-                                includedPackages.size(),
-                                includedPackages.size());
-        if (binding != null)
-            binding.selectedCount.setText(count);
-        sections.get("apps").summary().setText(count);
+        if (binding != null && sections.containsKey("apps"))
+            sections.get("apps").summary().setText(binding.appListCard.selectionSummary());
     }
 
     private int dp(int value) {
@@ -571,7 +457,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (uiData != null) uiData.close();
         binding = null;
         super.onDestroy();
     }

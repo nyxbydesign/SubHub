@@ -214,7 +214,7 @@ public final class MainActivity extends AppCompatActivity {
         binding.subCensorCard.setOnClickListener(
                 view ->
                         showArrangementDetails(
-                                R.string.sub_censor_title, censorArrangementDetails()));
+                                R.string.sub_censor_title, censorArrangementRows()));
         binding.subLimitsCard.setOnClickListener(
                 view ->
                         showArrangementDetails(
@@ -555,7 +555,7 @@ public final class MainActivity extends AppCompatActivity {
         if (ControllerPinManager.isDomModeActive()) {
             ControllerPinManager.enterSubMode();
             renderEditState();
-        } else ControllerPinGate.require(this, this::renderEditState, false);
+        } else ControllerPinGate.unlock(this, this::renderEditState, false);
     }
 
     private void renderEditState() {
@@ -580,14 +580,12 @@ public final class MainActivity extends AppCompatActivity {
     private void renderSubDashboard() {
         if (binding == null) return;
         FeatureModuleManager modules = new FeatureModuleManager(this);
-        boolean censorEnabled = modules.isCensorEnabled();
-        boolean limitsEnabled = modules.isLimitsEnabled();
         boolean walletEnabled = modules.isWalletEnabled();
         boolean subliminalEnabled = modules.isSubliminalEnabled();
         boolean popupEnabled = PopupStormSettings.load(this).isEnabled();
-        binding.subCensorCard.setVisibility(censorEnabled ? View.VISIBLE : View.GONE);
-        binding.subLimitsCard.setVisibility(limitsEnabled ? View.VISIBLE : View.GONE);
-        binding.subWalletCard.setVisibility(walletEnabled ? View.VISIBLE : View.GONE);
+        binding.subCensorCard.setVisibility(View.VISIBLE);
+        binding.subLimitsCard.setVisibility(View.VISIBLE);
+        binding.subWalletCard.setVisibility(View.VISIBLE);
         binding.subAtmosphereCard.setVisibility(View.VISIBLE);
         binding.subModulesEmpty.setVisibility(View.GONE);
         int atmosphereCount = (subliminalEnabled ? 1 : 0) + (popupEnabled ? 1 : 0);
@@ -603,7 +601,7 @@ public final class MainActivity extends AppCompatActivity {
         binding.modeHint.setVisibility(View.GONE);
 
         long now = System.currentTimeMillis();
-        if (censorEnabled) {
+        {
             SettingsRepository settings = new SettingsRepository(this);
             DetectorConfig detector = settings.loadDetectorConfig();
             TextSmutConfig text = settings.loadTextSmutConfig();
@@ -616,7 +614,7 @@ public final class MainActivity extends AppCompatActivity {
                                     R.plurals.sub_censors_active, censorCount, censorCount));
         }
 
-        if (limitsEnabled) {
+        {
             AppModeManager appMode = new AppModeManager(this);
             AppTimerManager timerManager = new AppTimerManager(this);
             AppTimerManager.Settings timer = timerManager.loadSettings();
@@ -635,15 +633,13 @@ public final class MainActivity extends AppCompatActivity {
                                     R.plurals.sub_limits_selected, limitCount, limitCount));
         }
 
-        if (walletEnabled) {
+        {
             PenanceManager walletManager = new PenanceManager(this);
             PenanceSnapshot wallet = walletManager.snapshot(now);
             int activeRules = 0;
-            if (wallet.isEnabled()) {
-                for (PenanceInfraction infraction : PenanceInfraction.values()) {
-                    if (infraction != PenanceInfraction.PAID_PAUSE
-                            && walletManager.isInfractionEnabled(infraction)) activeRules++;
-                }
+            for (PenanceInfraction infraction : PenanceInfraction.values()) {
+                if (infraction != PenanceInfraction.PAID_PAUSE
+                        && walletManager.isInfractionEnabled(infraction)) activeRules++;
             }
             binding.subWalletVoice.setText(
                     getResources()
@@ -651,14 +647,14 @@ public final class MainActivity extends AppCompatActivity {
                                     R.plurals.sub_wallet_active, activeRules, activeRules));
             boolean checkout = wallet.getCheckoutCents() > 0;
             binding.subWalletPay.setVisibility(
-                    wallet.getDueCents() > 0 || checkout ? View.VISIBLE : View.GONE);
+                    walletEnabled && (wallet.getDueCents() > 0 || checkout) ? View.VISIBLE : View.GONE);
             binding.subWalletPay.setText(
                     checkout ? R.string.sub_wallet_resume : R.string.sub_wallet_pay);
             PaidPauseManager paidPause = new PaidPauseManager(this);
             boolean pauseActive = paidPause.isActive();
             boolean pauseAvailable = paidPause.canPurchase();
             binding.subWalletPause.setVisibility(
-                    pauseActive || pauseAvailable ? View.VISIBLE : View.GONE);
+                    walletEnabled && (pauseActive || pauseAvailable) ? View.VISIBLE : View.GONE);
             binding.subWalletPause.setEnabled(!pauseActive);
             binding.subWalletPause.setText(
                     pauseActive
@@ -683,15 +679,42 @@ public final class MainActivity extends AppCompatActivity {
                         .putExtra(PenanceActivity.EXTRA_BEGIN_PAID_PAUSE, true));
     }
 
-    private void showArrangementDetails(int title, String details) {
+    private void showArrangementDetails(int title, List<ArrangementDetail> details) {
         Dialog dialog = new Dialog(this);
         View content =
                 LayoutInflater.from(this).inflate(R.layout.dialog_arrangement_details, null, false);
         ((TextView) content.findViewById(R.id.arrangement_detail_title)).setText(title);
-        TextView body = content.findViewById(R.id.arrangement_detail_body);
-        body.setText(details);
-        body.setMaxHeight(Math.round(getResources().getDisplayMetrics().heightPixels * 0.58f));
-        body.setMovementMethod(android.text.method.ScrollingMovementMethod.getInstance());
+        android.widget.ImageView icon = content.findViewById(R.id.arrangement_detail_icon);
+        icon.setImageResource(title == R.string.sub_censor_title ? R.drawable.ic_nav_censor
+                : title == R.string.sub_limits_title ? R.drawable.ic_nav_limits
+                : title == R.string.sub_wallet_title ? R.drawable.ic_nav_money : R.drawable.ic_atmosphere);
+        android.widget.ScrollView body = content.findViewById(R.id.arrangement_detail_body);
+        android.widget.LinearLayout rows = content.findViewById(R.id.arrangement_detail_rows);
+        for (ArrangementDetail detail : details) {
+            if (rows.getChildCount() > 0) {
+                View seam = new View(this);
+                seam.setBackgroundColor(getColor(R.color.outline_subtle));
+                rows.addView(seam, new android.widget.LinearLayout.LayoutParams(-1, dp(1)));
+            }
+            android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+            row.setOrientation(android.widget.LinearLayout.VERTICAL);
+            row.setPadding(0, dp(11), 0, dp(11));
+            TextView label = new TextView(this);
+            label.setText(detail.label);
+            label.setTextSize(12);
+            label.setTextColor(getColor(R.color.accent_text));
+            label.setTypeface(null, android.graphics.Typeface.BOLD);
+            androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
+            row.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
+            TextView value = new TextView(this);
+            value.setText(detail.value);
+            value.setTextSize(15);
+            value.setTextColor(getColor(R.color.text_primary));
+            value.setPadding(0, dp(4), 0, 0);
+            value.setLineSpacing(dp(2), 1f);
+            row.addView(value, new android.widget.LinearLayout.LayoutParams(-1, -2));
+            rows.addView(row, new android.widget.LinearLayout.LayoutParams(-1, -2));
+        }
         content.findViewById(R.id.arrangement_detail_close)
                 .setOnClickListener(view -> dialog.dismiss());
         dialog.setContentView(content);
@@ -705,6 +728,13 @@ public final class MainActivity extends AppCompatActivity {
         dialog.setOnShowListener(
                 ignored -> {
                     Window shown = dialog.getWindow();
+                    int width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(28), dp(560));
+                    rows.measure(View.MeasureSpec.makeMeasureSpec(width - dp(36), View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                    android.view.ViewGroup.LayoutParams scrollParams = body.getLayoutParams();
+                    scrollParams.height = Math.min(rows.getMeasuredHeight(),
+                            Math.round(getResources().getDisplayMetrics().heightPixels * .58f));
+                    body.setLayoutParams(scrollParams);
                     if (shown != null)
                         shown.setLayout(
                                 Math.min(
@@ -716,13 +746,13 @@ public final class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    String censorArrangementDetails() {
+    private List<ArrangementDetail> censorArrangementRows() {
         SettingsRepository repository = new SettingsRepository(this);
         DetectorConfig detector = repository.loadDetectorConfig();
         TextSmutConfig text = repository.loadTextSmutConfig();
         CensorAppearance appearance = repository.loadAppearance();
         AppModeManager appMode = new AppModeManager(this);
-        List<String> lines = new ArrayList<>();
+        List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.arrangement_censor_look,
@@ -768,14 +798,14 @@ public final class MainActivity extends AppCompatActivity {
         lines.add(
                 detailLine(
                         R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
-        return joinDetails(lines);
+        return lines;
     }
 
-    private String limitsArrangementDetails() {
+    private List<ArrangementDetail> limitsArrangementDetails() {
         AppModeManager appMode = new AppModeManager(this);
         AppTimerManager timers = new AppTimerManager(this);
         AppTimerManager.Settings settings = timers.loadSettings();
-        List<String> lines = new ArrayList<>();
+        List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.arrangement_limits_shared,
@@ -802,10 +832,10 @@ public final class MainActivity extends AppCompatActivity {
                     detailLine(
                             R.string.arrangement_limits_individual, getString(R.string.popup_off)));
         }
-        return joinDetails(lines);
+        return lines;
     }
 
-    private String walletArrangementDetails() {
+    private List<ArrangementDetail> walletArrangementDetails() {
         PenanceManager wallet = new PenanceManager(this);
         PenanceSnapshot snapshot = wallet.snapshot(System.currentTimeMillis());
         List<String> rules = new ArrayList<>();
@@ -832,7 +862,7 @@ public final class MainActivity extends AppCompatActivity {
                             trigger,
                             wallet.money(wallet.getInfractionCents(infraction))));
         }
-        List<String> lines = new ArrayList<>();
+        List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.arrangement_wallet_balance, wallet.money(snapshot.getDueCents())));
@@ -849,16 +879,16 @@ public final class MainActivity extends AppCompatActivity {
                                 R.string.arrangement_wallet_cap_values,
                                 wallet.money(wallet.getDailyCapCents()),
                                 wallet.money(wallet.getWeeklyCapCents()))));
-        return joinDetails(lines);
+        return lines;
     }
 
-    private String subliminalArrangementDetails() {
+    private List<ArrangementDetail> subliminalArrangementDetails() {
         AppModeManager appMode = new AppModeManager(this);
         SubliminalSettings settings = new SubliminalSettingsRepository(this).load();
         List<String> voices = new ArrayList<>();
         for (String pack : settings.getEnabledPacks()) voices.add(friendlySubliminalPack(pack));
         Collections.sort(voices, String.CASE_INSENSITIVE_ORDER);
-        List<String> lines = new ArrayList<>();
+        List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.arrangement_subliminal_voice,
@@ -872,14 +902,14 @@ public final class MainActivity extends AppCompatActivity {
         lines.add(
                 detailLine(
                         R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
-        return joinDetails(lines);
+        return lines;
     }
 
-    private String atmosphereArrangementDetails() {
+    private List<ArrangementDetail> atmosphereArrangementDetails() {
         FeatureModuleManager modules = new FeatureModuleManager(this);
         PopupStormSettings popup = PopupStormSettings.load(this);
         SubliminalSettings whispers = new SubliminalSettingsRepository(this).load();
-        List<String> lines = new ArrayList<>();
+        List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
                         R.string.atmosphere_whispers_title,
@@ -898,14 +928,23 @@ public final class MainActivity extends AppCompatActivity {
                 detailLine(
                         R.string.arrangement_apps,
                         appLabels(new AppModeManager(this).getIncludedPackages())));
-        return joinDetails(lines);
+        return lines;
     }
 
-    private String detailLine(int label, String value) {
-        return getString(R.string.arrangement_detail_line, getString(label), value);
+    private static final class ArrangementDetail {
+        final int label;
+        final String value;
+        ArrangementDetail(int label, String value) { this.label = label; this.value = value; }
     }
 
-    private String joinDetails(List<String> lines) {
+    private ArrangementDetail detailLine(int label, String value) {
+        return new ArrangementDetail(label, value);
+    }
+
+    String censorArrangementDetails() {
+        List<String> lines = new ArrayList<>();
+        for (ArrangementDetail row : censorArrangementRows())
+            lines.add(getString(R.string.arrangement_detail_line, getString(row.label), row.value));
         return android.text.TextUtils.join("\n\n", lines);
     }
 

@@ -43,61 +43,23 @@
                 android:paddingBottom="14dp">
                 <TextView style="@style/Widget.SubHub.SectionHeader"
                     android:text="@string/hardcore_title" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:layout_marginTop="4dp"
-                    android:text="@string/hardcore_body" />
                 <com.subhub.app.util.StateToggle
                     android:id="@+id/switch_hardcore_mode"
-                    style="@style/Widget.SubHub.SettingsToggle"
-                    android:layout_width="match_parent"
-                    android:layout_marginTop="5dp"
-                    android:text="@string/hardcore_toggle" />
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:minHeight="48dp" android:textSize="14sp"
+                    android:textColor="@color/text_primary" android:text="@string/hardcore_title" />
+                <TextView style="@style/Widget.SubHub.FieldHelp"
+                    android:layout_marginTop="0dp"
+                    android:text="@string/hardcore_body" />
                 <TextView
                     android:id="@+id/hardcore_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
-                    android:text="@string/hardcore_status_off"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
 
 
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/feature_areas_card"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/settings_card_gap"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="12dp">
-                <TextView style="@style/Widget.SubHub.SectionHeader"
-                    android:text="@string/global_features_title" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:layout_marginTop="3dp"
-                    android:text="@string/global_features_help" />
-                <com.subhub.app.util.StateToggle
-                    android:id="@+id/switch_module_censor"
-                    style="@style/Widget.SubHub.SettingsToggle"
-                    android:layout_width="match_parent"
-                    android:text="@string/global_feature_censor" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/global_feature_censor_help" />
-                <com.subhub.app.util.StateToggle
-                    android:id="@+id/switch_module_limits"
-                    style="@style/Widget.SubHub.SettingsToggle"
-                    android:layout_width="match_parent"
-                    android:text="@string/global_feature_limits" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/global_feature_limits_help" />
-                <com.subhub.app.util.StateToggle
-                    android:id="@+id/switch_module_wallet"
-                    style="@style/Widget.SubHub.SettingsToggle"
-                    android:layout_width="match_parent"
-                    android:text="@string/global_feature_wallet" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/global_feature_wallet_help" />
             </LinearLayout>
 
             <TextView
@@ -114,51 +76,9 @@
                 android:background="@drawable/bg_card"
                 android:orientation="vertical"
                 android:padding="12dp">
-                <LinearLayout
-                    android:id="@+id/app_list_card"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="vertical"
-                    android:padding="0dp">
-                    <TextView
-                        android:id="@+id/selected_count"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="5dp"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-                    <Button
-                        android:id="@+id/button_toggle_apps"
-                        style="@style/Widget.SubHub.CompactOutlineButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="48dp"
-                        android:layout_marginTop="6dp"
-                        android:text="@string/app_selection_expand" />
-                    <LinearLayout
-                        android:id="@+id/app_list_content"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:visibility="gone">
-                        <ProgressBar
-                            android:id="@+id/loading_apps"
-                            style="?android:attr/progressBarStyleSmall"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:layout_marginTop="14dp" />
-                        <ListView
-                            android:id="@+id/app_list"
-                            android:layout_width="match_parent"
-                            android:layout_height="360dp"
-                            android:nestedScrollingEnabled="true"
-                            android:divider="@android:color/transparent"
-                            android:dividerHeight="6dp"
-                            android:clipToPadding="false" />
-                    </LinearLayout>
-                </LinearLayout>
+                <com.subhub.app.settings.AppSelectionPanel
+                    android:id="@+id/app_list_card" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
                 <LinearLayout
                     android:id="@+id/android_access_card"
                     android:layout_width="match_parent"
@@ -208,9 +128,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="5dp"
                     android:columnCount="1">
-                    <TextView android:id="@+id/button_packs"
-                        style="@style/Widget.SubHub.SettingsAction"
-                        android:text="@string/global_arrangement_studio" />
                     <TextView android:id="@+id/button_help"
                         style="@style/Widget.SubHub.SettingsAction"
                         android:text="@string/help_title" />

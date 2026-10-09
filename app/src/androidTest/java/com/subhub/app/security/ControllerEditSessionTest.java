@@ -102,7 +102,7 @@ public final class ControllerEditSessionTest {
     }
 
     @Test
-    public void subDashboardOnlyShowsEnabledProductAreas() {
+    public void subDashboardKeepsAllConfiguredProductAreasVisible() {
         android.content.Context context = ApplicationProvider.getApplicationContext();
         try (ActivityScenario<MainActivity> scenario =
                 ActivityScenario.launch(MainActivity.class)) {
@@ -111,13 +111,13 @@ public final class ControllerEditSessionTest {
                         new FeatureModuleManager(activity).save(false, true, false);
                         activity.findViewById(R.id.button_edit_lock).performClick();
                         assertEquals(
-                                View.GONE,
+                                View.VISIBLE,
                                 activity.findViewById(R.id.sub_censor_card).getVisibility());
                         assertEquals(
                                 View.VISIBLE,
                                 activity.findViewById(R.id.sub_limits_card).getVisibility());
                         assertEquals(
-                                View.GONE,
+                                View.VISIBLE,
                                 activity.findViewById(R.id.sub_wallet_card).getVisibility());
                         assertEquals(
                                 View.VISIBLE,

@@ -52,15 +52,17 @@ public class KeyholderDiscoveryAndroidTest {
             });
         } finally { context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit(); }
     }
-    @Test public void subCanDiscoverBothMethodsButCannotChangePinWithoutAuthorization() {
+    @Test public void directKeyholderEntryRequiresDomBeforeShowingMethods() {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<AuthenticatorActivity> rituals = ActivityScenario.launch(AuthenticatorActivity.class)) {
-            onView(withId(R.id.keyholder_pin_change_button)).check(matches(isDisplayed())).perform(click());
-            onView(withText(R.string.controller_pin_unlock)).check(matches(isDisplayed()));
-            onView(withText(android.R.string.cancel)).perform(click());
             assertFalse(ControllerPinManager.isDomModeActive());
-            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
-            onView(withId(R.id.keyholder_pair_button)).perform(scrollTo()).check(matches(isDisplayed()));
+            long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
+            while (rituals.getState() != androidx.lifecycle.Lifecycle.State.DESTROYED
+                    && android.os.SystemClock.elapsedRealtime() < deadline) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                android.os.SystemClock.sleep(20);
+            }
+            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, rituals.getState());
         }
     }
 }

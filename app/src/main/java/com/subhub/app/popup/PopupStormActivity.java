@@ -46,6 +46,12 @@ public final class PopupStormActivity extends AppCompatActivity {
     private ActivityPopupStormBinding binding;
     private SharedPreferences preferences;
     private ControllerEditMode editMode;
+    private boolean updatingEnabled;
+    private final ActivityResultLauncher<Intent> enableOverlayPermission = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (Settings.canDrawOverlays(this)) completeEnable();
+                else renderEnabled();
+            });
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable statusUpdater = new Runnable() {
         @Override public void run() {
@@ -68,6 +74,9 @@ public final class PopupStormActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.popup_title, true);
         preferences = PopupStormSettings.preferences(this);
+        binding.switchPopupStorm.setOnCheckedChangeListener((button, checked) -> {
+            if (!updatingEnabled) setEffectEnabled(checked);
+        });
         PopupStormManager.get().reloadSettings(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonAddFolder.setOnClickListener(view -> folderPicker.launch(null));
@@ -242,12 +251,67 @@ public final class PopupStormActivity extends AppCompatActivity {
     private void applyEditState() {
         if (binding == null) return;
         boolean editing = ControllerPinManager.isSessionUnlocked();
+        renderEnabled();
         binding.buttonPreview.setEnabled(editing);
         binding.buttonAddFolder.setEnabled(editing);
         binding.presetSlider.setEnabled(editing);
         setEnabledRecursive(binding.dynamicSettings, editing);
         rebuildFolders();
         // Stop remains available as an unconditional safety action.
+    }
+
+    private void renderEnabled() {
+        if (binding == null) return;
+        updatingEnabled = true;
+        binding.switchPopupStorm.setChecked(preferences.getBoolean(PopupStormSettings.K_ENABLED, false));
+        binding.switchPopupStorm.setEnabled(ControllerPinManager.isDomModeActive());
+        updatingEnabled = false;
+    }
+
+    private void setEffectEnabled(boolean enabled) {
+        if (!ControllerPinManager.isDomModeActive()) { renderEnabled(); return; }
+        if (!enabled) {
+            preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).apply();
+            PopupStormManager.get().stop();
+            PopupStormManager.get().reloadSettings(this);
+            renderEnabled();
+            refreshStatus();
+        } else if (!preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
+            renderEnabled();
+            com.subhub.app.util.ThemedDialogs.builder(this)
+                    .setTitle(R.string.popup_photosensitivity_title)
+                    .setMessage(R.string.popup_photosensitivity_body)
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> renderEnabled())
+                    .setPositiveButton(R.string.popup_acknowledge, (dialog, which) -> {
+                        if (!ControllerPinManager.isDomModeActive()) { renderEnabled(); return; }
+                        preferences.edit().putBoolean(PopupStormSettings.K_ACK, true).apply();
+                        requestEnableOverlay();
+                    }).show();
+        } else requestEnableOverlay();
+    }
+
+    private void requestEnableOverlay() {
+        if (!ControllerPinManager.isDomModeActive()) { renderEnabled(); return; }
+        if (!Settings.canDrawOverlays(this)) {
+            renderEnabled();
+            Toast.makeText(this, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
+            enableOverlayPermission.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+        } else completeEnable();
+    }
+
+    private void completeEnable() {
+        if (!ControllerPinManager.isDomModeActive() || !Settings.canDrawOverlays(this)
+                || !preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
+            renderEnabled();
+            return;
+        }
+        preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, true).apply();
+        PopupStormManager.get().reloadSettings(this);
+        if (PopupStormActivationPolicy.shouldStart(ScreenCaptureService.isRunning(),
+                ScreenshotAccessibilityService.isRecognitionActive())) PopupStormManager.get().start(this);
+        renderEnabled();
+        refreshStatus();
     }
 
     private static void setEnabledRecursive(View view, boolean enabled) {

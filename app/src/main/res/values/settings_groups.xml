@@ -1,12 +1,15 @@
 <resources>
-    <string name="settings_all">‹ All settings</string>
+    <item type="id" name="button_packs" />
+    <item type="id" name="button_toggle_apps" />
+    <item type="id" name="feature_areas_card" />
+    <string name="settings_all">‹ All Settings</string>
     <string name="settings_features">Features</string>
     <string name="settings_apps">Apps</string>
-    <string name="settings_pacts">Arrangements &amp; protection</string>
+    <string name="settings_pacts">Arrangements &amp; Protection</string>
     <string name="settings_appearance">Appearance</string>
     <string name="settings_services">Wallet &amp; PayPal</string>
-    <string name="settings_help">Help &amp; about</string>
-    <string name="settings_updates">App updates</string>
+    <string name="settings_help">Help &amp; About</string>
+    <string name="settings_updates">App Updates</string>
     <string name="settings_features_summary">%1$d enabled</string>
     <string name="settings_apps_ready">Accessibility enabled · Manage app assignments</string>
     <string name="settings_apps_setup">Accessibility needs setup · Manage app assignments</string>
@@ -16,13 +19,12 @@
     <string name="settings_appearance_summary">Studio arrangements, styles and custom assets</string>
     <string name="settings_services_ready">PayPal connected</string>
     <string name="settings_services_setup">PayPal not connected</string>
-    <string name="settings_help_summary">Guides, diagnostics and app updates</string>
+    <string name="settings_build_summary">Build: %1$s | %2$s</string>
 <string name="settings_permissions">Permissions</string>
-<string name="settings_overlay">Display over other apps</string>
-<string name="settings_battery">Battery optimisation</string>
+<string name="settings_overlay">Display Over Other Apps</string>
+<string name="settings_battery">Battery Optimisation</string>
 <string name="settings_apps_count">Censor %1$d · Limits %2$d · Whispers %3$d apps</string>
-<string name="settings_permission_status">%1$d of 3 access settings ready</string>
 <string name="settings_apps_all">Censor all apps · Limits %1$d · Whispers %2$d</string>
 <string name="settings_notifications">Notifications</string>
-<string name="settings_privacy_permissions">Privacy &amp; permissions</string>
+<string name="settings_privacy_permissions">Privacy &amp; Permissions</string>
 </resources>

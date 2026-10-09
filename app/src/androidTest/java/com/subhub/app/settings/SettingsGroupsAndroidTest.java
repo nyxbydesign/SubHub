@@ -29,29 +29,23 @@ public class SettingsGroupsAndroidTest {
     }
 
     @Test
-    public void fourSectionsKeepHardcoreAndStudioInFeaturesAndPrivacyBeforePermissions() {
+    public void directSectionsKeepHardcoreWithPrivacyAndPermissions() {
         try(ActivityScenario<GlobalSettingsActivity> scenario=ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(a->{
                         List<String> keys=new ArrayList<>();
                         collect(a.findViewById(android.R.id.content),keys);
                 assertEquals(
-                                Arrays.asList("settings:features","settings:apps",
+                                Arrays.asList("settings:apps",
                                         "settings:privacy","settings:help"),keys);
                         assertNull(a.findViewById(R.id.paypal_card));
                     });
-            onView(withTagValue(org.hamcrest.Matchers.is("settings:features"))).perform(revealAboveNavigation(),click());
             scenario.onActivity(
                     a -> {
-                        View hardcore = a.findViewById(R.id.hardcore_card),
-                                studio = a.findViewById(R.id.button_packs);
+                        View hardcore = a.findViewById(R.id.hardcore_card);
                         assertTrue(hardcore.isShown());
-                        assertTrue(studio.isShown());
-                        int[] h = new int[2], s = new int[2];
-                        hardcore.getLocationOnScreen(h);
-                        studio.getLocationOnScreen(s);
-                        assertTrue(s[1] >= h[1] + hardcore.getHeight());
+                        assertNull(a.findViewById(R.id.feature_areas_card));
+                        assertNull(a.findViewById(R.id.button_packs));
                     });
-            onView(withTagValue(org.hamcrest.Matchers.is("settings:privacy"))).perform(revealAboveNavigation(), click());
             scenario.onActivity(
                     a -> {
                         View privacy = a.findViewById(R.id.privacy_discreet_toggle),
@@ -67,6 +61,22 @@ public class SettingsGroupsAndroidTest {
             scenario.onActivity(
                     a -> assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown())); }
                 }
+
+    @Test public void appsOpenWithOneSectionAndRestoreWithoutAnInnerToggle() {
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:apps"))).perform(revealAboveNavigation(), click());
+            scenario.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.app_list_content).isShown());
+                View header = a.findViewById(android.R.id.content).findViewWithTag("settings:apps");
+                assertTrue(((com.subhub.app.util.ExpandableSectionView) header.getParent()).summary().isShown());
+                assertNull(a.findViewById(R.id.button_toggle_apps));
+            });
+            scenario.recreate();
+            scenario.onActivity(a -> assertTrue(a.findViewById(R.id.app_list_content).isShown()));
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:apps"))).perform(revealAboveNavigation(), click());
+            scenario.onActivity(a -> assertFalse(a.findViewById(R.id.app_list_content).isShown()));
+        }
+    }
 
     private static void collect(View v, List<String> keys) {
         if (v.getTag() instanceof String && ((String) v.getTag()).startsWith("settings:"))

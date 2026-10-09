@@ -37,7 +37,7 @@ public final class PermissionSetupActivity extends AppCompatActivity {
                             if (ControllerPinManager.isDomModeActive()) {
                                 ControllerPinManager.enterSubMode();
                                 renderGuide();
-                            } else ControllerPinGate.require(this, this::renderGuide, false);
+                            } else ControllerPinGate.unlock(this, this::renderGuide, false);
                         });
         int[] titles = {
             R.id.permission_step_one_title,
@@ -81,9 +81,12 @@ public final class PermissionSetupActivity extends AppCompatActivity {
         if (binding == null) return;
         boolean editing = actionsAllowed();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
-        binding.permissionStepOneOpen.setEnabled(editing);
-        binding.permissionStepTwoOpen.setEnabled(editing && availableStep >= 2);
-        binding.permissionStepThreeOpen.setEnabled(editing && availableStep >= 3);
+        binding.permissionStepOneOpen.setEnabled(true);
+        binding.permissionStepTwoOpen.setEnabled(availableStep >= 2);
+        binding.permissionStepThreeOpen.setEnabled(availableStep >= 3);
+        binding.permissionStepOneOpen.setAlpha(editing ? 1f : .45f);
+        binding.permissionStepTwoOpen.setAlpha(editing ? 1f : .45f);
+        binding.permissionStepThreeOpen.setAlpha(editing ? 1f : .45f);
         binding.permissionStepTwo.setAlpha(availableStep >= 2 ? 1f : .5f);
         binding.permissionStepThree.setAlpha(availableStep >= 3 ? 1f : .5f);
         binding.permissionSetupStatus.setText(
@@ -100,7 +103,8 @@ public final class PermissionSetupActivity extends AppCompatActivity {
     }
 
     private void openSettings(Intent intent, int step) {
-        if (!actionsAllowed() || availableStep < step) return;
+        if (!actionsAllowed()) { ControllerPinGate.notifyLocked(this); return; }
+        if (availableStep < step) return;
         try {
             startActivity(intent);
             availableStep = Math.max(availableStep, Math.min(3, step + 1));

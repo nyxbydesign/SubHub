@@ -58,7 +58,7 @@ public class ControllerAuthenticatorAndroidTest {
                         .putExtra(com.subhub.app.MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true))) {
             scenario.onActivity(activity -> {
                 ControllerPinManager.enterSubMode();
-                ControllerPinGate.require(activity, () -> authorized.set(true), false);
+                ControllerPinGate.unlock(activity, () -> authorized.set(true), false);
             });
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.authenticator_method_code))
                     .perform(androidx.test.espresso.action.ViewActions.click());

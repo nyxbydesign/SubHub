@@ -32,10 +32,9 @@ public final class AuthenticatorActivity extends PreferencePage {
                 if (pendingSecret != null) { clearPending(); render(); } else finish();
             }
         });
-        render();
     }
     private void render() {
-        if (isFinishing() || isDestroyed()) return;
+        if (isFinishing() || isDestroyed() || !ControllerPinManager.isDomModeActive()) return;
         page(R.string.authenticator_title);
         ControllerAuthenticator authenticator = new ControllerAuthenticator(this);
         methodBodies.clear(); methodArrows.clear(); methodHeaders.clear();
@@ -107,7 +106,11 @@ public final class AuthenticatorActivity extends PreferencePage {
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("keyholder_method", expandedMethod); super.onSaveInstanceState(state); }
     @Override protected void onResume() {
         super.onResume();
-        if (pendingSecret == null) render();
+        if (!ControllerPinManager.isDomModeActive()) {
+            clearPending();
+            page(R.string.authenticator_title);
+            ControllerPinGate.require(this, this::render, true);
+        } else if (pendingSecret == null) render();
     }
     private void beginPairing() {
         clearPending(); pendingSecret = Totp.newSecret();

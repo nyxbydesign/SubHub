@@ -77,7 +77,7 @@ public final class ControllerEditMode {
                 enterSubMode(activity);
             }
         } else {
-            ControllerPinGate.require(activity, this::refresh, false);
+            ControllerPinGate.unlock(activity, this::refresh, false);
         }
     }
 

@@ -5,6 +5,7 @@ import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -86,17 +87,17 @@ public final class SubHubNavigationTest {
         ControllerPinManager.enterDomMode();
     }
 
-    @Test public void disabledAreasDisappearWhileSettingsRemainsAvailable() {
+    @Test public void disabledAreasRemainReachableWhileSettingsRemainsAvailable() {
         android.content.Context context = ApplicationProvider.getApplicationContext();
         FeatureModuleManager modules = new FeatureModuleManager(context);
         modules.save(false, true, false);
         try (ActivityScenario<GlobalSettingsActivity> scenario =
                      ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_censor).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_limits).getVisibility());
-                assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_money).getVisibility());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
@@ -131,17 +132,10 @@ public final class SubHubNavigationTest {
         try (ActivityScenario<GlobalSettingsActivity> scenario =
                      ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                assertEquals(View.GONE,
-                        activity.findViewById(R.id.settings_group_protection).getVisibility());
-                assertEquals(View.GONE,
-                        activity.findViewById(R.id.settings_group_coverage).getVisibility());
-                assertEquals(View.GONE, activity.findViewById(R.id.paypal_card).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.settings_group_services).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.app_settings_card).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.button_packs).getVisibility());
+                assertNull(activity.findViewById(R.id.feature_areas_card));
+                assertEquals(View.GONE, activity.findViewById(R.id.apps_card).getVisibility());
+                assertNull(activity.findViewById(R.id.paypal_card));
+                assertNull(activity.findViewById(R.id.button_packs));
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.button_diagnostics).getVisibility());
                 assertEquals(View.VISIBLE,

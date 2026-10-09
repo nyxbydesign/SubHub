@@ -71,7 +71,7 @@ public final class SettingsActivity extends AppCompatActivity {
             saveCustomPhrases();
             ControllerEditMode.enterSubMode(this);
         } else {
-            ControllerPinGate.require(this, this::applyLockState, false);
+            ControllerPinGate.unlock(this, this::applyLockState, false);
         }
     }
 
@@ -139,6 +139,8 @@ public final class SettingsActivity extends AppCompatActivity {
             choices[index].setTextSize(14f);
             choices[index].setText(text);
         }
+        binding.radioPresetOff.setTextSize(14f);
+        binding.radioPresetOff.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 
     private void adaptBorderChoices() {
@@ -190,7 +192,8 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.borderPreview.setAppearance(appearance);
 
         DetectionPreset preset = repository.loadDetectionPreset();
-        binding.presetGroup.check(radioFor(preset));
+        binding.presetGroup.check(new FeatureModuleManager(this).isCensorEnabled()
+                ? radioFor(preset) : R.id.radio_preset_off);
         DetectorConfig detector = repository.loadDetectorConfig();
         int confidence = Math.round(detector.getConfidenceThreshold() * 100);
         binding.confidenceSeek.setProgress(confidence);
@@ -254,6 +257,16 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.smutSensitivityGroup.setOnCheckedChangeListener((group, checkedId) -> saveAll());
         binding.presetGroup.setOnCheckedChangeListener((group, checkedId) -> {
             if (bindingValues) return;
+            if (!ControllerPinManager.isDomModeActive()) {
+                bindValues();
+                applyLockState();
+                return;
+            }
+            if (checkedId == R.id.radio_preset_off) {
+                new FeatureModuleManager(this).setCensorEnabled(false);
+                SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
+                return;
+            }
             DetectionPreset preset = presetFor(checkedId);
             repository.saveDetectionPreset(preset);
             bindingValues = true;
@@ -262,6 +275,7 @@ public final class SettingsActivity extends AppCompatActivity {
             binding.confidenceValue.setText(percent(confidence));
             bindingValues = false;
             saveAll();
+            new FeatureModuleManager(this).setCensorEnabled(true);
         });
         binding.intensitySeek.setOnSeekBarChangeListener(new SavingSeekListener() {
             @Override public void update(int progress, boolean fromUser) {
@@ -750,10 +764,6 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (ControllerPinManager.isDomModeActive()
-                && SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.CENSOR)) {
-            return;
-        }
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
         if (binding != null) {
             bindValues();

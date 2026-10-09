@@ -28,7 +28,6 @@
     <string name="detection_high_help">Maximum Coverage</string>
     <string name="censor_images_inline_help">Choose replacement images for the Image censor style. Add, enable, or remove them here; images stay on this device.</string>
     <string name="censor_gallery_photos">Censor photos from gallery</string>
-    <string name="apps_accessibility_ready">Accessibility connected</string>
     <string name="apps_accessibility_reconnecting">Accessibility enabled · reconnecting</string>
     <string name="apps_accessibility_off">Accessibility permission required</string>
     <string name="wallet_currency_label">Wallet currency</string>
@@ -57,7 +56,7 @@
     <string name="global_settings_group_services">Tools &amp; Payments</string>
     <string name="global_settings_subtitle">Choose the rules. Shape the experience.</string>
     <string name="global_features_title">Features</string>
-    <string name="global_features_help">Choose which features participate in service. Disabled features leave the bottom menu.</string>
+    <string name="global_features_help">Choose which features participate in service. Their pages remain available when disabled.</string>
     <string name="global_feature_censor">Censor</string>
     <string name="global_feature_censor_help">Image and text filtering, censor styles, and photo tools.</string>
     <string name="global_feature_limits">App limits</string>
@@ -75,7 +74,6 @@
     <string name="hardcore_toggle">Use Hardcore Mode</string>
     <string name="hardcore_status_off">Off · ordinary Android controls remain available</string>
     <string name="hardcore_status_pending">Approve Device Admin on Android’s next screen</string>
-    <string name="hardcore_status_active">Device Admin on · return to Sub mode to use the App Info guard</string>
     <string name="hardcore_status_accessibility">Device Admin On · turn on Accessibility to engage the App Info guard</string>
     <string name="hardcore_accessibility_cancelled">Hardcore Mode needs Accessibility to guard Clear Storage.</string>
     <string name="hardcore_repair_channel">Hardcore Mode setup</string>
@@ -557,7 +555,7 @@
     <string name="popup_cover">Cover detections</string>
     <string name="popup_avoid">Avoid detections</string>
     <string name="manage_popup_storm">Popup Storm</string>
-    <string name="help_title">Help &amp; Safety</string>
+    <string name="help_title">Help &amp; About</string>
     <string name="help_subtitle">Setup, safety, privacy, and troubleshooting.</string>
     <string name="help_permission_check">Permission Check</string>
     <string name="help_fix_permissions">Fix permission</string>
@@ -853,8 +851,8 @@
     <string name="sub_censor_armed">Configured for service</string>
     <string name="sub_censor_active">Censor is running</string>
     <plurals name="sub_censors_active">
-        <item quantity="one">%1$d Censor active</item>
-        <item quantity="other">%1$d Censors active</item>
+        <item quantity="one">%1$d Censor</item>
+        <item quantity="other">%1$d Censors</item>
     </plurals>
     <string name="sub_censor_summary">%1$s · %2$s</string>
     <string name="sub_censor_images_on">Image filter on</string>
@@ -868,8 +866,8 @@
     <string name="sub_limits_title">Limits</string>
     <string name="sub_limits_none">No limits configured</string>
     <plurals name="sub_limits_selected">
-        <item quantity="one">%1$d Limit active</item>
-        <item quantity="other">%1$d Limits active</item>
+        <item quantity="one">%1$d Limit</item>
+        <item quantity="other">%1$d Limits</item>
     </plurals>
     <string name="sub_limits_per_app">%1$dm each</string>
     <string name="sub_limits_individual_range">%1$d–%2$dm each</string>
@@ -904,8 +902,8 @@
     <string name="stats_history_no_activity">No feature activity</string>
     <string name="sub_wallet_title">Tributes</string>
     <plurals name="sub_wallet_active">
-        <item quantity="one">%1$d Tribute active</item>
-        <item quantity="other">%1$d Tributes active</item>
+        <item quantity="one">%1$d Tribute</item>
+        <item quantity="other">%1$d Tributes</item>
     </plurals>
     <string name="sub_wallet_inactive">No tribute rules.</string>
     <string name="sub_wallet_summary">%1$s due</string>
@@ -1022,8 +1020,8 @@
     <string name="atmosphere_home_summary">Whispers %1$s · Popup Storm %2$s</string>
     <string name="atmosphere_home_hint">Keyholder, whispers and visual rituals</string>
     <plurals name="atmosphere_effects_active">
-        <item quantity="one">%1$d Effect active</item>
-        <item quantity="other">%1$d Effects active</item>
+        <item quantity="one">%1$d Effect</item>
+        <item quantity="other">%1$d Effects</item>
     </plurals>
     <string name="atmosphere_subtitle_dom">Dom Space · shape the effects surrounding service</string>
     <string name="atmosphere_subtitle_sub">Sub Space · see the effects surrounding your service</string>

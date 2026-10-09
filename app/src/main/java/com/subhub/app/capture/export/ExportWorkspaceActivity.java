@@ -304,14 +304,18 @@ public class ExportWorkspaceActivity extends PreferencePage {
     }
     private void setDelete(boolean checked) {
         if (suppressDelete) return;
+        if (!deletion.isEnabled()) {
+            suppressDelete = true; deletion.setChecked(deleteOriginals); suppressDelete = false;
+            return;
+        }
         if (!checked) { deleteOriginals = false; invalidatePreview(); return; }
         suppressDelete = true; deletion.setChecked(false); suppressDelete = false;
-        ControllerPinGate.require(this, () -> ThemedDialogs.builder(this).setTitle(R.string.export_delete_warning_title)
+        ThemedDialogs.builder(this).setTitle(R.string.export_delete_warning_title)
                 .setMessage(R.string.export_delete_ready_help).setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.export_delete_warning_enable, (d, which) -> {
-                    if (!ControllerPinManager.isDomModeActive()) return;
+                    if (preparing || ExportService.isRunning()) return;
                     deleteOriginals = true; suppressDelete = true; deletion.setChecked(true); suppressDelete = false; invalidatePreview();
-                }).show(), false);
+                }).show();
     }
     private void refreshSummary() {
         SettingsRepository settings = SettingsRepository.forPreferences(ExportSettings.preferences(this));
@@ -432,6 +436,8 @@ public class ExportWorkspaceActivity extends PreferencePage {
         boolean editable = !preparing && !running;
         pick.setEnabled(editable); configure.setEnabled(editable);
         areas.setEnabled(editable);
+        ControllerPinGate.markLocked(configure);
+        ControllerPinGate.markLocked(areas);
         setChoicesEnabled(qualityChoices, editable);
         setChoicesEnabled(detectionChoices, editable); mute.setEnabled(editable); deletion.setEnabled(editable);
         previewSelection.setEnabled(editable);
@@ -533,13 +539,16 @@ public class ExportWorkspaceActivity extends PreferencePage {
     }
     private void deleteSavedOriginals() {
         if (job == null || ExportService.isRunning()) return;
-        ControllerPinGate.require(this, () -> ThemedDialogs.builder(this).setTitle(R.string.export_delete_warning_title)
+        final String approvedJob = job;
+        ThemedDialogs.builder(this).setTitle(R.string.export_delete_warning_title)
                 .setMessage(R.string.export_delete_ready_help).setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.export_delete_saved, (d, w) -> requestDeletion()).show(), false);
+                .setPositiveButton(R.string.export_delete_saved, (d, w) -> {
+                    if (approvedJob.equals(job)) requestDeletion();
+                }).show();
     }
     private void markDeleted(ExportJobStore.Item item) { store.update(item.id, ExportJobStore.State.SAVED, Uri.parse(item.output), "Original deleted", 100); }
     private void requestDeletion() {
-        if (!ControllerPinManager.isDomModeActive()) return;
+        if (job == null || ExportService.isRunning()) return;
         List<Uri> media = new ArrayList<>(); pendingDeleteIds.clear(); int deleted = 0;
         for (ExportJobStore.Item item : store.items(job)) {
             if (item.state != ExportJobStore.State.SAVED || item.output == null || "Original deleted".equals(item.message)) continue;

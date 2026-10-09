@@ -140,7 +140,11 @@ public final class PenanceContractTest {
         CommitmentManager.start(context, 60L * 60L * 1000L);
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(HardcoreModeManager.KEY_REQUESTED, true).commit();
-        new FeatureModuleManager(context).save(true, true, false);
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, false).commit();
+        context.getSharedPreferences(PenanceManager.PREFS_NAME, 0).edit()
+                .putBoolean("enabled", true).remove(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED).commit();
+        manager = new PenanceManager(context);
 
         assertFalse(new PaidPauseManager(context).canPurchase());
         assertFalse(manager.requestPaidPause(now));
@@ -155,16 +159,10 @@ public final class PenanceContractTest {
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(activity -> {
-                View paidPauseCard = activity.findViewById(R.id.paid_pause_config_card);
-                android.widget.CompoundButton master = activity.findViewById(R.id.ledger_enabled);
-                assertFalse(master.isChecked());
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
-
-                master.setChecked(true);
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
-
-                master.setChecked(false);
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
+                activity.findViewById(android.R.id.content).findViewWithTag("wallet:pause").performClick();
+                assertTrue(activity.findViewById(R.id.paid_pause_config_card).isShown());
+                assertTrue(activity.findViewById(R.id.paid_pause_enabled).isEnabled());
+                assertFalse(manager.isInfractionEnabled(PenanceInfraction.NEW_DETECTION));
             });
         } finally {
             ControllerPinManager.enterSubMode();

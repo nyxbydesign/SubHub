@@ -54,6 +54,13 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     }
 
     private void bindListeners() {
+        binding.switchWhispers.setOnCheckedChangeListener((button, checked) -> {
+            if (loading) return;
+            if (ControllerPinManager.isDomModeActive()) {
+                new com.subhub.app.settings.FeatureModuleManager(this).setSubliminalEnabled(checked);
+            }
+            render(repository.load());
+        });
         binding.presetSlider.setLabelFormatter(value -> presetLabel(Math.round(value)));
         binding.presetSlider.addOnChangeListener((slider, value, fromUser) -> {
             if (loading || !fromUser) return;
@@ -107,6 +114,9 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     private void render(SubliminalSettings settings) {
         if (binding == null) return;
         loading = true;
+        binding.switchWhispers.setChecked(
+                new com.subhub.app.settings.FeatureModuleManager(this).isSubliminalEnabled());
+        binding.switchWhispers.setEnabled(ControllerPinManager.isDomModeActive());
         binding.presetSlider.setValue(settings.getPreset().ordinal());
         binding.presetValue.setText(presetLabel(settings.getPreset().ordinal()));
         binding.advancedEnabled.setChecked(settings.isAdvanced());

@@ -121,6 +121,7 @@ public final class PrivacyControls {
                                     false);
                         });
         help(R.string.privacy_lock_help);
+        refresh();
     }
 
     private StateToggle toggle(
@@ -140,6 +141,8 @@ public final class PrivacyControls {
     }
 
     private void refresh() {
+        ControllerPinGate.markLocked(discreet);
+        ControllerPinGate.markLocked(lock);
         PrivacyManager privacy = new PrivacyManager(activity);
         updating = true;
         try {

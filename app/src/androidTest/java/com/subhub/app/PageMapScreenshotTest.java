@@ -85,7 +85,7 @@ public final class PageMapScreenshotTest {
         captureTarget("05c-settings-phrases-and-tools", SettingsActivity.class,
                 R.id.censor_phrases_section, R.id.button_appearance_details);
         captureTarget("04b-app-assignments", GlobalSettingsActivity.class,
-                R.id.app_list, R.id.button_toggle_apps);
+                R.id.app_list, 0);
         capture("07-censor-photos", ExportActivity.class);
         capture("08-help-safety", HelpActivity.class);
         capture("09-statistics", StatsActivity.class);
@@ -217,7 +217,10 @@ public final class PageMapScreenshotTest {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File directory = new File(context.getExternalFilesDir(null), "page-map");
         if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
-        try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(activityClass)) {
+        Intent launch = new Intent(context, activityClass);
+        if (activityClass == GlobalSettingsActivity.class && targetId == R.id.app_list)
+            launch.putExtra(GlobalSettingsActivity.EXTRA_SHOW_INCLUDED_APPS, true);
+        try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(launch)) {
             scenario.onActivity(activity -> {
                 if (activityClass == GlobalSettingsActivity.class) {}
                 if (expandId != 0) activity.findViewById(expandId).performClick();

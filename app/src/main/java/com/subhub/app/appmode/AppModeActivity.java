@@ -84,7 +84,6 @@ public final class AppModeActivity extends AppCompatActivity {
         binding = ActivityAppModeBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits, R.string.app_mode_title, 0);
-        if (SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.LIMITS)) return;
         manager = new AppModeManager(this);
         timers = new AppTimerManager(this);
         appData = AsyncUiScope.forPage(this);
@@ -121,6 +120,7 @@ public final class AppModeActivity extends AppCompatActivity {
                         restoreTimerValues();
                         return;
                     }
+                    if (!checked) timers.disableBudget(true);
                     renderTimerControls();
                     scheduleAutoSave();
                     if (checked) promptForAccessibility();
@@ -132,6 +132,7 @@ public final class AppModeActivity extends AppCompatActivity {
                         restoreTimerValues();
                         return;
                     }
+                    if (!checked) timers.disableBudget(false);
                     renderTimerControls();
                     scheduleAutoSave();
                     if (checked) promptForAccessibility();
@@ -153,9 +154,7 @@ public final class AppModeActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (manager == null
-                || SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.LIMITS))
-            return;
+        if (manager == null) return;
         failedPackages = null;
         if (!dirtyTimers || !editingAllowed()) restoreTimerValues();
         renderPerAppAllowances();
@@ -175,7 +174,7 @@ public final class AppModeActivity extends AppCompatActivity {
     private void toggleEditSession() {
         if (ControllerPinManager.isSessionUnlocked()) {
             ControllerEditMode.enterSubMode(this);
-        } else ControllerPinGate.require(this, this::applyEditState, false);
+        } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {

@@ -34,11 +34,16 @@ public final class MasterParticipationAndroidTest {
     private SharedPreferences preferences;
     private Map<String, ?> before;
     private Map<String, ?> achievementsBefore;
+    private Map<String, ?> walletBefore;
 
     @Before public void setup() {
         context = ApplicationProvider.getApplicationContext();
         preferences = new SettingsRepository(context).preferences();
         before = preferences.getAll();
+        walletBefore = context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME, 0).getAll();
+        new com.subhub.app.penance.PenanceManager(context).configure(false, Map.of(), 1000, 5000, 10, 15);
+        new com.subhub.app.penance.PaidPauseManager(context).configure(false, 500, 15);
+        new AppTimerManager(context).saveSettings(false, 30, false, 120);
         SharedPreferences achievements = context.getSharedPreferences("betablocker_achievements", Context.MODE_PRIVATE);
         achievementsBefore = achievements.getAll();
         Set<String> unlocked = new java.util.LinkedHashSet<>();
@@ -53,6 +58,7 @@ public final class MasterParticipationAndroidTest {
     }
     @After public void cleanup() {
         restore(preferences, before);
+        restore(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME, 0), walletBefore);
         restore(context.getSharedPreferences("betablocker_achievements", Context.MODE_PRIVATE), achievementsBefore);
         ControllerPinManager.enterSubMode();
     }
@@ -77,11 +83,24 @@ public final class MasterParticipationAndroidTest {
         AppModeManager mode = new AppModeManager(context);
         mode.setArmed(true);
         preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).commit();
-        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                ((CompoundButton) activity.findViewById(R.id.switch_module_censor)).setChecked(false);
-                ((CompoundButton) activity.findViewById(R.id.switch_module_limits)).setChecked(false);
-                ((CompoundButton) activity.findViewById(R.id.switch_module_wallet)).setChecked(false);
+        try (ActivityScenario<com.subhub.app.settings.SettingsActivity> page = ActivityScenario.launch(com.subhub.app.settings.SettingsActivity.class)) {
+            page.onActivity(activity -> activity.findViewById(R.id.radio_preset_off).performClick());
+        }
+        try (ActivityScenario<AppModeActivity> page = ActivityScenario.launch(AppModeActivity.class)) {
+            page.onActivity(activity -> {
+                ((CompoundButton) activity.findViewById(R.id.per_app_limit_enabled)).setChecked(false);
+                ((CompoundButton) activity.findViewById(R.id.total_limit_enabled)).setChecked(false);
+            });
+        }
+        try (ActivityScenario<com.subhub.app.penance.PenanceActivity> page = ActivityScenario.launch(com.subhub.app.penance.PenanceActivity.class)) {
+            page.onActivity(activity -> {
+                activity.findViewById(android.R.id.content).findViewWithTag("wallet:rules").performClick();
+                for (int id : new int[] {R.id.rule_detection_enabled, R.id.rule_dwell_enabled,
+                        R.id.rule_tap_enabled, R.id.rule_app_open_enabled, R.id.rule_tamper_enabled})
+                    ((CompoundButton) activity.findViewById(id)).setChecked(false);
+                activity.findViewById(R.id.button_back).performClick();
+                activity.findViewById(android.R.id.content).findViewWithTag("wallet:pause").performClick();
+                ((CompoundButton) activity.findViewById(R.id.paid_pause_enabled)).setChecked(false);
             });
         }
         assertTrue(mode.isArmed());
