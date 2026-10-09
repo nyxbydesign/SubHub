@@ -3,6 +3,7 @@ package com.subhub.app.service;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -361,6 +362,54 @@ public final class SceneTransactionCoordinatorTest {
         assertEquals(atomic, coordinator.invalidateForMotion(true));
         assertEquals(SceneTransactionCoordinator.Status.DROPPED_CLOSED,
                 coordinator.qualityReady(atomic, List.of("stale-quality"), 1_200L).status());
+    }
+
+    @Test public void completedFastResultsReplaceOnlyAvailablePresentation() {
+        SceneTransactionCoordinator<String> coordinator = new SceneTransactionCoordinator<>(() -> 1_800L);
+        SceneTransactionCoordinator.Commit<String> first = coordinator.submitCompletedFast(
+                key(100), SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("first")).commit();
+        assertNotNull(first);
+        assertTrue(coordinator.isPresentationCurrent(first));
+        // New captured keys have no presentation authority until a result completes.
+        SceneTransactionCoordinator.SceneKey queued = key(101);
+        assertEquals(key(100), coordinator.currentKey());
+        SceneTransactionCoordinator.Commit<String> newer = coordinator.submitCompletedFast(
+                queued, SceneTransactionCoordinator.Mode.SETTLED_FAST_ONLY, 1_300L, List.of("newer")).commit();
+        assertNotNull(newer);
+        assertFalse(coordinator.isPresentationCurrent(first));
+        assertTrue(coordinator.isPresentationCurrent(newer));
+        assertEquals(List.of("newer"), newer.fastObservations());
+    }
+
+    @Test public void completedOldResultsCannotRevokeNewerPresentation() {
+        SceneTransactionCoordinator<String> coordinator = new SceneTransactionCoordinator<>();
+        SceneTransactionCoordinator.Commit<String> newest = coordinator.submitCompletedFast(
+                key(110), SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("new")).commit();
+        assertEquals(SceneTransactionCoordinator.Status.DROPPED_STALE, coordinator.submitCompletedFast(
+                key(109), SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("old")).status());
+        assertEquals(SceneTransactionCoordinator.Status.DROPPED_DUPLICATE, coordinator.submitCompletedFast(
+                key(110), SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("duplicate")).status());
+        assertTrue(coordinator.isPresentationCurrent(newest));
+    }
+
+    @Test public void completedAdmissionKeepsEpochAndInvalidationTombstones() {
+        SceneTransactionCoordinator<String> coordinator = new SceneTransactionCoordinator<>();
+        SceneTransactionCoordinator.SceneKey restarted = new SceneTransactionCoordinator.SceneKey(5, 1, 8, 1_000);
+        SceneTransactionCoordinator.Commit<String> commit = coordinator.submitCompletedFast(
+                restarted, SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("restart")).commit();
+        assertEquals(SceneTransactionCoordinator.Status.DROPPED_STALE, coordinator.submitCompletedFast(
+                key(999), SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("previous epoch")).status());
+        coordinator.invalidate("document");
+        assertEquals(SceneTransactionCoordinator.Status.DROPPED_CLOSED, coordinator.submitCompletedFast(
+                restarted, SceneTransactionCoordinator.Mode.ACTIVE_FAST, 1_300L, List.of("reopen")).status());
+        assertFalse(coordinator.isPresentationCurrent(commit));
+    }
+
+    @Test public void completedAdmissionCannotEnableQualityJoin() {
+        SceneTransactionCoordinator<String> coordinator = new SceneTransactionCoordinator<>();
+        assertThrows(IllegalArgumentException.class, () -> coordinator.submitCompletedFast(
+                key(120), SceneTransactionCoordinator.Mode.SETTLED_ATOMIC, 1_300L, List.of("fast")));
+        assertNull(coordinator.currentKey());
     }
 
     private static SceneTransactionCoordinator.SceneKey key(long sequence) {

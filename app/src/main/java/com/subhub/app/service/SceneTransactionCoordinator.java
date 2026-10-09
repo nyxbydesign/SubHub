@@ -197,6 +197,33 @@ final class SceneTransactionCoordinator<T> {
         return fastReady(key, observations, uptimeMillis.getAsLong());
     }
 
+    /**
+     * Replaces presentation only when a newer fast-only result is actually available. Capturing
+     * or queuing another image must not revoke a completed result or starve an in-flight run.
+     * The caller still owns capture/document/window fences around this atomic operation.
+     */
+    synchronized Transition<T> submitCompletedFast(
+            SceneKey key, Mode mode, long deadlineUptimeMillis, List<? extends T> observations) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(mode, "mode");
+        if (mode == Mode.SETTLED_ATOMIC) {
+            throw new IllegalArgumentException("completed fast admission cannot join quality");
+        }
+        if (current != null) {
+            if (current.key.equals(key)) {
+                return transition(current.lifecycle == Lifecycle.INVALIDATED
+                        ? Status.DROPPED_CLOSED : Status.DROPPED_DUPLICATE);
+            }
+            if (key.captureEpoch() < current.key.captureEpoch()
+                    || key.captureEpoch() == current.key.captureEpoch()
+                    && key.fastSequence() <= current.key.fastSequence()) {
+                return transition(Status.DROPPED_STALE);
+            }
+        }
+        begin(key, mode, false, deadlineUptimeMillis);
+        return fastReady(key, observations, uptimeMillis.getAsLong());
+    }
+
     synchronized Transition<T> submitQuality(SceneKey key, List<? extends T> observations) {
         return qualityReady(key, observations, uptimeMillis.getAsLong());
     }

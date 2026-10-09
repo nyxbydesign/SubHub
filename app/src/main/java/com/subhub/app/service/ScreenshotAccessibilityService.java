@@ -955,12 +955,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 submissionSequence = fastSubmissionSequence.incrementAndGet();
             }
             SceneContext scene = streamingFast
-                    ? beginScene(requestedEpoch, submissionSequence,
+                    ? stageScene(requestedEpoch, submissionSequence,
                             inferenceMotionGeneration, capturePhase.screenshotUptimeMillis,
                             requestedAtUptimeMillis,
                             motionSettled, qualityRefine, continuousMotionInference, spatialFrame)
                     : null;
-            traceCaptureStage(requestedAtUptimeMillis, "scene-begun");
+            traceCaptureStage(requestedAtUptimeMillis, "scene-staged");
             long submittedFastSequence = enqueueInference(new InferenceFrame(
                     frame, requestedEpoch, sourceScrollX,
                     sourceScrollY, inferenceMotionGeneration,
@@ -1038,7 +1038,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         return submissionSequence;
     }
 
-    private SceneContext beginScene(
+    private SceneContext stageScene(
             long epoch,
             long fastSequence,
             long generation,
@@ -1058,25 +1058,44 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         long joinDeadline = Math.max(
                 screenshotUptimeMillis,
                 visibleDeadline - ATOMIC_SCENE_JOIN_GUARD_MS);
-        SceneTransactionCoordinator.BeginResult begun;
-        SceneContext next = new SceneContext(
-                key, joinDeadline, visibleDeadline, continuousMotionInference, spatialFrame);
+        // A queued image owns its resources, not the visible transaction. Admission happens
+        // when its fast result completes, so sparse capture cannot repeatedly cancel ONNX work.
+        return new SceneContext(key, mode, qualityExpected, joinDeadline, visibleDeadline,
+                continuousMotionInference, spatialFrame);
+    }
+
+    private SceneTransactionCoordinator.Transition<Detection> completeFastScene(
+            InferenceFrame candidate, long inferenceGeneration, List<Detection> detections) {
+        SceneContext scene = candidate.scene;
         synchronized (sceneLifecycleLock) {
-            // Fast coverage owns the visible scene. Quality may continue as shadow/cache evidence,
-            // but it can never hold a settled censor behind a join deadline again.
-            begun = sceneCoordinator.begin(key, mode, false, joinDeadline);
-            SceneContext previous = currentScene.getAndSet(next);
-            if (previous != null && previous != next) previous.cancel("superseded");
+            if (scene.cancelled.get() || !isCurrentCapture(candidate.epoch)
+                    || !isCurrentVisualDocument(candidate.visualDocumentEpoch, candidate.scrollSurfaceKey)
+                    || candidate.captureWindowId >= 0
+                    && candidate.captureWindowId != activeApplicationWindowId.get()
+                    || !candidate.continuousMotionInference
+                    && inferenceGeneration != motionGeneration.get()) {
+                // Keep structural invalidation separate from ordinary pending-frame replacement.
+                scene.cancel("completed-fast-scope-changed");
+                return null;
+            }
+            SceneTransactionCoordinator.SceneKey previousKey = sceneCoordinator.currentKey();
+            SceneTransactionCoordinator.Transition<Detection> transition =
+                    sceneCoordinator.submitCompletedFast(scene.key, scene.mode,
+                            scene.joinDeadlineUptimeMillis, detections);
+            if (transition.committed()) {
+                SceneContext previous = currentScene.getAndSet(scene);
+                if (previous != null && previous != scene) previous.cancel("newer-fast-completed");
+                scene.deliver(transition.commit());
+                CensorLabLog.i(TAG, "SCENE_BEGIN id=" + scene.key
+                        + " mode=" + scene.mode.name()
+                        + " qualityObserved=" + scene.qualityExpected
+                        + " qualityJoinExpected=false"
+                        + " joinDeadlineUptimeMs=" + scene.joinDeadlineUptimeMillis
+                        + " visibleDeadlineUptimeMs=" + scene.visibleDeadlineUptimeMillis
+                        + " superseded=" + (previousKey == null ? "none" : previousKey.toString()));
+            }
+            return transition;
         }
-        CensorLabLog.i(TAG, "SCENE_BEGIN id=" + key
-                + " mode=" + mode.name()
-                + " qualityObserved=" + qualityExpected
-                + " qualityJoinExpected=false"
-                + " joinDeadlineUptimeMs=" + joinDeadline
-                + " visibleDeadlineUptimeMs=" + visibleDeadline
-                + " superseded=" + (begun.superseded() == null
-                        ? "none" : begun.superseded().toString()));
-        return next;
     }
 
     static SceneTransactionCoordinator.Mode scenePresentationMode(boolean motionSettled) {
@@ -2381,8 +2400,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 long fastReadyAt = SystemClock.uptimeMillis();
                 traceCaptureStage(candidate.capturedAtUptimeMillis, "fast-ready");
                 SceneTransactionCoordinator.Transition<Detection> fastTransition =
-                        sceneCoordinator.submitFast(scene.key, visualDetections);
-                if (fastTransition.committed()) scene.deliver(fastTransition.commit());
+                        completeFastScene(candidate, inferenceMotionGeneration, visualDetections);
+                if (fastTransition == null) {
+                    CensorLabLog.i(TAG, "FAST_DROP reason=completed-scope-changed id=" + scene.key
+                            + " sourceSequence=" + candidate.fastSubmissionSequence
+                            + " currentSequence=" + fastSubmissionSequence.get());
+                    return;
+                }
                 CensorLabLog.i(TAG, "FAST_READY id=" + scene.key
                         + " captureAgeMs="
                         + (fastReadyAt - candidate.capturedAtUptimeMillis)
@@ -5875,6 +5899,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private static final class SceneContext {
         private final SpatialRegionCache.Frame spatialFrame;
         private final SceneTransactionCoordinator.SceneKey key;
+        private final SceneTransactionCoordinator.Mode mode;
+        private final boolean qualityExpected;
         private final boolean continuousMotionInference;
         private final long joinDeadlineUptimeMillis;
         private final long visibleDeadlineUptimeMillis;
@@ -5885,12 +5911,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
         private SceneContext(
                 SceneTransactionCoordinator.SceneKey key,
+                SceneTransactionCoordinator.Mode mode,
+                boolean qualityExpected,
                 long joinDeadlineUptimeMillis,
                 long visibleDeadlineUptimeMillis,
                 boolean continuousMotionInference,
                 SpatialRegionCache.Frame spatialFrame) {
             this.spatialFrame = spatialFrame;
             this.key = key;
+            this.mode = mode;
+            this.qualityExpected = qualityExpected;
             this.continuousMotionInference = continuousMotionInference;
             this.joinDeadlineUptimeMillis = joinDeadlineUptimeMillis;
             this.visibleDeadlineUptimeMillis = visibleDeadlineUptimeMillis;

@@ -8,15 +8,40 @@ import com.subhub.app.detection.ObjectTracker;
 import com.subhub.app.detection.TrackedObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
+import org.junit.Before;
+import org.junit.After;
 import static org.junit.Assert.*;
 
 /** Exercise the service-to-coordinator wiring, without connecting or starting capture workers. */
 public final class SceneMotionIntegrationAndroidTest {
+    private boolean previousRecognitionActive;
+    private boolean previousRunning;
+
+    @Before public void allowSyntheticCaptureScope() throws Exception {
+        Field active = ScreenshotAccessibilityService.class.getDeclaredField("recognitionActive");
+        active.setAccessible(true);
+        previousRecognitionActive = active.getBoolean(null);
+        active.setBoolean(null, true);
+        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+        running.setAccessible(true);
+        previousRunning = running.getBoolean(null);
+    }
+
+    @After public void restoreRecognitionScope() throws Exception {
+        Field active = ScreenshotAccessibilityService.class.getDeclaredField("recognitionActive");
+        active.setAccessible(true);
+        active.setBoolean(null, previousRecognitionActive);
+        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+        running.setAccessible(true);
+        running.setBoolean(null, previousRunning);
+    }
+
     @Test public void continuousServiceScenesSurviveMotionButNotNavigationOrSupersession() throws Exception {
         for (boolean settled : new boolean[] {false, true}) {
             ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
@@ -26,12 +51,15 @@ public final class SceneMotionIntegrationAndroidTest {
             SceneTransactionCoordinator.SceneKey key = key(scene);
             for (int reversal = 0; reversal < 8; reversal++) motion(service);
             assertFalse(cancelled(scene));
-            SceneTransactionCoordinator.Commit<Detection> commit =
-                    coordinator.fastReady(key, Collections.emptyList(), now + 1).commit();
+            SceneTransactionCoordinator.Commit<Detection> commit = complete(service, scene).commit();
             assertNotNull(commit);
             motion(service);
             assertTrue(coordinator.isPresentationCurrent(commit));
             Object replacement = begin(service, 2, now + 2, settled, true);
+            // Staging/capture does not supersede available presentation or an executing scene.
+            assertFalse(cancelled(scene));
+            assertTrue(coordinator.isPresentationCurrent(commit));
+            assertNotNull(complete(service, replacement).commit());
             assertTrue(cancelled(scene));
             assertFalse(coordinator.isPresentationCurrent(commit));
             motion(service);
@@ -49,10 +77,31 @@ public final class SceneMotionIntegrationAndroidTest {
         ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
         long now = SystemClock.uptimeMillis();
         Object scene = begin(service, 1, now, false, false);
+        assertNotNull(complete(service, scene).commit());
         motion(service);
         assertTrue(cancelled(scene));
         assertEquals(SceneTransactionCoordinator.Status.DROPPED_CLOSED,
                 coordinator(service).fastReady(key(scene), Collections.emptyList(), now + 1).status());
+    }
+
+    @Test public void completedResultStillRejectsStructuralAndMotionScopeChanges() throws Exception {
+        for (String scope : new String[] {"epoch", "document", "window", "motion", "stopped"}) {
+            ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+            Object scene = begin(service, 1, SystemClock.uptimeMillis(), false, false);
+            if (scope.equals("epoch")) ((CaptureEpoch) field(service, "captureEpoch")).invalidate();
+            if (scope.equals("document")) ((AtomicLong) field(service, "visualDocumentEpoch")).incrementAndGet();
+            if (scope.equals("motion")) ((AtomicLong) field(service, "motionGeneration")).incrementAndGet();
+            if (scope.equals("window")) ((java.util.concurrent.atomic.AtomicInteger)
+                    field(service, "activeApplicationWindowId")).set(2);
+            if (scope.equals("stopped")) {
+                Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+                running.setAccessible(true);
+                running.setBoolean(service, false);
+            }
+            assertNull(scope, complete(service, scene));
+            assertTrue(scope, cancelled(scene));
+            assertNull(scope, coordinator(service).currentKey());
+        }
     }
 
     @Test public void oldGenerationCanQueryButCannotInsertOrMoveEventCacheEvidence() throws Exception {
@@ -94,27 +143,51 @@ public final class SceneMotionIntegrationAndroidTest {
             if (candidate.getName().equals("updateWorldCache")) update = candidate;
         }
         assertNotNull(update);
-        // The prototype has an additional late-quality list; both must carry the generation fence.
         int count = update.getParameterTypes().length;
-        assertTrue(count == 13 || count == 14);
+        assertEquals(14, count);
+        assertEquals(ContentSpaceRegionCache.Evidence.class, update.getParameterTypes()[7]);
         assertEquals(long.class, update.getParameterTypes()[11]);
         update.setAccessible(true);
-        if (count == 14) {
-            update.invoke(service, tracks, 0L, 0L, 100, 200, 100, 200, false, "test", 1L,
-                    "test", generation, Collections.emptyList(), null);
-        } else {
-            update.invoke(service, tracks, 0L, 0L, 100, 200, 100, 200, false, "test", 1L,
-                    "test", generation, null);
-        }
+        update.invoke(service, tracks, 0L, 0L, 100, 200, 100, 200,
+                ContentSpaceRegionCache.Evidence.full(ContentSpaceRegionCache.Evidence.FAST,
+                        SystemClock.uptimeMillis()), "test", 1L,
+                "test", generation, Collections.emptyList(), null);
     }
 
     private static Object begin(ScreenshotAccessibilityService service, long sequence, long now,
             boolean settled, boolean continuous) throws Exception {
-        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod("beginScene", long.class,
+        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+        running.setAccessible(true);
+        running.setBoolean(service, true);
+        CaptureEpoch epoch = (CaptureEpoch) field(service, "captureEpoch");
+        if (epoch.token() == 0) epoch.invalidate();
+        ((AtomicLong) field(service, "motionGeneration")).set(1);
+        ((java.util.concurrent.atomic.AtomicInteger) field(service, "activeApplicationWindowId")).set(1);
+        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod("stageScene", long.class,
                 long.class, long.class, long.class, long.class, boolean.class, boolean.class,
                 boolean.class, SpatialRegionCache.Frame.class);
         method.setAccessible(true);
         return method.invoke(service, 1L, sequence, 1L, now, now, settled, false, continuous, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static SceneTransactionCoordinator.Transition<Detection> complete(
+            ScreenshotAccessibilityService service, Object scene) throws Exception {
+        Class<?> frameType = Class.forName(ScreenshotAccessibilityService.class.getName() + "$InferenceFrame");
+        Constructor<?> constructor = frameType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        SceneTransactionCoordinator.SceneKey stamp = key(scene);
+        long now = stamp.screenshotUptimeMillis();
+        Object frame = constructor.newInstance(null, stamp.captureEpoch(), 0L, 0L,
+                stamp.motionGeneration(), 100, 200, false, field(scene, "continuousMotionInference"),
+                false, false, now, 0L, 0L, stamp.motionGeneration(),
+                CaptureTimeReference.accessibility(false, now, now, now), false, 0L, 1L, "",
+                stamp.fastSequence(), 1, scene);
+        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod(
+                "completeFastScene", frameType, long.class, List.class);
+        method.setAccessible(true);
+        return (SceneTransactionCoordinator.Transition<Detection>) method.invoke(
+                service, frame, stamp.motionGeneration(), Collections.emptyList());
     }
     private static void motion(ScreenshotAccessibilityService service) throws Exception {
         Method method = ScreenshotAccessibilityService.class.getDeclaredMethod("invalidateNonReprojectableSceneForMotion");
