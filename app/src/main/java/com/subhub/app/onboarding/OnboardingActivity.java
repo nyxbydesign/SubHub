@@ -26,7 +26,7 @@ public final class OnboardingActivity extends PreferencePage {
     public static final String REPLAY = "replay";
     private static final int STEPS = 6;
     private int step;
-    private boolean replay, censor, limits, wallet, whispers, appearanceChanged;
+    private boolean replay, censor, limits, wallet, appearanceChanged;
     private CensorAppearance.Type style;
     private LinearLayout body;
     private boolean resumeRefresh;
@@ -42,7 +42,6 @@ public final class OnboardingActivity extends PreferencePage {
         censor = modules.isCensorEnabled();
         limits = modules.isLimitsEnabled();
         wallet = modules.isWalletEnabled();
-        whispers = modules.isSubliminalEnabled();
         style = new SettingsRepository(this).loadAppearance().getType();
         if (!replay && state == null && OnboardingState.inProgress(this)) {
             android.content.SharedPreferences draft = getSharedPreferences("subhub_onboarding", 0);
@@ -50,7 +49,6 @@ public final class OnboardingActivity extends PreferencePage {
             censor = draft.getBoolean("draft_censor", censor);
             limits = draft.getBoolean("draft_limits", limits);
             wallet = draft.getBoolean("draft_wallet", wallet);
-            whispers = draft.getBoolean("draft_whispers", whispers);
             style =
                     CensorAppearance.Type.fromPreference(
                             draft.getString("draft_style", style.getPreferenceValue()));
@@ -62,7 +60,6 @@ public final class OnboardingActivity extends PreferencePage {
             censor = state.getBoolean("censor");
             limits = state.getBoolean("limits");
             wallet = state.getBoolean("wallet");
-            whispers = state.getBoolean("whispers");
             style = CensorAppearance.Type.fromPreference(state.getString("style"));
             appearanceChanged = state.getBoolean("appearance_changed");
         }
@@ -97,7 +94,6 @@ public final class OnboardingActivity extends PreferencePage {
         state.putBoolean("censor", censor);
         state.putBoolean("limits", limits);
         state.putBoolean("wallet", wallet);
-        state.putBoolean("whispers", whispers);
         state.putString("style", style.getPreferenceValue());
         state.putBoolean("appearance_changed", appearanceChanged);
         super.onSaveInstanceState(state);
@@ -173,14 +169,6 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void features() {
-        text(
-                body,
-                getString(
-                        replay
-                                ? R.string.tour_replay_preview_help
-                                : R.string.tour_feature_instruction),
-                14,
-                true);
         feature(
                 R.drawable.ic_tab_home,
                 R.string.global_feature_censor,
@@ -199,16 +187,9 @@ public final class OnboardingActivity extends PreferencePage {
                 R.string.tour_wallet_help,
                 wallet,
                 v -> wallet = v);
-        feature(
-                R.drawable.ic_keyholder,
-                R.string.stats_whispers,
-                R.string.tour_whispers_help,
-                whispers,
-                v -> whispers = v);
         LinearLayout apps = card(body);
         text(apps, getString(R.string.settings_apps), 17, false)
                 .setTypeface(null, android.graphics.Typeface.BOLD);
-        text(apps, getString(R.string.tour_apps_help), 14, true);
         button(
                 apps,
                 getString(R.string.tour_choose_apps),
@@ -217,10 +198,7 @@ public final class OnboardingActivity extends PreferencePage {
                         ControllerPinManager.useWithoutKeyholder(this);
                     ControllerPinGate.require(
                             this,
-                            () ->
-                                    startActivity(
-                                            new Intent(this, GlobalSettingsActivity.class)
-                                                    .putExtra("show_app_assignments", true)),
+                            () -> startActivity(new Intent(this, SetupAppsActivity.class)),
                             false);
                 });
     }
@@ -252,7 +230,6 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void appearance() {
-        text(body, getString(R.string.tour_style_help), 14, true);
         preview(body, style, dp(200));
         CensorAppearance.Type[] types = {
             CensorAppearance.Type.BOX,
@@ -345,8 +322,7 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void permissions() {
-        text(body, getString(R.string.tour_permissions_explanation), 14, true);
-        boolean runtime = censor || limits || whispers;
+        boolean runtime = censor || limits;
         if (runtime)
             permission(
                     R.string.tour_accessibility_title,
@@ -387,7 +363,6 @@ public final class OnboardingActivity extends PreferencePage {
             censor = saved.isCensorEnabled();
             limits = saved.isLimitsEnabled();
             wallet = saved.isWalletEnabled();
-            whispers = saved.isSubliminalEnabled();
         }
         LinearLayout choices = card(body);
         text(choices, getString(R.string.settings_features), 17, false)
@@ -395,8 +370,7 @@ public final class OnboardingActivity extends PreferencePage {
         if (censor) text(choices, getString(R.string.global_feature_censor), 15, false);
         if (limits) text(choices, getString(R.string.global_feature_limits), 15, false);
         if (wallet) text(choices, getString(R.string.global_feature_wallet), 15, false);
-        if (whispers) text(choices, getString(R.string.stats_whispers), 15, false);
-        if (!censor && !limits && !wallet && !whispers)
+        if (!censor && !limits && !wallet)
             text(choices, getString(R.string.tour_features_none), 14, true);
         AppModeManager apps = new AppModeManager(this);
         text(
@@ -415,16 +389,6 @@ public final class OnboardingActivity extends PreferencePage {
                                 : R.string.tour_keyholder_optional),
                 13,
                 true);
-        explain(
-                body,
-                R.drawable.ic_tab_home,
-                R.string.tour_start_service,
-                R.string.tour_start_help);
-        explain(
-                body,
-                R.drawable.ic_tab_settings,
-                R.string.tour_more_settings,
-                R.string.tour_more_help);
     }
 
     private LinearLayout explain(LinearLayout parent, int resource, int title, int explanation) {
@@ -453,7 +417,7 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void preview(LinearLayout parent, CensorAppearance.Type type, int height) {
         CensorPreviewView preview = new CensorPreviewView(this, null);
-        preview.setWidePreview(true);
+        preview.setPhonePreview(true);
         preview.setTag(type.getPreferenceValue());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, height);
         p.bottomMargin = dp(14);
@@ -468,7 +432,6 @@ public final class OnboardingActivity extends PreferencePage {
                     .putBoolean("draft_censor", censor)
                     .putBoolean("draft_limits", limits)
                     .putBoolean("draft_wallet", wallet)
-                    .putBoolean("draft_whispers", whispers)
                     .putString("draft_style", style.getPreferenceValue())
                     .putBoolean("draft_appearance_changed", appearanceChanged)
                     .apply();
@@ -476,7 +439,7 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void finishSetup() {
         if (!replay) {
-            new FeatureModuleManager(this).save(censor, limits, wallet, whispers);
+            new FeatureModuleManager(this).save(censor, limits, wallet);
             if (appearanceChanged) {
                 SettingsRepository settings = new SettingsRepository(this);
                 CensorAppearance old = settings.loadAppearance();

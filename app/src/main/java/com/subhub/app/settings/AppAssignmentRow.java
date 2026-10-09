@@ -24,6 +24,7 @@ public final class AppAssignmentRow extends LinearLayout {
     private final TextView[] captions = new TextView[3];
     private final CheckBox[] checks = new CheckBox[3];
     private boolean stacked;
+    private int moduleCount = 3;
     private final ImageView icon;
     private final TextView name;
     private static final int[] MODULES = {
@@ -139,6 +140,14 @@ public final class AppAssignmentRow extends LinearLayout {
         }
     }
 
+    public void setModuleCount(int count) {
+        if (count < 1 || count > checks.length)
+            throw new IllegalArgumentException("Invalid module count");
+        if (moduleCount == count) return;
+        moduleCount = count;
+        arrange(stacked);
+    }
+
     public CheckBox choice(int index) {
         return checks[index];
     }
@@ -166,8 +175,10 @@ public final class AppAssignmentRow extends LinearLayout {
                         next ? 0 : 1));
         choices.setLayoutParams(
                 new LayoutParams(
-                        next ? LayoutParams.MATCH_PARENT : dp(168), LayoutParams.WRAP_CONTENT));
+                        next ? LayoutParams.MATCH_PARENT : dp(56 * moduleCount),
+                        LayoutParams.WRAP_CONTENT));
         for (int index = 0; index < 3; index++) {
+            choices.getChildAt(index).setVisibility(index < moduleCount ? VISIBLE : GONE);
             captions[index].setVisibility(next ? VISIBLE : GONE);
             choices.getChildAt(index)
                     .setLayoutParams(

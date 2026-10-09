@@ -14,8 +14,8 @@ import android.view.View;
 /**
  * A small, source-native sample used by the censor style cards.
  *
- * <p>The preview is intentionally synthetic: it communicates the effect without showing
- * private or explicit source imagery, and it keeps the settings screen useful offline.</p>
+ * <p>The preview is intentionally synthetic: it communicates the effect without showing private or
+ * explicit source imagery, and it keeps the settings screen useful offline.
  */
 public final class CensorPreviewView extends View {
     private static final int PLUM = Color.rgb(48, 31, 60);
@@ -25,10 +25,15 @@ public final class CensorPreviewView extends View {
     private static final int CYAN = Color.rgb(57, 196, 226);
     private static final int INK = Color.rgb(15, 11, 20);
 
-    private android.graphics.Bitmap wideBitmap;
-    private String wideStyle;
-    private boolean widePreview;
-    public void setWidePreview(boolean wide) { widePreview = wide; invalidate(); }
+    private android.graphics.Bitmap phoneBitmap;
+    private String phoneStyle;
+    private boolean phonePreview;
+
+    public void setPhonePreview(boolean enabled) {
+        phonePreview = enabled;
+        invalidate();
+    }
+
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF scene = new RectF();
     private final RectF target = new RectF();
@@ -48,19 +53,33 @@ public final class CensorPreviewView extends View {
         if (width <= 0f || height <= 0f) return;
 
         String style = String.valueOf(getTag());
-        if (widePreview) { drawWidePreview(canvas, width, height, style); return; }
+        if (phonePreview) {
+            drawPhonePreview(canvas, width, height, style);
+            return;
+        }
         float edge = Math.min(width, height) * 0.06f;
         float phoneHeight = Math.min(height - 2 * edge, (width - 2 * edge) / .54f);
         float phoneWidth = phoneHeight * .54f;
-        scene.set((width - phoneWidth) / 2f, (height - phoneHeight) / 2f,
-                (width + phoneWidth) / 2f, (height + phoneHeight) / 2f);
-        target.set(scene.left + scene.width() * .12f,
+        scene.set(
+                (width - phoneWidth) / 2f,
+                (height - phoneHeight) / 2f,
+                (width + phoneWidth) / 2f,
+                (height + phoneHeight) / 2f);
+        target.set(
+                scene.left + scene.width() * .12f,
                 scene.top + scene.height() * .30f,
                 scene.right - scene.width() * .12f,
                 scene.top + scene.height() * .76f);
 
-        paint.setShader(new LinearGradient(scene.left, scene.top, scene.right, scene.bottom,
-                Color.rgb(39, 25, 49), Color.rgb(25, 18, 33), Shader.TileMode.CLAMP));
+        paint.setShader(
+                new LinearGradient(
+                        scene.left,
+                        scene.top,
+                        scene.right,
+                        scene.bottom,
+                        Color.rgb(39, 25, 49),
+                        Color.rgb(25, 18, 33),
+                        Shader.TileMode.CLAMP));
         paint.setStyle(Paint.Style.FILL);
         float corner = scene.width() * .14f;
         canvas.drawRoundRect(scene, corner, corner, paint);
@@ -90,56 +109,156 @@ public final class CensorPreviewView extends View {
         }
     }
 
-    private void drawWidePreview(Canvas canvas, float width, float height, String style) {
-        if (wideBitmap == null || !style.equals(wideStyle)) {
-            if (wideBitmap != null) wideBitmap.recycle();
-            android.graphics.Bitmap source=android.graphics.Bitmap.createBitmap(640,360,android.graphics.Bitmap.Config.ARGB_8888);
-            Canvas sample=new Canvas(source); Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG);
-            sample.drawColor(Color.rgb(26,19,34));
-            brush.setColor(Color.rgb(96,64,118));sample.drawCircle(34,30,14,brush);
-            brush.setColor(Color.rgb(183,148,206));sample.drawRoundRect(60,20,235,28,4,4,brush);
-            brush.setColor(Color.rgb(83,62,100));sample.drawRoundRect(60,35,168,41,3,3,brush);
-            brush.setShader(new LinearGradient(24,60,616,308,Color.rgb(121,90,152),Color.rgb(44,74,116),Shader.TileMode.CLAMP));sample.drawRoundRect(24,60,616,308,12,12,brush);brush.setShader(null);
-            // Harmless geometric scene with detail that makes blur and pixelation visible.
-            for(int y=0;y<8;y++)for(int x=0;x<14;x++){brush.setColor(Color.rgb(65+(x*17+y*11)%100,50+(x*7+y*19)%90,95+(x*13+y*7)%100));sample.drawCircle(45+x*42,78+y*28,8+(x+y)%5,brush);}
-            brush.setColor(Color.rgb(211,188,231));sample.drawRoundRect(24,326,310,333,3,3,brush);
-            brush.setColor(Color.rgb(87,64,106));sample.drawRoundRect(24,343,480,349,3,3,brush);
-            wideBitmap=source.copy(android.graphics.Bitmap.Config.ARGB_8888,true);
-            CensorAppearance.Type type=CensorAppearance.Type.fromPreference(style);
-            if(type==CensorAppearance.Type.CUSTOM)type=CensorAppearance.Type.BOX;
-            try(com.subhub.app.capture.CensorRenderer renderer=new com.subhub.app.capture.CensorRenderer(getContext(),java.util.Collections.emptyList())) {
-                renderer.draw(wideBitmap,source,java.util.Collections.singletonList(new com.subhub.app.detection.Detection("preview","preview",1f,new com.subhub.app.detection.BBox(136,112,368,140),false,false)),new CensorAppearance(type,65,true,false,getContext().getColor(com.subhub.app.R.color.accent_hot)));
-            } finally { source.recycle(); }
-            wideStyle=style;
+    private void drawPhonePreview(Canvas canvas, float width, float height, String style) {
+        if (phoneBitmap == null || !style.equals(phoneStyle)) {
+            if (phoneBitmap != null) phoneBitmap.recycle();
+            android.graphics.Bitmap source =
+                    android.graphics.Bitmap.createBitmap(
+                            240, 480, android.graphics.Bitmap.Config.ARGB_8888);
+            Canvas sample = new Canvas(source);
+            Paint brush = new Paint(Paint.ANTI_ALIAS_FLAG);
+            brush.setColor(Color.rgb(26, 19, 34));
+            sample.drawRoundRect(2, 2, 238, 478, 28, 28, brush);
+            brush.setStyle(Paint.Style.STROKE);
+            brush.setStrokeWidth(4);
+            brush.setColor(PLUM_LIGHT);
+            sample.drawRoundRect(2, 2, 238, 478, 28, 28, brush);
+            brush.setStyle(Paint.Style.FILL);
+            sample.drawRoundRect(91, 12, 149, 17, 3, 3, brush);
+            sample.drawCircle(28, 47, 10, brush);
+            brush.setColor(Color.rgb(183, 148, 206));
+            sample.drawRoundRect(47, 40, 152, 47, 3, 3, brush);
+            brush.setColor(Color.rgb(83, 62, 100));
+            sample.drawRoundRect(47, 53, 119, 59, 3, 3, brush);
+            brush.setShader(
+                    new LinearGradient(
+                            16,
+                            76,
+                            224,
+                            364,
+                            Color.rgb(121, 90, 152),
+                            Color.rgb(44, 74, 116),
+                            Shader.TileMode.CLAMP));
+            sample.drawRoundRect(16, 76, 224, 364, 10, 10, brush);
+            brush.setShader(null);
+            // Synthetic portrait feed: enough detail to demonstrate actual blur and pixelation.
+            for (int y = 0; y < 12; y++)
+                for (int x = 0; x < 8; x++) {
+                    brush.setColor(
+                            Color.rgb(
+                                    65 + (x * 17 + y * 11) % 100,
+                                    50 + (x * 7 + y * 19) % 90,
+                                    95 + (x * 13 + y * 7) % 100));
+                    sample.drawCircle(29 + x * 26, 91 + y * 23, 6, brush);
+                }
+            brush.setColor(Color.rgb(211, 188, 231));
+            sample.drawRoundRect(16, 388, 172, 395, 3, 3, brush);
+            brush.setColor(Color.rgb(87, 64, 106));
+            sample.drawRoundRect(16, 407, 214, 413, 3, 3, brush);
+            sample.drawRoundRect(16, 424, 157, 430, 3, 3, brush);
+            brush.setColor(PLUM_LIGHT);
+            sample.drawRoundRect(86, 459, 154, 465, 3, 3, brush);
+            phoneBitmap = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true);
+            CensorAppearance.Type type = CensorAppearance.Type.fromPreference(style);
+            if (type == CensorAppearance.Type.CUSTOM) type = CensorAppearance.Type.BOX;
+            try (com.subhub.app.capture.CensorRenderer renderer =
+                    new com.subhub.app.capture.CensorRenderer(
+                            getContext(), java.util.Collections.emptyList())) {
+                renderer.draw(
+                        phoneBitmap,
+                        source,
+                        java.util.Collections.singletonList(
+                                new com.subhub.app.detection.Detection(
+                                        "preview",
+                                        "preview",
+                                        1f,
+                                        new com.subhub.app.detection.BBox(40, 133, 160, 183),
+                                        false,
+                                        false)),
+                        new CensorAppearance(
+                                type,
+                                65,
+                                true,
+                                false,
+                                getContext().getColor(com.subhub.app.R.color.accent_hot)));
+            } finally {
+                source.recycle();
+            }
+            phoneStyle = style;
         }
-        paint.setShader(null);paint.setStyle(Paint.Style.FILL);
-        canvas.drawBitmap(wideBitmap,null,new RectF(0,0,width,height),paint);
+        float phoneHeight = height * .94f;
+        float phoneWidth = phoneHeight * .5f;
+        float left = (width - phoneWidth) / 2;
+        float top = (height - phoneHeight) / 2;
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawBitmap(
+                phoneBitmap,
+                null,
+                new RectF(left, top, left + phoneWidth, top + phoneHeight),
+                paint);
     }
-    @Override protected void onDetachedFromWindow() { if(wideBitmap!=null){wideBitmap.recycle();wideBitmap=null;}super.onDetachedFromWindow(); }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (phoneBitmap != null) {
+            phoneBitmap.recycle();
+            phoneBitmap = null;
+        }
+        super.onDetachedFromWindow();
+    }
 
     private void drawSceneChrome(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(PLUM_LIGHT);
-        canvas.drawRoundRect(scene.left + scene.width() * .35f,
-                scene.top + scene.height() * .065f, scene.right - scene.width() * .35f,
-                scene.top + scene.height() * .085f, 2, 2, paint);
-        canvas.drawCircle(scene.left + scene.width() * .18f,
-                scene.top + scene.height() * .19f, scene.width() * .05f, paint);
+        canvas.drawRoundRect(
+                scene.left + scene.width() * .35f,
+                scene.top + scene.height() * .065f,
+                scene.right - scene.width() * .35f,
+                scene.top + scene.height() * .085f,
+                2,
+                2,
+                paint);
+        canvas.drawCircle(
+                scene.left + scene.width() * .18f,
+                scene.top + scene.height() * .19f,
+                scene.width() * .05f,
+                paint);
         paint.setColor(Color.rgb(83, 57, 102));
-        canvas.drawRoundRect(scene.left + scene.width() * .30f,
-                scene.top + scene.height() * .17f, scene.right - scene.width() * .12f,
-                scene.top + scene.height() * .21f, 2, 2, paint);
+        canvas.drawRoundRect(
+                scene.left + scene.width() * .30f,
+                scene.top + scene.height() * .17f,
+                scene.right - scene.width() * .12f,
+                scene.top + scene.height() * .21f,
+                2,
+                2,
+                paint);
         paint.setColor(Color.rgb(75, 48, 89));
-        canvas.drawRoundRect(scene.left + scene.width() * .12f,
-                scene.top + scene.height() * .81f, scene.right - scene.width() * .12f,
-                scene.top + scene.height() * .84f, 2, 2, paint);
-        canvas.drawRoundRect(scene.left + scene.width() * .12f,
-                scene.top + scene.height() * .87f, scene.left + scene.width() * .60f,
-                scene.top + scene.height() * .895f, 2, 2, paint);
+        canvas.drawRoundRect(
+                scene.left + scene.width() * .12f,
+                scene.top + scene.height() * .81f,
+                scene.right - scene.width() * .12f,
+                scene.top + scene.height() * .84f,
+                2,
+                2,
+                paint);
+        canvas.drawRoundRect(
+                scene.left + scene.width() * .12f,
+                scene.top + scene.height() * .87f,
+                scene.left + scene.width() * .60f,
+                scene.top + scene.height() * .895f,
+                2,
+                2,
+                paint);
         paint.setColor(PLUM_LIGHT);
-        canvas.drawRoundRect(scene.left + scene.width() * .35f,
-                scene.bottom - scene.height() * .055f, scene.right - scene.width() * .35f,
-                scene.bottom - scene.height() * .035f, 2, 2, paint);
+        canvas.drawRoundRect(
+                scene.left + scene.width() * .35f,
+                scene.bottom - scene.height() * .055f,
+                scene.right - scene.width() * .35f,
+                scene.bottom - scene.height() * .035f,
+                2,
+                2,
+                paint);
     }
 
     private void drawBox(Canvas canvas) {
@@ -163,13 +282,17 @@ public final class CensorPreviewView extends View {
         float cellHeight = target.height() / rows;
         for (int row = 0; row < rows; row++) {
             for (int column = 0; column < columns; column++) {
-                paint.setColor(((row + column) % 3 == 0) ? MAGENTA
-                        : ((row * 2 + column) % 3 == 0 ? VIOLET : Color.rgb(92, 39, 110)));
+                paint.setColor(
+                        ((row + column) % 3 == 0)
+                                ? MAGENTA
+                                : ((row * 2 + column) % 3 == 0 ? VIOLET : Color.rgb(92, 39, 110)));
                 float inset = Math.max(1f, cellWidth * 0.08f);
-                canvas.drawRect(target.left + column * cellWidth + inset,
+                canvas.drawRect(
+                        target.left + column * cellWidth + inset,
                         target.top + row * cellHeight + inset,
                         target.left + (column + 1) * cellWidth - inset,
-                        target.top + (row + 1) * cellHeight - inset, paint);
+                        target.top + (row + 1) * cellHeight - inset,
+                        paint);
             }
         }
     }
@@ -179,11 +302,17 @@ public final class CensorPreviewView extends View {
         paint.setColor(Color.argb(224, 66, 41, 83));
         canvas.drawRoundRect(target, target.height() * 0.12f, target.height() * 0.12f, paint);
         paint.setColor(Color.argb(135, 236, 64, 167));
-        canvas.drawCircle(target.left + target.width() * 0.38f, target.centerY(),
-                target.height() * 0.31f, paint);
+        canvas.drawCircle(
+                target.left + target.width() * 0.38f,
+                target.centerY(),
+                target.height() * 0.31f,
+                paint);
         paint.setColor(Color.argb(118, 116, 76, 196));
-        canvas.drawCircle(target.left + target.width() * 0.68f, target.centerY(),
-                target.height() * 0.34f, paint);
+        canvas.drawCircle(
+                target.left + target.width() * 0.68f,
+                target.centerY(),
+                target.height() * 0.34f,
+                paint);
         paint.setColor(Color.argb(98, 247, 183, 235));
         canvas.drawCircle(target.centerX(), target.centerY(), target.height() * 0.20f, paint);
     }
@@ -221,8 +350,9 @@ public final class CensorPreviewView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.rgb(7, 7, 11));
         canvas.drawRoundRect(target, target.height() * 0.08f, target.height() * 0.08f, paint);
-        int[] values = {VIOLET, Color.WHITE, Color.rgb(94, 83, 108), MAGENTA,
-                Color.rgb(38, 31, 45), Color.WHITE};
+        int[] values = {
+            VIOLET, Color.WHITE, Color.rgb(94, 83, 108), MAGENTA, Color.rgb(38, 31, 45), Color.WHITE
+        };
         int columns = 8;
         int rows = 5;
         float cellWidth = target.width() / columns;
@@ -231,10 +361,12 @@ public final class CensorPreviewView extends View {
         for (int row = 0; row < rows; row++) {
             for (int column = 0; column < columns; column++) {
                 paint.setColor(values[(row * 3 + column + offset) % values.length]);
-                canvas.drawRect(target.left + column * cellWidth,
+                canvas.drawRect(
+                        target.left + column * cellWidth,
                         target.top + row * cellHeight,
                         target.left + (column + 1) * cellWidth + 0.5f,
-                        target.top + (row + 1) * cellHeight + 0.5f, paint);
+                        target.top + (row + 1) * cellHeight + 0.5f,
+                        paint);
             }
             offset += 2;
         }
@@ -254,18 +386,24 @@ public final class CensorPreviewView extends View {
             float bandHeight = target.height() * heights[index];
             float shift = target.width() * ((index % 2 == 0) ? 0.15f : -0.11f);
             paint.setColor(index % 3 == 0 ? CYAN : (index % 3 == 1 ? MAGENTA : VIOLET));
-            canvas.drawRect(target.left + shift, y, target.right + shift * 0.45f,
-                    y + bandHeight, paint);
+            canvas.drawRect(
+                    target.left + shift, y, target.right + shift * 0.45f, y + bandHeight, paint);
             paint.setColor(index % 2 == 0 ? MAGENTA : CYAN);
-            canvas.drawRect(target.left - shift * 0.55f, y + bandHeight * 0.58f,
-                    target.right - shift * 0.20f, y + bandHeight, paint);
+            canvas.drawRect(
+                    target.left - shift * 0.55f,
+                    y + bandHeight * 0.58f,
+                    target.right - shift * 0.20f,
+                    y + bandHeight,
+                    paint);
             y += bandHeight + target.height() * 0.025f;
         }
         paint.setColor(Color.WHITE);
-        canvas.drawRect(target.left + target.width() * 0.08f,
+        canvas.drawRect(
+                target.left + target.width() * 0.08f,
                 target.centerY() - target.height() * 0.045f,
                 target.right - target.width() * 0.05f,
-                target.centerY() + target.height() * 0.045f, paint);
+                target.centerY() + target.height() * 0.045f,
+                paint);
     }
 
     private void drawTape(Canvas canvas) {
@@ -278,8 +416,12 @@ public final class CensorPreviewView extends View {
         for (int index = -2; index < 8; index++) {
             paint.setColor(index % 2 == 0 ? Color.rgb(246, 207, 61) : MAGENTA);
             float x = target.left + index * target.width() * 0.22f;
-            canvas.drawLine(x, target.bottom + target.height() * 0.15f,
-                    x + target.width() * 0.40f, target.top - target.height() * 0.15f, paint);
+            canvas.drawLine(
+                    x,
+                    target.bottom + target.height() * 0.15f,
+                    x + target.width() * 0.40f,
+                    target.top - target.height() * 0.15f,
+                    paint);
         }
         canvas.restore();
         paint.setStyle(Paint.Style.STROKE);
@@ -291,40 +433,55 @@ public final class CensorPreviewView extends View {
     private void drawError(Canvas canvas) {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.rgb(232, 228, 234));
-        RectF dialog = new RectF(target.left + target.width() * 0.05f,
-                target.top + target.height() * 0.10f,
-                target.right - target.width() * 0.05f,
-                target.bottom - target.height() * 0.10f);
+        RectF dialog =
+                new RectF(
+                        target.left + target.width() * 0.05f,
+                        target.top + target.height() * 0.10f,
+                        target.right - target.width() * 0.05f,
+                        target.bottom - target.height() * 0.10f);
         canvas.drawRoundRect(dialog, target.height() * 0.08f, target.height() * 0.08f, paint);
         paint.setColor(Color.rgb(215, 38, 48));
-        canvas.drawCircle(dialog.left + dialog.width() * 0.22f, dialog.centerY(),
-                dialog.height() * 0.22f, paint);
+        canvas.drawCircle(
+                dialog.left + dialog.width() * 0.22f,
+                dialog.centerY(),
+                dialog.height() * 0.22f,
+                paint);
         paint.setColor(Color.WHITE);
         paint.setStrokeWidth(Math.max(1.5f, dialog.height() * 0.06f));
         paint.setStyle(Paint.Style.STROKE);
-        canvas.drawLine(dialog.left + dialog.width() * 0.16f,
+        canvas.drawLine(
+                dialog.left + dialog.width() * 0.16f,
                 dialog.centerY() - dialog.height() * 0.08f,
                 dialog.left + dialog.width() * 0.28f,
-                dialog.centerY() + dialog.height() * 0.08f, paint);
-        canvas.drawLine(dialog.left + dialog.width() * 0.28f,
+                dialog.centerY() + dialog.height() * 0.08f,
+                paint);
+        canvas.drawLine(
+                dialog.left + dialog.width() * 0.28f,
                 dialog.centerY() - dialog.height() * 0.08f,
                 dialog.left + dialog.width() * 0.16f,
-                dialog.centerY() + dialog.height() * 0.08f, paint);
+                dialog.centerY() + dialog.height() * 0.08f,
+                paint);
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.rgb(74, 62, 80));
-        canvas.drawRect(dialog.left + dialog.width() * 0.42f,
+        canvas.drawRect(
+                dialog.left + dialog.width() * 0.42f,
                 dialog.top + dialog.height() * 0.30f,
                 dialog.right - dialog.width() * 0.12f,
-                dialog.top + dialog.height() * 0.37f, paint);
-        canvas.drawRect(dialog.left + dialog.width() * 0.42f,
+                dialog.top + dialog.height() * 0.37f,
+                paint);
+        canvas.drawRect(
+                dialog.left + dialog.width() * 0.42f,
                 dialog.top + dialog.height() * 0.48f,
                 dialog.right - dialog.width() * 0.24f,
-                dialog.top + dialog.height() * 0.55f, paint);
+                dialog.top + dialog.height() * 0.55f,
+                paint);
         paint.setColor(Color.rgb(0, 120, 215));
-        canvas.drawRect(dialog.left + dialog.width() * 0.66f,
+        canvas.drawRect(
+                dialog.left + dialog.width() * 0.66f,
                 dialog.bottom - dialog.height() * 0.20f,
                 dialog.right - dialog.width() * 0.12f,
-                dialog.bottom - dialog.height() * 0.08f, paint);
+                dialog.bottom - dialog.height() * 0.08f,
+                paint);
     }
 
     private void drawBlockedWord(Canvas canvas, float centerX, float centerY) {
@@ -332,7 +489,13 @@ public final class CensorPreviewView extends View {
         paint.setColor(Color.rgb(221, 205, 226));
         float width = target.width() * 0.50f;
         float height = Math.max(2f, target.height() * 0.075f);
-        canvas.drawRoundRect(centerX - width / 2f, centerY - height / 2f,
-                centerX + width / 2f, centerY + height / 2f, height, height, paint);
+        canvas.drawRoundRect(
+                centerX - width / 2f,
+                centerY - height / 2f,
+                centerX + width / 2f,
+                centerY + height / 2f,
+                height,
+                height,
+                paint);
     }
 }

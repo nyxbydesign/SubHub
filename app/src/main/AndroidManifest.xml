@@ -49,6 +49,7 @@
             android:name=".MainActivity"
             android:exported="true" />
         <activity android:name=".onboarding.OnboardingActivity" android:exported="false" />
+        <activity android:name=".settings.SetupAppsActivity" android:exported="false" />
         <activity-alias android:name=".DefaultLauncher" android:targetActivity=".MainActivity"
             android:exported="true" android:enabled="true" android:label="@string/app_name"
             android:icon="@mipmap/ic_launcher">
