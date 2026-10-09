@@ -2814,11 +2814,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 candidate.scene == null ? null : candidate.scene.spatialFrame);
         Rect publicationViewport = cacheViewport;
         traceCaptureStage(candidate.capturedAtUptimeMillis, "publication-post");
-        main.post(() -> {
+        Runnable publication = () -> {
             traceCaptureStage(candidate.capturedAtUptimeMillis, "publication-main");
-            Runnable publication = () -> {
-                traceCaptureStage(candidate.capturedAtUptimeMillis, "publication-tick");
-                if (isCurrentCapture(requestedEpoch) && overlay != null
+            traceCaptureStage(candidate.capturedAtUptimeMillis, "publication-tick");
+            if (isCurrentCapture(requestedEpoch) && overlay != null
                     && isCurrentVisualDocument(candidate.visualDocumentEpoch,
                             candidate.scrollSurfaceKey)
                     && (candidate.continuousMotionInference
@@ -2988,27 +2987,27 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                         + " renderSourceBias=" + Math.round(frameRenderReference.biasX())
                         + ',' + Math.round(frameRenderReference.biasY()));
                 scheduleGpuPreparationWarmup();
-                } else if (overlayFrame != null) {
-                    overlayFrame.recycle();
-                }
-            };
-            if (publishedSceneCommit == null) {
-                publication.run();
-                return;
+            } else if (overlayFrame != null) {
+                overlayFrame.recycle();
             }
-            PendingScenePresentation presentation = new PendingScenePresentation(
-                    publishedSceneCommit.key().toString(), publication, () -> {
-                        if (overlayFrame != null && !overlayFrame.isRecycled()) {
-                            overlayFrame.recycle();
-                        }
-                    });
-            LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter;
-            if (presenter == null) {
-                presentation.dispose();
-            } else {
-                presenter.submit(presentation);
+        };
+        String presentationId = publishedSceneCommit == null
+                ? "legacy-" + candidate.fastSubmissionSequence
+                : publishedSceneCommit.key().toString();
+        submitScenePresentation(presentationId, publication, () -> {
+            if (overlayFrame != null && !overlayFrame.isRecycled()) {
+                overlayFrame.recycle();
             }
         });
+    }
+
+    /** Admission is worker-side; an unavailable main looper must never become a frame queue. */
+    private void submitScenePresentation(String sceneId, Runnable publication, Runnable disposer) {
+        PendingScenePresentation presentation = new PendingScenePresentation(
+                sceneId, publication, disposer);
+        LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter;
+        if (presenter == null) presentation.dispose();
+        else presenter.submit(presentation);
     }
 
     private void scheduleGpuPreparationWarmup() {
@@ -6011,7 +6010,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 command -> main.post(() -> Choreographer.getInstance()
                         .postFrameCallback(frameTimeNanos -> command.run())),
                 PendingScenePresentation::present,
-                PendingScenePresentation::dispose);
+                PendingScenePresentation::dispose,
+                1);
     }
 
     private static final class PendingScenePresentation {

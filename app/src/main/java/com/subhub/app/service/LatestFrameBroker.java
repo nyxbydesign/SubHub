@@ -11,15 +11,23 @@ final class LatestFrameBroker<T> implements AutoCloseable {
     private final Executor executor;
     private final Consumer<T> processor;
     private final Consumer<T> disposer;
+    private final int maximumPerDispatch;
     private final AtomicReference<T> pending = new AtomicReference<>();
     private final AtomicBoolean draining = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicLong dropped = new AtomicLong();
 
     LatestFrameBroker(Executor executor, Consumer<T> processor, Consumer<T> disposer) {
+        this(executor, processor, disposer, Integer.MAX_VALUE);
+    }
+
+    LatestFrameBroker(Executor executor, Consumer<T> processor, Consumer<T> disposer,
+            int maximumPerDispatch) {
+        if (maximumPerDispatch < 1) throw new IllegalArgumentException("positive dispatch limit required");
         this.executor = executor;
         this.processor = processor;
         this.disposer = disposer;
+        this.maximumPerDispatch = maximumPerDispatch;
     }
 
     void submit(T value) {
@@ -33,6 +41,13 @@ final class LatestFrameBroker<T> implements AutoCloseable {
             dropped.incrementAndGet();
             disposer.accept(replaced);
         }
+        // close() can win after the first check but before insertion. Reclaim the orphan even
+        // when close already drained its earlier snapshot and scheduleDrain will now refuse.
+        if (closed.get()) {
+            T orphan = pending.getAndSet(null);
+            if (orphan != null) disposer.accept(orphan);
+            return;
+        }
         scheduleDrain();
     }
 
@@ -40,11 +55,19 @@ final class LatestFrameBroker<T> implements AutoCloseable {
 
     private void scheduleDrain() {
         if (closed.get() || !draining.compareAndSet(false, true)) return;
-        executor.execute(this::drain);
+        try {
+            executor.execute(this::drain);
+        } catch (RuntimeException | Error rejected) {
+            draining.set(false);
+            T undeliverable = pending.getAndSet(null);
+            if (undeliverable != null) disposer.accept(undeliverable);
+            throw rejected;
+        }
     }
 
     private void drain() {
         try {
+            int processed = 0;
             while (!closed.get()) {
                 T value = pending.getAndSet(null);
                 if (value == null) return;
@@ -53,6 +76,7 @@ final class LatestFrameBroker<T> implements AutoCloseable {
                 } finally {
                     disposer.accept(value);
                 }
+                if (++processed >= maximumPerDispatch) return;
             }
         } finally {
             draining.set(false);

@@ -133,6 +133,70 @@ public final class SceneMotionIntegrationAndroidTest {
         } finally { event.recycle(); }
     }
 
+    @Test public void completedPresentationIsCoalescedBeforeBlockedMainAndReleasedOnce() throws Exception {
+        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+        java.util.ArrayDeque<Runnable> ticks = new java.util.ArrayDeque<>();
+        java.util.ArrayList<Integer> presented = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<Throwable> mainFailure = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.CountDownLatch blocked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch unblock = new java.util.concurrent.CountDownLatch(1);
+        LatestFrameBroker<Object> broker = new LatestFrameBroker<>(ticks::addLast,
+                packet -> invokePresentationPacket(packet, "present"),
+                packet -> invokePresentationPacket(packet, "dispose"), 1);
+        Field presenter = ScreenshotAccessibilityService.class.getDeclaredField("scenePresenter");
+        presenter.setAccessible(true);
+        presenter.set(service, broker);
+        Method submit = ScreenshotAccessibilityService.class.getDeclaredMethod(
+                "submitScenePresentation", String.class, Runnable.class, Runnable.class);
+        submit.setAccessible(true);
+        assertTrue(new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            blocked.countDown();
+            try {
+                if (!unblock.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    mainFailure.set(new AssertionError("Synthetic main block was not released"));
+                }
+            } catch (InterruptedException error) { mainFailure.set(error); }
+        }));
+        try {
+            assertTrue(blocked.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            for (int id = 1; id <= 24; id++) {
+                final int sceneId = id;
+                submit.invoke(service, "synthetic-" + id, (Runnable) () -> {
+                    assertEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper());
+                    presented.add(sceneId);
+                    released.incrementAndGet(); // Consumer adopts and releases this synthetic frame.
+                }, (Runnable) released::incrementAndGet);
+            }
+            assertEquals("Only one callback can wait behind main", 1, ticks.size());
+            assertEquals("Replaced frames close before main resumes", 23, released.get());
+            assertTrue(presented.isEmpty());
+            unblock.countDown();
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .runOnMainSync(() -> ticks.removeFirst().run());
+            assertNull(mainFailure.get());
+            assertEquals(List.of(24), presented);
+            assertEquals(24, released.get());
+            submit.invoke(service, "synthetic-close", (Runnable) () -> fail("Closed presenter must not publish"),
+                    (Runnable) released::incrementAndGet);
+            broker.close();
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .runOnMainSync(() -> ticks.removeFirst().run());
+            assertEquals(25, released.get());
+        } finally {
+            unblock.countDown();
+            broker.close();
+        }
+    }
+
+    private static void invokePresentationPacket(Object packet, String action) {
+        try {
+            Method method = packet.getClass().getDeclaredMethod(action);
+            method.setAccessible(true);
+            method.invoke(packet);
+        } catch (Exception error) { throw new AssertionError("Synthetic presentation callback failed", error); }
+    }
+
     @Test public void oldGenerationCanQueryButCannotInsertOrMoveEventCacheEvidence() throws Exception {
         ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
         Field surface = ScreenshotAccessibilityService.class.getDeclaredField("activeScrollSurfaceKey");
