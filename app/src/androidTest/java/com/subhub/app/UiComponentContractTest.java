@@ -124,6 +124,13 @@ public final class UiComponentContractTest {
         try (ActivityScenario<PenanceActivity> scenario =
                 ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(
+                    activity ->
+                            activity.findViewById(android.R.id.content)
+                                    .findViewWithTag("wallet:rules")
+                                    .performClick());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .waitForIdleSync();
+            scenario.onActivity(
                     activity -> {
                         int[] inputIds = {
                             R.id.rule_detection_amount,
@@ -147,6 +154,16 @@ public final class UiComponentContractTest {
                                     "Input must be linked to its visible label",
                                     hasLabel(activity.findViewById(android.R.id.content), id));
                         }
+                    });
+            scenario.onActivity(
+                    activity ->
+                            activity.findViewById(android.R.id.content)
+                                    .findViewWithTag("wallet:corrections")
+                                    .performClick());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .waitForIdleSync();
+            scenario.onActivity(
+                    activity -> {
                         int[] actionIds = {R.id.button_forgive_latest, R.id.button_clear_unpaid};
                         for (int id : actionIds) {
                             TextView action = activity.findViewById(id);

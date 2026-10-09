@@ -60,22 +60,8 @@
                     android:text="@string/hardcore_status_off"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
-                <TextView
-                    android:id="@+id/button_hardcore_system"
-                    style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="9dp"
-                    android:text="@string/hardcore_open_admin"
-                    />
-                <TextView
-                    android:id="@+id/button_hardcore_restricted"
-                    style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="7dp"
-                    android:text="@string/hardcore_open_restricted"
-                    android:visibility="gone" />
+
+
             </LinearLayout>
 
             <LinearLayout
@@ -129,61 +115,12 @@
                 android:orientation="vertical"
                 android:padding="12dp">
                 <LinearLayout
-                    android:id="@+id/recognition_card"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="0dp"
-                    android:orientation="vertical"
-                    android:padding="0dp">
-                    <TextView style="@style/Widget.SubHub.FieldLabel"
-                        android:layout_marginTop="0dp"
-                        android:text="@string/app_mode_rules_title" />
-                    <CheckBox
-                        android:id="@+id/armed"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="48dp"
-                        android:layout_marginTop="4dp"
-                    android:buttonTint="@color/toggle_tint"
-                        android:text="@string/app_mode_armed"
-                        android:visibility="gone"
-                        android:textColor="@color/text_primary" />
-                    <com.subhub.app.util.CompactChoiceGroup
-                        android:id="@+id/mode_group"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical">
-                        <RadioButton
-                            android:id="@+id/mode_always"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:minHeight="48dp"
-                            android:buttonTint="@color/toggle_tint"
-                            android:text="@string/app_mode_always"
-                            android:textColor="@color/text_primary" />
-                        <RadioButton
-                            android:id="@+id/mode_selected"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:minHeight="48dp"
-                            android:buttonTint="@color/toggle_tint"
-                            android:text="@string/app_mode_selected"
-                            android:textColor="@color/text_primary" />
-                    </com.subhub.app.util.CompactChoiceGroup>
-                </LinearLayout>
-                <LinearLayout
                     android:id="@+id/app_list_card"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:orientation="vertical"
                     android:padding="0dp">
-                    <TextView style="@style/Widget.SubHub.FieldLabel"
-                        android:layout_marginTop="0dp"
-                        android:text="@string/app_selection_title" />
-                    <TextView style="@style/Widget.SubHub.FieldHelp"
-                        android:layout_marginTop="3dp"
-                        android:text="@string/app_selection_help" />
                     <TextView
                         android:id="@+id/selected_count"
                         android:layout_width="match_parent"
@@ -280,183 +217,10 @@
                     <TextView android:id="@+id/button_diagnostics"
                         style="@style/Widget.SubHub.SettingsAction"
                         android:text="@string/global_diagnostics" />
-                    <TextView android:id="@+id/button_commitment"
-                        style="@style/Widget.SubHub.SettingsAction"
-                        android:text="@string/global_security" />
+
                 </GridLayout>
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/paypal_card"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/settings_card_gap"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="12dp">
-                <TextView style="@style/Widget.SubHub.SectionHeader"
-                    android:text="@string/paypal_settings_title" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:layout_marginTop="3dp"
-                    android:text="@string/paypal_settings_help" />
-                <TextView style="@style/Widget.SubHub.FieldLabel"
-                    android:text="@string/paypal_environment_label" />
-                <com.subhub.app.util.CompactChoiceGroup
-                    android:id="@+id/paypal_environment"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    <RadioButton
-                        android:id="@+id/paypal_environment_sandbox"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:minHeight="48dp"
-                        android:layout_weight="1"
-                        android:text="@string/paypal_environment_sandbox"
-                        android:textColor="@color/text_primary" />
-                    <RadioButton
-                        android:id="@+id/paypal_environment_live"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:minHeight="48dp"
-                        android:layout_weight="1"
-                        android:text="@string/paypal_environment_live"
-                        android:textColor="@color/text_primary" />
-                </com.subhub.app.util.CompactChoiceGroup>
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/paypal_environment_help" />
-                <TextView
-                    android:id="@+id/paypal_sandbox_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="7dp"
-                    android:textColor="@color/accent_text"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <TextView style="@style/Widget.SubHub.FieldLabel"
-                    android:text="@string/wallet_currency_label" />
-                <com.subhub.app.util.CompactChoiceGroup
-                    android:id="@+id/wallet_currency"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    <RadioButton android:id="@+id/wallet_currency_eur"
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:minHeight="48dp"
-                        android:text="@string/wallet_currency_eur" />
-                    <RadioButton android:id="@+id/wallet_currency_usd"
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:minHeight="48dp"
-                        android:text="@string/wallet_currency_usd" />
-                </com.subhub.app.util.CompactChoiceGroup>
-                <TextView android:id="@+id/wallet_currency_status"
-                    style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/wallet_currency_help" />
-                <Button android:id="@+id/button_refresh_wallet_currency"
-                    style="@style/Widget.SubHub.CompactOutlineButton"
-                    android:layout_width="match_parent"
-                    android:text="@string/wallet_currency_refresh" />
-                <TextView android:labelFor="@id/paypal_client_id" style="@style/Widget.SubHub.FieldLabel"
-                    android:text="@string/paypal_client_id_label" />
-                <EditText style="@style/Widget.SubHub.Input"
-                    android:id="@+id/paypal_client_id"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="3dp"
-                    android:hint="@string/paypal_client_id_hint"
-                    android:inputType="textNoSuggestions"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_muted" />
-                <TextView android:labelFor="@id/paypal_client_secret" style="@style/Widget.SubHub.FieldLabel"
-                    android:text="@string/paypal_client_secret_label" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/paypal_client_secret_help" />
-                <EditText style="@style/Widget.SubHub.Input"
-                    android:id="@+id/paypal_client_secret"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="3dp"
-                    android:hint="@string/paypal_client_secret_hint"
-                    android:inputType="textPassword"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_muted" />
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="7dp"
-                    android:orientation="horizontal">
-                    <Button
-                        android:id="@+id/button_save_paypal_sandbox"
-                        style="@style/Widget.SubHub.CompactOutlineButton"
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:textColor="@color/text_primary"
-                        android:text="@string/paypal_sandbox_save" />
-                    <Button
-                        android:id="@+id/button_clear_paypal_sandbox"
-                        style="@style/Widget.SubHub.CompactOutlineButton"
-                        android:layout_width="0dp"
-                        android:layout_marginStart="6dp"
-                        android:layout_weight="1"
-                        android:textColor="@color/text_primary"
-                        android:text="@string/paypal_sandbox_clear" />
-                </LinearLayout>
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/paypal_vault_help" />
-                <TextView
-                    android:id="@+id/paypal_vault_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/accent_text"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <Button
-                    android:id="@+id/button_link_paypal_wallet"
-                    style="@style/Widget.SubHub.CompactOutlineButton"
-                    android:layout_width="match_parent"
-                    android:layout_marginTop="7dp"
-                    android:text="@string/paypal_wallet_link" />
-                <CheckBox
-                    android:id="@+id/paypal_auto_pay_enabled"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:minHeight="@dimen/control_min_height"
-                    android:text="@string/paypal_auto_pay_enable"
-                    android:textColor="@color/text_primary" />
-                <TextView style="@style/Widget.SubHub.FieldHelp"
-                    android:text="@string/paypal_auto_pay_help" />
-                <TextView
-                    android:id="@+id/paypal_auto_pay_status"
-                    style="@style/Widget.SubHub.FieldHelp"
-                    android:layout_marginTop="5dp"
-                    android:textColor="@color/accent_hot"
-                    android:visibility="gone" />
-                <TextView android:labelFor="@id/paypal_link" style="@style/Widget.SubHub.FieldLabel"
-                    android:text="@string/paypal_link_label" />
-                <EditText style="@style/Widget.SubHub.Input"
-                    android:id="@+id/paypal_link"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="3dp"
-                    android:hint="@string/paypal_link_hint"
-                    android:inputType="textUri"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_muted" />
-                <Button
-                    android:id="@+id/button_save_paypal"
-                    style="@style/Widget.SubHub.PrimaryButton"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/paypal_settings_save" />
-            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 

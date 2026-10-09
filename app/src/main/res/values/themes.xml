@@ -314,25 +314,25 @@
     </style>
 
     <style name="Widget.SubHub.RuleHelp" parent="">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">34dp</item>
-        <item name="android:textColor">@color/text_muted</item>
-        <item name="android:textSize">10sp</item>
-        <item name="android:includeFontPadding">false</item>
-    </style>
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:minHeight">0dp</item>
+    <item name="android:textColor">@color/text_secondary</item>
+    <item name="android:textSize">10sp</item>
+    <item name="android:includeFontPadding">false</item>
+</style>
 
     <style name="Widget.SubHub.RuleCostLabel" parent="">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">26dp</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:text">@string/penance_rule_cost_label</item>
-        <item name="android:textColor">@color/text_secondary</item>
-        <item name="android:textSize">10sp</item>
-        <item name="android:textStyle">bold</item>
-    </style>
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:minHeight">20dp</item>
+    <item name="android:gravity">center_vertical</item>
+    <item name="android:includeFontPadding">false</item>
+    <item name="android:text">@string/penance_rule_cost_label</item>
+    <item name="android:textColor">@color/text_secondary</item>
+    <item name="android:textSize">10sp</item>
+    <item name="android:textStyle">bold</item>
+</style>
 
     <style name="Widget.SubHub.MoneyInput" parent="">
         <item name="android:layout_width">match_parent</item>
@@ -372,21 +372,21 @@
     </style>
 
     <style name="Widget.SubHub.WalletFieldLabel" parent="Widget.SubHub.FieldLabel">
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">32dp</item>
-        <item name="android:layout_marginTop">0dp</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:textSize">11sp</item>
-    </style>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:minHeight">0dp</item>
+    <item name="android:layout_marginTop">0dp</item>
+    <item name="android:gravity">center_vertical</item>
+    <item name="android:includeFontPadding">false</item>
+    <item name="android:textSize">11sp</item>
+</style>
 
     <style name="Widget.SubHub.WalletFieldHelp" parent="Widget.SubHub.FieldHelp">
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">30dp</item>
-        <item name="android:layout_marginTop">2dp</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:textSize">10sp</item>
-    </style>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:minHeight">0dp</item>
+    <item name="android:layout_marginTop">2dp</item>
+    <item name="android:includeFontPadding">false</item>
+    <item name="android:textSize">10sp</item>
+</style>
 
     <style name="Widget.SubHub.HomeStatCard" parent="">
         <item name="android:layout_width">0dp</item>
@@ -717,4 +717,23 @@
         <item name="android:elevation">2dp</item>
         <item name="android:stateListAnimator">@null</item>
     </style>
+    <style name="Widget.SubHub.WalletSecondaryAmount" parent="">
+        <item name="android:layout_width">match_parent</item><item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">17sp</item><item name="android:textColor">@color/text_primary</item>
+        <item name="android:textStyle">bold</item><item name="android:layout_marginTop">3dp</item>
+    </style>
+    <style name="Widget.SubHub.WalletRuleCard" parent="">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:orientation">vertical</item>
+    <item name="android:padding">10dp</item>
+    <item name="android:layout_marginTop">8dp</item>
+    <item name="android:background">@drawable/bg_card</item>
+</style>
+    <style name="Widget.SubHub.WalletFieldTile" parent="Widget.SubHub.FieldTile">
+    <item name="android:background">@null</item>
+    <item name="android:minHeight">0dp</item>
+    <item name="android:padding">3dp</item>
+    <item name="android:elevation">0dp</item>
+</style>
 </resources>

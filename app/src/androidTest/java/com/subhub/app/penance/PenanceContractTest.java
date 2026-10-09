@@ -156,7 +156,7 @@ public final class PenanceContractTest {
                      ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(activity -> {
                 View paidPauseCard = activity.findViewById(R.id.paid_pause_config_card);
-                android.widget.CheckBox master = activity.findViewById(R.id.ledger_enabled);
+                android.widget.CompoundButton master = activity.findViewById(R.id.ledger_enabled);
                 assertFalse(master.isChecked());
                 assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
 
@@ -407,30 +407,31 @@ public final class PenanceContractTest {
         assertEquals(1, manager.recordStrikes(1, now + 201));
     }
 
-    @Test public void styledTreasuryAndMainEntryRemainAvailable() {
+    @Test public void walletUsesFocusedRuleEditorAndSubHomeEntryRemainsAvailable() {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
-            scenario.onActivity(activity -> {
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.button_clear_unpaid).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.button_test_strike).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.payment_availability).getVisibility());
-                assertEquals(4, ((android.widget.GridLayout)
-                        activity.findViewById(R.id.rule_grid)).getChildCount());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.detection_batch).getVisibility());
-                android.widget.GridLayout rules = activity.findViewById(R.id.rule_grid);
-                assertEquals(rules.getChildAt(0).getTop(), rules.getChildAt(1).getTop());
-                assertTrue(rules.getChildAt(2).getTop() > rules.getChildAt(0).getTop());
-                assertEquals(rules.getChildAt(0).getWidth(), rules.getChildAt(1).getWidth());
-                int[] detectionLocation = new int[2];
-                int[] dwellLocation = new int[2];
-                activity.findViewById(R.id.rule_detection_amount)
-                        .getLocationOnScreen(detectionLocation);
-                activity.findViewById(R.id.rule_dwell_amount)
-                        .getLocationOnScreen(dwellLocation);
-                assertEquals(detectionLocation[1], dwellLocation[1]);
+            scenario.onActivity(activity ->
+                            activity.findViewById(android.R.id.content)
+                                    .findViewWithTag("wallet:rules")
+                                    .performClick());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .waitForIdleSync();
+            scenario.onActivity(
+                    activity -> {
+                        assertTrue(activity.findViewById(R.id.rule_config_card).isShown());
+                        assertTrue(activity.findViewById(R.id.safety_config_card).isShown());
+                android.view.ViewGroup rules = activity.findViewById(R.id.rule_grid);
+                assertEquals(4, rules.getChildCount());
+                        for (int i = 1; i < rules.getChildCount(); i++) {
+                            assertTrue(rules.getChildAt(i).getTop() > rules.getChildAt(i - 1).getTop());
+                assertEquals(rules.getChildAt(0).getWidth(), rules.getChildAt(i).getWidth());
+                        }
+                        assertEquals(
+                                View.VISIBLE,
+                                activity.findViewById(R.id.detection_batch).getVisibility());
+                activity.findViewById(R.id.button_back).performClick();
+                        assertTrue(activity.findViewById(R.id.wallet_overview).isShown());
             });
         }
         ControllerPinManager.enterSubMode();
@@ -445,7 +446,7 @@ public final class PenanceContractTest {
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(activity -> {
-                android.widget.CheckBox toggle = activity.findViewById(
+                android.widget.CompoundButton toggle = activity.findViewById(
                         R.id.rule_detection_enabled);
                 View batch = activity.findViewById(R.id.detection_batch);
                 toggle.setChecked(false);

@@ -1,5 +1,7 @@
 package com.subhub.app.penance;
 
+import static org.junit.Assert.*;
+
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -10,7 +12,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import static org.junit.Assert.*;
 
 /** Disposable emulator only. No credentials or network requests. */
 @RunWith(AndroidJUnit4.class)
@@ -167,10 +168,13 @@ public final class WalletCurrencyAndroidTest {
     @Test public void currencySelectorIsControllerGatedAndPersistsConfirmedChoice() {
         new PayPalCredentialStore(context).clear();
         com.subhub.app.security.ControllerPinManager.enterDomMode();
-        try (androidx.test.core.app.ActivityScenario<com.subhub.app.settings.GlobalSettingsActivity> scenario =
-                androidx.test.core.app.ActivityScenario.launch(com.subhub.app.settings.GlobalSettingsActivity.class)) {
+        try (androidx.test.core.app.ActivityScenario<com.subhub.app.penance.PenanceActivity> scenario =
+                androidx.test.core.app.ActivityScenario.launch(com.subhub.app.penance.PenanceActivity.class)) {
             scenario.onActivity(activity -> {
-                assertTrue(activity.findViewById(com.subhub.app.R.id.wallet_currency_usd).isEnabled());
+                        activity.findViewById(android.R.id.content)
+                                .findViewWithTag("wallet:paypal")
+                                .performClick();
+                        assertTrue(activity.findViewById(com.subhub.app.R.id.wallet_currency_usd).isEnabled());
                 ((android.widget.RadioButton) activity.findViewById(com.subhub.app.R.id.wallet_currency_usd))
                         .performClick();
             });
@@ -187,8 +191,8 @@ public final class WalletCurrencyAndroidTest {
                     "wallet-currency-preview.png")));
         }
         com.subhub.app.security.ControllerPinManager.enterSubMode();
-        try (androidx.test.core.app.ActivityScenario<com.subhub.app.settings.GlobalSettingsActivity> scenario =
-                androidx.test.core.app.ActivityScenario.launch(com.subhub.app.settings.GlobalSettingsActivity.class)) {
+        try (androidx.test.core.app.ActivityScenario<com.subhub.app.penance.PenanceActivity> scenario =
+                androidx.test.core.app.ActivityScenario.launch(com.subhub.app.penance.PenanceActivity.class)) {
             scenario.onActivity(activity -> {
                 assertFalse(activity.findViewById(com.subhub.app.R.id.wallet_currency_eur).isEnabled());
                 assertFalse(activity.findViewById(com.subhub.app.R.id.button_refresh_wallet_currency).isEnabled());
@@ -203,7 +207,8 @@ public final class WalletCurrencyAndroidTest {
             else com.subhub.app.security.ControllerPinManager.enterSubMode();
             try (androidx.test.core.app.ActivityScenario<PenanceActivity> scenario =
                     androidx.test.core.app.ActivityScenario.launch(PenanceActivity.class)) {
-                scenario.onActivity(activity -> assertEquals("Wallet currency: USD",
+                scenario.onActivity(activity -> assertEquals(
+                                        "USD",
                         ((android.widget.TextView) activity.findViewById(com.subhub.app.R.id.primary_header_subtitle))
                                 .getText().toString()));
             }

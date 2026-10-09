@@ -1186,4 +1186,31 @@
     <string name="limits_waiting_service">Waiting for accessibility service</string>
     <string name="limits_less_than_minute">&lt;1m</string>
     <string name="limits_apps_unavailable">Could not load apps</string>
+    <string name="wallet_safety_title">Safety &amp; caps</string>
+    <string name="wallet_connection_title">PayPal</string>
+    <plurals name="wallet_rules_enabled"><item quantity="one">%d rule enabled</item><item quantity="other">%d rules enabled</item></plurals>
+    <plurals name="wallet_history_count"><item quantity="one">%d entry</item><item quantity="other">%d entries</item></plurals>
+    <string name="wallet_caps_summary">Daily %1$s · Weekly %2$s</string>
+    <string name="wallet_pause_summary">%1$d min · %2$s</string>
+    <string name="wallet_event_label">%1$s × %2$d</string>
+    <string name="wallet_history_recent">Latest %1$d of %2$d entries</string>
+    <string name="wallet_setup_paypal">Set up PayPal</string>
+    <string name="wallet_pay_amount">Pay %1$s</string>
+    <string name="wallet_correction_balance_label">Correction window</string>
+    <string name="wallet_paid_balance_label">Paid</string>
+    <string name="wallet_daily_cap">Daily cap</string>
+    <string name="wallet_weekly_cap">Weekly cap</string>
+    <string name="wallet_recent_activity">Recent activity</string>
+    <string name="wallet_settings">Wallet settings</string>
+    <string name="wallet_rules_caps_title">Rules &amp; caps</string>
+    <string name="wallet_rules_caps_summary">%1$d rules · %2$s daily cap</string>
+    <string name="wallet_checkout_label">At checkout</string>
+    <string name="wallet_history_more">Show more activity</string>
+    <string name="wallet_history_less">Show less activity</string>
+    <string name="wallet_today_time">Today, %1$s</string>
+    <string name="wallet_status_correction">Correction window</string>
+    <string name="wallet_status_due">Due</string>
+    <string name="wallet_status_pending">Pending payment</string>
+    <string name="wallet_status_paid">Paid</string>
+    <string name="wallet_status_forgiven">Forgiven</string>
 </resources>

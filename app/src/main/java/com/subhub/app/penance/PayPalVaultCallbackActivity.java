@@ -7,7 +7,6 @@ import android.os.Bundle;
 import android.widget.Toast;
 
 import com.subhub.app.R;
-import com.subhub.app.settings.GlobalSettingsActivity;
 
 /** Narrow approval-return boundary for payer-present PayPal Wallet authorization. */
 public final class PayPalVaultCallbackActivity extends Activity {
@@ -18,12 +17,12 @@ public final class PayPalVaultCallbackActivity extends Activity {
         PayPalCredentialStore store = new PayPalCredentialStore(this);
         Uri data = getIntent() == null ? null : getIntent().getData();
         if (!validCallback(data)) {
-            finishToSettings(R.string.paypal_vault_link_missing);
+            finishToWallet(R.string.paypal_vault_link_missing);
             return;
         }
         if ("/vault/cancel".equalsIgnoreCase(data.getPath())) {
             store.clearPendingVaultSetup();
-            finishToSettings(R.string.paypal_vault_link_cancelled);
+            finishToWallet(R.string.paypal_vault_link_cancelled);
             return;
         }
         PayPalCredentialStore.PendingVaultSetup pending = store.pendingVaultSetup();
@@ -33,7 +32,7 @@ public final class PayPalVaultCallbackActivity extends Activity {
                 || !credentials.boundaryId().equals(pending.boundaryId())
                 || (callbackMetadata != null && !callbackMetadata.isEmpty()
                 && !callbackMetadata.equals(pending.clientMetadataId()))) {
-            finishToSettings(R.string.paypal_vault_link_missing);
+            finishToWallet(R.string.paypal_vault_link_missing);
             return;
         }
         paypalClient = new PayPalOrdersClient(this);
@@ -44,14 +43,14 @@ public final class PayPalVaultCallbackActivity extends Activity {
                         if (result.errorKind() == PayPalOrdersClient.ErrorKind.VAULT_UNAVAILABLE) {
                             store.markVaultUnavailable(credentials);
                         }
-                        finishToSettings(getString(
+                        finishToWallet(getString(
                                 R.string.paypal_vault_link_failed, result.error()));
                         return;
                     }
                     PayPalOrdersClient.PaymentToken token = result.value();
                     store.recordVaultResult(credentials, "VAULTED", token.id(),
                             token.customerId(), token.payerEmail(), token.payerAccountId());
-                    finishToSettings(R.string.paypal_vault_link_success);
+                    finishToWallet(R.string.paypal_vault_link_success);
                 });
     }
 
@@ -62,14 +61,15 @@ public final class PayPalVaultCallbackActivity extends Activity {
                 || "/vault/cancel".equalsIgnoreCase(data.getPath());
     }
 
-    private void finishToSettings(int message) {
-        finishToSettings(getString(message));
+    private void finishToWallet(int message) {
+        finishToWallet(getString(message));
     }
 
-    private void finishToSettings(String message) {
+    private void finishToWallet(String message) {
         if (paypalClient != null) paypalClient.close();
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        startActivity(new Intent(this, GlobalSettingsActivity.class)
+        startActivity(new Intent(this, PenanceActivity.class)
+                        .putExtra(PenanceActivity.EXTRA_SHOW_CONNECTION, true)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         finish();
     }

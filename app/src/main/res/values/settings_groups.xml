@@ -24,4 +24,5 @@
 <string name="settings_permission_status">%1$d of 3 access settings ready</string>
 <string name="settings_apps_all">Censor all apps · Limits %1$d · Whispers %2$d</string>
 <string name="settings_notifications">Notifications</string>
+<string name="settings_privacy_permissions">Privacy &amp; permissions</string>
 </resources>
