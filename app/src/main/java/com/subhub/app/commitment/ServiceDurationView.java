@@ -164,6 +164,16 @@ public final class ServiceDurationView extends LinearLayout {
         render();
     }
 
+    public int choiceAreaHeight() {
+        int measured = 0;
+        for (int i = 0; i < choices.length; i += 2) {
+            View row = (View) choices[i].getParent();
+            measured += row.getMeasuredHeight();
+            if (i > 0) measured += ((android.view.ViewGroup.MarginLayoutParams) row.getLayoutParams()).topMargin;
+        }
+        return measured > 0 ? measured : Math.round(160 * getResources().getDisplayMetrics().density);
+    }
+
     public void setHeadingVisible(boolean visible) {
         findViewById(R.id.service_duration_heading).setVisibility(visible ? VISIBLE : GONE);
     }

@@ -85,8 +85,7 @@ public final class CommitmentManager {
     }
 
     public static boolean isCountdownHidden(Context context) {
-        return isActive(context) && preferences(context).getBoolean("commitment_hide_countdown", false)
-                && !com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        return isActive(context) && preferences(context).getBoolean("commitment_hide_countdown", false);
     }
 
     public static String countdownLabel(Context context) {

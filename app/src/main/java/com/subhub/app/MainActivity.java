@@ -86,6 +86,7 @@ public final class MainActivity extends AppCompatActivity {
             "com.subhub.app.extra.SUPPRESS_PERMISSION_READINESS";
     private ActivityMainBinding binding;
     private TextView editLockButton;
+    private int durationDisplay = -1;
     private MediaProjectionManager projectionManager;
     private ActivityResultLauncher<Intent> projectionPermission;
     private ActivityResultLauncher<Intent> overlayPermission;
@@ -204,10 +205,14 @@ public final class MainActivity extends AppCompatActivity {
                             }
                         });
 
+        binding.commitmentCard.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (durationDisplay == 1 && right - left != oldRight - oldLeft)
+                binding.commitmentCard.post(this::sizeServiceCountdown);
+        });
         binding.buttonProtection.setOnClickListener(this::toggleProtection);
         editLockButton.setOnClickListener(view -> toggleEditSession());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.HOME);
-        binding.buttonCommitmentView.setVisibility(View.GONE);
         binding.subWalletPay.setOnClickListener(
                 view -> startActivity(new Intent(this, PenanceActivity.class)));
         binding.subWalletPause.setOnClickListener(view -> beginPaidPause());
@@ -375,16 +380,41 @@ public final class MainActivity extends AppCompatActivity {
             // service. Re-arm the stored arrangement and keep the original expiry intact.
             CommitmentManager.reinforceProtection(this);
         }
+        boolean service = active || appMode.isArmed() || ScreenCaptureService.isRunning()
+                || ScreenshotAccessibilityService.isRecognitionActive() || new PaidPauseManager(this).isActive();
+        int next = !service ? 0 : active ? 1 : 2;
+        boolean animate = durationDisplay >= 0 && durationDisplay != next
+                && binding.commitmentCard.isLaidOut() && android.animation.ValueAnimator.areAnimatorsEnabled();
+        if (animate) {
+            android.transition.TransitionSet change = new android.transition.TransitionSet()
+                    .setOrdering(android.transition.TransitionSet.ORDERING_TOGETHER)
+                    .addTransition(new android.transition.ChangeBounds())
+                    .addTransition(new android.transition.Fade()).setDuration(380);
+            android.transition.TransitionManager.beginDelayedTransition(binding.commitmentCard, change);
+        }
+        if (next == 1 && durationDisplay != 1) sizeServiceCountdown();
         binding.commitmentCard.setVisibility(View.VISIBLE);
-        binding.commitmentStartPanel.setVisibility(!active ? View.VISIBLE : View.GONE);
-        binding.commitmentActivePanel.setVisibility(active ? View.VISIBLE : View.GONE);
-        if (active)
-            binding.commitmentStatus.setText(
-                    CommitmentManager.isCountdownHidden(this)
-                            ? getString(R.string.pact_time_hidden)
-                            : getString(
-                                    R.string.commitment_active_remaining,
-                                    CommitmentManager.countdownLabel(this)));
+        binding.commitmentStartPanel.setVisibility(next == 0 ? View.VISIBLE : View.GONE);
+        binding.commitmentActivePanel.setVisibility(next != 0 ? View.VISIBLE : View.GONE);
+        binding.serviceCountdown.setVisibility(next == 1 ? View.VISIBLE : View.GONE);
+        binding.serviceDurationPermanentStatus.setVisibility(next == 2 ? View.VISIBLE : View.GONE);
+        if (next == 1) binding.serviceCountdown.setCountdown(
+                CommitmentManager.remainingMillis(this), CommitmentManager.originalDurationMillis(this),
+                CommitmentManager.isCountdownHidden(this), animate);
+        else binding.serviceCountdown.stop();
+        durationDisplay = next;
+    }
+
+    private void sizeServiceCountdown() {
+        if (binding == null) return;
+        int width = binding.commitmentCard.getWidth() - binding.commitmentCard.getPaddingLeft()
+                - binding.commitmentCard.getPaddingRight();
+        if (width > 0) binding.commitmentStartPanel.measure(
+                View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int height = binding.commitmentStartPanel.choiceAreaHeight();
+        android.view.ViewGroup.LayoutParams size = binding.serviceCountdown.getLayoutParams();
+        if (size.height != height) { size.height = height; binding.serviceCountdown.setLayoutParams(size); }
     }
 
     private void updateProtectionButton(boolean running) {
