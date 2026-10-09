@@ -99,7 +99,7 @@ Wallet places the amount due, payment action, and recent ledger in one compact o
 
 Faint randomized phrases can follow service through the shared included-app list. Obedience, focus, beta/cuck, findom, and custom phrase packs run through one touch-through Accessibility overlay—without waking the image detector. Presence, timing, text size, and voice are configured in Dom mode; Sub mode sees only the active summary.
 
-Subliminal Messaging does not require Censor, Limits, or Wallet; each feature keeps its global enable control.
+Subliminal Messaging does not require Censor, Limits, or Wallet. Enable it from its Rituals detail page.
 
 #### Popup Storm
 
@@ -115,10 +115,10 @@ Configure intensity, choose an image library, and try a bounded ten-second previ
 
 ### Studio / Pack Maker
 
-Studio is the portable pack creator built into SubHub, reachable from Rituals and as the last item in Settings → Features. Drafting a pack never changes live settings.
+Studio is the portable pack creator built into SubHub, reachable from Rituals. Drafting a pack never changes live settings.
 
 - Start with a blank draft, capture the current setup, or duplicate an existing arrangement.
-- Use the four-step Details, Features, Images and Review editor. Configure each of the 114 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
+- Use the four-step Details, Features, Images and Review editor. Configure each of the 111 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
 - Mix feature modules, Censor and text filters, generic Limits, tribute rules and caps, Subliminal Messaging, Popup Storm settings, and embedded private images. Preview/remove images and choose an optional cover.
 - Use the shared color wheel and precise RGB sliders, with independent gradient endpoints.
 - Autosave drafts, preview the result, import or export `.sub` files, and share them through Android’s standard share sheet.
@@ -170,7 +170,7 @@ A session begins when service starts—not when SubHub opens—and persists unti
 
 1. Install the universal APK, or the APK matching your device’s ABI, from [Downloads](https://github.com/confiteor48/SubHub/releases/latest).
 2. Set the controller PIN and configure the participating features in Dom mode.
-3. In Settings → Apps, choose the one included-app list. Each globally enabled service feature uses it. Settings groups Features, Apps, Privacy & permissions, and Help & about; grant the Android access required by the features you use.
+3. In Settings → Apps, choose the one included-app list. Each enabled service feature uses it. Select Off in Censor’s detection cards to disable live censoring. Limits uses its two budget switches; Wallet uses its tribute-rule and Paid Pause controls. Their pages always remain in the Dom navbar. All Apps overrides the scope, including newly installed apps, while retaining the individual selection for when it is switched off. Settings keeps Apps, open Privacy & Permissions controls including Hardcore, and Help & About with the installed build version and date.
 4. Hand over to Sub mode, choose a duration, and enter service.
 
 Disable a feature and it stops participating in service. Android permissions and the controller’s configuration remain separate from a pack or draft.
@@ -183,7 +183,7 @@ Disable a feature and it stops participating in service. Android permissions and
 - Android remains the authority for Accessibility, screen capture, overlays, notifications, and Device Admin.
 - Hardcore Mode adds platform-supported friction. It is not an unbreakable device-security boundary.
 - Device Admin requests no wipe, camera, password, force-lock, or login-monitoring policy.
-- Censor, Limits, and Wallet can each be removed from the experience.
+- Censor detection, Limits budgets, and Wallet rules can be turned off independently; their Dom pages remain available.
 
 ## Build
 
