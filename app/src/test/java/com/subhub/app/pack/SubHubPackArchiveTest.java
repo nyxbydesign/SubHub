@@ -56,7 +56,7 @@ public final class SubHubPackArchiveTest {
                 .put("saved_wallet_id", "must-not-export")
                 .put("history", "must-not-export");
         JSONObject clean = SubHubPackSchema.sanitizeSection(SubHubPackSchema.WALLET, wallet);
-        assertTrue(clean.getBoolean("enabled"));
+        assertFalse(clean.has("enabled"));
         assertTrue(clean.has("daily_cap_cents"));
         assertFalse(clean.has("paypal_client_id"));
         assertFalse(clean.has("saved_wallet_id"));

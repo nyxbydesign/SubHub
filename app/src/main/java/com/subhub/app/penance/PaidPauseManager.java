@@ -23,7 +23,7 @@ public final class PaidPauseManager {
     public static final int MIN_DURATION_MINUTES = 1;
     public static final int MAX_DURATION_MINUTES = 24 * 60;
 
-    private static final String KEY_ENABLED = "paid_pause_enabled";
+    public static final String KEY_ENABLED = "paid_pause_enabled";
     private static final String KEY_PRICE_CENTS = "paid_pause_price_cents";
     private static final String KEY_DURATION_MINUTES = "paid_pause_duration_minutes";
     private static final String KEY_ACTIVE_UNTIL = "paid_pause_active_until";

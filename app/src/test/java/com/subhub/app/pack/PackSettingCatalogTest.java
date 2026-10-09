@@ -29,7 +29,7 @@ public final class PackSettingCatalogTest {
             }
             sections.put(section, clean);
         }
-        assertEquals(114, keys.size());
+        assertEquals(111, keys.size());
         assertNull(PackSettingCatalog.field("censor", "app_mode_kind"));
         assertTrue(SubHubPackSchema.isSecretOrRuntimeKey("app_included_packages_v1"));
         SubHubPack source = SubHubPack.blank("synthetic-creator");
@@ -42,6 +42,30 @@ public final class PackSettingCatalogTest {
                 PackVerifier.canonicalize(imported.getSection(section)));
         assertFalse(imported.manifestWithoutIntegrity(Map.of()).has("lockGroups"));
         assertEquals(4, imported.manifestWithoutIntegrity(Map.of()).getInt("schemaVersion"));
+    }
+
+    @Test public void retiredMasterSwitchesKeepImportedBudgetsAndRulesOff() throws Exception {
+        JSONObject modules = new JSONObject().put("module_limits_enabled", false)
+                .put("module_wallet_enabled", false).put("module_censor_enabled", true);
+        JSONObject limits = new JSONObject().put("app_timer_per_app_enabled", true)
+                .put("app_timer_total_enabled", true).put("app_timer_total_minutes", 75);
+        JSONObject wallet = new JSONObject().put("enabled", true)
+                .put("rule_new_detection_enabled", true).put("rule_new_detection_cents", 123)
+                .put("paid_pause_enabled", true);
+        SubHubPack pack = new SubHubPack("legacy", "fixture", "Legacy", "", "", "1.0.0",
+                1, 1, "0.6.0", Map.of("modules", modules, "limits", limits, "wallet", wallet),
+                new JSONObject(), Map.of());
+        assertFalse(pack.getSection("limits").getBoolean("app_timer_per_app_enabled"));
+        assertFalse(pack.getSection("limits").getBoolean("app_timer_total_enabled"));
+        assertEquals(75, pack.getSection("limits").getInt("app_timer_total_minutes"));
+        assertFalse(pack.getSection("wallet").getBoolean("rule_new_detection_enabled"));
+        assertFalse(pack.getSection("wallet").getBoolean("paid_pause_enabled"));
+        assertEquals(123, pack.getSection("wallet").getInt("rule_new_detection_cents"));
+        assertFalse(pack.getSection("modules").has("module_limits_enabled"));
+        assertFalse(pack.getSection("modules").has("module_wallet_enabled"));
+        assertFalse(pack.getSection("wallet").has("enabled"));
+        JSONObject isolated = PackSettingCatalog.sanitize("wallet", wallet.put("enabled", false));
+        assertFalse(isolated.getBoolean("rule_new_detection_enabled"));
     }
 
     @Test public void decimalMoneyAndPercentEditorsDoNotChangeUnitsOrPreferenceTypes() {

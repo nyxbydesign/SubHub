@@ -49,7 +49,8 @@ public final class SubHubPack {
         if (sections != null) for (Map.Entry<String, JSONObject> item : sections.entrySet()) {
             if (SubHubPackSchema.SECTIONS.contains(item.getKey()) && item.getValue() != null) {
                 this.sections.put(item.getKey(), SubHubPackSchema.sanitizeSection(
-                        item.getKey(), item.getValue()));
+                        item.getKey(), normalizeLegacyParticipation(item.getKey(), item.getValue(),
+                                sections.get(SubHubPackSchema.MODULES))));
             }
         }
         this.recommendations = SubHubPackSchema.sanitizeRecommendations(recommendations);
@@ -59,6 +60,22 @@ public final class SubHubPack {
                 this.assets.put(item.getKey(), item.getValue().clone());
             }
         }
+    }
+
+    private static JSONObject normalizeLegacyParticipation(String section, JSONObject values, JSONObject modules) {
+        JSONObject result = copy(values);
+        if (modules == null) return result;
+        try {
+            if (SubHubPackSchema.LIMITS.equals(section)
+                    && modules.has("module_limits_enabled") && !modules.optBoolean("module_limits_enabled", true)) {
+                result.put("app_timer_per_app_enabled", false);
+                result.put("app_timer_total_enabled", false);
+            }
+            if (SubHubPackSchema.WALLET.equals(section)
+                    && modules.has("module_wallet_enabled") && !modules.optBoolean("module_wallet_enabled", true))
+                result.put("enabled", false);
+        } catch (JSONException failure) { throw new IllegalArgumentException(failure); }
+        return result;
     }
 
     public static SubHubPack blank() {

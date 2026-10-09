@@ -32,8 +32,6 @@ public final class PackSettingCatalog {
     private static final Map<String, Field> FIELDS = new LinkedHashMap<>();
     static {
         add("modules", "module_censor_enabled", R.string.pack_field_module_censor_enabled, R.string.pack_group_features, Kind.BOOLEAN, Boolean.TRUE, 0, 0, 0, List.of());
-        add("modules", "module_limits_enabled", R.string.pack_field_module_limits_enabled, R.string.pack_group_features, Kind.BOOLEAN, Boolean.TRUE, 0, 0, 0, List.of());
-        add("modules", "module_wallet_enabled", R.string.pack_field_module_wallet_enabled, R.string.pack_group_features, Kind.BOOLEAN, Boolean.TRUE, 0, 0, 0, List.of());
         add("modules", "module_subliminal_enabled", R.string.pack_field_module_subliminal_enabled, R.string.pack_group_features, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("censor", "detection_quality", R.string.pack_field_detection_preset, R.string.pack_group_detection, Kind.CHOICE, "medium", 0, 0, 0, List.of("low", "medium", "high"));
         add("censor", "detection_confidence_percent", R.string.pack_field_confidence_threshold_percent, R.string.pack_group_detection, Kind.INTEGER, 25, 10, 80, 0, List.of());
@@ -88,7 +86,6 @@ public final class PackSettingCatalog {
         add("limits", "app_timer_per_app_minutes", R.string.pack_field_app_timer_per_app_minutes, R.string.pack_group_allowances, Kind.INTEGER, 30, 1, 1440, 0, List.of());
         add("limits", "app_timer_total_enabled", R.string.pack_field_app_timer_total_enabled, R.string.pack_group_allowances, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("limits", "app_timer_total_minutes", R.string.pack_field_app_timer_total_minutes, R.string.pack_group_allowances, Kind.INTEGER, 120, 1, 1440, 0, List.of());
-        add("wallet", "enabled", R.string.pack_field_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("wallet", "rule_new_detection_enabled", R.string.pack_field_rule_new_detection_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.TRUE, 0, 0, 0, List.of());
         add("wallet", "rule_new_detection_cents", R.string.pack_field_rule_new_detection_cents, R.string.pack_group_tribute_rules, Kind.MONEY, 100, 1, 10000, 0, List.of());
         add("wallet", "rule_censored_dwell_enabled", R.string.pack_field_rule_censored_dwell_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
@@ -205,6 +202,11 @@ public final class PackSettingCatalog {
             Object value = field.normalize(values.opt(key));
             put(result, key, value);
         });
+        if (SubHubPackSchema.WALLET.equals(section) && values.has("enabled") && !values.optBoolean("enabled", true)) {
+            for (Field field : fields(section))
+                if (field.key.startsWith("rule_") && field.key.endsWith("_enabled")
+                        || field.key.equals("paid_pause_enabled")) put(result, field.key, Boolean.FALSE);
+        }
         validateRelationships(result);
         return result;
     }

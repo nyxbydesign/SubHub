@@ -35,6 +35,7 @@ public final class PenanceManager {
     public static final String CURRENCY = "EUR";
     private static final String KEY_CURRENCY = "wallet_currency";
     private static final String KEY_ENABLED = "enabled";
+    public static final String KEY_RULE_PARTICIPATION_MIGRATED = "rule_participation_migrated_v1";
     private static final String KEY_STRIKE_CENTS = "strike_cents";
     private static final String KEY_DAILY_CAP_CENTS = "daily_cap_cents";
     private static final String KEY_WEEKLY_CAP_CENTS = "weekly_cap_cents";
@@ -107,10 +108,34 @@ public final class PenanceManager {
         this.context = context.getApplicationContext();
         preferences = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         modules = new FeatureModuleManager(this.context);
+        migrateRuleParticipation();
     }
 
     public boolean isEnabled() {
-        return modules.isWalletEnabled() && preferences.getBoolean(KEY_ENABLED, false);
+        for (PenanceInfraction rule : PenanceInfraction.values())
+            if (rule != PenanceInfraction.PAID_PAUSE && isInfractionEnabled(rule)) return true;
+        return new PaidPauseManager(context).isEnabled();
+    }
+
+    /** Preserve effective off states without retaining a second switch or changing saved costs. */
+    private void migrateRuleParticipation() {
+        synchronized (LOCK) {
+            SharedPreferences global = context.getSharedPreferences(
+                    com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+            if (!preferences.getBoolean(KEY_RULE_PARTICIPATION_MIGRATED, false)) {
+                boolean wasEnabled = preferences.getBoolean(KEY_ENABLED, false)
+                        && global.getBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true);
+                SharedPreferences.Editor edit = preferences.edit()
+                        .putBoolean(KEY_RULE_PARTICIPATION_MIGRATED, true).remove(KEY_ENABLED);
+                if (!wasEnabled) {
+                    for (PenanceInfraction rule : PenanceInfraction.values())
+                        edit.putBoolean(ruleEnabledKey(rule), false);
+                    edit.putBoolean(PaidPauseManager.KEY_ENABLED, false)
+                            .putInt(KEY_DETECTION_REMAINDER, 0);
+                }
+                edit.apply();
+            }
+        }
     }
 
     public int getStrikeCents() {
@@ -124,6 +149,15 @@ public final class PenanceManager {
         }
         return infraction == PenanceInfraction.NEW_DETECTION
                 ? infraction.enabledByDefault() : false;
+    }
+
+    /** Turning a rule off must not depend on validating unrelated editor drafts. */
+    public void disableInfraction(PenanceInfraction infraction) {
+        synchronized (LOCK) {
+            SharedPreferences.Editor edit = preferences.edit().putBoolean(ruleEnabledKey(infraction), false);
+            if (infraction == PenanceInfraction.NEW_DETECTION) edit.putInt(KEY_DETECTION_REMAINDER, 0);
+            edit.apply();
+        }
     }
 
     public int getInfractionCents(PenanceInfraction infraction) {
@@ -228,10 +262,10 @@ public final class PenanceManager {
         int boundedDaily = PenancePolicy.clampDailyCapCents(dailyCapCents, largestRule);
         int boundedWeekly = PenancePolicy.clampWeeklyCapCents(weeklyCapCents, boundedDaily);
         int boundedBatch = PenancePolicy.clampDetectionBatch(detectionBatch);
-        boolean resetDetectionProgress = !enabled || !isEnabled()
+        boolean resetDetectionProgress = !enabled || !isInfractionEnabled(PenanceInfraction.NEW_DETECTION)
+                || !rules.containsKey(PenanceInfraction.NEW_DETECTION)
                 || boundedBatch != getDetectionBatch();
         SharedPreferences.Editor editor = preferences.edit()
-                .putBoolean(KEY_ENABLED, enabled)
                 .putInt(KEY_DAILY_CAP_CENTS, boundedDaily)
                 .putInt(KEY_WEEKLY_CAP_CENTS, boundedWeekly)
                 .putInt(KEY_MERCY_MINUTES, PenancePolicy.clampMercyMinutes(mercyMinutes))
@@ -242,8 +276,8 @@ public final class PenanceManager {
                 .remove(LEGACY_KEY_BACKEND_URL);
         if (resetDetectionProgress) editor.putInt(KEY_DETECTION_REMAINDER, 0);
         for (PenanceInfraction infraction : PenanceInfraction.values()) {
-            boolean ruleEnabled = rules.containsKey(infraction);
-            int cents = ruleEnabled && rules.get(infraction) != null
+            boolean ruleEnabled = enabled && rules.containsKey(infraction);
+            int cents = rules.containsKey(infraction) && rules.get(infraction) != null
                     ? PenancePolicy.clampStrikeCents(rules.get(infraction))
                     : getInfractionCents(infraction);
             editor.putBoolean(ruleEnabledKey(infraction), ruleEnabled)

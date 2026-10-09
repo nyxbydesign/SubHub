@@ -101,6 +101,11 @@ public final class AppTimerManager {
                         KEY_TOTAL_MINUTES, DEFAULT_TOTAL_MINUTES)));
     }
 
+    /** Disable an individual budget without requiring valid drafts in the other editor. */
+    public void disableBudget(boolean perApp) {
+        settingsPreferences.edit().putBoolean(perApp ? KEY_PER_APP_ENABLED : KEY_TOTAL_ENABLED, false).apply();
+    }
+
     public void saveSettings(boolean perAppEnabled, int perAppMinutes,
             boolean totalEnabled, int totalMinutes) {
         settingsPreferences.edit()
