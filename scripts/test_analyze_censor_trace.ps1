@@ -167,6 +167,38 @@ try {
         & $analyzer $normal -StartMarker 'RUN_START'
     } 'must be supplied together'
 
+    $admissionFixture = Join-Path $temporaryRoot 'capture-admission.log'
+    Write-Fixture $admissionFixture @(
+        'ScreenshotA11y: CAPTURE_ADMISSION v=1 action=dispatch requestId=1 uptimeMs=1000 eligibleMs=1334 inFlight=true reason=ready',
+        'ScreenshotA11y: CAPTURE_ADMISSION v=1 action=complete requestId=1 uptimeMs=1100 eligibleMs=1334 inFlight=false reason=released',
+        'ScreenshotA11y: CAPTURE_ADMISSION v=1 action=defer requestId=0 uptimeMs=1334 eligibleMs=1334 inFlight=false reason=quality-reservation',
+        'ScreenshotA11y: CAPTURE_ADMISSION v=1 action=dispatch requestId=2 uptimeMs=1400 eligibleMs=1734 inFlight=true reason=ready'
+    )
+    $admissionResult = & $analyzer $admissionFixture | ConvertFrom-Json
+    Assert-Equal 4 $admissionResult.parsing.captureAdmissionRecords 'raw admission records'
+    Assert-Equal 4 $admissionResult.parsing.parsedCaptureAdmissionRecords 'parsed admission records'
+    Assert-Equal $true $admissionResult.parsing.complete 'admission parsing completeness'
+    Assert-Equal 2 $admissionResult.captureAdmission.actions.dispatch 'dispatch count'
+    Assert-Equal 1 $admissionResult.captureAdmission.reasons.'quality-reservation' 'reservation count'
+    Assert-Equal 400 $admissionResult.captureAdmission.dispatchGapMs.p50 'actual dispatch gap'
+    Assert-Equal 0 $admissionResult.captureAdmission.dispatchGapsBelowPlatformMinimum 'spacing violations'
+    foreach ($badAdmission in @(
+            'CAPTURE_ADMISSION v=2 future=1',
+            'CAPTURE_ADMISSION v=1 action=dispatch requestId=1',
+            'CAPTURE_ADMISSION v=1 action=dispatch requestId=1 uptimeMs=1000 eligibleMs=1334 inFlight=true reason=ready extra=1',
+            'CAPTURE_ADMISSION v=1 action=dispatch requestId=0 uptimeMs=1000 eligibleMs=1334 inFlight=true reason=ready')) {
+        Write-Fixture $admissionFixture @($badAdmission)
+        Assert-Throws { & $analyzer $admissionFixture } '*CAPTURE_ADMISSION*incomplete*'
+    }
+    Write-Fixture $admissionFixture @(
+        'CAPTURE_ADMISSION v=1 action=dispatch requestId=5 uptimeMs=1000 eligibleMs=1334 inFlight=true reason=ready',
+        'CAPTURE_ADMISSION v=1 action=dispatch requestId=6 uptimeMs=1300 eligibleMs=1634 inFlight=true reason=ready',
+        'CAPTURE_ADMISSION v=1 action=dispatch requestId=1 uptimeMs=500 eligibleMs=834 inFlight=true reason=ready'
+    )
+    $violationResult = & $analyzer $admissionFixture | ConvertFrom-Json
+    Assert-Equal 1 $violationResult.captureAdmission.dispatchGapsBelowPlatformMinimum 'short gap remains visible'
+    Assert-Equal 1 $violationResult.captureAdmission.dispatchClockOrIdentityResets 'reset not mistaken for interval'
+
     Write-Output 'analyze_censor_trace regression checks passed.'
 } finally {
     $resolvedTemporaryRoot = [IO.Path]::GetFullPath($temporaryRoot)

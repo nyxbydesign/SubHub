@@ -145,6 +145,11 @@ foreach ($requestedPath in $Path) {
     $worldCacheInvalidations = [Collections.Generic.List[object]]::new()
     $worldCacheReentries = [Collections.Generic.List[object]]::new()
     $capturePhases = [Collections.Generic.List[object]]::new()
+    $captureAdmissions = [Collections.Generic.List[object]]::new()
+    $captureDispatchGaps = [Collections.Generic.List[long]]::new()
+    $rawCaptureAdmissions = 0
+    $previousCaptureDispatch = $null
+    $captureDispatchClockResets = 0
     $scrolls = [Collections.Generic.List[object]]::new()
     $scrollMetadata = [Collections.Generic.List[object]]::new()
     $rawScrollMetadata = 0
@@ -745,6 +750,37 @@ foreach ($requestedPath in $Path) {
             })
             continue
         }
+        if ($line.Contains('CAPTURE_ADMISSION ')) {
+            $rawCaptureAdmissions++
+            if ($line -notmatch 'CAPTURE_ADMISSION v=1 action=(defer|busy|dispatch|complete|failure) requestId=(\d+) uptimeMs=(\d+) eligibleMs=(\d+) inFlight=(true|false) reason=([a-z0-9-]+)$') {
+                throw 'Unsupported or incomplete CAPTURE_ADMISSION record; parsing is incomplete.'
+            }
+            $admission = [pscustomobject]@{
+                action = $Matches[1]
+                requestId = [long] $Matches[2]
+                uptimeMs = [long] $Matches[3]
+                eligibleMs = [long] $Matches[4]
+                inFlight = $Matches[5] -eq 'true'
+                reason = $Matches[6]
+            }
+            if ($admission.action -eq 'dispatch') {
+                if ($admission.requestId -le 0 -or !$admission.inFlight -or
+                        $admission.eligibleMs -lt $admission.uptimeMs) {
+                    throw 'Inconsistent CAPTURE_ADMISSION dispatch; parsing is incomplete.'
+                }
+                if ($null -ne $previousCaptureDispatch) {
+                    if ($admission.requestId -gt $previousCaptureDispatch.requestId -and
+                            $admission.uptimeMs -ge $previousCaptureDispatch.uptimeMs) {
+                        $captureDispatchGaps.Add($admission.uptimeMs - $previousCaptureDispatch.uptimeMs)
+                    } else {
+                        $captureDispatchClockResets++
+                    }
+                }
+                $previousCaptureDispatch = $admission
+            }
+            $captureAdmissions.Add($admission)
+            continue
+        }
         if ($line -match 'CAPTURE_PHASE requestToCaptureMs=(\d+) callbackDelayMs=(\d+) requestScroll=(-?\d+),(-?\d+) captureScroll=(-?\d+),(-?\d+) requestGeneration=(\d+) captureGeneration=(\d+) timelineResolved=(true|false)') {
             $capturePhases.Add([pscustomobject]@{
                 time = $time
@@ -958,9 +994,13 @@ foreach ($requestedPath in $Path) {
             scrollMetadataRecords = $rawScrollMetadata
             parsedScrollMetadataRecords = $scrollMetadata.Count
             unparsedScrollMetadataRecords = $rawScrollMetadata - $scrollMetadata.Count
+            captureAdmissionRecords = $rawCaptureAdmissions
+            parsedCaptureAdmissionRecords = $captureAdmissions.Count
+            unparsedCaptureAdmissionRecords = $rawCaptureAdmissions - $captureAdmissions.Count
             complete = ($rawOverlayRecords -eq $publishes.Count) -and
                 ($rawQualityRecords -eq $quality.Count + $streamingQuality.Count) -and
-                ($rawScrollMetadata -eq $scrollMetadata.Count)
+                ($rawScrollMetadata -eq $scrollMetadata.Count) -and
+                ($rawCaptureAdmissions -eq $captureAdmissions.Count)
         }
         bytes = (Get-Item -LiteralPath $resolved).Length
         selection = $selection
@@ -1175,6 +1215,14 @@ foreach ($requestedPath in $Path) {
                 $startupSessionSummaries.activationToFirstOverlayMs)
             qualityBeforeFirstOverlayViolations = @($startupSessionSummaries |
                 Where-Object qualityStartedAfterFirstOverlay -eq $false).Count
+        }
+        captureAdmission = [ordered]@{
+            records = $captureAdmissions.Count
+            actions = Get-GroupCounts @($captureAdmissions) 'action'
+            reasons = Get-GroupCounts @($captureAdmissions) 'reason'
+            dispatchGapMs = Get-Distribution @($captureDispatchGaps)
+            dispatchGapsBelowPlatformMinimum = @($captureDispatchGaps | Where-Object { $_ -lt 334 }).Count
+            dispatchClockOrIdentityResets = $captureDispatchClockResets
         }
         capturePhase = [ordered]@{
             samples = $capturePhases.Count

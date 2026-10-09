@@ -145,7 +145,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private static final long ATOMIC_SCENE_VISIBLE_DEADLINE_MS = 280L;
     private static final long ATOMIC_SCENE_JOIN_GUARD_MS = 32L;
 
-    private final AtomicBoolean processing = new AtomicBoolean();
+    private final AccessibilityCaptureScheduler screenshotScheduler =
+            new AccessibilityCaptureScheduler(SystemClock::uptimeMillis,
+                    this::scheduleCaptureTask, () -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) requestScreenshot();
+                    },
+                    ACCESSIBILITY_SCREENSHOT_INTERVAL_MS);
     private final AtomicBoolean inferenceDraining = new AtomicBoolean();
     private final AtomicBoolean settledInferenceNeeded = new AtomicBoolean();
     private final AtomicBoolean qualityConfirmationRequested = new AtomicBoolean();
@@ -296,8 +301,6 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             main.postDelayed(this, 1000L);
         }
     };
-    private volatile ScheduledFuture<?> captureSchedule;
-    private volatile ScheduledFuture<?> priorityCaptureSchedule;
     private SettingsRepository settings;
     private StatsRepository stats;
     private volatile DetectionEngine detector;
@@ -332,7 +335,6 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private volatile long lastSuccessfulQualityDurationMs;
     private volatile long activeStartupSession;
     private volatile long lastFastOverlayGeneration = Long.MIN_VALUE;
-    private volatile long lastScreenshotRequestUptime;
     private volatile long lastScrollDiagnosticUptime;
     private volatile long scrollTraceId;
     private volatile long scrollTraceStartedUptime;
@@ -512,13 +514,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution());
             DiagnosticsRepository.ready(DIAGNOSTICS_MODE, fastDetector.getActiveProvider(),
                     fastDetector.getActiveModel(), fastConfig.getInferenceResolution());
-            ScheduledFuture<?> existing = captureSchedule;
-            if (existing != null) existing.cancel(false);
-            captureSchedule = worker.scheduleWithFixedDelay(
-                    this::requestScreenshot,
-                    0,
-                    capturePollDelayMs(config),
-                    TimeUnit.MILLISECONDS);
+            screenshotScheduler.start();
         } catch (Exception error) {
             if (detector != null) detector.close();
             detector = null;
@@ -601,7 +597,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (!running || !recognitionActive) return;
         long requestUptime = SystemClock.uptimeMillis();
         if (captureGapProbe != null) {
-            boolean armed = captureGapProbe.awaitingArm() && !processing.get()
+            boolean armed = captureGapProbe.awaitingArm() && !screenshotScheduler.inFlight()
                     && captureGapArmFile.isFile() && captureGapArmFile.delete();
             CaptureGapProbe.Action action = captureGapProbe.poll(requestUptime, armed);
             if (action == CaptureGapProbe.Action.START || action == CaptureGapProbe.Action.END) {
@@ -609,10 +605,19 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                         + (action == CaptureGapProbe.Action.START ? "start" : "end")
                         + " nowMs=" + requestUptime + " untilMs=" + captureGapProbe.deadline());
             }
-            if (action == CaptureGapProbe.Action.START || action == CaptureGapProbe.Action.WAIT) return;
+            if (action == CaptureGapProbe.Action.START || action == CaptureGapProbe.Action.WAIT) {
+                traceCaptureAdmission("defer", 0L, "intentional-gap");
+                wakeCaptureAt(captureGapProbe.deadline());
+                return;
+            }
         }
-        if (requestUptime - lastScreenshotRequestUptime
-                < ACCESSIBILITY_SCREENSHOT_INTERVAL_MS) return;
+        if (requestUptime < screenshotScheduler.nextEligibleMillis()) {
+            traceCaptureAdmission("defer", 0L,
+                    requestUptime < screenshotScheduler.retryNotBeforeMillis()
+                            ? "retry-backoff" : "platform-spacing");
+            wakeCaptureAt(screenshotScheduler.nextEligibleMillis());
+            return;
+        }
         boolean concurrentQuality = concurrentQualityAllowed(requestUptime);
         if (!concurrentQuality && qualityBackfillRunner.circuitAllows(requestUptime)
                 && shouldReserveQualityTick(
@@ -623,6 +628,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                             qualityReservationUntilUptime.get() - requestUptime)
                     + " pending=" + qualityBackfillRunner.pendingCount());
             scheduleQualityInference();
+            traceCaptureAdmission("defer", 0L, "quality-reservation");
+            wakeCaptureAt(qualityReservationUntilUptime.get());
             return;
         }
         long qualityActiveMs = inferenceGate.qualityActiveMs(System.nanoTime());
@@ -631,65 +638,92 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             Log.i(TAG, "QUALITY_WINDOW action=yield-quality activeMs=" + qualityActiveMs);
             preemptQualityInference("fast-capture-due");
         }
-        if (!processing.compareAndSet(false, true)) return;
-        lastScreenshotRequestUptime = requestUptime;
+        long requestId = screenshotScheduler.acquire(requestUptime);
+        if (requestId == 0L) {
+            traceCaptureAdmission("busy", 0L, "in-flight-or-stopped");
+            return;
+        }
         traceCaptureStage(requestUptime, "accepted");
-        long requestedEpoch = captureEpoch.token();
-        long requestedScrollX = cumulativeScrollX.get();
-        long requestedScrollY = cumulativeScrollY.get();
-        long requestedGeneration = motionGeneration.get();
-        ForegroundWindowResolver.Candidate liveWindow = resolveLiveApplicationWindow();
-        int activeWindowId = liveWindow == null ? -1 : liveWindow.windowId;
-        String livePackage = liveWindow == null ? "" : liveWindow.packageName;
-        if (activeWindowId >= 0 && livePackage.equals(foregroundPackage)) {
-            acceptApplicationWindow(activeWindowId);
-            ensureProvisionalScrollSurface(livePackage, activeWindowId);
-        }
-        AppModeManager mode = new AppModeManager(this);
-        if (AppModePolicy.shouldAcceptLiveForegroundPackage(
-                livePackage, mode.inputMethodPackage())
-                && !livePackage.equals(foregroundPackage)) {
-            String confirmedPackage = livePackage;
-            main.post(() -> acceptForegroundPackage(
-                    confirmedPackage, System.currentTimeMillis()));
-            finishScreenshotRequest();
-            return;
-        }
-        long requestedDocumentEpoch = visualDocumentEpoch.get();
-        TakeScreenshotCallback callback = new TakeScreenshotCallback() {
-            @Override
-            public void onSuccess(ScreenshotResult result) {
-                traceCaptureStage(requestUptime, "callback-success");
-                try {
-                    process(result, requestedEpoch, requestedScrollX, requestedScrollY,
-                            requestedGeneration, requestUptime,
-                            activeWindowId, requestedDocumentEpoch);
-                } finally {
-                    traceCaptureStage(requestUptime, "callback-exit");
-                }
+        try {
+            long requestedEpoch = captureEpoch.token();
+            long requestedScrollX = cumulativeScrollX.get();
+            long requestedScrollY = cumulativeScrollY.get();
+            long requestedGeneration = motionGeneration.get();
+            ForegroundWindowResolver.Candidate liveWindow = resolveLiveApplicationWindow();
+            int activeWindowId = liveWindow == null ? -1 : liveWindow.windowId;
+            String livePackage = liveWindow == null ? "" : liveWindow.packageName;
+            if (activeWindowId >= 0 && livePackage.equals(foregroundPackage)) {
+                acceptApplicationWindow(activeWindowId);
+                ensureProvisionalScrollSurface(livePackage, activeWindowId);
             }
+            AppModeManager mode = new AppModeManager(this);
+            if (AppModePolicy.shouldAcceptLiveForegroundPackage(
+                    livePackage, mode.inputMethodPackage())
+                    && !livePackage.equals(foregroundPackage)) {
+                String confirmedPackage = livePackage;
+                main.post(() -> acceptForegroundPackage(
+                        confirmedPackage, System.currentTimeMillis()));
+                traceCaptureAdmission("defer", requestId, "foreground-change");
+                finishScreenshotRequest(requestId,
+                        SystemClock.uptimeMillis() + ACCESSIBILITY_SCREENSHOT_INTERVAL_MS);
+                return;
+            }
+            long requestedDocumentEpoch = visualDocumentEpoch.get();
+            TakeScreenshotCallback callback = new TakeScreenshotCallback() {
+                @Override
+                public void onSuccess(ScreenshotResult result) {
+                    traceCaptureStage(requestUptime, "callback-success");
+                    try {
+                        process(result, requestedEpoch, requestedScrollX, requestedScrollY,
+                                requestedGeneration, requestUptime,
+                                activeWindowId, requestedDocumentEpoch, requestId);
+                    } finally {
+                        traceCaptureStage(requestUptime, "callback-exit");
+                    }
+                }
 
-            @Override
-            public void onFailure(int errorCode) {
-                traceCaptureStage(requestUptime, "callback-failure-" + errorCode);
-                if (errorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
-                    DiagnosticsRepository.failCode(
-                            DIAGNOSTICS_MODE, "Screenshot error", errorCode);
-                    Log.w(TAG, "Accessibility screenshot failed with code " + errorCode);
+                @Override
+                public void onFailure(int errorCode) {
+                    traceCaptureStage(requestUptime, "callback-failure-" + errorCode);
+                    if (errorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                        DiagnosticsRepository.failCode(
+                                DIAGNOSTICS_MODE, "Screenshot error", errorCode);
+                        Log.w(TAG, "Accessibility screenshot failed with code " + errorCode);
+                    }
+                    traceCaptureAdmission("failure", requestId, "platform-" + errorCode);
+                    finishScreenshotRequest(requestId);
                 }
-                finishScreenshotRequest();
+            };
+            // Android 14+ can capture the foreground app window directly. Unlike a display capture,
+            // this excludes SubHub's own accessibility overlay, so a censor stays continuously visible
+            // without becoming part of the next detector input.
+            if (!running || !recognitionActive || !isCurrentCapture(requestedEpoch)
+                    || !screenshotScheduler.dispatched(requestId, SystemClock.uptimeMillis())) {
+                finishScreenshotRequest(requestId);
+                return;
             }
-        };
-        // Android 14+ can capture the foreground app window directly. Unlike a display capture,
-        // this excludes SubHub's own accessibility overlay, so a censor stays continuously visible
-        // without becoming part of the next detector input.
-        traceCaptureStage(requestUptime, "dispatch");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                && activeWindowId >= 0) {
-            takeScreenshotOfWindow(activeWindowId, worker, callback);
-            return;
+            traceCaptureStage(requestUptime, "dispatch");
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                        && activeWindowId >= 0) {
+                    takeScreenshotOfWindow(activeWindowId, worker, callback);
+                } else {
+                    takeScreenshot(Display.DEFAULT_DISPLAY, worker, callback);
+                }
+            } finally {
+                // Callbacks use this same queued worker, so ownership is still held here. Retain
+                // spacing from the API return even if Binder was slow or the call threw synchronously.
+                screenshotScheduler.dispatchReturned(requestId, SystemClock.uptimeMillis());
+                traceCaptureAdmission("dispatch", requestId, "api-return");
+            }
+        } catch (RuntimeException error) {
+            // A synchronous framework/foreground failure must not strand the in-flight owner.
+            DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
+            Log.w(TAG, "Could not dispatch accessibility screenshot", error);
+            traceCaptureAdmission("failure", requestId, "dispatch-exception");
+            finishScreenshotRequest(requestId,
+                    SystemClock.uptimeMillis() + ACCESSIBILITY_SCREENSHOT_INTERVAL_MS);
         }
-        takeScreenshot(Display.DEFAULT_DISPLAY, worker, callback);
     }
 
     private static void traceCaptureStage(long requestUptime, String stage) {
@@ -708,7 +742,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             long requestedGeneration,
             long requestedAtUptimeMillis,
             int requestedWindowId,
-            long requestedDocumentEpoch) {
+            long requestedDocumentEpoch,
+            long screenshotRequestId) {
         Bitmap wrapped = null;
         Bitmap frame = null;
         HardwareBuffer buffer = result.getHardwareBuffer();
@@ -967,7 +1002,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (frame != null && !frame.isRecycled()) frame.recycle();
             if (wrapped != null && !wrapped.isRecycled()) wrapped.recycle();
             if (buffer != null) buffer.close();
-            finishScreenshotRequest();
+            finishScreenshotRequest(screenshotRequestId);
         }
     }
 
@@ -1225,6 +1260,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 qualityInferenceDraining.set(false);
                 qualityBackfillRunner.clear();
                 qualityReservationUntilUptime.set(0L);
+                wakeCaptureAt(SystemClock.uptimeMillis());
             }
         }
     }
@@ -1263,6 +1299,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     || lastResult.status()
                     == QualityBackfillRunner.RunStatus.DEFERRED_CIRCUIT) {
                 qualityReservationUntilUptime.set(0L);
+                wakeCaptureAt(now);
             }
             if (running && qualityBackfillRunner.pendingCount() > 0) {
                 long policyDelay = lastResult != null && lastResult.deferred()
@@ -1987,7 +2024,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private FastPriorityInferenceGate.QualityAdmission tryAcquireQualityGate() {
         long nowUptime = SystemClock.uptimeMillis();
         long availableSlackMs = qualityAvailableSlackMs(
-                lastScreenshotRequestUptime, nowUptime);
+                screenshotScheduler.lastDispatchMillis(), nowUptime);
         availableSlackMs = Math.max(availableSlackMs,
                 Math.max(0L, qualityReservationUntilUptime.get() - nowUptime));
         long requiredBudgetMs = qualityExecutionBudgetMs(lastSuccessfulQualityDurationMs);
@@ -2002,7 +2039,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 + " activeLane=" + inferenceGate.activeLane().name().toLowerCase()
                 + " availableSlackMs=" + Math.max(
                         qualityAvailableSlackMs(
-                                lastScreenshotRequestUptime, SystemClock.uptimeMillis()),
+                                screenshotScheduler.lastDispatchMillis(), SystemClock.uptimeMillis()),
                         Math.max(0L, qualityReservationUntilUptime.get()
                                 - SystemClock.uptimeMillis()))
                 + " requiredBudgetMs="
@@ -3641,6 +3678,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             long receivedUptimeMillis) {
         if (dx == 0 && dy == 0) return;
         qualityReservationUntilUptime.set(0L);
+        wakeCaptureAt(SystemClock.uptimeMillis());
         // Continuous fast observations are reprojected before tracking and presentation. Closing
         // their transaction here discards useful work even when no newer capture exists.
         invalidateNonReprojectableSceneForMotion();
@@ -3915,6 +3953,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         qualityBackfillRunner.resetPolicyState();
         qualityTilePassSequence.set(0L);
         qualityReservationUntilUptime.set(0L);
+        wakeCaptureAt(SystemClock.uptimeMillis());
         clearLateQualityPresentation("structural-clear");
         preemptQualityInference("quality-cleared");
     }
@@ -3924,29 +3963,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         ScheduledExecutorService captureWorker = worker;
         if (!running || !recognitionActive || captureWorker == null
                 || captureWorker.isShutdown()) return;
-        ScheduledFuture<?> existing = priorityCaptureSchedule;
-        if (existing != null) existing.cancel(false);
-        priorityCaptureSchedule = captureWorker.schedule(
-                this::requestSettledCapture, MOTION_SETTLE_MS, TimeUnit.MILLISECONDS);
-    }
-
-    private void requestSettledCapture() {
-        if (!running || !recognitionActive || worker == null || worker.isShutdown()) return;
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return;
+        // A settled request shares admission with regular capture; it cannot shift a poll phase.
         long now = SystemClock.uptimeMillis();
-        long wait = settledCaptureDelayMs(
-                now, lastMotionUptime, lastScreenshotRequestUptime);
-        if (wait > 0L) {
-            priorityCaptureSchedule = worker.schedule(
-                    this::requestSettledCapture, wait, TimeUnit.MILLISECONDS);
-            return;
-        }
-        priorityCaptureSchedule = null;
-        CensorLabLog.i(TAG, "SETTLED_CAPTURE_REQUEST scrollId=" + scrollTraceId
-                + " afterMotionMs=" + (lastMotionUptime <= 0L
-                        ? 0L : now - lastMotionUptime)
-                + " platformGapMs=" + (now - lastScreenshotRequestUptime));
-        requestScreenshot();
+        wakeCaptureAt(now + settledCaptureDelayMs(now, lastMotionUptime,
+                Math.max(0L, screenshotScheduler.lastDispatchMillis())));
     }
 
     static long settledCaptureDelayMs(
@@ -3967,8 +3987,47 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         return new Rect(0, 0, Math.max(1, metrics.widthPixels), Math.max(1, metrics.heightPixels));
     }
 
-    private void finishScreenshotRequest() {
-        processing.set(false);
+    private AccessibilityCaptureScheduler.Cancellation scheduleCaptureTask(
+            Runnable task, long delayMillis) {
+        ScheduledExecutorService captureWorker = worker;
+        if (captureWorker == null || captureWorker.isShutdown()) {
+            throw new RejectedExecutionException("Accessibility capture worker stopped");
+        }
+        ScheduledFuture<?> scheduled = captureWorker.schedule(task, delayMillis,
+                TimeUnit.MILLISECONDS);
+        return () -> scheduled.cancel(false);
+    }
+
+    private void wakeCaptureAt(long deadline) {
+        if (!running || !recognitionActive) return;
+        try {
+            screenshotScheduler.wakeAt(deadline);
+        } catch (RejectedExecutionException stopped) {
+            Log.i(TAG, "CAPTURE_SCHEDULE_SKIP reason=worker-stopped");
+        }
+    }
+
+    private void finishScreenshotRequest(long requestId) {
+        finishScreenshotRequest(requestId, SystemClock.uptimeMillis());
+    }
+
+    private void finishScreenshotRequest(long requestId, long notBeforeMillis) {
+        try {
+            if (screenshotScheduler.finish(requestId, notBeforeMillis)) {
+                traceCaptureAdmission("complete", requestId, "released");
+            }
+        } catch (RejectedExecutionException stopped) {
+            Log.i(TAG, "CAPTURE_SCHEDULE_SKIP reason=worker-stopped");
+        }
+    }
+
+    private void traceCaptureAdmission(String action, long requestId, String reason) {
+        long observedUptime = "dispatch".equals(action)
+                ? screenshotScheduler.lastDispatchMillis() : SystemClock.uptimeMillis();
+        CensorLabLog.i(TAG, "CAPTURE_ADMISSION v=1 action=" + action
+                + " requestId=" + requestId + " uptimeMs=" + observedUptime
+                + " eligibleMs=" + screenshotScheduler.nextEligibleMillis()
+                + " inFlight=" + screenshotScheduler.inFlight() + " reason=" + reason);
     }
 
     private void requestTextRefresh() {
@@ -5685,12 +5744,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         captureEpoch.invalidate();
         invalidateCurrentScene("recognition-deactivated");
         Log.i(TAG, "Recognition suspended for foreground package " + foregroundPackage);
-        ScheduledFuture<?> schedule = captureSchedule;
-        captureSchedule = null;
-        if (schedule != null) schedule.cancel(false);
-        ScheduledFuture<?> prioritySchedule = priorityCaptureSchedule;
-        priorityCaptureSchedule = null;
-        if (prioritySchedule != null) prioritySchedule.cancel(false);
+        screenshotScheduler.stop();
         discardPendingInference();
         clearQualityBackfill();
         LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter;
@@ -5712,9 +5766,6 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         invalidateCurrentScene("scroll-state-reset");
         invalidateWorldCache("scroll-state-reset");
         cancelPendingTextConfirmation();
-        ScheduledFuture<?> prioritySchedule = priorityCaptureSchedule;
-        priorityCaptureSchedule = null;
-        if (prioritySchedule != null) prioritySchedule.cancel(false);
         synchronized (scrollStateLock) {
             cumulativeScrollX.set(0L);
             cumulativeScrollY.set(0L);
@@ -5744,7 +5795,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         lastInferenceUptime = 0L;
         lastQualityInferenceUptime = 0L;
         lastSuccessfulQualityDurationMs = 0L;
-        lastScreenshotRequestUptime = 0L;
+        // screenshotScheduler retains actual dispatch spacing across logical scene changes.
         lastOcrCompletionUptime = 0L;
         if (motionEstimator != null) motionEstimator.reset();
         scrollMotionResolver.reset();

@@ -5,7 +5,7 @@ import android.util.Log;
 /** Mirrors selected, sanitized performance log lines into an explicit Censor Lab session. */
 public final class CensorLabLog {
     private static final String[] ALLOWED_PREFIXES = {
-            "CALIBRATION_SCENE", "CALIBRATION_TOUCH", "CAPTURE_PHASE", "FAST_DROP",
+            "CALIBRATION_SCENE", "CALIBRATION_TOUCH", "CAPTURE_PHASE", "CAPTURE_ADMISSION", "FAST_DROP",
             "FRAME_MOTION", "INFERENCE_GATE",
             "OVERLAY_PUBLISH", "QUALITY_", "SCROLL_", "SETTLED_",
             "SCENE_", "SOURCE_FRAME_", "STARTUP", "TEXT_", "WORLD_CACHE_"

@@ -23,5 +23,8 @@ public final class CensorLabLogTest {
     @Test public void futureSchemaMustReachParserInsteadOfSilentlyDisappearing() {
         assertTrue(CensorLabLog.allowed("PersonInference", "PERSON_MODEL v=2 future=1"));
         assertTrue(CensorLabLog.allowed("ScreenshotA11y", "PERSON_PUBLISH v=2 future=1"));
+        assertTrue(CensorLabLog.allowed("ScreenshotA11y", "CAPTURE_ADMISSION v=1 action=dispatch"));
+        assertTrue(CensorLabLog.allowed("ScreenshotA11y", "CAPTURE_ADMISSION v=2 future=1"));
+        assertFalse(CensorLabLog.allowed("ScreenCaptureService", "CAPTURE_ADMISSION v=1"));
     }
 }
