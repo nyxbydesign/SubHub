@@ -247,8 +247,11 @@ public final class StatsRepository {
     }
 
     public List<SessionEntry> getSessionHistory() {
+        return parseSessionHistory(preferences.getString(KEY_SESSION_HISTORY, ""));
+    }
+
+    static List<SessionEntry> parseSessionHistory(String raw) {
         List<SessionEntry> result = new ArrayList<>();
-        String raw = preferences.getString(KEY_SESSION_HISTORY, "");
         if (raw == null || raw.trim().isEmpty()) return result;
         for (String encoded : raw.split(";")) {
             String[] parts = encoded.split(",", -1);

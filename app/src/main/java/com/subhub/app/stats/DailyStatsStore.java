@@ -12,6 +12,7 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
     private static DailyStatsStore instance;
     private final Context context;
     private final Map<String, Map<String,Long>> cachedTotals=new HashMap<>();
+    private String importedHistory;
     private static final java.util.concurrent.ExecutorService counterWriter = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-daily-counters"));
     public void queueStats(SharedPreferences prefs) {
         Map<String, ?> snapshot = prefs.getAll();
@@ -34,6 +35,7 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE clock(id INTEGER PRIMARY KEY, process TEXT, mono INTEGER, wall INTEGER, zone TEXT, session INTEGER)");
         db.execSQL("CREATE TABLE metadata(name TEXT PRIMARY KEY,value TEXT)");
         db.execSQL("INSERT INTO metadata VALUES('since',?)", new Object[] {LocalDate.now().toString()});
+        db.execSQL("INSERT INTO metadata VALUES('collection_started_ms',?)", new Object[] {Long.toString(System.currentTimeMillis())});
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { throw new IllegalStateException("Unsupported daily statistics schema"); }
     public synchronized String since() {
@@ -72,8 +74,85 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
                 {"assessed_USD","tribute_cents_USD"},{"tributes","tribute_events"},{"sessions","sessions_count"}};
         for (String[] key : keys) { Object value = raw.get(key[1]); totals.put(key[0], value instanceof Number ? ((Number) value).longValue() : 0); }
         Object stamp = raw.get(STAMP); Object zone = raw.get(ZONE);
-        checkpoint("stats", totals, stamp instanceof Long ? (Long) stamp : System.currentTimeMillis(), zone instanceof String ? (String) zone : ZoneId.systemDefault().getId());
+        String recordedZone = zone instanceof String ? (String) zone : ZoneId.systemDefault().getId();
+        Object history = raw.get("session_history");
+        if (history instanceof String) backfillSessions((String) history, recordedZone);
+        checkpoint("stats", totals, stamp instanceof Long ? (Long) stamp : System.currentTimeMillis(), recordedZone);
     }
+    /** Import only the saved portion before daily collection, never replaying live aggregates. */
+    synchronized void backfillSessions(String history, String zone) {
+        if (history.equals(importedHistory)) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            String cutoffValue = metadata(db, "legacy_cutoff_ms");
+            String importZone = metadata(db, "legacy_zone");
+            if (cutoffValue == null) {
+                cutoffValue = metadata(db, "collection_started_ms");
+                // Older daily databases did not keep an exact collection timestamp. Their
+                // first recorded midnight is the conservative boundary for avoiding overlap.
+                if (cutoffValue == null)
+                    cutoffValue =
+                            Long.toString(
+                                    LocalDate.parse(metadata(db, "since"))
+                                            .atStartOfDay(ZoneId.of(zone))
+                                            .toInstant()
+                                            .toEpochMilli());
+                importZone = zone;
+                db.execSQL(
+                        "INSERT INTO metadata VALUES('legacy_cutoff_ms',?)",
+                        new Object[] {cutoffValue});
+                db.execSQL(
+                        "INSERT INTO metadata VALUES('legacy_zone',?)", new Object[] {importZone});
+            }
+            long cutoff = Long.parseLong(cutoffValue);
+            ZoneId localZone = ZoneId.of(importZone);
+            for (StatsRepository.SessionEntry session :
+                    StatsRepository.parseSessionHistory(history)) {
+                long start = session.getStartMillis(), seconds = session.getDurationSeconds();
+                if (start >= cutoff || seconds > (Long.MAX_VALUE - start) / 1000) continue;
+                long end = start + seconds * 1000;
+                ContentValues receipt = new ContentValues();
+                receipt.put("id", "legacy-session:" + start);
+                if (db.insertWithOnConflict(
+                                "receipts", null, receipt, SQLiteDatabase.CONFLICT_IGNORE)
+                        == -1) continue;
+                for (Map.Entry<String, Long> slice :
+                        DailyTimeSlices.split(start, Math.min(end, cutoff) - start, localZone)
+                                .entrySet())
+                    add(db, slice.getKey(), "service_ms", slice.getValue());
+                String day = Instant.ofEpochMilli(start).atZone(localZone).toLocalDate().toString();
+                add(db, day, "sessions", 1);
+                // Legacy counters have a session timestamp, but no individual event times.
+                // A session that crosses the collection boundary cannot safely add counters.
+                if (end <= cutoff) {
+                    legacyValue(db, day, "censors", session.getBlocks());
+                    legacyValue(db, day, "limits_ms", session.getLimitedAppMillis());
+                    legacyValue(db, day, "limit_stops", session.getLimitInterventions());
+                    legacyValue(db, day, "tributes", session.getTributeEvents());
+                    legacyValue(db, day, "assessed_EUR", session.getTributeCents());
+                    legacyValue(db, day, "whispers", session.getSubliminals());
+                    legacyValue(db, day, "popups", session.getPopupImpressions());
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        importedHistory = history;
+    }
+
+    private static String metadata(SQLiteDatabase db, String name) {
+        try (Cursor c =
+                db.rawQuery("SELECT value FROM metadata WHERE name=?", new String[] {name})) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    private static void legacyValue(SQLiteDatabase db, String day, String metric, long value) {
+        if (value > 0) add(db, day, metric, value);
+    }
+
     public void syncWallet() {
         com.subhub.app.penance.PenanceManager wallet = new com.subhub.app.penance.PenanceManager(context);
         Map<String, Long> totals = new LinkedHashMap<>();
