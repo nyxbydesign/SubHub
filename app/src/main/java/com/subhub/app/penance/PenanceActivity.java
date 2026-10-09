@@ -855,9 +855,9 @@ public final class PenanceActivity extends AppCompatActivity {
     private void renderHistory(PenanceSnapshot snapshot, long nowMillis) {
         binding.history.setText(snapshot.getEvents().isEmpty() ? getString(R.string.penance_history_empty) : "");
         binding.history.setVisibility(snapshot.getEvents().isEmpty() ? View.VISIBLE : View.GONE);
-        binding.walletHistoryList.bind(snapshot.getEvents(), nowMillis, historyExpanded ? 12 : 2);
+        int groupCount = binding.walletHistoryList.bind(snapshot.getEvents(), nowMillis, historyExpanded ? 12 : 2);
         binding.walletHistoryMore.setVisibility(
-                snapshot.getEvents().size() > 2 ? View.VISIBLE : View.GONE);
+                groupCount > 2 ? View.VISIBLE : View.GONE);
         binding.walletHistoryMore.setText(
                 historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more);
     }
