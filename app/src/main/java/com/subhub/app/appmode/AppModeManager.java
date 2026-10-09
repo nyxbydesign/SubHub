@@ -1,30 +1,25 @@
 package com.subhub.app.appmode;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.provider.Settings;
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.view.accessibility.AccessibilityManager;
 
-import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.CaptureMethod;
+import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.StatsRepository;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Shared app scope with independent per-feature assignments. */
+/** One included-app scope shared by every enabled runtime feature. */
 public final class AppModeManager {
     public static final String KEY_ARMED = "app_mode_armed";
-    public static final String KEY_MODE = "app_mode_kind";
-    public static final String KEY_MODE_EXPLICIT = "app_mode_kind_explicit_v2";
-    public static final String KEY_SELECTED_PACKAGES = "app_mode_selected_packages";
-    public static final String KEY_TIMER_PACKAGES = "app_timer_selected_packages";
-    public static final String KEY_SUBLIMINAL_PACKAGES = "subliminal_selected_packages";
-    private static final String MODE_ALWAYS = "always";
-    private static final String MODE_SELECTED = "selected";
+    public static final String KEY_INCLUDED_PACKAGES = "app_included_packages_v1";
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -33,6 +28,7 @@ public final class AppModeManager {
         this.context = context.getApplicationContext();
         preferences = this.context.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        migrateAppSelection();
     }
 
     public boolean isArmed() {
@@ -45,87 +41,96 @@ public final class AppModeManager {
         syncProtectionSession(wasArmed, armed);
     }
 
-    public AppModePolicy.Mode getMode() {
-        String storedMode = preferences.getString(KEY_MODE, MODE_ALWAYS);
-        if (preferences.getBoolean(KEY_MODE_EXPLICIT, false)) {
-            return MODE_SELECTED.equals(storedMode)
-                    ? AppModePolicy.Mode.SELECTED_APPS : AppModePolicy.Mode.ALWAYS;
-        }
-        // Per-app Censor checkboxes are the most specific intent. Older builds saved them
-        // independently from this mode and could leave a stale "always" value behind, causing
-        // recognition in every app despite an explicit X-only (or similar) assignment.
-        if (!getSelectedPackages().isEmpty()) return AppModePolicy.Mode.SELECTED_APPS;
-        return MODE_SELECTED.equals(storedMode)
-                ? AppModePolicy.Mode.SELECTED_APPS : AppModePolicy.Mode.ALWAYS;
+    public Set<String> getIncludedPackages() {
+        migrateAppSelection();
+        return AppModePolicy.sanitizePackages(
+                preferences.getStringSet(KEY_INCLUDED_PACKAGES,
+                Collections.emptySet()));
     }
 
-    public Set<String> getSelectedPackages() {
-        Set<String> stored = preferences.getStringSet(KEY_SELECTED_PACKAGES,
-                Collections.emptySet());
-        return AppModePolicy.sanitizePackages(stored);
-    }
-
-    public Set<String> getTimerPackages() {
-        Set<String> stored = preferences.getStringSet(KEY_TIMER_PACKAGES, null);
-        // Existing installs used one shared selection. Preserve that choice until the
-        // controller explicitly saves the new two-column app picker.
-        return stored == null ? getSelectedPackages() : AppModePolicy.sanitizePackages(stored);
-    }
-
-    public Set<String> getSubliminalPackages() {
-        Set<String> stored = preferences.getStringSet(KEY_SUBLIMINAL_PACKAGES,
-                Collections.emptySet());
-        return AppModePolicy.sanitizePackages(stored);
-    }
-
-    public void saveAppSelections(Set<String> censorPackages, Set<String> timerPackages,
-            Set<String> subliminalPackages) {
-        Set<String> cleanCensorPackages = AppModePolicy.sanitizePackages(censorPackages);
-        SharedPreferences.Editor editor = preferences.edit()
-                .putStringSet(KEY_SELECTED_PACKAGES,
-                        new LinkedHashSet<>(cleanCensorPackages))
-                .putStringSet(KEY_TIMER_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(timerPackages)))
-                .putStringSet(KEY_SUBLIMINAL_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(subliminalPackages)));
-        if (!cleanCensorPackages.isEmpty()) {
-            editor.putString(KEY_MODE, MODE_SELECTED).putBoolean(KEY_MODE_EXPLICIT, true);
-        }
-        editor.commit();
-    }
-
-    /** UI-only scope edits publish all choices together without rewriting service state. */
-    public void saveUiSelections(AppModePolicy.Mode mode, Set<String> censorPackages,
-            Set<String> timerPackages, Set<String> subliminalPackages) {
+    /** Publish one selection without changing service state, feature switches or allowances. */
+    public void saveIncludedPackages(Set<String> packages) {
         preferences.edit()
-                .putString(KEY_MODE, mode == AppModePolicy.Mode.SELECTED_APPS
-                        ? MODE_SELECTED : MODE_ALWAYS)
-                .putBoolean(KEY_MODE_EXPLICIT, true)
-                .putStringSet(KEY_SELECTED_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(censorPackages)))
-                .putStringSet(KEY_TIMER_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(timerPackages)))
-                .putStringSet(KEY_SUBLIMINAL_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(subliminalPackages)))
+                .putStringSet(
+                        KEY_INCLUDED_PACKAGES,
+                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
                 .apply();
     }
 
-    /** Compatibility overload for tests and older integrations. */
-    public void saveAppSelections(Set<String> censorPackages, Set<String> timerPackages) {
-        saveAppSelections(censorPackages, timerPackages, getSubliminalPackages());
-    }
-
-    public void save(boolean armed, AppModePolicy.Mode mode, Set<String> selectedPackages) {
+    public void save(boolean armed, Set<String> packages) {
         boolean wasArmed = isArmed();
         preferences.edit()
                 .putBoolean(KEY_ARMED, armed)
-                .putString(KEY_MODE,
-                        mode == AppModePolicy.Mode.SELECTED_APPS ? MODE_SELECTED : MODE_ALWAYS)
-                .putBoolean(KEY_MODE_EXPLICIT, true)
-                .putStringSet(KEY_SELECTED_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(selectedPackages)))
+                .putStringSet(
+                        KEY_INCLUDED_PACKAGES,
+                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
                 .commit();
         syncProtectionSession(wasArmed, armed);
+    }
+
+    private void migrateAppSelection() {
+        if (preferences.contains(KEY_INCLUDED_PACKAGES)) return;
+        synchronized (AppModeManager.class) {
+            if (preferences.contains(KEY_INCLUDED_PACKAGES)) return;
+            Set<String> censor = preferences.getStringSet("app_mode_selected_packages", Set.of());
+            Set<String> limits = preferences.getStringSet("app_timer_selected_packages", censor);
+            Set<String> whispers =
+                    preferences.getStringSet("subliminal_selected_packages", Set.of());
+            boolean legacy =
+                    preferences.contains(KEY_ARMED)
+                            || preferences.contains("app_mode_kind")
+                            || preferences.contains("app_mode_selected_packages")
+                            || preferences.contains("app_timer_selected_packages")
+                            || preferences.contains("subliminal_selected_packages");
+            boolean all =
+                    LegacyAppSelection.wasAllApps(
+                            preferences.getString("app_mode_kind", "always"),
+                            preferences.getBoolean("app_mode_kind_explicit_v2", false),
+                            censor,
+                            legacy);
+            Set<String> installed = new LinkedHashSet<>();
+            if (all) {
+                android.content.Intent launcher =
+                        new android.content.Intent(android.content.Intent.ACTION_MAIN)
+                                .addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+                for (android.content.pm.ResolveInfo info :
+                        context.getPackageManager()
+                                .queryIntentActivities(
+                                        launcher, android.content.pm.PackageManager.MATCH_ALL)) {
+                    if (info.activityInfo != null
+                            && !context.getPackageName().equals(info.activityInfo.packageName))
+                        installed.add(info.activityInfo.packageName);
+                }
+            }
+            preferences
+                    .edit()
+                    .putStringSet(
+                            KEY_INCLUDED_PACKAGES,
+                            new LinkedHashSet<>(
+                                    LegacyAppSelection.merge(
+                                            all, censor, limits, whispers, installed)))
+                    .remove("app_mode_kind")
+                    .remove("app_mode_kind_explicit_v2")
+                    .remove("app_mode_selected_packages")
+                    .remove("app_timer_selected_packages")
+                    .remove("subliminal_selected_packages")
+                    .apply();
+        }
+    }
+
+    /** Capture-method independent participation used by projection as well as Accessibility. */
+    public boolean shouldCensorForeground(String foregroundPackage) {
+        return new FeatureModuleManager(context).isCensorEnabled()
+                && participates(foregroundPackage);
+    }
+
+    private boolean participates(String foregroundPackage) {
+        return AppModePolicy.shouldRecognize(
+                isArmed(),
+                getIncludedPackages(),
+                foregroundPackage,
+                context.getPackageName(),
+                inputMethodPackage());
     }
 
     public boolean shouldRecognize(String foregroundPackage) {
@@ -133,16 +138,12 @@ public final class AppModeManager {
         if (new SettingsRepository(context).loadCaptureMethod() != CaptureMethod.APP_MODE) {
             return false;
         }
-        return AppModePolicy.shouldRecognize(isEffectivelyArmed(System.currentTimeMillis()),
-                getMode(), getSelectedPackages(),
-                foregroundPackage, context.getPackageName(), inputMethodPackage());
+        return participates(foregroundPackage);
     }
 
     public boolean shouldShowSubliminal(String foregroundPackage) {
         if (!new FeatureModuleManager(context).isSubliminalEnabled()) return false;
-        return AppModePolicy.shouldRecognize(isEffectivelyArmed(System.currentTimeMillis()),
-                getMode(), getSubliminalPackages(),
-                foregroundPackage, context.getPackageName(), inputMethodPackage());
+        return participates(foregroundPackage);
     }
 
     /** Effective one-app scope for usage accounting, without enumerating installed apps. */
@@ -153,17 +154,15 @@ public final class AppModeManager {
                 android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
         String homePackage = home == null || home.activityInfo == null ? "" : home.activityInfo.packageName;
         boolean eligible = AppModePolicy.shouldLimit(isEffectivelyArmed(System.currentTimeMillis()),
-                getMode(), getTimerPackages(), foregroundPackage,
+                        getIncludedPackages(), foregroundPackage,
                 context.getPackageName(), inputMethodPackage(), homePackage);
         return eligible ? Set.of(foregroundPackage.trim()) : Set.of();
     }
 
-    /** Popup Storm participates independently of Censor and its app/capture scope. */
+    /** Effects use the same included apps without requiring the Censor module. */
     public boolean shouldShowPopups(String foregroundPackage) {
         if (!com.subhub.app.popup.PopupStormSettings.load(context).isEnabled()) return false;
-        return AppModePolicy.shouldRecognize(isEffectivelyArmed(System.currentTimeMillis()),
-                AppModePolicy.Mode.ALWAYS, Set.of(), foregroundPackage,
-                context.getPackageName(), inputMethodPackage());
+        return participates(foregroundPackage);
     }
 
     public boolean isEffectivelyArmed(long nowMillis) {
@@ -182,7 +181,9 @@ public final class AppModeManager {
         return false;
     }
 
-    /** App Mode already persists its exact armed/disarmed state across process and device restarts. */
+    /**
+     * App Mode already persists its exact armed/disarmed state across process and device restarts.
+     */
     public void applyBootPolicy() {
         // Intentionally preserve KEY_ARMED. Android permissions remain independently revocable.
     }

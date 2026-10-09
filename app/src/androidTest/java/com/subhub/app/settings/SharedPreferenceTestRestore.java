@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.Set;
 
 /** Restore only the test-owned application fixture, never device settings. */
-final class SharedPreferenceTestRestore {
-    static void restore(SharedPreferences preferences, Map<String, ?> original) {
+public final class SharedPreferenceTestRestore {
+    public static void restore(SharedPreferences preferences, Map<String, ?> original) {
         SharedPreferences.Editor edit = preferences.edit().clear();
         for (Map.Entry<String, ?> entry : original.entrySet()) {
             Object value = entry.getValue();

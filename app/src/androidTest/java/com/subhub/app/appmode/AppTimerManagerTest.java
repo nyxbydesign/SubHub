@@ -102,7 +102,24 @@ public final class AppTimerManagerTest {
                 timers.limitStatus(APP_ONE, selected, DAY_SIX));
     }
 
-    @Test public void unselectedAppsNeverAccrueOrBlock() {
+    @Test public void visibleScopeKeepsEarlierUsageInCombinedTotalAndResetsNextDay() {
+        timers.clearUsageForTesting();
+        timers.saveSettings(true, 30, true, 120);
+        timers.recordUsage(APP_ONE, 70_000L, selected, DAY_FIVE);
+        timers.recordUsage(APP_TWO, 50_000L, selected, DAY_FIVE);
+        Map<String, AppTimerManager.UsageSnapshot> subset =
+                timers.snapshots(Set.of(APP_TWO), DAY_FIVE);
+        assertEquals(120_000L, subset.get("").totalUsedMillis);
+        assertEquals(50_000L, subset.get(APP_TWO).appUsedMillis);
+        assertEquals(120_000L, subset.get(APP_TWO).totalUsedMillis);
+        assertEquals(120_000L, timers.snapshots(Set.of(), DAY_FIVE).get("").totalUsedMillis);
+        Map<String, AppTimerManager.UsageSnapshot> nextDay = timers.snapshots(selected, DAY_SIX);
+        assertEquals(0L, nextDay.get("").totalUsedMillis);
+        assertEquals(0L, nextDay.get(APP_ONE).appUsedMillis);
+    }
+
+    @Test
+    public void unselectedAppsNeverAccrueOrBlock() {
         timers.saveSettings(true, 1, true, 1);
         String unselected = "com.example.unselected";
         timers.recordUsage(unselected, 120_000L, selected, DAY_EIGHT);

@@ -31,7 +31,6 @@ import androidx.core.content.ContextCompat;
 
 import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.appmode.ResumeNotificationManager;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
@@ -629,16 +628,16 @@ public final class MainActivity extends AppCompatActivity {
             AppModeManager appMode = new AppModeManager(this);
             AppTimerManager timerManager = new AppTimerManager(this);
             AppTimerManager.Settings timer = timerManager.loadSettings();
-            Set<String> timerPackages = appMode.getTimerPackages();
+            Set<String> timerPackages = appMode.getIncludedPackages();
             AppTimerManager.AllowanceSummary allowances =
                     timerManager.summarizeAllowances(timerPackages);
-            boolean allApps = appMode.getMode() == AppModePolicy.Mode.ALWAYS;
+
             int limitCount =
-                    !allApps && allowances.isEmpty()
+                    allowances.isEmpty()
                             ? 0
                             : (timer.totalEnabled ? 1 : 0)
                                     + (timer.perAppEnabled
-                                            ? (allApps ? 1 : allowances.appCount)
+                                            ? allowances.appCount
                                             : 0);
             binding.subLimitsSummary.setText(
                     getResources()
@@ -778,10 +777,7 @@ public final class MainActivity extends AppCompatActivity {
                                 : getString(R.string.popup_off)));
         lines.add(
                 detailLine(
-                        R.string.arrangement_apps,
-                        appMode.getMode() == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS
-                                ? getString(R.string.arrangement_all_apps)
-                                : appLabels(appMode.getSelectedPackages())));
+                        R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
         return joinDetails(lines);
     }
 
@@ -796,17 +792,7 @@ public final class MainActivity extends AppCompatActivity {
                         settings.totalEnabled
                                 ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                                 : getString(R.string.popup_off)));
-        Set<String> packages = appMode.getTimerPackages();
-        if (appMode.getMode() == AppModePolicy.Mode.ALWAYS) {
-            lines.add(
-                    detailLine(
-                            R.string.arrangement_apps, getString(R.string.arrangement_all_apps)));
-            if (settings.perAppEnabled)
-                lines.add(
-                        detailLine(
-                                R.string.app_timer_default_minutes,
-                                getString(R.string.arrangement_minutes, settings.perAppMinutes)));
-        }
+        Set<String> packages = appMode.getIncludedPackages();
         if (settings.perAppEnabled && !packages.isEmpty()) {
             List<String> allowances = new ArrayList<>();
             for (String packageName : packages) {
@@ -895,10 +881,7 @@ public final class MainActivity extends AppCompatActivity {
                         friendlyPreset(settings.getPreset())));
         lines.add(
                 detailLine(
-                        R.string.arrangement_apps,
-                        appMode.getMode() == AppModePolicy.Mode.ALWAYS
-                                ? getString(R.string.arrangement_all_apps)
-                                : appLabels(appMode.getSubliminalPackages())));
+                        R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
         return joinDetails(lines);
     }
 
@@ -924,9 +907,7 @@ public final class MainActivity extends AppCompatActivity {
         lines.add(
                 detailLine(
                         R.string.arrangement_apps,
-                        new AppModeManager(this).getMode() == AppModePolicy.Mode.ALWAYS
-                                ? getString(R.string.arrangement_all_apps)
-                                : appLabels(new AppModeManager(this).getSubliminalPackages())));
+                        appLabels(new AppModeManager(this).getIncludedPackages())));
         return joinDetails(lines);
     }
 

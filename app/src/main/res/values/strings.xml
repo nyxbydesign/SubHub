@@ -716,7 +716,7 @@
     <string name="penance_history_detection">new censor</string>
     <string name="penance_history_dwell">time on censored content</string>
     <string name="penance_history_tap">censor tap</string>
-    <string name="penance_history_app_open">assigned app opened</string>
+    <string name="penance_history_app_open">included app opened</string>
     <string name="penance_charge_toast">%1$s · +%2$s tribute · %3$s due</string>
     <string name="penance_status_open">due</string>
     <string name="penance_status_mercy">grace period</string>
@@ -1164,4 +1164,26 @@
     <string name="studio_section_popup">Popup storm</string>
     <string name="studio_no_sections">Choose at least one feature.</string>
     <string name="studio_no_secrets">No PayPal attachment. App assignments, history, permissions, payer authorization, and live service state are never included.</string>
+    <plurals name="apps_included_count"><item quantity="one">%d included app</item><item quantity="other">%d included apps</item></plurals>
+    <string name="app_include_accessibility">Include %1$s</string>
+    <string name="limits_today">Today</string>
+    <string name="limits_today_scope">%1$d included apps</string>
+    <string name="limits_combined">Combined limit</string>
+    <string name="limits_per_app">Per-app limits</string>
+    <string name="limits_daily_minutes">Daily minutes</string>
+    <string name="limits_minutes_per_day">min/day</string>
+    <string name="limits_manage_apps">Manage included apps</string>
+    <string name="limits_no_apps">No included apps</string>
+    <string name="limits_loading_apps">Loading apps…</string>
+    <string name="limits_usage_remaining">%1$s used · %2$s left</string>
+    <string name="limits_usage_only">%1$s used</string>
+    <string name="limits_reached">Limit reached</string>
+    <string name="limits_shared_reached">Combined limit reached</string>
+    <string name="limits_tracking">Tracking app use</string>
+    <string name="limits_off">Limits off</string>
+    <string name="limits_protection_off">Protection is off</string>
+    <string name="limits_access_needed">Accessibility access needed</string>
+    <string name="limits_waiting_service">Waiting for accessibility service</string>
+    <string name="limits_less_than_minute">&lt;1m</string>
+    <string name="limits_apps_unavailable">Could not load apps</string>
 </resources>

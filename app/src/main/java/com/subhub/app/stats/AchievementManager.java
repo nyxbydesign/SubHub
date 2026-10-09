@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.text.TextSmutConfig;
@@ -175,8 +174,7 @@ public final class AchievementManager {
             case "app_mode_guardian":
                 return new AppModeManager(context).isArmed() ? 1 : 0;
             case "app_assignment_curator":
-                return new AppModeManager(context).getMode() == AppModePolicy.Mode.SELECTED_APPS
-                        ? new AppModeManager(context).getSelectedPackages().size() : 0;
+                return new AppModeManager(context).getIncludedPackages().size();
             case "limits_setter":
                 return new AppTimerManager(context).loadSettings().anyEnabled() ? 1 : 0;
             case "limits_dual_guard": {
@@ -379,13 +377,17 @@ public final class AchievementManager {
         public int getDescription() { return description; }
         public String getIcon() { return icon; }
         public String getCategory() { return category; }
-        /** @return the generated illustrated badge drawable for this achievement. */
+
+        /**
+         * @return the generated illustrated badge drawable for this achievement.
+         */
         public int getBadgeArtRes() { return badgeArtRes; }
+
         /**
          * Legacy asset accessor retained for binary/source compatibility.
          *
-         * <p>Badges no longer use licensed asset filenames; callers should use
-         * {@link #getBadgeArtRes()} instead.</p>
+         * <p>Badges no longer use licensed asset filenames; callers should use {@link
+         * #getBadgeArtRes()} instead.
          */
         @Deprecated public String getBadge() { return null; }
         public boolean isHidden() { return hidden; }

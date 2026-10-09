@@ -375,10 +375,11 @@ public final class OnboardingActivity extends PreferencePage {
         AppModeManager apps = new AppModeManager(this);
         text(
                 choices,
-                getString(
-                        R.string.tour_app_counts,
-                        apps.getSelectedPackages().size(),
-                        apps.getTimerPackages().size()),
+                getResources()
+                        .getQuantityString(
+                                R.plurals.apps_included_count,
+                                apps.getIncludedPackages().size(),
+                        apps.getIncludedPackages().size()),
                 13,
                 true);
         text(

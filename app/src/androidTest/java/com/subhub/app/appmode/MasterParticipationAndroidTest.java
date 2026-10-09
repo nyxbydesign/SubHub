@@ -1,10 +1,11 @@
 package com.subhub.app.appmode;
-
-import static org.junit.Assert.*;
-import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
+
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
+
+import static org.junit.Assert.*;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.widget.CompoundButton;
@@ -96,16 +97,17 @@ public final class MasterParticipationAndroidTest {
         assertFalse(mode.isArmed());
     }
 
-    @Test public void popupOnlyParticipationDoesNotNeedCensorOrItsCaptureAndAssignmentScope() {
+    @Test public void popupOnlyParticipationUsesTheSharedIncludedScopeWithoutCensor() {
         FeatureModuleManager modules = new FeatureModuleManager(context);
         modules.save(false, false, false, false);
         preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, true)
                 .putString(SettingsRepository.KEY_CAPTURE_METHOD, CaptureMethod.SCREEN_RECORDING.preferenceValue()).commit();
         AppModeManager mode = new AppModeManager(context);
-        mode.save(true, AppModePolicy.Mode.SELECTED_APPS, Set.of());
+        mode.save(true, Set.of("synthetic.app"));
         assertTrue(modules.hasRuntimeFeature());
         assertFalse(mode.shouldRecognize("synthetic.app"));
         assertTrue(mode.shouldShowPopups("synthetic.app"));
+        assertFalse(mode.shouldShowPopups("excluded.app"));
         assertFalse(mode.shouldShowPopups(context.getPackageName()));
         mode.setArmed(false);
         assertFalse(mode.shouldShowPopups("synthetic.app"));

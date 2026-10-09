@@ -196,10 +196,9 @@ public final class AtmosphereActivity extends AppCompatActivity {
                 ? R.string.atmosphere_state_active : R.string.atmosphere_state_ready;
         binding.whispersStatus.setText(state);
         SubliminalSettings settings = new SubliminalSettingsRepository(this).load();
-        binding.whispersSummary.setText(appMode.getMode() == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS
-                ? getString(R.string.atmosphere_whispers_all_apps, friendly(settings.getPreset().name()))
-                : getString(R.string.atmosphere_whispers_summary,
-                        friendly(settings.getPreset().name()), appMode.getSubliminalPackages().size()));
+        binding.whispersSummary.setText(
+                getString(R.string.atmosphere_whispers_summary,
+                        friendly(settings.getPreset().name()), appMode.getIncludedPackages().size()));
     }
 
     private void renderPopupStorm() {

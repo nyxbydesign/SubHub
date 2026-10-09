@@ -17,7 +17,6 @@ import androidx.test.uiautomator.UiDevice;
 
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.capture.CustomImagesActivity;
@@ -27,11 +26,11 @@ import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.popup.PopupStormActivity;
-import com.subhub.app.settings.SettingsActivity;
-import com.subhub.app.settings.GlobalSettingsActivity;
-import com.subhub.app.settings.FeatureModuleManager;
-import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.GlobalSettingsActivity;
+import com.subhub.app.settings.SettingsActivity;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.AchievementsActivity;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.studio.StudioActivity;
@@ -220,9 +219,7 @@ public final class PageMapScreenshotTest {
         if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
         try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(activityClass)) {
             scenario.onActivity(activity -> {
-                if (activityClass == GlobalSettingsActivity.class) {
-                    activity.findViewById(R.id.mode_selected).performClick();
-                }
+                if (activityClass == GlobalSettingsActivity.class) {}
                 if (expandId != 0) activity.findViewById(expandId).performClick();
             });
             if (targetId == R.id.app_list) {
@@ -283,8 +280,12 @@ public final class PageMapScreenshotTest {
         }
         if (examples.isEmpty()) throw new AssertionError("Install one or two demo apps before documentation capture");
         AppModeManager mode = new AppModeManager(context);
-        mode.saveAppSelections(mode.getSelectedPackages(), examples.keySet(), mode.getSubliminalPackages());
-        mode.save(false, AppModePolicy.Mode.SELECTED_APPS, mode.getSelectedPackages());
+        mode.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        mode.getIncludedPackages(), examples.keySet(), mode.getIncludedPackages(),
+                        java.util.Set.of()));
+        mode.save(false, mode.getIncludedPackages());
         AppTimerManager timers = new AppTimerManager(context);
         timers.saveSettings(true, 30, true, 45);
         timers.saveAllowances(examples.keySet(), examples);
@@ -323,15 +324,18 @@ public final class PageMapScreenshotTest {
             if (activityClass == AppModeActivity.class) {
                 scenario.onActivity(activity -> {
                     ViewGroup rows = activity.findViewById(R.id.per_app_allowances_list);
-                    int expected = new AppModeManager(activity).getTimerPackages().size();
-                    if (expected < 1 || expected > 2 || rows.getChildCount() != expected) {
-                        throw new AssertionError("Limits screenshot must show one or two selected demo apps");
+                    int expected = new AppModeManager(activity).getIncludedPackages().size();
+                    if (expected < 1 || expected > 2) {
+                        throw new AssertionError(
+                                        "Limits screenshot must show one or two selected demo"
+                                            + " apps");
                     }
                     java.util.Set<String> values = new java.util.LinkedHashSet<>();
-                    for (int index = 0; index < rows.getChildCount(); index++) {
-                        ViewGroup row = (ViewGroup) rows.getChildAt(index);
-                        android.widget.EditText allowance = (android.widget.EditText) row.getChildAt(1);
-                        if (!allowance.isShown()) throw new AssertionError("Custom allowance is not visible");
+                    for (String packageName :
+                                    new AppModeManager(activity).getIncludedPackages()) {
+                                android.widget.EditText allowance =
+                                        rows.findViewWithTag("limit:" + packageName);
+                        if (allowance == null || !allowance.isShown()) throw new AssertionError("Custom allowance is not visible");
                         values.add(allowance.getText().toString());
                     }
                     if (!values.contains("20") || (expected == 2 && !values.contains("10"))) {

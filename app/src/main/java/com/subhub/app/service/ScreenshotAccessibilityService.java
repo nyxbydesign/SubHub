@@ -25,55 +25,54 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.appmode.AppTimerRuntimePolicy;
-import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.BBox;
+import com.subhub.app.detection.CensorCoverage;
+import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
 import com.subhub.app.detection.DetectorConfig;
-import com.subhub.app.detection.CensorCoverage;
 import com.subhub.app.detection.FastVisualGate;
 import com.subhub.app.detection.ObjectTracker;
-import com.subhub.app.detection.TrackedObject;
 import com.subhub.app.detection.RenderSourceReference;
+import com.subhub.app.detection.TrackedObject;
 import com.subhub.app.detection.VisualDetectionStabilizer;
-import com.subhub.app.detection.VisualTrackArbitrator;
 import com.subhub.app.detection.VisualIdentityReconciler;
+import com.subhub.app.detection.VisualTrackArbitrator;
 import com.subhub.app.detection.text.AccessibilityTextSmutDetector;
 import com.subhub.app.detection.text.DetectionFusion;
 import com.subhub.app.detection.text.OcrTextSmutDetector;
 import com.subhub.app.detection.text.SmutTextClassifier;
 import com.subhub.app.detection.text.TextDetectionCoordinateMapper;
-import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.detection.text.TextDetectionStabilizer;
-import com.subhub.app.diagnostics.DiagnosticsRepository;
+import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.diagnostics.CensorLabLog;
 import com.subhub.app.diagnostics.CensorLabRecorder;
+import com.subhub.app.diagnostics.DiagnosticsRepository;
 import com.subhub.app.overlay.OverlayController;
-import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.penance.CensorTapTracker;
 import com.subhub.app.penance.DwellInfractionTracker;
 import com.subhub.app.penance.PenanceChargeNotifier;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
-import com.subhub.app.settings.CensorAppearance;
-import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.HardcoreSettingsGuard;
-import com.subhub.app.stats.StatsRepository;
+import com.subhub.app.settings.CensorAppearance;
+import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.AchievementManager;
+import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.subliminal.SubliminalOverlayController;
 
-import java.util.Collections;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -1119,7 +1118,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private void invalidateNonReprojectableSceneForMotion() {
-        // Continuous fast scenes already reproject at publication. Motion is not a structural fence.
+        // Continuous fast scenes already reproject at publication. Motion is not a structural
+        // fence.
         SceneTransactionCoordinator.SceneKey invalidated;
         synchronized (sceneLifecycleLock) {
             SceneContext scene = currentScene.get();
@@ -1821,7 +1821,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Experiment: refine only the currently displayed capture, never inventing scroll alignment. */
+    /**
+     * Experiment: refine only the currently displayed capture, never inventing scroll alignment.
+     */
     private void scheduleImmediateQualityRefresh() {
         if (!BuildConfig.IMMEDIATE_QUALITY_EXPERIMENT
                 || !immediateQualityScheduled.compareAndSet(false, true)) return;
@@ -1854,17 +1856,27 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     synchronized (pendingLateQualityPresentation) {
                     if (pendingLateQualityPresentation.get() != source
                             || !source.immediatelyPresented.compareAndSet(false, true)) return;
-                    // Retain the normal handoff: consuming the slot here would make a one-hit
-                    // addition disappear at the next fast publication before cache confirmation.
-                    List<Detection> combined = new ArrayList<>(displayed.baseRegions);
+                                                        // Retain the normal handoff: consuming the
+                                                        // slot here would make a
+                                                        // one-hit
+                                                        // addition disappear at the next fast
+                                                        // publication before cache
+                                                        // confirmation.
+                                                        List<Detection> combined = new ArrayList<>(displayed.baseRegions);
                     combined.addAll(additions);
-                    // This replaces only render-memory regions. Live tracks, text, the source
-                    // bitmap, detector statistics and durable confirmation state are untouched.
-                    overlay.updateWorldCache(combined, source.sourceWidth, source.sourceHeight,
+                                                        // This replaces only render-memory regions.
+                                                        // Live tracks, text, the
+                                                        // source
+                                                        // bitmap, detector statistics and durable
+                                                        // confirmation state are
+                                                        // untouched.
+                                                        overlay.updateWorldCache(combined, source.sourceWidth, source.sourceHeight,
                             source.scrollX, source.scrollY, source.viewportWidth, source.viewportHeight);
                     pendingLateQualityPresentation.markDisplayed(source);
-                    CensorLabLog.i(TAG, "QUALITY_IMMEDIATE_PRESENT sourceFastSequence="
-                            + source.fastSubmissionSequence + " regions=" + additions.size()
+                    CensorLabLog.i(TAG,
+                                                                "QUALITY_IMMEDIATE_PRESENT"
+                                                                    + " sourceFastSequence="
+                                                                        + source.fastSubmissionSequence + " regions=" + additions.size()
                             + " readyToPresentMs=" + Math.max(0L, now - source.readyAtUptime)
                             + " captureAgeMs=" + Math.max(0L, now - source.capturedAtUptime));
                     }
@@ -1875,8 +1887,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     /**
      * Takes quality only for a later fast publication, without waiting for quality inference.
-     * Current-only sources require unchanged phase and are
-     * bounded by age rather than tick count.
+     * Current-only sources require unchanged phase and are bounded by age rather than tick count.
      */
     private LateQualityPresentation takeLateQualityForFast(
             long consumerFastSequence,
@@ -2152,10 +2163,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         Rect viewport = screenBounds();
         main.post(() -> {
             if (isCurrentCapture(candidate.epoch) && overlay != null) {
-                // A scroll callback may have arrived after the screenshot callback but before an
-                // optional quality pass yielded. The retained bitmap still belongs to the hardware
-                // capture timestamp, not to the callback's first estimate of that timestamp.
-                CaptureScrollTimeline.Phase sourcePhase = resolveCapturePhase(candidate);
+                        // A scroll callback may have arrived after the screenshot callback but
+                        // before an
+                        // optional quality pass yielded. The retained bitmap still belongs to the
+                        // hardware
+                        // capture timestamp, not to the callback's first estimate of that
+                        // timestamp.
+                        CaptureScrollTimeline.Phase sourcePhase = resolveCapturePhase(candidate);
                 overlay.updateWorld(
                         currentTracks, candidate.sourceWidth, candidate.sourceHeight,
                         sourceFrame, trackCameraX, trackCameraY,
@@ -2758,9 +2772,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 }
                 List<Detection> regionsForView;
                 boolean lateQualityPublished;
-                // Recheck on the actual UI publication, not only on the inference worker.
-                // Slot replacement/expiry cannot race between this fence and the overlay write.
-                synchronized (pendingLateQualityPresentation) {
+                                    // Recheck on the actual UI publication, not only on the
+                                    // inference worker.
+                                    // Slot replacement/expiry cannot race between this fence and
+                                    // the overlay write.
+                                    synchronized (pendingLateQualityPresentation) {
                 Rect liveViewport = screenBounds();
                 lateQualityPublished = lateQualityForScene != null
                         && (!lateQualityForScene.surfaceKey.isEmpty()
@@ -2843,9 +2859,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 if (firstOverlayReported.compareAndSet(false, true)) {
                     Log.i(TAG, "STARTUP session=" + activeStartupSession
                             + " phase=first-fast-overlay uptimeMs=" + publishedAt);
-                    // Session/provider construction can contend for the same resources as the
-                    // fast lane. Optional refinement starts only after coverage is visible.
-                    scheduleQualityDetectorInitialization(detectorConfig);
+                                        // Session/provider construction can contend for the same
+                                        // resources as the
+                                        // fast lane. Optional refinement starts only after coverage
+                                        // is visible.
+                                        scheduleQualityDetectorInitialization(detectorConfig);
                 }
                 VisualGeometryDelta geometry = recordVisualGeometry(renderTracks);
                 DiagnosticsRepository.recordPublishDelay(DIAGNOSTICS_MODE, publishDelay);
@@ -3727,18 +3745,22 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                         && isCurrentVisualDocument(cacheDocument, cacheSurface)
                         && spatialRegionCache.retainAppliedCoverage(
                                 queriedSpatialFrame, SystemClock.uptimeMillis())) {
-                    // No new image is not the same as an unmatched new image. Move only coverage
-                    // already delivered to this view; do not query or insert expired-source data.
-                    overlay.offsetContent(dx, dy, allowPrediction, effectiveAt);
+                            // No new image is not the same as an unmatched new image. Move only
+                            // coverage
+                            // already delivered to this view; do not query or insert expired-source
+                            // data.
+                            overlay.offsetContent(dx, dy, allowPrediction, effectiveAt);
                     CensorLabLog.i(TAG, "SPATIAL_CACHE_HOLD id=" + spatialRegionCache.appliedFrameId());
                     return;
                 }
                 if (publishCacheWindow
                         && motionGeneration.get() == expectedMotionGeneration
                         && isCurrentVisualDocument(cacheDocument, cacheSurface)) {
-                    // Both mutations occur in this UI callback. The View exposes their union only
-                    // when Android draws the next frame; cache work cannot evict a real scene from
-                    // the detector's latest-only presentation broker.
+                            // Both mutations occur in this UI callback. The View exposes their
+                            // union only
+                            // when Android draws the next frame; cache work cannot evict a real
+                            // scene from
+                            // the detector's latest-only presentation broker.
                     List<Detection> regionsForEvent = spatialCacheExperiment
                             ? spatialRegionCache.revalidatePresentation(queriedSpatialFrame,
                                     SystemClock.uptimeMillis(), cachedForFrame, cachedForFrame)
@@ -3830,7 +3852,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                                 aligned, detectorConfig == null ? 1f : detectorConfig.getConfidenceThreshold());
                     }
                 }
-                // If a subsequent generation guard aborts update, never reuse the pre-mutation basis.
+                // If a subsequent generation guard aborts update, never reuse the pre-mutation
+                // basis.
                 if (spatialTrackingExperiment) sourceTrackContinuity.clear();
                 tracker.offsetActiveTracks(dx, dy, width, height, proposal.offsets);
                 trackerScrollX = scrollX;
@@ -5087,7 +5110,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
      * unstable scroll event disables a surface, the nonzero scroll timestamp prevents this
      * provisional identity from being recreated for that same window.
      */
-    /** Debug observer only: cached source bounds, no refresh/parent traversal or camera mutation. */
+    /**
+     * Debug observer only: cached source bounds, no refresh/parent traversal or camera mutation.
+     */
     private void traceScrollSourceBounds(AccessibilityEvent event) {
         if (!BuildConfig.DEBUG) return;
         long started = SystemClock.uptimeMillis();
@@ -5210,10 +5235,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         captureEpoch.invalidate();
         activeApplicationWindowId.set(-1);
         foregroundPackage = packageName;
+        com.subhub.app.appmode.ForegroundAppState.update(packageName);
         foregroundSinceMillis = now;
         resetTextSnapshots();
         AppModeManager mode = new AppModeManager(this);
-        if (mode.getSelectedPackages().contains(packageName)) {
+        if (mode.getIncludedPackages().contains(packageName)) {
             int charged = penance.recordInfraction(
                     PenanceInfraction.WATCHED_APP_OPEN, 1, now);
             PenanceChargeNotifier.show(this, penance,
@@ -5390,9 +5416,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 + " armed=" + appMode.isArmed()
                 + " censorEnabled=" + modules.isCensorEnabled()
                 + " captureMethod=" + settings.loadCaptureMethod().name()
-                + " mode=" + appMode.getMode().name()
                 + " selected="
-                + appMode.getSelectedPackages().contains(foregroundPackage)
+                + appMode.getIncludedPackages().contains(foregroundPackage)
                 + " settingsPackage=" + settingsPackage);
         if (shouldRun && !recognitionActive) activateRecognition();
         else if (!shouldRun && recognitionActive) deactivateRecognition();
@@ -5733,7 +5758,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        // Android may temporarily interrupt feedback; the scheduled capture loop remains owned here.
+        // Android may temporarily interrupt feedback; the scheduled capture loop remains owned
+        // here.
     }
 
     private String diagnosticsOverlayText() {
@@ -6267,6 +6293,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        com.subhub.app.appmode.ForegroundAppState.clear();
         accountForegroundUsage(System.currentTimeMillis());
         running = false;
         main.removeCallbacks(timerTick);

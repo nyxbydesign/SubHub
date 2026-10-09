@@ -1,76 +1,70 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/app_mode_page"
-    android:layout_width="match_parent"
+    android:id="@+id/app_mode_page" android:layout_width="match_parent"
     android:layout_height="match_parent" android:background="@drawable/bg_main">
-<ScrollView android:layout_width="match_parent" android:layout_height="match_parent"
-    android:clipToPadding="false" android:fillViewport="true">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingBottom="@dimen/bottom_nav_clearance">
-
-        <include
-            layout="@layout/view_primary_header"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="@dimen/page_margin"
-            android:layout_marginTop="@dimen/primary_header_top" />
-
-        <LinearLayout android:id="@+id/timer_card" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
-            android:layout_marginTop="8dp" android:background="@drawable/bg_card"
-            android:orientation="vertical" android:padding="11dp">
-            <TextView style="@style/Widget.SubHub.SectionHeader"
-                android:text="@string/app_timer_title" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="6dp" android:text="@string/app_timer_body"
-                android:textColor="@color/text_secondary" android:textSize="11sp" />
-
-            <CheckBox android:id="@+id/per_app_limit_enabled" android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp" android:layout_marginTop="8dp"
-                android:buttonTint="@color/toggle_tint" android:text="@string/app_timer_per_app"
-                android:textColor="@color/text_primary" />
-            <TextView style="@style/Widget.SubHub.FieldHelp"
-                android:text="@string/app_timer_per_app_allowances_help" />
-            <LinearLayout android:id="@+id/default_allowance_group"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical">
-                <TextView android:labelFor="@id/default_limit_minutes"
-                    style="@style/Widget.SubHub.FieldLabel" android:text="@string/app_timer_default_minutes" />
-                <EditText android:id="@+id/default_limit_minutes" style="@style/Widget.SubHub.Input"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:minHeight="48dp" android:inputType="number" android:maxLength="4" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="match_parent"
+        android:clipToPadding="false" android:fillViewport="true">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:paddingBottom="@dimen/bottom_nav_clearance">
+            <include layout="@layout/view_primary_header" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+                android:layout_marginTop="@dimen/primary_header_top" />
+            <LinearLayout android:id="@+id/timer_card" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+                android:layout_marginTop="12dp" android:background="@drawable/bg_wallet_balance"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/limits_today" android:textColor="@color/text_secondary" android:textSize="13sp" />
+                <TextView android:id="@+id/limits_today_amount" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="3dp" android:includeFontPadding="false"
+                    android:textColor="@color/text_primary" android:textSize="36sp" android:textStyle="bold" />
+                <TextView android:id="@+id/limits_today_scope" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:textColor="@color/text_secondary" android:textSize="12sp" />
+                <TextView android:id="@+id/timer_usage_status" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:textColor="@color/accent_text" android:textSize="12sp" />
             </LinearLayout>
-            <LinearLayout android:id="@+id/per_app_allowances_list"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="4dp" android:orientation="vertical" />
-
-            <CheckBox android:id="@+id/total_limit_enabled" android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp" android:layout_marginTop="8dp"
-                android:buttonTint="@color/toggle_tint" android:text="@string/app_timer_combined"
-                android:textColor="@color/text_primary" />
-            <TextView android:labelFor="@id/total_limit_minutes" style="@style/Widget.SubHub.FieldLabel"
-                android:text="@string/app_timer_total_minutes_label" />
-            <TextView style="@style/Widget.SubHub.FieldHelp"
-                android:text="@string/app_timer_total_minutes_help" />
-            <EditText style="@style/Widget.SubHub.Input" android:id="@+id/total_limit_minutes" android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp" android:layout_marginTop="4dp"
-                android:hint="@string/app_timer_minutes_hint" android:inputType="number"
-                android:maxLength="4" android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_muted" />
-            <TextView android:id="@+id/timer_usage_status" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:layout_marginTop="10dp"
-                android:textColor="@color/text_secondary" android:textSize="11sp" />
+            <LinearLayout android:id="@+id/limits_combined_card" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+                android:layout_marginTop="12dp" android:background="@drawable/bg_card"
+                android:orientation="vertical" android:padding="12dp">
+                <com.subhub.app.util.StateToggle android:id="@+id/total_limit_enabled"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                    android:text="@string/limits_combined" android:textColor="@color/text_primary"
+                    android:textSize="14sp" android:textStyle="bold" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:layout_marginEnd="10dp" android:labelFor="@id/total_limit_minutes"
+                        android:text="@string/limits_daily_minutes" android:textColor="@color/text_secondary" android:textSize="13sp" />
+                    <EditText android:id="@+id/total_limit_minutes" style="@style/Widget.SubHub.Input"
+                        android:layout_width="104dp" android:layout_height="48dp" android:minHeight="48dp"
+                        android:gravity="center" android:inputType="number" android:maxLength="4" android:singleLine="true"
+                        android:includeFontPadding="false" android:textSize="14sp" />
+                </LinearLayout>
+                <TextView android:id="@+id/limits_combined_usage" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                    android:textColor="@color/text_secondary" android:textSize="12sp" />
+                <ProgressBar android:id="@+id/limits_combined_progress" style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="8dp"
+                    android:max="100" android:progressTint="@color/accent_mid" android:progressBackgroundTint="@color/outline_subtle" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card" android:orientation="vertical" android:padding="12dp">
+                <com.subhub.app.util.StateToggle android:id="@+id/per_app_limit_enabled"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                    android:text="@string/limits_per_app" android:textColor="@color/text_primary"
+                    android:textSize="14sp" android:textStyle="bold" />
+                <LinearLayout android:id="@+id/per_app_allowances_list" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+                <TextView android:id="@+id/limits_manage_apps" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
+                    android:text="@string/limits_manage_apps" android:textColor="@color/accent_text" android:textSize="13sp"
+                    android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" />
+            </LinearLayout>
         </LinearLayout>
-
-    </LinearLayout>
-</ScrollView>
-<include layout="@layout/view_bottom_pill_nav" />
+    </ScrollView>
+    <include layout="@layout/view_bottom_pill_nav" />
 </FrameLayout>

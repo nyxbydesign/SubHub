@@ -38,7 +38,6 @@ public final class PackSettingCatalog {
         add("censor", "detection_quality", R.string.pack_field_detection_preset, R.string.pack_group_detection, Kind.CHOICE, "medium", 0, 0, 0, List.of("low", "medium", "high"));
         add("censor", "detection_confidence_percent", R.string.pack_field_confidence_threshold_percent, R.string.pack_group_detection, Kind.INTEGER, 25, 10, 80, 0, List.of());
         add("censor", "capture_method", R.string.pack_field_capture_method, R.string.pack_group_detection, Kind.CHOICE, "app_mode", 0, 0, 0, List.of("app_mode", "screen_recording"));
-        add("censor", "app_mode_kind", R.string.pack_field_app_mode_kind, R.string.pack_group_detection, Kind.CHOICE, "always", 0, 0, 0, List.of("always", "selected"));
         add("censor", "censor_coverage", R.string.pack_field_censor_coverage, R.string.pack_group_detection, Kind.CHOICE, "detected_areas", 0, 0, 0, List.of("detected_areas", "whole_person"));
         add("censor", "enabled_categories", R.string.pack_field_enabled_categories, R.string.pack_group_detection, Kind.SELECTION, array("genitals_female", "genitals_male", "breasts", "buttocks", "anus"), 0, 200, 120, List.of("genitals_female", "genitals_male", "breasts", "buttocks", "anus", "genitals_covered", "breasts_covered", "buttocks_covered", "anus_covered", "male_chest", "belly", "belly_covered", "feet", "feet_covered", "armpits", "armpits_covered", "face", "face_female", "face_male"));
         add("censor", "text_smut_enabled", R.string.pack_field_text_smut_enabled, R.string.pack_group_text_filter, Kind.BOOLEAN, Boolean.TRUE, 0, 0, 0, List.of());
@@ -327,8 +326,6 @@ public final class PackSettingCatalog {
             case "popup_storm_detection_mode:off" -> R.string.pack_choice_popup_storm_detection_mode_off;
             case "popup_storm_detection_mode:cover" -> R.string.pack_choice_popup_storm_detection_mode_cover;
             case "popup_storm_detection_mode:avoid" -> R.string.pack_choice_popup_storm_detection_mode_avoid;
-            case "app_mode_kind:always" -> R.string.pack_choice_app_mode_kind_always;
-            case "app_mode_kind:selected" -> R.string.pack_choice_app_mode_kind_selected;
             default -> throw new IllegalArgumentException("Unknown pack option");
         };
     }

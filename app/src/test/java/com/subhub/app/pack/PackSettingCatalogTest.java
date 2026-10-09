@@ -29,7 +29,9 @@ public final class PackSettingCatalogTest {
             }
             sections.put(section, clean);
         }
-        assertEquals(115, keys.size());
+        assertEquals(114, keys.size());
+        assertNull(PackSettingCatalog.field("censor", "app_mode_kind"));
+        assertTrue(SubHubPackSchema.isSecretOrRuntimeKey("app_included_packages_v1"));
         SubHubPack source = SubHubPack.blank("synthetic-creator");
         for (Map.Entry<String, JSONObject> section : sections.entrySet()) source.setSection(section.getKey(), section.getValue());
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

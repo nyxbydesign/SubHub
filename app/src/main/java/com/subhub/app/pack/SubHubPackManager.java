@@ -7,9 +7,9 @@ import android.net.Uri;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.capture.CustomImageManager;
-import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PayPalEnvironment;
+import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsRepository;
@@ -24,7 +24,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -40,7 +39,8 @@ import java.util.UUID;
 
 /** Draft/library storage plus reversible, journaled activation for portable SubHub packs. */
 public final class SubHubPackManager {
-    // Private storage names stay stable so existing libraries, drafts and active packs remain readable.
+    // Private storage names stay stable so existing libraries, drafts and active packs remain
+    // readable.
     private static final String STORAGE_EXTENSION = ".subhubpack";
     private static final String STATE_PREFS = "subhub_pack_state_v1";
     private static final String KEY_ACTIVE_ID = "active_pack_id";
@@ -121,12 +121,6 @@ public final class SubHubPackManager {
                 ? SubHubPackSchema.captureWallet(preferences(PenanceManager.PREFS_NAME))
                 : SubHubPackSchema.captureMainSection(section,
                         preferences(SettingsRepository.PREFERENCES_NAME));
-        if (SubHubPackSchema.CENSOR.equals(section)) {
-            try { result.put(com.subhub.app.appmode.AppModeManager.KEY_MODE,
-                    new com.subhub.app.appmode.AppModeManager(context).getMode()
-                            == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS ? "always" : "selected"); }
-            catch (org.json.JSONException invalid) { throw new IllegalArgumentException(invalid); }
-        }
         return result;
     }
 
@@ -154,7 +148,9 @@ public final class SubHubPackManager {
             if (pack.getId().equals(activePackId())) {
                 if (pack.hasEncryptedPayPal() || activeHasPayPalBackup()
                         || (installed != null && installed.hasEncryptedPayPal())) {
-                    throw new IOException("Deactivate in Dom Space before updating an encrypted PayPal arrangement");
+                    throw new IOException(
+                            "Deactivate in Dom Space before updating an encrypted PayPal"
+                                + " arrangement");
                 }
                 if (installed == null || !samePackIdentity(installed, pack)) {
                     throw new IOException("Active arrangement identity does not match this update");
@@ -231,13 +227,16 @@ public final class SubHubPackManager {
             if (!changed.isEmpty()) result.add(title(section) + ": " + String.join(", ", changed));
         }
         if (selected.contains(SubHubPackSchema.WALLET) && pack.hasEncryptedPayPal()) {
-            result.add("PayPal: encrypted merchant credentials and recipient link. Unlock and confirm "
-                    + "before activation. Existing payer authorization will not be reused.");
+            result.add(
+                    "PayPal: encrypted merchant credentials and recipient link. Unlock and confirm"
+                        + " before activation. Existing payer authorization will not be reused.");
         }
         if (result.isEmpty()) result.add("No setting values would change.");
         JSONObject recommendations = pack.getRecommendations();
         if (recommendations.optBoolean("hardcoreSuggested", false)) {
-            result.add("Recommendation: consider Hardcore Mode. It will not be enabled automatically.");
+            result.add(
+                    "Recommendation: consider Hardcore Mode. It will not be enabled"
+                        + " automatically.");
         }
         if (recommendations.has("serviceDurationMillis")) {
             result.add("Recommended service duration: "
@@ -432,10 +431,6 @@ public final class SubHubPackManager {
                 if (SubHubPackSchema.isSecretOrRuntimeKey(key)) continue;
                 applyJson(editor, PackSettingCatalog.field(section, key), values.opt(key));
             }
-            if (SubHubPackSchema.CENSOR.equals(section)
-                    && values.has(com.subhub.app.appmode.AppModeManager.KEY_MODE)) {
-                editor.putBoolean(com.subhub.app.appmode.AppModeManager.KEY_MODE_EXPLICIT, true);
-            }
         }
         for (SharedPreferences.Editor editor : editors.values()) if (!editor.commit()) return false;
         return true;
@@ -479,9 +474,6 @@ public final class SubHubPackManager {
             if (SubHubPackSchema.CENSOR.equals(section)) {
                 affected.add(CustomImageManager.PACK_DIR_KEY);
                 affected.add(CustomImageManager.REVISION_KEY);
-                if (values.has(com.subhub.app.appmode.AppModeManager.KEY_MODE)) {
-                    affected.add(com.subhub.app.appmode.AppModeManager.KEY_MODE_EXPLICIT);
-                }
             }
             if (SubHubPackSchema.POPUP.equals(section)) {
                 affected.add(PopupStormSettings.K_PACK_DIR);

@@ -26,12 +26,13 @@ import androidx.core.app.NotificationCompat;
 
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
-import com.subhub.app.settings.FeatureModuleManager;
-import com.subhub.app.appmode.ProtectionSessionManager;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.ForegroundAppState;
+import com.subhub.app.appmode.ProtectionSessionManager;
 import com.subhub.app.appmode.ResumeNotificationManager;
-import com.subhub.app.capture.ScreenCaptureManager;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
+import com.subhub.app.capture.ScreenCaptureManager;
+import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
 import com.subhub.app.detection.DetectorConfig;
@@ -39,23 +40,23 @@ import com.subhub.app.detection.ObjectTracker;
 import com.subhub.app.detection.TrackedObject;
 import com.subhub.app.diagnostics.DiagnosticsRepository;
 import com.subhub.app.overlay.OverlayController;
-import com.subhub.app.popup.PopupStormManager;
-import com.subhub.app.penance.DwellInfractionTracker;
 import com.subhub.app.penance.CensorTapTracker;
+import com.subhub.app.penance.DwellInfractionTracker;
 import com.subhub.app.penance.PenanceChargeNotifier;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
-import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.settings.CensorAppearance;
-import com.subhub.app.stats.StatsRepository;
-import com.subhub.app.stats.AchievementManager;
-import com.subhub.app.commitment.CommitmentManager;
+import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.ProtectionStopPolicy;
 
+import com.subhub.app.settings.CensorAppearance;
+import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.stats.AchievementManager;
+import com.subhub.app.stats.StatsRepository;
+
 import java.util.List;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -82,6 +83,7 @@ public final class ScreenCaptureService extends Service {
     private CaptureLoadGovernor loadGovernor;
     private MediaProjection projection;
     private ScreenCaptureManager capture;
+    private ForegroundAppState.Snapshot clearedScope, processedScope;
     private DetectionEngine detector;
     private ObjectTracker tracker;
     private OverlayController overlay;
@@ -239,11 +241,24 @@ public final class ScreenCaptureService extends Service {
         if (tracker != null) tracker.setConfig(config);
         PopupStormManager.get().reloadSettings(this);
         PopupStormManager.get().syncServiceParticipation(this,
-                running && new AppModeManager(this).isArmed());
+                running && new AppModeManager(this).shouldShowPopups(
+                                                ForegroundAppState.snapshot().packageName));
     }
 
     private void captureLatestFrame() {
-        if (!running || capture == null || !censorConfigured()) return;
+        if (!running || capture == null) return;
+        ForegroundAppState.Snapshot scope = ForegroundAppState.snapshot();
+        if (!censorConfigured()) {
+            if (clearedScope != scope) {
+                clearedScope = scope;
+                mainHandler.post(
+                        () -> {
+                            if (overlay != null && !censorConfigured()) overlay.clear();
+                        });
+            }
+            return;
+        }
+        clearedScope = null;
         DetectorConfig currentConfig = detectorConfig;
         if (loadGovernor != null && !loadGovernor.shouldCapture(
                 SystemClock.uptimeMillis(),
@@ -254,7 +269,7 @@ public final class ScreenCaptureService extends Service {
             if (frame == null) return;
             if (broker == null) frame.recycle();
             else {
-                broker.submit(new ProjectionFrame(frame, capture, SystemClock.uptimeMillis()));
+                broker.submit(new ProjectionFrame(frame, capture, SystemClock.uptimeMillis(), scope));
             }
         } catch (Exception error) {
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
@@ -265,9 +280,16 @@ public final class ScreenCaptureService extends Service {
     private void processFrame(ProjectionFrame candidate) {
         Bitmap frame = candidate.bitmap();
         try {
-            if (!running || !censorConfigured() || frame == null || frame.isRecycled()) return;
+            if (!running || !censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)
+                    || frame == null || frame.isRecycled()) return;
+            if (processedScope != candidate.scope) {
+                tracker.clear();
+                tapTracker.clear();
+                dwellTracker.clear();
+                processedScope = candidate.scope;
+            }
             List<Detection> detections = detector.detect(frame);
-            if (!censorConfigured()) return;
+            if (!censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)) return;
             List<TrackedObject> tracks = tracker.update(detections);
             DetectorConfig currentConfig = detectorConfig;
             int recordedBlocks = stats.recordTracks(tracks, currentConfig == null
@@ -314,7 +336,8 @@ public final class ScreenCaptureService extends Service {
                         + width + "x" + height);
             }
             mainHandler.post(() -> {
-                if (overlay != null && censorConfigured()) {
+                if (overlay != null && censorConfigured()
+                                && ForegroundAppState.isCurrent(candidate.scope)) {
                     overlay.setDiagnostics(diagnosticText);
                     if (overlayFrameRelease == null) {
                         overlay.update(tracks, width, height, overlayFrame);
@@ -396,7 +419,8 @@ public final class ScreenCaptureService extends Service {
     public IBinder onBind(Intent intent) { return null; }
 
     private boolean censorConfigured() {
-        return settings != null && settings.preferences().getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true);
+        return settings != null && new AppModeManager(this)
+                        .shouldCensorForeground(ForegroundAppState.snapshot().packageName);
     }
 
     @Override
@@ -459,13 +483,17 @@ public final class ScreenCaptureService extends Service {
         private final ScreenCaptureManager owner;
         private final long capturedAtUptimeMillis;
 
+        private final ForegroundAppState.Snapshot scope;
+
         private ProjectionFrame(
                 Bitmap bitmap,
                 ScreenCaptureManager owner,
-                long capturedAtUptimeMillis) {
+                long capturedAtUptimeMillis,
+                ForegroundAppState.Snapshot scope) {
             this.bitmap = bitmap;
             this.owner = owner;
             this.capturedAtUptimeMillis = capturedAtUptimeMillis;
+            this.scope = scope;
         }
 
         private Bitmap bitmap() { return bitmap; }

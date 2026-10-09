@@ -108,7 +108,7 @@ public final class AppTimerManager {
                 .putInt(KEY_PER_APP_MINUTES, sanitizeMinutes(perAppMinutes))
                 .putBoolean(KEY_TOTAL_ENABLED, totalEnabled)
                 .putInt(KEY_TOTAL_MINUTES, sanitizeMinutes(totalMinutes))
-                .commit();
+                .apply();
     }
 
     public int allowanceMinutes(String packageName) {
@@ -153,7 +153,18 @@ public final class AppTimerManager {
                         sanitizeMinutes(minutes == null ? DEFAULT_PER_APP_MINUTES : minutes));
             }
         }
-        editor.commit();
+        editor.apply();
+    }
+
+    /** Editing visible apps must not erase a retained allowance for an excluded app. */
+    public void updateAllowances(Map<String, Integer> allowances) {
+        SharedPreferences.Editor editor = settingsPreferences.edit();
+        for (Map.Entry<String, Integer> entry : allowances.entrySet()) {
+            String name = safePackage(entry.getKey());
+            if (!name.isEmpty() && entry.getValue() != null)
+                editor.putInt(ALLOWANCE_PREFIX + name, sanitizeMinutes(entry.getValue()));
+        }
+        editor.apply();
     }
 
     public synchronized void recordUsage(String packageName, long elapsedMillis,
@@ -177,6 +188,23 @@ public final class AppTimerManager {
         return new UsageSnapshot(
                 usagePreferences.getLong(packageKey(packageName), 0L),
                 usagePreferences.getLong(KEY_TOTAL_USED, 0L));
+    }
+
+    /** One day check and one consistent aggregate for a visible list of app budgets. */
+    public synchronized Map<String, UsageSnapshot> snapshots(Set<String> packages, long nowMillis) {
+        ensureCurrentDay(nowMillis);
+        long total = usagePreferences.getLong(KEY_TOTAL_USED, 0L);
+        Map<String, UsageSnapshot> result = new LinkedHashMap<>();
+        result.put("", new UsageSnapshot(0L, total));
+        if (packages != null)
+            for (String name : packages) {
+                if (name != null && !name.isEmpty())
+                    result.put(
+                            name,
+                            new UsageSnapshot(
+                                    usagePreferences.getLong(packageKey(name), 0L), total));
+            }
+        return java.util.Collections.unmodifiableMap(result);
     }
 
     public synchronized LimitStatus limitStatus(String packageName,

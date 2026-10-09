@@ -15,7 +15,6 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.ResumeNotificationManager;
 import com.subhub.app.commitment.CommitmentActivity;
 import com.subhub.app.databinding.ActivityGlobalSettingsBinding;
@@ -46,6 +45,7 @@ import java.util.Set;
 
 /** Always-available home for app-wide feature, safety, pack, and support settings. */
 public final class GlobalSettingsActivity extends AppCompatActivity {
+    public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private final Map<String, com.subhub.app.util.ExpandableSectionView> sections =
             new LinkedHashMap<>();
@@ -72,10 +72,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private boolean editingUnlocked;
     private boolean paypalReadyForDisplay, appsLoaded;
     private com.subhub.app.util.AsyncUiScope uiData;
-    private AppAssignmentAdapter appAssignments;
-    private final Set<String> censorPackages = new LinkedHashSet<>();
-    private final Set<String> timerPackages = new LinkedHashSet<>();
-    private final Set<String> subliminalPackages = new LinkedHashSet<>();
+    private IncludedAppsAdapter includedApps;
+    private final Set<String> includedPackages = new LinkedHashSet<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -94,9 +92,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         paypalCredentials = new PayPalCredentialStore(this);
         paypalClient = new PayPalOrdersClient(this);
         autoPay = new HardcoreAutoPayManager(this);
-        censorPackages.addAll(appMode.getSelectedPackages());
-        timerPackages.addAll(appMode.getTimerPackages());
-        subliminalPackages.addAll(appMode.getSubliminalPackages());
+        includedPackages.addAll(appMode.getIncludedPackages());
         hardcoreActivation =
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
@@ -131,10 +127,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleLimits.setChecked(modules.isLimitsEnabled());
         binding.switchModuleWallet.setChecked(modules.isWalletEnabled());
         binding.armed.setChecked(appMode.isArmed());
-        binding.modeGroup.check(
-                appMode.getMode() == AppModePolicy.Mode.SELECTED_APPS
-                        ? R.id.mode_selected
-                        : R.id.mode_always);
+        
         binding.paypalLink.setText(new PenanceManager(this).getPayPalLink());
         PayPalCredentialStore.Credentials credentials = paypalCredentials.load();
         binding.paypalClientId.setText(credentials.clientId());
@@ -171,10 +164,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                                         android.net.Uri.parse("package:" + getPackageName()))));
         binding.buttonAccessibilitySettings.setOnClickListener(
                 view -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        binding.modeGroup.setOnCheckedChangeListener(
-                (group, checkedId) -> {
-                    if (!updatingRecognition) saveRecognition();
-                });
+        
         binding.buttonSavePaypal.setOnClickListener(view -> savePayPalLink());
         binding.buttonSavePaypalSandbox.setOnClickListener(view -> savePayPalSandbox());
         binding.buttonClearPaypalSandbox.setOnClickListener(view -> clearPayPalSandbox());
@@ -240,12 +230,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        showRequestedAppAssignments();
+        showRequestedIncludedApps();
     }
 
-    private void showRequestedAppAssignments() {
-        if (binding == null || !getIntent().getBooleanExtra("show_app_assignments", false)) return;
-        getIntent().removeExtra("show_app_assignments");
+    private void showRequestedIncludedApps() {
+        if (binding == null || !getIntent().getBooleanExtra(EXTRA_SHOW_INCLUDED_APPS, false)) return;
+        getIntent().removeExtra(EXTRA_SHOW_INCLUDED_APPS);
         selectedGroup = "apps";
         displayGroup();
         binding.appListContent.setVisibility(View.VISIBLE);
@@ -441,22 +431,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                                 (modules.isCensorEnabled() ? 1 : 0)
                                         + (modules.isLimitsEnabled() ? 1 : 0)
                                         + (modules.isWalletEnabled() ? 1 : 0)));
-        sections.get("apps")
-                .summary()
-                .setText(
-                        getString(
-                                R.string.settings_apps_count,
-                                appMode.getSelectedPackages().size(),
-                                appMode.getTimerPackages().size(),
-                                appMode.getSubliminalPackages().size()));
-        if (appMode.getMode() == com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS)
-            sections.get("apps")
-                    .summary()
-                    .setText(
-                            getString(
-                                    R.string.settings_apps_all,
-                                    appMode.getTimerPackages().size(),
-                                    appMode.getSubliminalPackages().size()));
+        renderSelectedCount();
         boolean overlay = android.provider.Settings.canDrawOverlays(this);
         boolean notification =
                 androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled();
@@ -510,7 +485,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        showRequestedAppAssignments();
+        showRequestedIncludedApps();
         boolean returnedFromPayPal = paypalApprovalLaunched;
         paypalApprovalLaunched = false;
         applyEditState();
@@ -540,8 +515,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonHardcoreRestricted.setEnabled(editingUnlocked);
         binding.buttonAccessibilitySettings.setEnabled(editingUnlocked);
         binding.armed.setEnabled(editingUnlocked);
-        binding.modeAlways.setEnabled(editingUnlocked);
-        binding.modeSelected.setEnabled(editingUnlocked);
         binding.paypalLink.setEnabled(editingUnlocked);
         binding.buttonSavePaypal.setEnabled(editingUnlocked);
         binding.paypalClientId.setEnabled(editingUnlocked);
@@ -553,7 +526,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.paypalEnvironmentSandbox.setEnabled(editingUnlocked);
         binding.paypalEnvironmentLive.setEnabled(editingUnlocked);
         binding.paypalAutoPayEnabled.setEnabled(editingUnlocked);
-        if (appAssignments != null) appAssignments.setEditing(editingUnlocked);
+        if (includedApps != null) includedApps.setEditing(editingUnlocked);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         refreshHardcoreState();
         refreshAccessState();
@@ -581,28 +554,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         displayGroup();
     }
 
-    private void saveRecognition() {
-        if (!editingUnlocked) return;
-        AppModePolicy.Mode mode =
-                binding.modeSelected.isChecked()
-                        ? AppModePolicy.Mode.SELECTED_APPS
-                        : AppModePolicy.Mode.ALWAYS;
-        // Shared feature scope only; Home starts or stops protection.
-        boolean armed = appMode.isArmed();
-        appMode.saveUiSelections(mode, censorPackages, timerPackages, subliminalPackages);
-        if (armed) ResumeNotificationManager.show(this);
-        else ResumeNotificationManager.cancel(this);
-        refreshAccessState();
-    }
-
-    private void saveAppAssignments() {
-        if (!editingUnlocked) return;
-        AppModePolicy.Mode mode =
-                binding.modeSelected.isChecked()
-                        ? AppModePolicy.Mode.SELECTED_APPS
-                        : AppModePolicy.Mode.ALWAYS;
-        // Keep the explicit shared scope; changing assignments never toggles the service.
-        appMode.saveUiSelections(mode, censorPackages, timerPackages, subliminalPackages);
+    private void saveIncludedApps() {
+        if (!ControllerPinManager.isDomModeActive()) return;
+        appMode.saveIncludedPackages(includedPackages);
         renderSelectedCount();
     }
 
@@ -1209,81 +1163,33 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (binding == null) return;
         appsLoaded = true;
         binding.loadingApps.setVisibility(View.GONE);
-        Set<String> installed = new LinkedHashSet<>();
-        for (InstalledAppCatalog.Entry entry : entries) installed.add(entry.packageName);
-        censorPackages.retainAll(installed);
-        timerPackages.retainAll(installed);
-        subliminalPackages.retainAll(installed);
-        List<Set<String>> assignments =
-                java.util.Arrays.asList(censorPackages, timerPackages, subliminalPackages);
-        binding.appList.addHeaderView(assignmentHeader(), null, false);
-        appAssignments =
-                new AppAssignmentAdapter(
+        includedApps =
+                new IncludedAppsAdapter(
                         this,
                         entries,
-                        assignments,
-                        (packageName, module, selected) -> {
-                            if (!editingUnlocked) return;
-                            Set<String> packages = assignments.get(module);
-                            if (selected) packages.add(packageName);
-                            else packages.remove(packageName);
-                            saveAppAssignments();
+                        includedPackages,
+                        (packageName, selected) -> {
+                            if (!ControllerPinManager.isDomModeActive()) return;
+                            if (selected) includedPackages.add(packageName);
+                            else includedPackages.remove(packageName);
+                            saveIncludedApps();
                         });
-        binding.appList.setAdapter(appAssignments);
-        appAssignments.setEditing(editingUnlocked);
+        binding.appList.setAdapter(includedApps);
+        includedApps.setEditing(editingUnlocked);
         renderSelectedCount();
     }
 
-    private LinearLayout assignmentHeader() {
-        LinearLayout header =
-                new LinearLayout(this) {
-                    @Override
-                    protected void onMeasure(int widthSpec, int heightSpec) {
-                        boolean stacked =
-                                View.MeasureSpec.getSize(widthSpec) < dp(280)
-                                        || getResources().getConfiguration().fontScale > 1.4f;
-                        // Stacked rows name each checkbox themselves; do not squeeze a redundant
-                        // legend.
-                        for (int index = 1; index < getChildCount(); index++) {
-                            getChildAt(index).setVisibility(stacked ? View.GONE : View.VISIBLE);
-                        }
-                        super.onMeasure(widthSpec, heightSpec);
-                    }
-                };
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(4), dp(4), dp(4), dp(4));
-        TextView app = new TextView(this);
-        app.setText(R.string.app_assignment_app);
-        app.setTextColor(getColor(R.color.text_secondary));
-        app.setTextSize(11);
-        header.addView(
-                app, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        int[] labels = {
-            R.string.app_selection_censor,
-            R.string.app_selection_limit,
-            R.string.app_selection_subliminal
-        };
-        for (int label : labels) {
-            TextView title = new TextView(this);
-            title.setText(label);
-            title.setTextSize(10);
-            title.setGravity(Gravity.CENTER);
-            title.setTextColor(getColor(R.color.text_secondary));
-            header.addView(
-                    title,
-                    new LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT));
-        }
-        return header;
-    }
 
     private void renderSelectedCount() {
+        String count =
+                getResources()
+                        .getQuantityString(
+                                R.plurals.apps_included_count,
+                                includedPackages.size(),
+                                includedPackages.size());
         if (binding != null)
-            binding.selectedCount.setText(
-                    getString(
-                            R.string.app_selection_count_three,
-                            censorPackages.size(),
-                            timerPackages.size(),
-                            subliminalPackages.size()));
+            binding.selectedCount.setText(count);
+        sections.get("apps").summary().setText(count);
     }
 
     private int dp(int value) {

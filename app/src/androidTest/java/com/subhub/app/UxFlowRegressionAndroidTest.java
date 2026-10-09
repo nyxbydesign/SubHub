@@ -5,9 +5,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import android.content.Context;
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,7 +22,6 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.penance.PenanceInfraction;
@@ -33,16 +32,16 @@ import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.studio.StudioActivity;
 
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
 
 /** Native interaction and hierarchy checks; never creates a payment or starts service. */
 @RunWith(AndroidJUnit4.class)
@@ -102,8 +101,12 @@ public final class UxFlowRegressionAndroidTest {
 
     @Test public void unassignedLimitsCannotLookEnabledAndOfferChooseApps() {
         AppModeManager apps = new AppModeManager(context);
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, Collections.emptySet());
-        apps.saveAppSelections(Collections.emptySet(), Collections.emptySet(), Collections.emptySet());
+        apps.save(false, Collections.emptySet());
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
+                        java.util.Set.of()));
         AppTimerManager timers = new AppTimerManager(context);
         timers.saveSettings(false, 30, false, 120);
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
@@ -116,32 +119,35 @@ public final class UxFlowRegressionAndroidTest {
                 assertFalse(total.isChecked());
                 assertFalse(timers.loadSettings().perAppEnabled);
                 assertFalse(timers.loadSettings().totalEnabled);
-                View action = activity.findViewById(R.id.per_app_allowances_list)
-                        .findViewWithTag("limits_choose_apps");
+                View action = activity.findViewById(R.id.limits_manage_apps);
                 assertNotNull(action);
                 assertTrue(action.isClickable());
             });
         }
     }
 
-    @Test public void appAssignmentDestinationExpandsWithoutChangingScope() {
+    @Test public void includedAppsDestinationExpandsWithoutChangingScope() {
         AppModeManager apps = new AppModeManager(context);
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, Collections.emptySet());
-        apps.saveAppSelections(Collections.emptySet(), Collections.emptySet(), Collections.emptySet());
+        apps.save(false, Collections.emptySet());
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
+                        java.util.Set.of()));
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
                 GlobalSettingsActivity.class.getName(), null, false);
         Activity destination = null;
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
             scenario.onActivity(activity -> activity.findViewById(R.id.per_app_allowances_list)
-                    .findViewWithTag("limits_choose_apps").performClick());
+                    .findViewById(R.id.limits_manage_apps).performClick());
             destination = monitor.waitForActivityWithTimeout(3000);
             assertNotNull(destination);
             instrumentation.waitForIdleSync();
             Activity opened = destination;
             instrumentation.runOnMainSync(() -> {
                 assertEquals(View.VISIBLE, opened.findViewById(R.id.app_list_content).getVisibility());
-                assertEquals(AppModePolicy.Mode.SELECTED_APPS, apps.getMode());
+                        assertTrue(apps.getIncludedPackages().isEmpty());
                 assertFalse(apps.isArmed());
             });
         } finally {
@@ -156,8 +162,10 @@ public final class UxFlowRegressionAndroidTest {
     @Test public void perAppAllowanceIsLabelledWithItsApp() {
         AppModeManager apps = new AppModeManager(context);
         Set<String> selected = Collections.singleton(context.getPackageName());
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, selected);
-        apps.saveAppSelections(selected, selected, Collections.emptySet());
+        apps.save(false, selected);
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false, selected, selected, Collections.emptySet(), java.util.Set.of()));
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
             scenario.onActivity(activity -> {
                 ViewGroup list = activity.findViewById(R.id.per_app_allowances_list);

@@ -159,7 +159,7 @@ public final class StudioCreatorAndroidTest {
         createdId = pack.getId();
         for (String section : SubHubPackSchema.SECTIONS) pack.setSection(section, PackSettingCatalog.defaults(section));
         mainPrefs().edit().putBoolean(AppModeManager.KEY_ARMED, true)
-                .putStringSet(AppModeManager.KEY_SELECTED_PACKAGES, Set.of("synthetic.local.app"))
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of("synthetic.local.app"))
                 .putBoolean(com.subhub.app.popup.PopupStormSettings.K_ACK, true).commit();
         walletPrefs().edit().putString("wallet_currency", "USD").commit();
         File exported = manager.exportForShare(pack);
@@ -182,7 +182,7 @@ public final class StudioCreatorAndroidTest {
             }
         }
         assertTrue(new AppModeManager(context).isArmed());
-        assertEquals(Set.of("synthetic.local.app"), new AppModeManager(context).getSelectedPackages());
+        assertEquals(Set.of("synthetic.local.app"), new AppModeManager(context).getIncludedPackages());
         assertEquals("USD", walletPrefs().getString("wallet_currency", ""));
         assertTrue(mainPrefs().getBoolean(com.subhub.app.popup.PopupStormSettings.K_ACK, false));
         assertFalse(context.getSharedPreferences("subhub_pack_state_v1", Context.MODE_PRIVATE).contains("active_lock_groups"));

@@ -97,9 +97,8 @@ public class SetupPickerAndroidTest {
                     () -> {
                         assertNull(opened.findViewById(R.id.bottom_navigation));
                         ListView list = opened.findViewById(R.id.app_list);
-                        AppAssignmentRow row = (AppAssignmentRow) list.getChildAt(1);
-                        assertFalse(row.choice(2).isShown());
-                        row.choice(0).setChecked(!row.choice(0).isChecked());
+                        IncludedAppRow row = (IncludedAppRow) list.getChildAt(0);
+                        row.choice().setChecked(!row.choice().isChecked());
                         capture(opened, "setup-apps.png");
                         PrimaryHeader.backButton(opened.findViewById(android.R.id.content))
                                 .performClick();
