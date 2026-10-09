@@ -144,6 +144,8 @@ public final class ServiceDurationView extends LinearLayout {
         }
     }
 
+    public boolean isCountdownHidden() { return hidden.isChecked(); }
+
     public Selection selection() {
         long min =
                 selected == RANDOM
@@ -151,12 +153,6 @@ public final class ServiceDurationView extends LinearLayout {
                         : Math.max(0, selected);
         long max = selected == RANDOM ? PactDuration.hours(maximum.getText().toString()) : min;
         return new Selection(min, max, hidden.isChecked());
-    }
-
-    public void resetToPermanent() {
-        selected = PERMANENT;
-        persist();
-        render();
     }
 
     public void setEditable(boolean enabled) {
@@ -180,7 +176,7 @@ public final class ServiceDurationView extends LinearLayout {
 
     private void render() {
         range.setVisibility(selected == RANDOM ? VISIBLE : GONE);
-        hidden.setVisibility(selected == PERMANENT ? GONE : VISIBLE);
+        hidden.setVisibility(VISIBLE);
         for (int index = 0; index < choices.length; index++) {
             TextView button = choices[index];
             boolean checked = selected == durations[index];

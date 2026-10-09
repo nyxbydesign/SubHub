@@ -112,17 +112,153 @@ public final class ServiceCountdownAndroidTest {
                     a.findViewById(R.id.service_countdown).getContentDescription()));
         }
     }
-    @Test public void permanentServiceHidesChoicesWithoutDrawingACountdown() {
+    @Test public void permanentServiceKeepsClockFootprintWithInfinity() {
+        context.getSharedPreferences("subhub_service_duration_ui", 0).edit().putBoolean("hidden", false).commit();
         new AppModeManager(context).setArmed(true);
         try (ActivityScenario<MainActivity> page = launch()) {
             page.onActivity(a -> {
                 assertFalse(a.findViewById(R.id.commitment_start_panel).isShown());
-                assertFalse(a.findViewById(R.id.service_countdown).isShown());
-                assertTrue(a.findViewById(R.id.service_duration_permanent_status).isShown());
+                ServiceCountdownView clock = a.findViewById(R.id.service_countdown);
+                assertTrue(clock.isShown());
+                assertEquals(((ServiceDurationView) a.findViewById(R.id.commitment_start_panel)).choiceAreaHeight(), clock.getLayoutParams().height);
+                assertEquals(a.getString(R.string.service_duration_permanent), clock.getContentDescription());
                 capture(a, "clock-permanent");
             });
         }
     }
+
+    @Test public void permanentInfinityCanUseTheSameHiddenTimeCensor() {
+        context.getSharedPreferences("subhub_service_duration_ui", 0).edit().putBoolean("hidden", true).commit();
+        new FeatureModuleManager(context).setCensorEnabled(false);
+        new AppModeManager(context).setArmed(true);
+        try (ActivityScenario<MainActivity> page = launch()) {
+            awaitMask(page, CensorAppearance.Type.BLUR);
+            page.onActivity(a -> {
+                ServiceCountdownView clock = a.findViewById(R.id.service_countdown);
+                assertTrue(clock.isShown());
+                assertEquals(a.getString(R.string.pact_time_hidden), clock.getContentDescription());
+                capture(a, "clock-permanent-hidden");
+            });
+            page.recreate();
+            awaitMask(page, CensorAppearance.Type.BLUR);
+            page.onActivity(a -> assertEquals(a.getString(R.string.pact_time_hidden),
+                    a.findViewById(R.id.service_countdown).getContentDescription()));
+        }
+    }
+
+    @Test public void hiddenCensorEffectsAndAnimatedBordersKeepPlayingOnHome() throws Exception {
+        org.junit.Assume.assumeTrue(android.animation.ValueAnimator.areAnimatorsEnabled());
+        SettingsRepository settings = new SettingsRepository(context);
+        new FeatureModuleManager(context).setCensorEnabled(true);
+        assertTrue(CommitmentManager.start(context, 3600000, 3600000, true));
+        try (ActivityScenario<MainActivity> page = launch()) {
+            for (CensorAppearance.Type type : new CensorAppearance.Type[]{
+                    CensorAppearance.Type.STATIC, CensorAppearance.Type.GLITCH,
+                    CensorAppearance.Type.TAPE, CensorAppearance.Type.BOX}) {
+                settings.saveAppearance(type, 75, type == CensorAppearance.Type.BOX, false);
+                settings.preferences().edit()
+                        .putBoolean(SettingsRepository.KEY_ANIMATE_BORDER, type == CensorAppearance.Type.BOX)
+                        .putString(SettingsRepository.KEY_BORDER_EFFECT, "rainbow").commit();
+                page.onActivity(a -> ((ServiceCountdownView) a.findViewById(R.id.service_countdown))
+                        .setCountdown(1400000, 3600000, true, false));
+                awaitMask(page, type);
+                Bitmap[] samples = new Bitmap[2];
+                java.util.concurrent.atomic.AtomicInteger liveFrames = new java.util.concurrent.atomic.AtomicInteger();
+                android.view.ViewTreeObserver.OnDrawListener drawing = liveFrames::incrementAndGet;
+                try {
+                    page.onActivity(a -> {
+                        ServiceCountdownView clock = a.findViewById(R.id.service_countdown);
+                        samples[0] = maskPixels(clock);
+                        clock.getViewTreeObserver().addOnDrawListener(drawing);
+                    });
+                    SystemClock.sleep(350);
+                    page.onActivity(a -> {
+                        ServiceCountdownView clock = a.findViewById(R.id.service_countdown);
+                        clock.getViewTreeObserver().removeOnDrawListener(drawing);
+                        samples[1] = maskPixels(clock);
+                        assertEquals(a.getString(R.string.pact_time_hidden), clock.getContentDescription());
+                        capture(a, "clock-animated-" + type.getPreferenceValue());
+                    });
+                    assertFalse(type + " must animate instead of freezing its first frame",
+                            samples[0].sameAs(samples[1]));
+                    assertTrue(type + " must schedule live redraws without waiting for the countdown tick",
+                            liveFrames.get() >= 5);
+                } finally { for (Bitmap sample : samples) if (sample != null) sample.recycle(); }
+            }
+        }
+    }
+
+    private static Bitmap maskPixels(ServiceCountdownView clock) {
+        Bitmap whole = Bitmap.createBitmap(clock.getWidth(), clock.getHeight(), Bitmap.Config.ARGB_8888);
+        try {
+            clock.draw(new Canvas(whole));
+            Field field = ServiceCountdownView.class.getDeclaredField("center"); field.setAccessible(true);
+            RectF bounds = (RectF) field.get(clock);
+            int left = Math.max(0, (int) bounds.left - 2), top = Math.max(0, (int) bounds.top - 2);
+            int right = Math.min(whole.getWidth(), (int) Math.ceil(bounds.right) + 2);
+            int bottom = Math.min(whole.getHeight(), (int) Math.ceil(bounds.bottom) + 2);
+            return Bitmap.createBitmap(whole, left, top, right - left, bottom - top);
+        } catch (Exception error) { throw new AssertionError(error); }
+        finally { whole.recycle(); }
+    }
+
+    @Test public void permanentSelectionShowsHideCountdownAndKeepsItsChoice() {
+        context.getSharedPreferences("subhub_service_duration_ui", 0).edit()
+                .putLong("duration", ServiceDurationView.PERMANENT).putBoolean("hidden", false).commit();
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<MainActivity> page = launch()) {
+            page.onActivity(a -> {
+                ServiceDurationView choices = a.findViewById(R.id.commitment_start_panel);
+                android.widget.CompoundButton hide = choices.findViewById(R.id.service_duration_hide);
+                assertTrue(hide.isShown());
+                assertTrue(hide.isEnabled());
+                hide.performClick();
+                assertTrue(choices.isCountdownHidden());
+                assertEquals(0L, choices.selection().minimum);
+            });
+            page.recreate();
+            page.onActivity(a -> {
+                ServiceDurationView choices = a.findViewById(R.id.commitment_start_panel);
+                assertTrue(choices.findViewById(R.id.service_duration_hide).isShown());
+                assertTrue(choices.isCountdownHidden());
+                assertFalse(ControllerPinManager.isDomModeActive());
+            });
+        }
+    }
+
+    @Test public void allSixSelectionsSurviveReopeningAndTimedServiceDoesNotResetTheChoice() {
+        int[] options = {R.id.commitment_timer_1h, R.id.commitment_timer_24h,
+                R.id.commitment_timer_7d, R.id.commitment_timer_30d,
+                R.id.commitment_timer_permanent, R.id.service_duration_random};
+        context.getSharedPreferences("subhub_service_duration_ui", 0).edit()
+                .putLong("minimum", 3600000).putLong("maximum", 7200000).commit();
+        try (ActivityScenario<MainActivity> page = launch()) {
+            for (int option : options) {
+                page.onActivity(a -> a.findViewById(option).performClick());
+                page.recreate();
+                page.onActivity(a -> assertTrue(a.findViewById(option).isSelected()));
+            }
+            page.onActivity(a -> {
+                assertEquals(3600000L, ((ServiceDurationView) a.findViewById(R.id.commitment_start_panel)).selection().minimum);
+                assertEquals(7200000L, ((ServiceDurationView) a.findViewById(R.id.commitment_start_panel)).selection().maximum);
+                a.findViewById(R.id.commitment_timer_1h).performClick();
+                try {
+                    java.lang.reflect.Method start = MainActivity.class.getDeclaredMethod("startSelectedPact");
+                    start.setAccessible(true); start.invoke(a);
+                } catch (Exception error) { throw new AssertionError(error); }
+                assertTrue(CommitmentManager.isActive(context));
+                assertTrue(a.findViewById(R.id.commitment_timer_1h).isSelected());
+                a.findViewById(R.id.button_protection).performClick();
+                assertFalse(CommitmentManager.isActive(context));
+            });
+            page.recreate();
+            page.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.commitment_start_panel).isShown());
+                assertTrue(a.findViewById(R.id.commitment_timer_1h).isSelected());
+            });
+        }
+    }
+
     @Test public void subCannotLeavePermanentServiceAndDomCanStopItNormally() {
         new AppModeManager(context).setArmed(true);
         ControllerPinManager.enterSubMode();

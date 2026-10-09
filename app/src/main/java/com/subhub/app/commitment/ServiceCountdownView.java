@@ -35,6 +35,7 @@ public final class ServiceCountdownView extends View {
     private String label = "", requestedMask;
     private float fraction;
     private boolean hidden;
+    private boolean permanent;
     private Mask mask;
     private ValueAnimator reveal;
 
@@ -56,11 +57,29 @@ public final class ServiceCountdownView extends View {
     }
 
     public void setCountdown(long remaining, long duration, boolean hideTime, boolean animate) {
+        permanent = false;
         hidden = hideTime;
         label = CommitmentActivity.formatDuration(remaining);
         setContentDescription(hideTime ? getContext().getString(R.string.pact_time_hidden)
                 : getContext().getString(R.string.commitment_active_remaining, label));
         float next = duration <= 0 ? 0 : Math.max(0f, Math.min(1f, (float) remaining / duration));
+        setFraction(next, animate);
+        if (hidden) requestMask();
+        invalidate();
+    }
+
+    public void setPermanent(boolean hideTime, boolean animate) {
+        permanent = true;
+        hidden = hideTime;
+        label = "\u221e";
+        setContentDescription(getContext().getString(hideTime
+                ? R.string.pact_time_hidden : R.string.service_duration_permanent));
+        setFraction(1f, animate);
+        if (hidden) requestMask();
+        invalidate();
+    }
+
+    private void setFraction(float next, boolean animate) {
         if (animate && ValueAnimator.areAnimatorsEnabled()) {
             if (reveal != null) reveal.cancel();
             reveal = ValueAnimator.ofFloat(0f, next);
@@ -72,8 +91,6 @@ public final class ServiceCountdownView extends View {
             });
             reveal.start();
         } else if (reveal == null || !reveal.isRunning()) fraction = next;
-        if (hidden) requestMask();
-        invalidate();
     }
 
     public void stop() {
@@ -83,20 +100,29 @@ public final class ServiceCountdownView extends View {
     private void requestMask() {
         boolean enabled = new FeatureModuleManager(getContext()).isCensorEnabled();
         boolean configured = enabled && settings.preferences().contains(SettingsRepository.KEY_CENSOR_TYPE);
-        String key = configured + ":" + settings.preferences().getAll().hashCode();
+        String key = permanent + ":" + configured + ":" + settings.preferences().getAll().hashCode()
+                + ":" + ValueAnimator.areAnimatorsEnabled();
         if (key.equals(requestedMask)) return;
         requestedMask = key;
         CensorAppearance saved = settings.loadAppearance();
         CensorAppearance appearance = configured
                 ? new CensorAppearance(saved.getType(), saved.getIntensity(), 0f,
-                        saved.isShowBorder(), false, saved.getBorderEffect(), saved.isShowText(),
+                        saved.isShowBorder(), saved.isAnimateBorder(), saved.getBorderEffect(), saved.isShowText(),
                         saved.getBorderColor(), saved.getEffectPalette(), saved.getPhrases(), false,
                         saved.getReverseStrength(), saved.getReverseCutoutShape(),
                         saved.getErrorTitle(), saved.getErrorMessage(),
                         saved.getGradientStart(), saved.getGradientEnd())
                 : new CensorAppearance(CensorAppearance.Type.BLUR, 75, false, false, 0);
         Context app = getContext().getApplicationContext();
-        jobs.load(MASK_JOB, () -> makeMask(app, appearance), ready -> {
+        String sourceLabel = permanent ? "\u221e" : "00:00:00";
+        boolean animate = ValueAnimator.areAnimatorsEnabled() && (
+                appearance.getType() == CensorAppearance.Type.STATIC
+                        || appearance.getType() == CensorAppearance.Type.GLITCH
+                        || appearance.getType() == CensorAppearance.Type.TAPE
+                        || appearance.isShowBorder() && appearance.isAnimateBorder()
+                            && (appearance.getBorderEffect() == CensorAppearance.BorderEffect.GRADIENT
+                                || appearance.getBorderEffect() == CensorAppearance.BorderEffect.RAINBOW));
+        jobs.load(MASK_JOB, () -> makeMask(app, appearance, animate, sourceLabel), ready -> {
             if (mask != null) mask.close();
             mask = ready;
             invalidate();
@@ -108,9 +134,10 @@ public final class ServiceCountdownView extends View {
         });
     }
 
-    private static Mask makeMask(Context app, CensorAppearance appearance) {
+    private static Mask makeMask(Context app, CensorAppearance appearance, boolean animated, String sourceLabel) {
         Bitmap source = Bitmap.createBitmap(240, 76, Bitmap.Config.ARGB_8888);
-        Bitmap target = null;
+        Bitmap[] frames = new Bitmap[animated ? 120 : 1];
+        boolean complete = false;
         try {
             Paint glyphs = new Paint(Paint.ANTI_ALIAS_FLAG);
             glyphs.setColor(app.getColor(R.color.text_primary));
@@ -118,19 +145,25 @@ public final class ServiceCountdownView extends View {
             glyphs.setTextAlign(Paint.Align.CENTER);
             glyphs.setTextSize(38);
             // Weak, translucent or animated Censor styles cannot leak a real hidden countdown.
-            new Canvas(source).drawText("00:00:00", 120, 51, glyphs);
-            target = Bitmap.createBitmap(240, 76, Bitmap.Config.ARGB_8888);
+            new Canvas(source).drawText(sourceLabel, 120, 51, glyphs);
             try (CensorRenderer renderer = appearance.getType() == CensorAppearance.Type.CUSTOM
                     ? new CensorRenderer(app) : new CensorRenderer(app, Collections.emptyList())) {
-                renderer.draw(target, source, Collections.singletonList(new Detection(
-                        "COUNTDOWN", "countdown", 1f, new BBox(0, 0, 240, 76), true, true)), appearance);
+                java.util.List<Detection> region = Collections.singletonList(new Detection(
+                        "COUNTDOWN", "countdown", 1f, new BBox(0, 0, 240, 76), true, true));
+                for (int index = 0; index < frames.length; index++) {
+                    if (Thread.currentThread().isInterrupted())
+                        throw new java.util.concurrent.CancellationException();
+                    frames[index] = Bitmap.createBitmap(240, 76, Bitmap.Config.ARGB_8888);
+                    renderer.drawAtTime(frames[index], source, region, appearance,
+                            index * Mask.CYCLE_MILLIS / frames.length);
+                }
             }
-            Mask result = new Mask(target, appearance.getType());
-            target = null;
+            Mask result = new Mask(frames, appearance.getType());
+            complete = true;
             return result;
         } finally {
             source.recycle();
-            if (target != null) target.recycle();
+            if (!complete) for (Bitmap frame : frames) if (frame != null) frame.recycle();
         }
     }
 
@@ -147,11 +180,15 @@ public final class ServiceCountdownView extends View {
         float width = radius * 1.65f, height = width * 76 / 240;
         center.set(x - width / 2, y - height / 2, x + width / 2, y + height / 2);
         if (hidden) {
-            if (mask != null) canvas.drawBitmap(mask.bitmap, null, center, image);
+            if (mask != null) {
+                canvas.drawBitmap(ValueAnimator.areAnimatorsEnabled()
+                        ? mask.frame(android.os.SystemClock.uptimeMillis()) : mask.frames[0], null, center, image);
+                if (mask.frames.length > 1 && ValueAnimator.areAnimatorsEnabled()) postInvalidateOnAnimation();
+            }
             else canvas.drawRoundRect(center, dp(8), dp(8), placeholder);
         } else {
             text.setTextSize(26 * getResources().getDisplayMetrics().scaledDensity);
-            float measured = text.measureText(label);
+            float measured = text.measureText(permanent ? "00:00:00" : label);
             if (measured > width) text.setTextSize(text.getTextSize() * width / measured);
             canvas.drawText(label, x, y - (text.ascent() + text.descent()) / 2, text);
         }
@@ -168,9 +205,15 @@ public final class ServiceCountdownView extends View {
     private float dp(float value) { return value * getResources().getDisplayMetrics().density; }
 
     private static final class Mask implements AutoCloseable {
-        final Bitmap bitmap;
+        static final long CYCLE_MILLIS = 4000L;
+        final Bitmap[] frames;
         final CensorAppearance.Type type;
-        Mask(Bitmap bitmap, CensorAppearance.Type type) { this.bitmap = bitmap; this.type = type; }
-        @Override public void close() { if (!bitmap.isRecycled()) bitmap.recycle(); }
+        final long startedAt = android.os.SystemClock.uptimeMillis();
+        Mask(Bitmap[] frames, CensorAppearance.Type type) { this.frames = frames; this.type = type; }
+        Bitmap frame(long timeMillis) {
+            int index = (int) (Math.max(0L, timeMillis - startedAt) % CYCLE_MILLIS * frames.length / CYCLE_MILLIS);
+            return frames[index];
+        }
+        @Override public void close() { for (Bitmap frame : frames) if (!frame.isRecycled()) frame.recycle(); }
     }
 }
