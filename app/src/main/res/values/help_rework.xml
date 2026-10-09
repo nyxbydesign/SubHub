@@ -11,7 +11,6 @@
     <string name="help_rework_app">App &amp; Updates</string>
     <string name="help_rework_build">Build: %1$s | %2$s</string>
     <string name="help_rework_language">Language: %1$s</string>
-    <string name="help_rework_installed">No update saved. Open Manage Updates to check.</string>
     <string name="help_rework_expanded">Expanded</string>
     <string name="help_rework_collapsed">Collapsed</string>
     <string name="help_rework_start_title">How do I start using SubHub?</string>

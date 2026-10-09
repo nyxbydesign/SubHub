@@ -305,8 +305,8 @@ public final class HelpActivity extends AppCompatActivity {
 
     private void renderUpdates() {
         UpdateCandidate candidate = new UpdateStateStore(this).candidate();
-        binding.updateSummary.setText(candidate == null
-                ? getString(R.string.help_rework_installed)
+        binding.updateSummary.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
+        binding.updateSummary.setText(candidate == null ? ""
                 : getString(R.string.update_help_available, candidate.manifest.versionName));
     }
 

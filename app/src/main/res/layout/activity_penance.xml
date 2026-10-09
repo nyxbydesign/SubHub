@@ -96,12 +96,10 @@
                         <GridLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="2" android:layout_marginTop="4dp">
                             <LinearLayout style="@style/Widget.SubHub.WalletFieldTile">
                                 <TextView android:labelFor="@id/rule_tamper_amount" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_rule_cost_label" />
-                                <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/penance_rule_tamper_price_help" />
                                 <EditText android:id="@+id/rule_tamper_amount" style="@style/Widget.SubHub.MoneyInput" />
                             </LinearLayout>
                             <LinearLayout style="@style/Widget.SubHub.WalletFieldTile">
                                 <TextView android:labelFor="@id/tamper_cooldown_minutes" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/penance_tamper_cooldown_label" />
-                                <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/penance_tamper_cooldown_help" />
                                 <EditText android:id="@+id/tamper_cooldown_minutes" style="@style/Widget.SubHub.IntegerInput" />
                             </LinearLayout>
                         </GridLayout>
@@ -134,7 +132,6 @@
                         </LinearLayout>
                         <LinearLayout style="@style/Widget.SubHub.WalletFieldTile">
                             <TextView android:labelFor="@id/paid_pause_minutes" style="@style/Widget.SubHub.WalletFieldLabel" android:text="@string/paid_pause_minutes_label" />
-                            <TextView style="@style/Widget.SubHub.WalletFieldHelp" android:text="@string/paid_pause_minutes_help" />
                             <EditText android:id="@+id/paid_pause_minutes" style="@style/Widget.SubHub.IntegerInput" />
                         </LinearLayout>
                     </GridLayout>

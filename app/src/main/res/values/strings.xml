@@ -663,9 +663,7 @@
     <string name="penance_rule_app_open_help">Enter a censor-assigned app. One tribute per entry.</string>
     <string name="penance_rule_tamper_title">Blocked control attempt</string>
     <string name="penance_rule_tamper_help">Wrong Dom PINs, blocked uninstall or data-clear actions, attempts to leave locked service, and Device Admin removal. Hardcore Mode only.</string>
-    <string name="penance_rule_tamper_price_help">Tribute for one rate-limited attempt.</string>
     <string name="penance_tamper_cooldown_label">Cooldown (Minutes)</string>
-    <string name="penance_tamper_cooldown_help">Repeated attempts inside this window count once.</string>
     <string name="penance_rule_cost_label">Tribute Due</string>
     <string name="penance_detection_batch_label">Every N Censors</string>
     <string name="penance_safety_limits_title">Tribute caps</string>
@@ -915,7 +913,6 @@
     <string name="paid_pause_price_label">Tribute for pause</string>
     <string name="paid_pause_price_help">Tribute required for one release.</string>
     <string name="paid_pause_minutes_label">Pause duration (minutes)</string>
-    <string name="paid_pause_minutes_help">Service resumes when time is up.</string>
     <string name="paid_pause_buy">Pay %2$s for %1$d Min Off</string>
     <string name="paid_pause_active">Paused · %1$s Left</string>
     <string name="paid_pause_button">Service paused</string>
