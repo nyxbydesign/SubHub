@@ -21,8 +21,8 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
-import com.subhub.app.R;
 import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.subhub.app.R;
 
 import org.junit.After;
 import org.junit.Test;
@@ -45,7 +45,7 @@ public final class ExportAndCustomUiTest {
     @Test public void exportShowsCurrentStyleAndRequiresSecondDeleteConfirmation() {
         try (ActivityScenario<ExportActivity> scenario = ActivityScenario.launch(ExportActivity.class)) {
             scenario.onActivity(activity -> {
-                assertNotNull(activity.findViewById(R.id.export_settings_summary));
+                assertNotNull(activity.findViewById(R.id.export_look_button));
                 assertTrue(activity.findViewById(R.id.button_pick_images).isEnabled());
                 assertFalse(((SwitchMaterial) activity.findViewById(
                         R.id.switch_delete_originals)).isChecked());

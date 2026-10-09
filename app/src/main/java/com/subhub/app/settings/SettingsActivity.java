@@ -1,36 +1,29 @@
 package com.subhub.app.settings;
-
-import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CompoundButton;
-import android.widget.EditText;
-import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
 import com.subhub.app.capture.CensorImageEditor;
-import com.subhub.app.capture.ExportActivity;
 import com.subhub.app.databinding.ActivitySettingsBinding;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.overlay.CensorPhrases;
+import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
@@ -338,8 +331,6 @@ public final class SettingsActivity extends AppCompatActivity {
                 if (!bindingValues && ControllerPinManager.isSessionUnlocked()) saveCustomPhrases();
             }
         });
-        binding.buttonExport.setOnClickListener(view -> ControllerPinGate.require(this,
-                () -> startActivity(new Intent(this, ExportActivity.class)), false));
         binding.paletteColorOne.setOnClickListener(view -> pickEffectColor(1));
         binding.gradientStart.setOnClickListener(view -> pickGradientColor(true));
         binding.gradientEnd.setOnClickListener(view -> pickGradientColor(false));
@@ -382,7 +373,6 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.reverseStrengthSeek.setEnabled(
                 editing);
         images.refresh();
-        binding.buttonExport.setEnabled(editing);
         setEnabledRecursive(binding.presetGroup,
                 editing);
         binding.confidenceSeek.setEnabled(

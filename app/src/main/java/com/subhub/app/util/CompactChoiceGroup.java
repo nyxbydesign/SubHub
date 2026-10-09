@@ -8,10 +8,19 @@ import android.widget.RadioGroup;
 /** Radio semantics with equal-width wrapping and equal-height cards within each row. */
 public final class CompactChoiceGroup extends RadioGroup {
     private int columns = 1;
+    private int preferredColumns, minimumCellWidthDp = 88;
     private int[] rowHeights = new int[0];
 
     public CompactChoiceGroup(Context context, AttributeSet attributes) {
         super(context, attributes);
+    }
+
+    public void setPreferredColumns(int count, int minimumWidthDp) {
+        if (count < 1 || minimumWidthDp < 48)
+            throw new IllegalArgumentException("Invalid choice layout");
+        preferredColumns = count;
+        minimumCellWidthDp = minimumWidthDp;
+        requestLayout();
     }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
@@ -24,8 +33,11 @@ public final class CompactChoiceGroup extends RadioGroup {
         for (int i = 0; i < getChildCount(); i++) if (getChildAt(i).getVisibility() != GONE) count++;
         float density = getResources().getDisplayMetrics().density;
         float fontScale = getResources().getConfiguration().fontScale;
-        int minimum = Math.round(88 * density * Math.max(1f, fontScale));
-        int desired = count == 4 ? 2 : Math.min(3, count);
+        int minimum = Math.round(minimumCellWidthDp * density * Math.max(1f, fontScale));
+        int desired =
+                preferredColumns > 0
+                        ? Math.min(preferredColumns, count)
+                        : count == 4 ? 2 : Math.min(3, count);
         columns = Math.max(1, Math.min(desired, available / Math.max(1, minimum)));
         rowHeights = new int[(count + columns - 1) / columns];
         int cell = available / columns;

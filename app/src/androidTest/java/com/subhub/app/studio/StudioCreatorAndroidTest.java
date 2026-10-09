@@ -1,6 +1,4 @@
 package com.subhub.app.studio;
-
-import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
@@ -8,6 +6,8 @@ import static androidx.test.espresso.action.ViewActions.replaceText;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
+
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
@@ -16,7 +16,6 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.view.View;
-import com.subhub.app.util.StateToggle;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
@@ -30,6 +29,7 @@ import com.subhub.app.pack.SubHubPackSchema;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.util.StateToggle;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -200,8 +200,9 @@ public final class StudioCreatorAndroidTest {
                 activity.findViewById(R.id.editor_next).performClick();
                 StateToggle include = activity.findViewById(R.id.section_list).findViewWithTag("pack_include:censor");
                 assertFalse(include.isChecked());
-                include.performClick(); // CompoundButton toggles even without an OnClickListener.
-                assertTrue(include.isChecked());
+                include.performClick(); // CompoundButton toggles even without an
+                                                 // OnClickListener.
+                        assertTrue(include.isChecked());
                 activity.findViewById(R.id.editor_next).performClick();
             });
             scenario.recreate();

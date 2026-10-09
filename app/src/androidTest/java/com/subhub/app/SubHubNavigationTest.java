@@ -12,8 +12,8 @@ import static org.junit.Assert.assertTrue;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
-import android.graphics.Rect;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
@@ -39,14 +39,14 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.penance.PenanceActivity;
-import com.subhub.app.stats.StatsRepository;
+import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsActivity;
-import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.HardcoreModeManager;
-import com.subhub.app.util.SubHubNavigation;
+import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.util.PrimaryHeader;
+import com.subhub.app.util.SubHubNavigation;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -117,7 +117,7 @@ public final class SubHubNavigationTest {
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.GONE,
+                assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
             });
@@ -170,7 +170,7 @@ public final class SubHubNavigationTest {
                         activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE,
                         activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.GONE,
+                assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_settings).getVisibility());
@@ -266,8 +266,9 @@ public final class SubHubNavigationTest {
                                 .getDisplayMetrics().density);
                         measurePage(page, pageWidth, pageHeight);
                         SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ATMOSPHERE);
-                        // The layout listener applies the measured pill clearance on the next pass.
-                        measurePage(page, pageWidth, pageHeight);
+                                // The layout listener applies the measured pill clearance on the
+                                // next pass.
+                                measurePage(page, pageWidth, pageHeight);
                         measurePage(page, pageWidth, pageHeight);
                         ViewGroup navigation = page.findViewById(R.id.bottom_navigation);
                         int target = themed.getResources()

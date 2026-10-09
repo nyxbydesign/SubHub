@@ -1,31 +1,26 @@
 package com.subhub.app.studio;
 
-import com.subhub.app.util.PrimaryHeader;
-
 import android.content.Intent;
-import android.graphics.Typeface;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import com.subhub.app.util.StateToggle;
-import android.widget.LinearLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 import androidx.lifecycle.ViewModel;
@@ -39,19 +34,19 @@ import com.subhub.app.pack.SubHubPackArchive;
 import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.pack.SubHubPackSchema;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.util.PrimaryHeader;
+import com.subhub.app.util.StateToggle;
 import com.subhub.app.util.SubHubNavigation;
 
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -61,6 +56,8 @@ import java.util.function.Consumer;
 
 /** Always-available creator, library, importer, previewer, and share surface for arrangements. */
 public final class StudioActivity extends AppCompatActivity {
+    public static final String EXTRA_FROM_RITUALS = "studio_from_rituals";
+    public static final String EXTRA_IMPORT_PACK = "studio_import_pack";
     private static final long MAX_IMAGE_BYTES = 25L * 1024L * 1024L;
     private static final String[] SECTION_ORDER = {
             SubHubPackSchema.MODULES, SubHubPackSchema.CENSOR, SubHubPackSchema.LIMITS,
@@ -107,13 +104,17 @@ public final class StudioActivity extends AppCompatActivity {
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.studio_title, false);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.VISIBLE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> {
-            startActivity(new Intent(this, com.subhub.app.settings.GlobalSettingsActivity.class)
+                            if (!getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false))
+                                startActivity(new Intent(this, com.subhub.app.settings.GlobalSettingsActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
             finish();
         });
         manager = new SubHubPackManager(this);
         payPalTransfer = new StudioPayPalTransfer(this, manager);
-        SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
+        SubHubNavigation.bind(this, binding.getRoot(),
+                getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
+                        ? SubHubNavigation.Screen.ATMOSPHERE
+                        : SubHubNavigation.Screen.SETTINGS);
         setupTabs();
         setupEditor();
         binding.buttonImport.setOnClickListener(view -> importPicker.launch(
@@ -122,6 +123,18 @@ public final class StudioActivity extends AppCompatActivity {
         binding.buttonCapture.setOnClickListener(view -> storageAction(manager::captureCurrent, this::openDraft));
         renderLibrary();
         renderDrafts();
+        if (savedInstanceState == null && getIntent().getBooleanExtra(EXTRA_IMPORT_PACK, false)) {
+            getIntent().removeExtra(EXTRA_IMPORT_PACK);
+            binding.getRoot()
+                    .post(
+                            () ->
+                                    importPicker.launch(
+                                            new String[] {
+                                                SubHubPackArchive.MIME_TYPE,
+                                                "application/octet-stream",
+                                                "*/*"
+                                            }));
+        }
         if (savedInstanceState != null) {
             assetTarget = savedInstanceState.getString("assetTarget", "censor");
             String id = savedInstanceState.getString("draftId");
@@ -166,7 +179,10 @@ public final class StudioActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (binding != null) {
-            SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
+            SubHubNavigation.bind(this, binding.getRoot(),
+                    getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
+                            ? SubHubNavigation.Screen.ATMOSPHERE
+                            : SubHubNavigation.Screen.SETTINGS);
             applySpaceVisibility();
         }
     }
@@ -833,8 +849,9 @@ public final class StudioActivity extends AppCompatActivity {
                     String extension = "image/jpeg".equals(bounds.outMimeType) ? "jpg"
                             : "image/webp".equals(bounds.outMimeType) ? "webp" : "png";
                     String path = "assets/" + folder + "/" + java.util.UUID.randomUUID() + "." + extension;
-                    // Admit the new bytes before removing the old cover: failed replacement keeps it.
-                    target.putAsset(path, bytes);
+                            // Admit the new bytes before removing the old cover: failed replacement
+                            // keeps it.
+                            target.putAsset(path, bytes);
                     if ("cover".equals(folder)) for (String previous : target.getAssetPaths()) {
                         if (previous.startsWith("assets/cover/") && !previous.equals(path)) target.removeAsset(previous);
                     }

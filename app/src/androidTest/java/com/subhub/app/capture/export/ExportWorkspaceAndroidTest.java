@@ -1,5 +1,12 @@
 package com.subhub.app.capture.export;
 
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.*;
+import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
+import static androidx.test.espresso.matcher.ViewMatchers.*;
+
+import static org.junit.Assert.*;
+
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.*;
@@ -21,11 +28,6 @@ import org.junit.runner.RunWith;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import static androidx.test.espresso.Espresso.onView;
-import static androidx.test.espresso.action.ViewActions.*;
-import static androidx.test.espresso.matcher.ViewMatchers.*;
-import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
-import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class ExportWorkspaceAndroidTest {
@@ -35,7 +37,7 @@ public class ExportWorkspaceAndroidTest {
         SettingsRepository live = new SettingsRepository(context);
         String originalStyle = live.preferences().getString(SettingsRepository.KEY_CENSOR_TYPE, "box");
         ExportSettings.reset(context);
-        ExportSettings.preferences(context).edit().putString(SettingsRepository.KEY_CENSOR_TYPE, "box")
+        ExportSettings.preferences(context).edit().putString(SettingsRepository.KEY_CENSOR_TYPE, "pixelate")
                 .putBoolean(SettingsRepository.KEY_REVERSE_MODE, true)
                 .putFloat(SettingsRepository.KEY_REVERSE_STRENGTH, 1f)
                 .putStringSet(SettingsRepository.KEY_ENABLED_CATEGORIES, Collections.emptySet()).commit();
@@ -44,8 +46,8 @@ public class ExportWorkspaceAndroidTest {
         ExportFoundationAndroidTest.generate(sourceVideo, times, 90);
         Uri video = seed(sourceVideo, true);
         File sourcePhoto = new File(context.getCacheDir(), "workspace-source.jpg");
-        Bitmap image = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888); image.eraseColor(Color.GREEN);
-        Canvas pattern = new Canvas(image); Paint paint = new Paint(); paint.setColor(Color.BLUE);
+        Bitmap image = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888); image.eraseColor(Color.rgb(84, 41, 109));
+        Canvas pattern = new Canvas(image); Paint paint = new Paint(); paint.setColor(Color.rgb(193, 122, 225));
         for (int x = 0; x < 320; x += 16) pattern.drawRect(x, 0, x + 8, 240, paint);
         try (OutputStream output = new FileOutputStream(sourcePhoto)) { image.compress(Bitmap.CompressFormat.JPEG, 95, output); } finally { image.recycle(); }
         Uri photo = seed(sourcePhoto, false); List<Uri> copies = new ArrayList<>();
@@ -55,6 +57,36 @@ public class ExportWorkspaceAndroidTest {
             Intents.intending(hasAction(Intent.ACTION_OPEN_DOCUMENT)).respondWith(new Instrumentation.ActivityResult(Activity.RESULT_OK, selected));
             try (ActivityScenario<ExportActivity> scenario = ActivityScenario.launch(ExportActivity.class)) {
                 onView(withId(R.id.button_pick_images)).perform(scrollTo(), click());
+                await(
+                        () -> {
+                            AtomicBoolean loaded = new AtomicBoolean();
+                            scenario.onActivity(
+                                    a ->
+                                            loaded.set(
+                                                    ((android.widget.Spinner)
+                                                                    a.findViewById(
+                                                                            R.id
+                                                                                    .export_preview_selection))
+                                                            .getAdapter()
+                                                            .getItem(0)
+                                                            .toString()
+                                                            .contains("workspace-source")));
+                            return loaded.get();
+                        },
+                        5000);
+                scenario.onActivity(
+                        a -> {
+                            assertEquals(
+                                    android.view.View.GONE,
+                                    a.findViewById(R.id.export_preview_position).getVisibility());
+                            assertTrue(a.findViewById(R.id.export_video_options).isShown());
+                            ((android.widget.RadioGroup)
+                                            a.findViewById(R.id.export_quality_choices))
+                                    .check(R.id.export_quality_high);
+                            assertEquals(
+                                    ExportOptions.Quality.HIGH,
+                                    ExportSettings.options(context).quality);
+                        });
                 onView(withId(R.id.export_preview_button)).perform(scrollTo(), click());
                 await(() -> {
                     AtomicBoolean visible = new AtomicBoolean();
@@ -66,6 +98,53 @@ public class ExportWorkspaceAndroidTest {
                     job = store.latest(); assertEquals(2, store.items(job).size());
                     assertTrue(store.items(job).stream().allMatch(item -> item.state == ExportJobStore.State.DRAFT));
                 }
+                capture(scenario, "gallery-photo-preview.png");
+                scenario.onActivity(
+                        a ->
+                                ((android.widget.Spinner)
+                                                a.findViewById(R.id.export_preview_selection))
+                                        .setSelection(1));
+                await(
+                        () -> {
+                            AtomicBoolean visible = new AtomicBoolean();
+                            scenario.onActivity(
+                                    a ->
+                                            visible.set(
+                                                    a.findViewById(R.id.export_preview_position)
+                                                            .isShown()));
+                            return visible.get();
+                        },
+                        5000);
+                onView(withId(R.id.export_preview_position)).perform(scrollTo(), swipeRight());
+                await(
+                        () -> {
+                            AtomicBoolean visible = new AtomicBoolean();
+                            scenario.onActivity(
+                                    a ->
+                                            visible.set(
+                                                    a.findViewById(R.id.export_preview_image)
+                                                                    .getVisibility()
+                                                            == android.view.View.VISIBLE));
+                            return visible.get();
+                        },
+                        45000);
+                capture(scenario, "gallery-video-preview.png");
+                scenario.recreate();
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(
+                        a -> {
+                            assertEquals(
+                                    1,
+                                    ((android.widget.Spinner)
+                                                    a.findViewById(R.id.export_preview_selection))
+                                            .getSelectedItemPosition());
+                            assertTrue(
+                                    ((android.widget.SeekBar)
+                                                            a.findViewById(
+                                                                    R.id.export_preview_position))
+                                                    .getProgress()
+                                            > 50);
+                        });
                 assertEquals(originalStyle, live.preferences().getString(SettingsRepository.KEY_CENSOR_TYPE, "box"));
                 onView(withId(R.id.export_start_batch_button)).perform(scrollTo(), click());
                 await(ExportService::isRunning, 15_000);
@@ -84,20 +163,13 @@ public class ExportWorkspaceAndroidTest {
                 }
                 scenario.moveToState(Lifecycle.State.RESUMED);
                 onView(withId(R.id.export_results_list)).perform(scrollTo());
-                Bitmap screenshot = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
-                try (OutputStream output = new FileOutputStream(new File(context.getFilesDir(), "gallery-results.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG, 100, output); }
-                screenshot.recycle();
-                onView(withId(R.id.button_pick_images)).perform(scrollTo());
+                capture(scenario, "gallery-results.png");
                 scenario.onActivity(a -> {
-                    android.view.View view = a.findViewById(R.id.button_pick_images);
-                    android.view.ViewParent parent = view.getParent();
-                    while (parent != null && !(parent instanceof android.widget.ScrollView)) parent = parent.getParent();
-                    if (parent instanceof android.widget.ScrollView) ((android.widget.ScrollView) parent).scrollTo(0, 0);
+                            ((android.widget.ScrollView)
+                                            a.findViewById(R.id.export_page).getParent()).scrollTo(0, 0);
                 });
-                InstrumentationRegistry.getInstrumentation().getUiAutomation().waitForIdle(150, 3000);
-                screenshot = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
-                try (OutputStream output = new FileOutputStream(new File(context.getFilesDir(), "gallery-controls.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG, 100, output); }
-                screenshot.recycle();
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                capture(scenario, "gallery-controls.png");
             }
         } finally {
             Intents.release();
@@ -105,6 +177,47 @@ public class ExportWorkspaceAndroidTest {
             context.getContentResolver().delete(video, null, null); context.getContentResolver().delete(photo, null, null);
             ExportSettings.reset(context); ControllerPinManager.enterSubMode();
         }
+    }
+
+    @Test
+    public void emptySelectionHasClearPickerAndNoUnavailablePreviewControls() throws Exception {
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<ExportActivity> scenario =
+                ActivityScenario.launch(ExportActivity.class)) {
+            scenario.onActivity(
+                    a -> {
+                        assertTrue(a.findViewById(R.id.button_pick_images).isShown());
+                        assertEquals(
+                                android.view.View.GONE,
+                                a.findViewById(R.id.export_preview_button).getVisibility());
+                        assertEquals(
+                                android.view.View.GONE,
+                                a.findViewById(R.id.export_preview_position).getVisibility());
+                        assertFalse(a.findViewById(R.id.export_start_batch_button).isEnabled());
+                        assertTrue(a.findViewById(R.id.export_preview_empty).isShown());
+                    });
+            capture(scenario, "gallery-empty.png");
+        }
+    }
+
+    private void capture(ActivityScenario<ExportActivity> scenario, String name) {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        scenario.onActivity(
+                a -> {
+                    android.view.View root = a.getWindow().getDecorView();
+                    Bitmap screenshot =
+                            Bitmap.createBitmap(
+                                    root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
+                    root.draw(new Canvas(screenshot));
+                    try (OutputStream output =
+                            new FileOutputStream(new File(context.getFilesDir(), name))) {
+                        assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
+                    } catch (IOException failure) {
+                        throw new AssertionError(failure);
+                    } finally {
+                        screenshot.recycle();
+                    }
+                });
     }
     private Uri seed(File file, boolean video) throws IOException {
         ContentValues values = new ContentValues(); values.put(MediaStore.MediaColumns.DISPLAY_NAME, "UX synthetic " + file.getName());

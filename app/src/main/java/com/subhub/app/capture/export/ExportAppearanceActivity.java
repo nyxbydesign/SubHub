@@ -1,6 +1,4 @@
 package com.subhub.app.capture.export;
-
-import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.widget.*;
 import com.subhub.app.R;
@@ -15,10 +13,18 @@ import java.util.*;
 
 /** Export-only controls share the live appearance vocabulary without writing its preferences. */
 public final class ExportAppearanceActivity extends PreferencePage {
+    public static final String EXTRA_SHOW_CATEGORIES = "export_show_categories";
     private SettingsRepository settings;
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state); page(R.string.export_appearance_title);
-        ControllerPinGate.require(this, this::render, true);
+        ControllerPinGate.require(this,
+                () -> {
+                    render();
+                    if (getIntent().getBooleanExtra(EXTRA_SHOW_CATEGORIES, false)) {
+                        getIntent().removeExtra(EXTRA_SHOW_CATEGORIES);
+                        categories();
+                    }
+                }, true);
     }
     private void render() {
         if (isDestroyed() || isFinishing()) return;

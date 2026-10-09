@@ -25,13 +25,13 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class UiComponentContractTest {
     @Test
-    public void statsHasNoAchievementButtonAndHomePlacesAchievementsAfterActivity() {
+    public void statisticsStaysOnHomeAndAchievementsMoveToRituals() {
         try (ActivityScenario<com.subhub.app.stats.StatsActivity> scenario =
                 ActivityScenario.launch(com.subhub.app.stats.StatsActivity.class)) {
             scenario.onActivity(
                     activity -> {
                         org.junit.Assert.assertNull(
-                                activity.findViewById(R.id.button_achievements));
+                                activity.findViewById(R.id.achievements_home_card));
                         org.junit.Assert.assertNull(
                                 "Achievement counts belong on Achievements, not Stats",
                                 activity.findViewById(R.id.achievement_progress));
@@ -43,11 +43,27 @@ public final class UiComponentContractTest {
             scenario.onActivity(
                     activity -> {
                         View lifetime = activity.findViewById(R.id.daily_statistics_panel);
+                        assertNotNull(lifetime);
+                        org.junit.Assert.assertNull(
+                                activity.findViewById(R.id.achievements_home_card));
+                        assertEquals(
+                                View.VISIBLE,
+                                activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                    });
+        }
+        try (ActivityScenario<AtmosphereActivity> scenario =
+                ActivityScenario.launch(AtmosphereActivity.class)) {
+            scenario.onActivity(
+                    activity -> {
+                        View packs = activity.findViewById(R.id.rituals_packs_card);
                         View achievements = activity.findViewById(R.id.achievements_home_card);
-                        assertEquals(lifetime.getParent(), achievements.getParent());
-                        ViewGroup parent = (ViewGroup) lifetime.getParent();
+                        assertNotNull(achievements);
+                        ViewGroup parent = (ViewGroup) packs.getParent();
                         assertTrue(
-                                parent.indexOfChild(lifetime) < parent.indexOfChild(achievements));
+                                parent.indexOfChild(packs) < parent.indexOfChild(achievements));
+                        org.junit.Assert.assertNull(
+                                activity.findViewById(R.id.daily_statistics_panel));
+                        assertTrue(!activity.findViewById(R.id.switch_whispers).isEnabled());
                     });
         } finally {
             ControllerPinManager.enterDomMode();

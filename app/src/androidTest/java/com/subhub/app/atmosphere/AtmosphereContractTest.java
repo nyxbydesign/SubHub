@@ -1,19 +1,17 @@
 package com.subhub.app.atmosphere;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 
 import android.content.Context;
 import android.view.View;
-import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
-import com.subhub.app.R;
 import com.subhub.app.MainActivity;
+import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 
@@ -32,7 +30,7 @@ public final class AtmosphereContractTest {
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.sub_atmosphere_card).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
-                assertEquals(View.GONE,
+                assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
             });

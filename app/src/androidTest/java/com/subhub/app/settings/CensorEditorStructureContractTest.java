@@ -2,9 +2,8 @@ package com.subhub.app.settings;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
-import static androidx.test.espresso.action.ViewActions.scrollTo;
-import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -21,7 +20,6 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
 
 import com.subhub.app.R;
-import com.subhub.app.capture.ExportActivity;
 import com.subhub.app.security.ControllerPinManager;
 
 import org.junit.After;
@@ -95,12 +93,9 @@ public final class CensorEditorStructureContractTest {
                 View photos = activity.findViewById(R.id.button_export);
                 ViewGroup page = (ViewGroup) rules.getParent();
                 assertEquals(page, appearance.getParent());
-                assertEquals(page, photos.getParent());
+                        org.junit.Assert.assertNull(photos);
                 assertTrue(page.indexOfChild(rules) < page.indexOfChild(appearance));
-                assertTrue(page.indexOfChild(appearance) < page.indexOfChild(photos));
                 assertTrue(activity.findViewById(R.id.button_packs) == null);
-                assertEquals(activity.getString(R.string.censor_gallery_photos),
-                        ((android.widget.TextView) photos).getText().toString());
                 for (int id : new int[] {R.id.capture_method_group, R.id.preset_group,
                         R.id.coverage_group, R.id.switch_breasts, R.id.switch_smut_text}) {
                     assertInside(rules, activity.findViewById(id));
@@ -112,7 +107,7 @@ public final class CensorEditorStructureContractTest {
                 }
                 int minimum = activity.getResources()
                         .getDimensionPixelSize(R.dimen.control_min_height);
-                for (int id : new int[] {R.id.button_add_censor_images, R.id.button_export}) {
+                for (int id : new int[] {R.id.button_add_censor_images}) {
                     View action = activity.findViewById(id);
                     assertTrue(action.isShown());
                     assertTrue(action.getWidth() >= minimum);
@@ -122,16 +117,17 @@ public final class CensorEditorStructureContractTest {
         }
     }
 
-    @Test public void galleryPhotoActionOpensExistingExportWithSeparateDeletionChoice() {
-        try (ActivityScenario<SettingsActivity> scenario =
-                     ActivityScenario.launch(SettingsActivity.class)) {
-            onView(withId(R.id.button_export)).perform(revealAboveNavigation(), click());
+    @Test public void ritualsGalleryActionOpensWorkspaceWithSeparateDeletionChoice() {
+        try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> scenario =
+                     ActivityScenario.launch(com.subhub.app.atmosphere.AtmosphereActivity.class)) {
+            onView(withId(R.id.rituals_gallery_card)).perform(revealAboveNavigation(), click());
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 Activity export = null;
                 for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance()
                         .getActivitiesInStage(Stage.RESUMED)) {
-                    if (activity instanceof ExportActivity) export = activity;
+                    if (activity instanceof
+                                            com.subhub.app.capture.export.ExportWorkspaceActivity) export = activity;
                 }
                 assertNotNull("Gallery action must open the photo export screen", export);
                 assertNotNull(export.findViewById(R.id.switch_delete_originals));
@@ -145,7 +141,7 @@ public final class CensorEditorStructureContractTest {
         try (ActivityScenario<SettingsActivity> scenario =
                      ActivityScenario.launch(SettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                assertFalse(activity.findViewById(R.id.button_export).isEnabled());
+                        org.junit.Assert.assertNull(activity.findViewById(R.id.button_export));
                 assertFalse(activity.findViewById(R.id.button_add_censor_images).isEnabled());
                 assertFalse(activity.findViewById(R.id.radio_coverage_person).isEnabled());
                 assertFalse(activity.findViewById(R.id.switch_smut_text).isEnabled());

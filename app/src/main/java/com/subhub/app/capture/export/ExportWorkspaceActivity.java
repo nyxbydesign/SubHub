@@ -4,12 +4,14 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.*;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.*;
 import androidx.activity.result.ActivityResultLauncher;
@@ -18,11 +20,13 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.ContextCompat;
 import com.subhub.app.R;
 import com.subhub.app.capture.CensorRenderer;
+import com.subhub.app.databinding.ActivityExportWorkspaceBinding;
 import com.subhub.app.detection.DetectionEngine;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.util.PreferencePage;
+import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.StateToggle;
 import com.subhub.app.util.ThemedDialogs;
 import java.io.*;
@@ -43,12 +47,22 @@ public class ExportWorkspaceActivity extends PreferencePage {
     private Bitmap previewBitmap;
     private int previewPosition;
     private int previewIndex;
+    private ActivityExportWorkspaceBinding binding;
     private Spinner previewSelection;
-    private TextView selectedSummary, settingsSummary, status;
+    private SeekBar framePosition;
+    private RadioGroup qualityChoices, detectionChoices;
+    private boolean renderingOptions;
+    private final Map<String, MediaInfo> mediaInfo = new LinkedHashMap<>();
+    private long selectionRevision;
+    private String settingsFingerprint = "";
+
+    private record MediaInfo(String name, boolean video) {}
+
+    private TextView selectedSummary, status;
     private LinearLayout results, resultCard;
     private ImageView preview;
-    private Button pick, configure, start, previewButton, quality, retry, delete, cancel;
-    private StateToggle faster, mute, deletion;
+    private Button pick, configure, areas, start, previewButton, retry, delete, cancel;
+    private StateToggle mute, deletion;
     private ActivityResultLauncher<String[]> picker;
     private ActivityResultLauncher<String> storagePermission;
     private ActivityResultLauncher<IntentSenderRequest> deleteConsent;
@@ -74,78 +88,219 @@ public class ExportWorkspaceActivity extends PreferencePage {
             ArrayList<String> uris = state.getStringArrayList("selected"); if (uris != null) for (String uri : uris) selected.add(Uri.parse(uri));
             long[] pending = state.getLongArray("pending_delete"); if (pending != null) for (long id : pending) pendingDeleteIds.add(id);
             deleteOriginals = state.getBoolean("delete_originals", false);
+            previewIndex = state.getInt("preview_index", 0);
+            previewPosition = state.getInt("preview_position", 0);
         } else job = store.latest();
         build();
     }
     private void build() {
-        page(R.string.export_workspace_title); text(page, getString(R.string.export_workspace_help), 14, true);
-        LinearLayout selection = card(page);
-        pick = button(selection, getString(R.string.export_choose_media), () -> picker.launch(new String[] {"image/*", "video/*"}));
-        pick.setId(R.id.button_pick_images);
-        selectedSummary = text(selection, getString(R.string.export_selected_count, selected.size()), 14, true);
-        LinearLayout options = card(page);
-        settingsSummary = text(options, "", 15, false); settingsSummary.setId(R.id.export_settings_summary);
-        configure = button(options, getString(R.string.export_appearance_title), () ->
-                ControllerPinGate.require(this, () -> startActivity(new Intent(this, ExportAppearanceActivity.class)), false));
-        quality = button(options, "", this::chooseQuality);
+        binding = ActivityExportWorkspaceBinding.inflate(getLayoutInflater());
+        setContentView(binding.getRoot());
+        page = binding.exportPage;
+        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.export_workspace_title, false);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        pick = binding.buttonPickImages;
+        pick.setOnClickListener(view -> picker.launch(new String[] {"image/*", "video/*"}));
+        configure = binding.exportLookButton;
+        configure.setOnClickListener(view -> openAppearance(false));
+        areas = binding.exportAreasButton;
+        areas.setOnClickListener(view -> openAppearance(true));
+        selectedSummary = binding.exportSelectedSummary;
+        status = binding.exportStatus;
+        binding.exportQualityChoices.setPreferredColumns(4, 70);
+        qualityChoices = binding.exportQualityChoices;
+        detectionChoices = binding.exportDetectionChoices;
         ExportOptions current = ExportSettings.options(this);
-        faster = (StateToggle) toggle(options, R.string.export_faster, current.detectEvery == 2, checked -> {
-            ExportSettings.preferences(this).edit().putBoolean("export_fast", checked).apply(); invalidatePreview();
+        mute = binding.exportMute;
+        mute.setChecked(current.mute);
+        mute.setOnCheckedChangeListener(
+                (view, checked) -> {
+                    if (renderingOptions || !mute.isEnabled()) return;
+                    ExportSettings.preferences(this).edit().putBoolean("export_mute", checked).apply(); invalidatePreview();
         });
-        text(options, getString(R.string.export_faster_help), 13, true);
-        mute = (StateToggle) toggle(options, R.string.export_mute, current.mute, checked -> {
-            ExportSettings.preferences(this).edit().putBoolean("export_mute", checked).apply(); invalidatePreview();
-        });
-        deletion = (StateToggle) toggle(options, R.string.export_delete_after, deleteOriginals, this::setDelete);
-        deletion.setId(R.id.switch_delete_originals);
-        LinearLayout review = card(page); text(review, getString(R.string.export_preview_help), 13, true);
-        previewSelection = new Spinner(this); previewSelection.setContentDescription(getString(R.string.export_preview_item));
-        review.addView(previewSelection, new LinearLayout.LayoutParams(-1, dp(48)));
+        deletion = binding.switchDeleteOriginals;
+        deletion.setChecked(deleteOriginals);
+        deletion.setOnCheckedChangeListener((view, checked) -> setDelete(checked));
+        qualityChoices.setOnCheckedChangeListener(
+                (group, id) -> {
+                    if (renderingOptions || !group.isEnabled()) return;
+                    ExportOptions.Quality selectedQuality =
+                            id == R.id.export_quality_draft
+                                    ? ExportOptions.Quality.DRAFT
+                                    : id == R.id.export_quality_high
+                                            ? ExportOptions.Quality.HIGH
+                                            : id == R.id.export_quality_best
+                                                    ? ExportOptions.Quality.BEST
+                                                    : ExportOptions.Quality.BALANCED;
+                    ExportSettings.preferences(this)
+                            .edit()
+                            .putString("export_quality", selectedQuality.name())
+                            .apply();
+                    invalidatePreview();
+                    refreshSummary();
+                });
+        detectionChoices.setOnCheckedChangeListener(
+                (group, id) -> {
+                    if (renderingOptions || !group.isEnabled()) return;
+                    ExportSettings.preferences(this)
+                            .edit()
+                            .putBoolean("export_fast", id == R.id.export_detection_fast)
+                            .apply();
+                    invalidatePreview();
+                    refreshSummary();
+                });
+        previewSelection = binding.exportPreviewSelection;
         previewSelection.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { previewIndex = position; }
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                        if (previewIndex != position) {
+                            previewIndex = position;
+                            previewPosition = 0;
+                            clearPreview();
+                        }
+                        refreshMediaControls(); }
             public void onNothingSelected(AdapterView<?> parent) { previewIndex = 0; }
         });
-        updatePreviewSelection();
-        previewButton = button(review, getString(R.string.export_preview), () -> prepare(false)); previewButton.setId(R.id.export_preview_button);
-        SeekBar position = new SeekBar(this); position.setMax(100); position.setContentDescription(getString(R.string.export_preview_frame));
-        review.addView(position, new LinearLayout.LayoutParams(-1, dp(48)));
-        position.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+        previewButton = binding.exportPreviewButton;
+        previewButton.setOnClickListener(view -> prepare(false));
+        framePosition = binding.exportPreviewPosition;
+        framePosition.setProgress(previewPosition);
+        framePosition.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar view, int progress, boolean user) { if (user) previewPosition = progress; }
             public void onStartTrackingTouch(SeekBar view) { }
-            public void onStopTrackingTouch(SeekBar view) { if (!selected.isEmpty() && !preparing) prepare(false); }
+            public void onStopTrackingTouch(SeekBar view) { if (!selected.isEmpty() && !preparing && view.isEnabled()) prepare(false); }
         });
-        preview = new ImageView(this); preview.setId(R.id.export_preview_image); preview.setAdjustViewBounds(true);
-        preview.setContentDescription(getString(R.string.export_preview)); preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        review.addView(preview, new LinearLayout.LayoutParams(-1, dp(220))); preview.setVisibility(View.GONE);
-        start = button(page, getString(R.string.export_start_batch), this::startExport); start.setId(R.id.export_start_batch_button);
-        status = text(page, "", 14, true); status.setId(R.id.export_status);
-        resultCard = card(page); text(resultCard, getString(R.string.export_results), 18, false);
-        results = new LinearLayout(this); results.setOrientation(LinearLayout.VERTICAL); results.setId(R.id.export_results_list); resultCard.addView(results);
-        cancel = button(resultCard, getString(android.R.string.cancel), () -> {
+        preview = binding.exportPreviewImage;
+        start = binding.exportStartBatchButton;
+        start.setOnClickListener(view -> startExport());
+        results = binding.exportResultsList;
+        resultCard = binding.exportResultCard;
+        cancel = binding.buttonCancelExport;
+        cancel.setOnClickListener(
+                view -> {
             if (ExportService.isRunning()) startService(new Intent(this, ExportService.class).setAction(ExportService.ACTION_CANCEL));
         });
-        cancel.setId(R.id.button_cancel_export);
-        retry = button(resultCard, getString(R.string.export_retry_batch), () -> {
+        retry = binding.exportRetryBatch;
+        retry.setOnClickListener(
+                view -> {
             if (job != null && !ExportService.isRunning()) { store.retry(job); launchJob(job); }
         });
-        delete = button(resultCard, getString(R.string.export_delete_saved), this::deleteSavedOriginals);
+        delete = binding.exportDeleteSaved;
+        delete.setOnClickListener(view -> deleteSavedOriginals());
+        updatePreviewSelection();
+        loadMediaInfo();
         refreshSummary(); renderResults();
+    }
+
+    private void openAppearance(boolean categories) {
+        ControllerPinGate.require(
+                this,
+                () ->
+                        startActivity(
+                                new Intent(this, ExportAppearanceActivity.class)
+                                        .putExtra(
+                                                ExportAppearanceActivity.EXTRA_SHOW_CATEGORIES,
+                                                categories)),
+                false);
     }
     private void select(List<Uri> uris) {
         if (uris == null || uris.isEmpty()) return;
         selected.clear(); selected.addAll(uris);
         for (Uri uri : uris) try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (SecurityException ignored) { /* Provider may grant only transient access. */ }
-        selectedSummary.setText(getString(R.string.export_selected_count, selected.size())); invalidatePreview(); renderResults();
+        previewIndex = 0;
+        previewPosition = 0; invalidatePreview();
         updatePreviewSelection();
+        loadMediaInfo();
+        renderResults();
     }
     private void updatePreviewSelection() {
         List<String> labels = new ArrayList<>();
-        for (int i = 0; i < selected.size(); i++) labels.add(getString(R.string.export_preview_item_number, i + 1));
+        for (int i = 0; i < selected.size(); i++) labels.add(mediaName(selected.get(i).toString(), i + 1));
+        int chosen = Math.max(0, Math.min(previewIndex, selected.size() - 1));
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); previewSelection.setAdapter(adapter);
+        previewSelection.setSelection(chosen);
+        previewIndex = chosen;
+        refreshMediaControls();
+    }
+
+    private void loadMediaInfo() {
+        long revision = ++selectionRevision;
+        Set<String> sources = new LinkedHashSet<>();
+        for (Uri uri : selected) sources.add(uri.toString());
+        if (job != null) for (ExportJobStore.Item item : store.items(job)) sources.add(item.source);
+        android.content.Context app = getApplicationContext();
+        worker.execute(
+                () -> {
+                    Map<String, MediaInfo> loaded = new LinkedHashMap<>();
+                    for (String source : sources) {
+                        Uri uri = Uri.parse(source);
+                        String name = "";
+                        boolean video = false;
+                        try (Cursor cursor =
+                                app.getContentResolver()
+                                        .query(
+                                                uri,
+                                                new String[] {OpenableColumns.DISPLAY_NAME},
+                                                null,
+                                                null,
+                                                null)) {
+                            if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
+                        } catch (RuntimeException ignored) {
+                        }
+                        try {
+                            video = ExportMedia.isVideo(app, uri);
+                        } catch (Exception ignored) {
+                        }
+                        loaded.put(source, new MediaInfo(name == null ? "" : name, video));
+                    }
+                    main.post(
+                            () -> {
+                                if (closed || revision != selectionRevision) return;
+                                mediaInfo.clear();
+                                mediaInfo.putAll(loaded);
+                                updatePreviewSelection();
+                                resultsFingerprint = null;
+                                renderResults();
+                            });
+                });
+    }
+
+    private String mediaName(String source, int number) {
+        MediaInfo info = mediaInfo.get(source);
+        return info == null || info.name().isEmpty()
+                ? getString(R.string.gallery_item_number, number)
+                : info.name();
+    }
+
+    private void refreshMediaControls() {
+        boolean any = !selected.isEmpty();
+        MediaInfo current =
+                any
+                        ? mediaInfo.get(
+                                selected.get(Math.min(previewIndex, selected.size() - 1))
+                                        .toString())
+                        : null;
+        boolean video = current != null && current.video();
         previewSelection.setVisibility(selected.size() > 1 ? View.VISIBLE : View.GONE);
-        previewIndex = 0;
+        previewButton.setVisibility(any ? View.VISIBLE : View.GONE);
+        selectedSummary.setVisibility(any ? View.VISIBLE : View.GONE);
+        selectedSummary.setText(
+                selected.size() == 1
+                        ? mediaName(selected.get(0).toString(), 1)
+                        : getString(R.string.export_selected_count, selected.size()));
+        framePosition.setVisibility(video ? View.VISIBLE : View.GONE);
+        framePosition.setProgress(previewPosition);
+        binding.exportFrameNote.setVisibility(video ? View.VISIBLE : View.GONE);
+        binding.exportVideoOptions.setVisibility(
+                !any
+                                || selected.stream()
+                                        .map(uri -> mediaInfo.get(uri.toString()))
+                                        .anyMatch(info -> info != null && info.video())
+                        ? View.VISIBLE
+                        : View.GONE);
+        binding.exportPreviewHint.setText(
+                any ? R.string.gallery_preview_hint : R.string.export_select_first);
     }
     private void setDelete(boolean checked) {
         if (suppressDelete) return;
@@ -158,23 +313,39 @@ public class ExportWorkspaceActivity extends PreferencePage {
                     deleteOriginals = true; suppressDelete = true; deletion.setChecked(true); suppressDelete = false; invalidatePreview();
                 }).show(), false);
     }
-    private void chooseQuality() {
-        ExportOptions.Quality[] values = ExportOptions.Quality.values(); String[] labels = new String[values.length];
-        for (int i = 0; i < values.length; i++) labels[i] = ExportAppearanceActivity.label(values[i].name().toLowerCase(Locale.ROOT));
-        ThemedDialogs.builder(this).setTitle(R.string.export_quality_title)
-                .setSingleChoiceItems(labels, ExportSettings.options(this).quality.ordinal(), (d, which) -> {
-                    ExportSettings.preferences(this).edit().putString("export_quality", values[which].name()).apply();
-                    d.dismiss(); invalidatePreview(); refreshSummary();
-                }).setNegativeButton(android.R.string.cancel, null).show();
-    }
     private void refreshSummary() {
         SettingsRepository settings = SettingsRepository.forPreferences(ExportSettings.preferences(this));
-        settingsSummary.setText(getString(R.string.export_style_value, ExportAppearanceActivity.label(settings.loadAppearance().getType().getPreferenceValue())));
-        quality.setText(getString(R.string.export_quality_value, ExportAppearanceActivity.label(ExportSettings.options(this).quality.name().toLowerCase(Locale.ROOT))));
+        ExportOptions options = ExportSettings.options(this);
+        configure.setText(
+                ExportAppearanceActivity.label(settings.loadAppearance().getType().getPreferenceValue()));
+        areas.setText(getString(R.string.gallery_areas_count,
+                        settings.loadDetectorConfig().getEnabledCategories().size()));
+        renderingOptions = true;
+        qualityChoices.check(
+                options.quality == ExportOptions.Quality.DRAFT
+                        ? R.id.export_quality_draft
+                        : options.quality == ExportOptions.Quality.HIGH
+                                ? R.id.export_quality_high
+                                : options.quality == ExportOptions.Quality.BEST
+                                        ? R.id.export_quality_best
+                                        : R.id.export_quality_balanced);
+        detectionChoices.check(
+                options.detectEvery == 2 ? R.id.export_detection_fast : R.id.export_detection_full);
+        mute.setChecked(options.mute);
+        renderingOptions = false;
+        String next = ExportSettings.preferences(this).getAll().toString();
+        if (!settingsFingerprint.isEmpty() && !next.equals(settingsFingerprint))
+            invalidatePreview();
+        settingsFingerprint = next;
     }
     private void invalidatePreview() {
         preparedFingerprint = null;
+        clearPreview();
+    }
+
+    private void clearPreview() {
         if (preview != null) { preview.setImageDrawable(null); preview.setVisibility(View.GONE); }
+        if (binding != null) binding.exportPreviewEmpty.setVisibility(View.VISIBLE);
         if (previewBitmap != null) { previewBitmap.recycle(); previewBitmap = null; }
     }
     private void startExport() {
@@ -212,11 +383,12 @@ public class ExportWorkspaceActivity extends PreferencePage {
                 main.post(() -> {
                     if (closed) { if (image != null) image.recycle(); return; }
                     job = readyJob; preparedFingerprint = fingerprint; preparing = false;
-                    if (export) status.setText(R.string.export_ready_snapshot);
+                    if (export) status.setText(R.string.gallery_ready);
                     else {
                         preview.setImageBitmap(image); preview.setVisibility(View.VISIBLE);
+                                        binding.exportPreviewEmpty.setVisibility(View.GONE);
                         if (previewBitmap != null && previewBitmap != image) previewBitmap.recycle(); previewBitmap = image;
-                        status.setText(R.string.export_ready_snapshot);
+                        status.setText(R.string.gallery_preview_ready);
                     }
                     renderResults();
                 });
@@ -251,15 +423,22 @@ public class ExportWorkspaceActivity extends PreferencePage {
     private void launchJob(String id) {
         try { ContextCompat.startForegroundService(this, new Intent(this, ExportService.class).setAction(ExportService.ACTION_START).putExtra(ExportService.EXTRA_JOB, id)); }
         catch (RuntimeException rejected) { store.recover(); notice(getString(R.string.export_wait_running)); }
-        status.setText(R.string.export_ready_snapshot); renderResults();
+        status.setText(R.string.gallery_ready); renderResults();
     }
     private void renderResults() {
         if (results == null || closed) return;
         List<ExportJobStore.Item> items = job == null ? Collections.emptyList() : store.items(job);
         boolean running = ExportService.isRunning() || items.stream().anyMatch(item -> item.state == ExportJobStore.State.PENDING || item.state == ExportJobStore.State.RUNNING);
         boolean editable = !preparing && !running;
-        pick.setEnabled(editable); configure.setEnabled(editable); quality.setEnabled(editable);
-        faster.setEnabled(editable); mute.setEnabled(editable); deletion.setEnabled(editable);
+        pick.setEnabled(editable); configure.setEnabled(editable);
+        areas.setEnabled(editable);
+        setChoicesEnabled(qualityChoices, editable);
+        setChoicesEnabled(detectionChoices, editable); mute.setEnabled(editable); deletion.setEnabled(editable);
+        previewSelection.setEnabled(editable);
+        framePosition.setEnabled(editable);
+        binding.exportPreviewProgress.setVisibility(preparing ? View.VISIBLE : View.GONE);
+        binding.exportPreviewEmpty.setVisibility(
+                preparing || previewBitmap != null ? View.GONE : View.VISIBLE);
         start.setEnabled(editable && !selected.isEmpty()); previewButton.setEnabled(editable && !selected.isEmpty());
         resultCard.setVisibility(items.stream().anyMatch(item -> item.state != ExportJobStore.State.DRAFT) ? View.VISIBLE : View.GONE);
         cancel.setVisibility(running ? View.VISIBLE : View.GONE);
@@ -280,13 +459,68 @@ public class ExportWorkspaceActivity extends PreferencePage {
         if (fingerprint.toString().equals(resultsFingerprint)) return;
         resultsFingerprint = fingerprint.toString(); results.removeAllViews(); int number = 0;
         for (ExportJobStore.Item item : items) {
-            text(results, getString(R.string.export_item_status, ++number, ExportAppearanceActivity.label(item.state.name().toLowerCase(Locale.ROOT)), item.progress), 15, false);
-            if (!item.message.isEmpty() && !"Saved".equals(item.message)) text(results, item.message, 12, true);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(0, dp(14), 0, dp(14));
+            results.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout top = new LinearLayout(this);
+            top.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.addView(top, new LinearLayout.LayoutParams(-1, -2));
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(R.drawable.ic_tab_export);
+            icon.setImageTintList(
+                    android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            top.addView(icon, new LinearLayout.LayoutParams(dp(26), dp(26)));
+            LinearLayout labels = new LinearLayout(this);
+            labels.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -2, 1);
+            labelParams.setMarginStart(dp(12));
+            top.addView(labels, labelParams);
+            TextView name = text(labels, mediaName(item.source, ++number), 14, false);
+            name.setTypeface(null, android.graphics.Typeface.BOLD);
+            name.setPadding(0, 0, 0, dp(3));
+            TextView stateLabel =
+                    text(
+                            labels, ExportAppearanceActivity.label(item.state.name().toLowerCase(Locale.ROOT)),
+                            12,
+                            true);
+            stateLabel.setPadding(0, 0, 0, 0);
+            if (item.state == ExportJobStore.State.RUNNING
+                    || item.state == ExportJobStore.State.PENDING) {
+                ProgressBar progress =
+                        new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                progress.setMax(100);
+                progress.setProgress(item.progress);
+                progress.setProgressTintList(
+                        android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
+                progress.setContentDescription(
+                        getString(R.string.gallery_export_progress, item.progress));
+                LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(6));
+                progressParams.topMargin = dp(12);
+                row.addView(progress, progressParams);
+            }
+            if (!item.message.isEmpty() && !"Saved".equals(item.message)) text(row, item.message, 12, true);
             if (item.state == ExportJobStore.State.SAVED && item.output != null) {
-                button(results, getString(R.string.export_open_copy), () -> open(Uri.parse(item.output), false));
-                button(results, getString(R.string.export_share_copy), () -> open(Uri.parse(item.output), true));
+                com.subhub.app.util.WalletBalanceRow actions =
+                        new com.subhub.app.util.WalletBalanceRow(this, null);
+                row.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+                button(
+                        actions, getString(R.string.export_open_copy), () -> open(Uri.parse(item.output), false));
+                button(
+                        actions, getString(R.string.export_share_copy), () -> open(Uri.parse(item.output), true));
+            }
+            if (number < items.size()) {
+                View divider = new View(this);
+                divider.setBackgroundResource(R.color.outline_subtle);
+                results.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
             }
         }
+    }
+
+    private void setChoicesEnabled(RadioGroup group, boolean enabled) {
+        group.setEnabled(enabled);
+        for (int i = 0; i < group.getChildCount(); i++) group.getChildAt(i).setEnabled(enabled);
     }
     private void open(Uri uri, boolean share) {
         String type = getContentResolver().getType(uri);
@@ -333,9 +567,11 @@ public class ExportWorkspaceActivity extends PreferencePage {
             return ExportMedia.publish(this, store, store.items(temporaryJob).get(0), file, false);
         } finally { if (file.exists() && !file.delete()) file.deleteOnExit(); }
     }
-    @Override protected void onResume() { super.onResume(); if (settingsSummary != null) refreshSummary(); main.removeCallbacks(refresh); main.post(refresh); }
+    @Override protected void onResume() { super.onResume(); if (binding != null) refreshSummary(); main.removeCallbacks(refresh); main.post(refresh); }
     @Override protected void onPause() { main.removeCallbacks(refresh); super.onPause(); }
     @Override protected void onSaveInstanceState(Bundle state) {
+        state.putInt("preview_index", previewIndex);
+        state.putInt("preview_position", previewPosition);
         state.putString("job", job); state.putString("fingerprint", preparedFingerprint); state.putBoolean("delete_originals", deleteOriginals);
         ArrayList<String> uris = new ArrayList<>(); for (Uri uri : selected) uris.add(uri.toString()); state.putStringArrayList("selected", uris);
         long[] pending = new long[pendingDeleteIds.size()]; for (int i = 0; i < pending.length; i++) pending[i] = pendingDeleteIds.get(i);

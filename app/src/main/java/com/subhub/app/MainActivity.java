@@ -20,7 +20,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -63,7 +62,6 @@ import com.subhub.app.settings.CensorAppearance;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.stats.AchievementBadgeView;
 import com.subhub.app.stats.AchievementManager;
 import com.subhub.app.stats.AchievementsActivity;
 import com.subhub.app.stats.MilestoneManager;
@@ -79,7 +77,6 @@ import com.subhub.app.util.SubHubNavigation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -99,7 +96,6 @@ public final class MainActivity extends AppCompatActivity {
     private boolean startFlowAwaitingNotification;
     private final EnumSet<HomePermissionPolicy.Requirement> attemptedPermissions =
             EnumSet.noneOf(HomePermissionPolicy.Requirement.class);
-    private String achievementPreviewFingerprint = "";
     private com.subhub.app.util.AsyncUiScope uiData;
     private final java.util.List<android.content.SharedPreferences> achievementSources =
             new java.util.ArrayList<>();
@@ -211,10 +207,6 @@ public final class MainActivity extends AppCompatActivity {
         binding.buttonProtection.setOnClickListener(this::toggleProtection);
         editLockButton.setOnClickListener(view -> toggleEditSession());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.HOME);
-        binding.achievementsHomeCard.setOnClickListener(
-                view -> startActivity(new Intent(this, AchievementsActivity.class)));
-        binding.buttonAchievements.setOnClickListener(
-                view -> startActivity(new Intent(this, AchievementsActivity.class)));
         binding.buttonCommitmentView.setVisibility(View.GONE);
         binding.subWalletPay.setOnClickListener(
                 view -> startActivity(new Intent(this, PenanceActivity.class)));
@@ -631,14 +623,12 @@ public final class MainActivity extends AppCompatActivity {
             Set<String> timerPackages = appMode.getIncludedPackages();
             AppTimerManager.AllowanceSummary allowances =
                     timerManager.summarizeAllowances(timerPackages);
-
             int limitCount =
                     allowances.isEmpty()
                             ? 0
                             : (timer.totalEnabled ? 1 : 0)
                                     + (timer.perAppEnabled
-                                            ? allowances.appCount
-                                            : 0);
+                                            ? allowances.appCount : 0);
             binding.subLimitsSummary.setText(
                     getResources()
                             .getQuantityString(
@@ -1251,92 +1241,12 @@ public final class MainActivity extends AppCompatActivity {
                         achievementsDirty = true;
                         return;
                     }
-                    applyAchievementsPreview(preview);
                     if (notifyProgressOnResume) {
                         notifyProgressOnResume = false;
                         showProgressUnlocks(preview.achievements, stats);
                     }
                 },
                 failure -> achievementsDirty = true);
-    }
-
-    private void applyAchievementsPreview(com.subhub.app.stats.HomeAchievementPreview preview) {
-        AchievementManager achievements = preview.achievements;
-        AchievementManager.Achievement next = preview.next;
-        AchievementManager.Progress nextProgress = preview.progress;
-        String fingerprint = preview.fingerprint;
-        if (fingerprint.equals(achievementPreviewFingerprint)) return;
-        achievementPreviewFingerprint = fingerprint;
-
-        binding.achievementsHomeCount.setText(
-                getString(
-                        R.string.achievements_progress_compact,
-                        achievements.getUnlockedCount(),
-                        achievements.getTotalCount()));
-        binding.achievementsHomeBadges.removeAllViews();
-        Set<Integer> artwork = new LinkedHashSet<>();
-        int shown = 0;
-        for (AchievementManager.Achievement value : achievements.all()) {
-            if (!artwork.add(value.getBadgeArtRes())) continue;
-            boolean unlocked = achievements.isUnlocked(value.getId());
-            boolean concealed = value.isHidden() && !unlocked;
-            LinearLayout cell = new LinearLayout(this);
-            cell.setOrientation(LinearLayout.VERTICAL);
-            cell.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
-            cell.setBackgroundResource(R.drawable.bg_achievement_preview_cell);
-            LinearLayout.LayoutParams cellParams =
-                    new LinearLayout.LayoutParams(dp(92), LinearLayout.LayoutParams.MATCH_PARENT);
-            if (shown > 0) cellParams.leftMargin = dp(8);
-            cell.setLayoutParams(cellParams);
-
-            AchievementBadgeView badge = new AchievementBadgeView(this);
-            badge.bind(
-                    value.getBadgeArtRes(),
-                    unlocked,
-                    concealed,
-                    concealed
-                            ? getString(R.string.achievement_hidden_name)
-                            : getString(value.getName()));
-            badge.setLayoutParams(new LinearLayout.LayoutParams(dp(76), dp(76)));
-            cell.addView(badge);
-
-            TextView label = new TextView(this);
-            label.setText(
-                    concealed
-                            ? getString(R.string.achievement_hidden_name)
-                            : getString(value.getName()));
-            label.setTextColor(getColor(unlocked ? R.color.text_primary : R.color.text_muted));
-            label.setTextSize(10);
-            label.setGravity(android.view.Gravity.CENTER);
-            label.setMaxLines(1);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            label.setIncludeFontPadding(false);
-            LinearLayout.LayoutParams labelParams =
-                    new LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT);
-            labelParams.topMargin = dp(3);
-            label.setLayoutParams(labelParams);
-            cell.addView(label);
-            binding.achievementsHomeBadges.addView(cell);
-            shown++;
-            if (shown == 4) break;
-        }
-        if (next == null) {
-            binding.achievementsHomeNext.setText(R.string.achievements_all_complete);
-            binding.achievementsHomeProgress.setProgress(100);
-            binding.achievementsHomeProgressPercent.setText(
-                    getString(R.string.achievements_home_progress_percent, 100));
-        } else {
-            binding.achievementsHomeNext.setText(
-                    getString(
-                            R.string.achievements_next_fmt,
-                            getString(next.getName()),
-                            nextProgress.getCurrent() + " / " + nextProgress.getTarget()));
-            binding.achievementsHomeProgress.setProgress(nextProgress.percent());
-            binding.achievementsHomeProgressPercent.setText(
-                    getString(R.string.achievements_home_progress_percent, nextProgress.percent()));
-        }
     }
 
     private void showProgressUnlocks(AchievementManager achievements, StatsSnapshot stats) {

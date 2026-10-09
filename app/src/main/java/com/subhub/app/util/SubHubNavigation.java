@@ -21,10 +21,10 @@ import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.penance.PenanceActivity;
+import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsActivity;
-import com.subhub.app.security.ControllerPinManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,7 +54,7 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_censor), domMode && modules.isCensorEnabled());
         setVisible(root.findViewById(R.id.nav_limits), domMode && modules.isLimitsEnabled());
         setVisible(root.findViewById(R.id.nav_money), domMode && modules.isWalletEnabled());
-        setVisible(root.findViewById(R.id.nav_atmosphere), domMode);
+        setVisible(root.findViewById(R.id.nav_atmosphere), true);
         setVisible(root.findViewById(R.id.nav_settings), true);
         bindTab(activity, root.findViewById(R.id.nav_home),
                 root.findViewById(R.id.nav_home_icon), root.findViewById(R.id.nav_home_label),
@@ -198,8 +198,8 @@ public final class SubHubNavigation {
     public static boolean redirectIfDisabled(Activity activity, Screen current) {
         FeatureModuleManager modules = new FeatureModuleManager(activity);
         boolean enabled = current == Screen.HOME || current == Screen.SETTINGS
-                || current == Screen.ATMOSPHERE && ControllerPinManager.isDomModeActive()
-                || current == Screen.CENSOR && modules.isCensorEnabled()
+                || current == Screen.ATMOSPHERE
+                        || current == Screen.CENSOR && modules.isCensorEnabled()
                 || current == Screen.LIMITS && modules.isLimitsEnabled()
                 || current == Screen.MONEY && modules.isWalletEnabled();
         if (enabled) return false;

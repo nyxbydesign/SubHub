@@ -1,107 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/censor_page"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/bg_main">
-
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:clipToPadding="false"
-        android:fillViewport="true">
-
-        <LinearLayout
-            android:id="@+id/page_content"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingStart="@dimen/page_margin"
-            android:paddingTop="@dimen/primary_header_top"
-            android:paddingEnd="@dimen/page_margin"
-            android:paddingBottom="@dimen/bottom_nav_clearance">
-
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/censor_page" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/bg_main">
+    <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:clipToPadding="false" android:fillViewport="true">
+        <LinearLayout android:id="@+id/page_content" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="@dimen/page_margin" android:paddingTop="@dimen/primary_header_top" android:paddingEnd="@dimen/page_margin" android:paddingBottom="@dimen/bottom_nav_clearance">
             <include layout="@layout/view_primary_header" />
             <include layout="@layout/view_global_notice" />
-
-            <!-- One command deck: readiness, duration, action, and arrangement. -->
-            <LinearLayout
-                android:id="@+id/home_service_widget"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/bg_home_command"
-                android:orientation="vertical"
-                android:paddingStart="13dp"
-                android:paddingTop="11dp"
-                android:paddingEnd="13dp"
-                android:paddingBottom="14dp">
-
-
-
-
-
-                <LinearLayout
-                    android:id="@+id/commitment_card"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:background="@drawable/bg_home_module"
-                    android:orientation="vertical"
-                    android:padding="11dp">
-
-                    <com.subhub.app.commitment.ServiceDurationView
-                        android:id="@+id/commitment_start_panel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content" />
-
-                    <LinearLayout
-                        android:id="@+id/commitment_active_panel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/bg_home_permission"
-                        android:orientation="vertical"
-                        android:padding="11dp"
-                        android:visibility="gone">
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:includeFontPadding="false"
-                            android:text="@string/commitment_pact_sealed"
-                            android:textColor="@color/accent_mid"
-                            android:textSize="11sp"
-                            android:textStyle="bold" />
-                        <TextView
-                            android:id="@+id/commitment_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="11sp" />
-                        <TextView
-                            android:id="@+id/button_commitment_view"
-                            style="@style/Widget.SubHub.OutlineAction"
-                            android:layout_height="wrap_content"
-                            android:minHeight="48dp"
-                            android:layout_marginTop="8dp"
-                            android:text="@string/commitment_view_pact" />
+            <LinearLayout android:id="@+id/home_service_widget" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_home_command" android:orientation="vertical" android:paddingStart="13dp" android:paddingTop="11dp" android:paddingEnd="13dp" android:paddingBottom="14dp">
+                <LinearLayout android:id="@+id/commitment_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_home_module" android:orientation="vertical" android:padding="11dp">
+                    <com.subhub.app.commitment.ServiceDurationView android:id="@+id/commitment_start_panel" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                    <LinearLayout android:id="@+id/commitment_active_panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/bg_home_permission" android:orientation="vertical" android:padding="11dp" android:visibility="gone">
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:includeFontPadding="false" android:text="@string/commitment_pact_sealed" android:textColor="@color/accent_mid" android:textSize="11sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/commitment_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textColor="@color/text_secondary" android:textSize="11sp" />
+                        <TextView android:id="@+id/button_commitment_view" style="@style/Widget.SubHub.OutlineAction" android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="8dp" android:text="@string/commitment_view_pact" />
                     </LinearLayout>
                 </LinearLayout>
-
-                <Button
-                    android:id="@+id/button_protection"
-                    style="@style/Widget.SubHub.ServiceButton"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="10dp"
-                    android:background="@drawable/bg_home_primary_action"
-                    android:backgroundTint="@null"
-                    android:elevation="0dp"
-                    android:letterSpacing="0.11"
-                    android:text="@string/start_protection"
-                    android:textSize="13sp" />
-
+                <Button android:id="@+id/button_protection" style="@style/Widget.SubHub.ServiceButton" android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="10dp" android:background="@drawable/bg_home_primary_action" android:backgroundTint="@null" android:elevation="0dp" android:letterSpacing="0.11" android:text="@string/start_protection" android:textSize="13sp" />
                 <LinearLayout android:id="@+id/protection_status_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal" android:gravity="center_vertical" android:orientation="horizontal" android:visibility="gone">
                     <View android:id="@+id/protection_status_dot" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_status_dot" />
                     <TextView android:id="@+id/protection_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/status_inactive" />
@@ -109,386 +21,44 @@
                 <TextView android:id="@+id/runtime_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
                 <TextView android:id="@+id/mode_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
             </LinearLayout>
-
-
-
-            <!-- Arrangement: a quiet, ordered summary of every enabled module. -->
-            <LinearLayout
-                android:id="@+id/sub_dashboard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/home_primary_content_gap"
-                android:background="@drawable/bg_home_dashboard"
-                android:orientation="vertical"
-                android:padding="13dp"
-                android:visibility="gone">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:includeFontPadding="false"
-                        android:letterSpacing="0.13"
-                        android:text="@string/home_arrangement_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:baselineAligned="false"
-                    android:orientation="horizontal">
-
-                    <LinearLayout
-                        android:id="@+id/sub_censor_card"
-                        android:layout_width="0dp"
-                        android:layout_height="88dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_home_module"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
-                        android:gravity="center_horizontal"
-                        android:orientation="vertical"
-                        android:padding="9dp">
-
-                        <ImageView
-                            android:layout_width="30dp"
-                            android:layout_height="30dp"
-                            android:background="@drawable/bg_home_metric"
-                            android:contentDescription="@string/sub_censor_title"
-                            android:padding="7dp"
-                            android:src="@drawable/ic_nav_censor"
-                            app:tint="@color/accent_mid" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:gravity="center"
-                            android:includeFontPadding="false"
-                            android:text="@string/sub_censor_title"
-                            android:visibility="gone"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="8sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_censor_voice"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:autoSizeMaxTextSize="10sp"
-                            android:autoSizeMinTextSize="7sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:includeFontPadding="false"
-                            android:maxLines="2"
-                            android:textColor="@color/text_primary"
-                            android:textSize="10sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_censor_summary"
-                            android:visibility="gone"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:autoSizeMaxTextSize="8sp"
-                            android:autoSizeMinTextSize="6sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="1"
-                            android:textColor="@color/text_muted"
-                            android:textSize="8sp" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/sub_limits_card"
-                        android:layout_width="0dp"
-                        android:layout_height="88dp"
-                        android:layout_marginStart="7dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_home_module"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
-                        android:gravity="center_horizontal"
-                        android:orientation="vertical"
-                        android:padding="9dp">
-
-                        <ImageView
-                            android:layout_width="30dp"
-                            android:layout_height="30dp"
-                            android:background="@drawable/bg_home_metric"
-                            android:contentDescription="@string/sub_limits_title"
-                            android:padding="7dp"
-                            android:src="@drawable/ic_nav_limits"
-                            app:tint="@color/accent_mid" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:gravity="center"
-                            android:includeFontPadding="false"
-                            android:text="@string/sub_limits_title"
-                            android:visibility="gone"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="8sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_limits_summary"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:autoSizeMaxTextSize="10sp"
-                            android:autoSizeMinTextSize="7sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="2"
-                            android:textColor="@color/text_primary"
-                            android:textSize="10sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_limits_detail"
-                            android:visibility="gone"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:autoSizeMaxTextSize="8sp"
-                            android:autoSizeMinTextSize="6sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="1"
-                            android:textColor="@color/text_muted"
-                            android:textSize="8sp" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/sub_wallet_card"
-                        android:layout_width="0dp"
-                        android:layout_height="88dp"
-                        android:layout_marginStart="7dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_home_module"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
-                        android:gravity="center_horizontal"
-                        android:orientation="vertical"
-                        android:padding="9dp">
-
-                        <ImageView
-                            android:layout_width="30dp"
-                            android:layout_height="30dp"
-                            android:background="@drawable/bg_home_metric"
-                            android:contentDescription="@string/sub_wallet_title"
-                            android:padding="7dp"
-                            android:src="@drawable/ic_nav_money"
-                            app:tint="@color/accent_mid" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:gravity="center"
-                            android:includeFontPadding="false"
-                            android:text="@string/sub_wallet_title"
-                            android:visibility="gone"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="8sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_wallet_voice"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:autoSizeMaxTextSize="10sp"
-                            android:autoSizeMinTextSize="7sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="2"
-                            android:textColor="@color/text_primary"
-                            android:textSize="10sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_wallet_summary"
-                            android:visibility="gone"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:autoSizeMaxTextSize="8sp"
-                            android:autoSizeMinTextSize="6sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="1"
-                            android:textColor="@color/text_muted"
-                            android:textSize="8sp" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/sub_atmosphere_card"
-                        android:layout_width="0dp"
-                        android:layout_height="88dp"
-                        android:layout_marginStart="7dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_home_module"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
-                        android:gravity="center_horizontal"
-                        android:orientation="vertical"
-                        android:padding="9dp">
-
-                        <ImageView
-                            android:layout_width="30dp"
-                            android:layout_height="30dp"
-                            android:background="@drawable/bg_home_metric"
-                            android:contentDescription="@string/atmosphere_title"
-                            android:padding="7dp"
-                            android:src="@drawable/ic_atmosphere"
-                            app:tint="@color/accent_mid" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
-                            android:gravity="center"
-                            android:includeFontPadding="false"
-                            android:text="@string/atmosphere_title"
-                            android:visibility="gone"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="8sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_atmosphere_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:autoSizeMaxTextSize="10sp"
-                            android:autoSizeMinTextSize="7sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="2"
-                            android:textColor="@color/text_primary"
-                            android:textSize="10sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/sub_atmosphere_summary"
-                            android:visibility="gone"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="3dp"
-                            android:autoSizeMaxTextSize="8sp"
-                            android:autoSizeMinTextSize="6sp"
-                            android:autoSizeStepGranularity="1sp"
-                            android:autoSizeTextType="uniform"
-                            android:ellipsize="end"
-                            android:gravity="center"
-                            android:maxLines="1"
-                            android:textColor="@color/text_muted"
-                            android:textSize="8sp" />
-                    </LinearLayout>
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/sub_wallet_pay"
-                    style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="7dp"
-                    android:text="@string/sub_wallet_pay"
-                    android:textColor="@color/accent_mid"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/sub_wallet_pause"
-                    style="@style/Widget.SubHub.OutlineAction"
-                    android:layout_height="wrap_content"
-                    android:minHeight="48dp"
-                    android:layout_marginTop="6dp"
-                    android:textColor="@color/accent_mid"
-                    android:visibility="gone" />
-
-                <LinearLayout
-                    android:id="@+id/sub_modules_empty"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="9dp"
-                    android:background="@drawable/bg_home_module"
-                    android:orientation="vertical"
-                    android:padding="14dp"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/sub_dashboard_empty_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/sub_dashboard_empty_body"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="10sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <LinearLayout android:id="@+id/achievements_home_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:orientation="vertical" android:padding="12dp">
+            <LinearLayout android:id="@+id/sub_dashboard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/home_primary_content_gap" android:background="@drawable/bg_home_dashboard" android:orientation="vertical" android:padding="13dp" android:visibility="gone">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:letterSpacing="0.12" android:text="@string/achievements_home_title" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold" />
-                    <TextView android:id="@+id/achievements_home_count" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_achievement_tag" android:paddingHorizontal="8dp" android:paddingVertical="3dp" android:textColor="@color/accent_hot" android:textSize="10sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:includeFontPadding="false" android:letterSpacing="0.13" android:text="@string/home_arrangement_title" android:textColor="@color/text_primary" android:textSize="12sp" android:textStyle="bold" />
                 </LinearLayout>
-                <HorizontalScrollView android:layout_width="match_parent" android:layout_height="116dp" android:layout_marginTop="9dp" android:clipToPadding="false" android:scrollbars="none">
-                    <LinearLayout android:id="@+id/achievements_home_badges" android:layout_width="wrap_content" android:layout_height="match_parent" android:gravity="center_vertical" android:orientation="horizontal" />
-                </HorizontalScrollView>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:gravity="center_vertical" android:orientation="horizontal">
-                    <TextView android:id="@+id/achievements_home_next" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:ellipsize="end" android:maxLines="1" android:textColor="@color/text_primary" android:textSize="10sp" android:textStyle="bold" />
-                    <TextView android:id="@+id/achievements_home_progress_percent" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="@color/accent_hot" android:textSize="10sp" android:textStyle="bold" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:baselineAligned="false" android:orientation="horizontal">
+                    <LinearLayout android:id="@+id/sub_censor_card" android:layout_width="0dp" android:layout_height="88dp" android:layout_weight="1" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:gravity="center_horizontal" android:orientation="vertical" android:padding="9dp">
+                        <ImageView android:layout_width="30dp" android:layout_height="30dp" android:background="@drawable/bg_home_metric" android:contentDescription="@string/sub_censor_title" android:padding="7dp" android:src="@drawable/ic_nav_censor" app:tint="@color/accent_mid" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:includeFontPadding="false" android:text="@string/sub_censor_title" android:visibility="gone" android:textColor="@color/text_secondary" android:textSize="8sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_censor_voice" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:autoSizeMaxTextSize="10sp" android:autoSizeMinTextSize="7sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:includeFontPadding="false" android:maxLines="2" android:textColor="@color/text_primary" android:textSize="10sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_censor_summary" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:autoSizeMaxTextSize="8sp" android:autoSizeMinTextSize="6sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:textColor="@color/text_muted" android:textSize="8sp" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/sub_limits_card" android:layout_width="0dp" android:layout_height="88dp" android:layout_marginStart="7dp" android:layout_weight="1" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:gravity="center_horizontal" android:orientation="vertical" android:padding="9dp">
+                        <ImageView android:layout_width="30dp" android:layout_height="30dp" android:background="@drawable/bg_home_metric" android:contentDescription="@string/sub_limits_title" android:padding="7dp" android:src="@drawable/ic_nav_limits" app:tint="@color/accent_mid" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:includeFontPadding="false" android:text="@string/sub_limits_title" android:visibility="gone" android:textColor="@color/text_secondary" android:textSize="8sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_limits_summary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:autoSizeMaxTextSize="10sp" android:autoSizeMinTextSize="7sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="2" android:textColor="@color/text_primary" android:textSize="10sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_limits_detail" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:autoSizeMaxTextSize="8sp" android:autoSizeMinTextSize="6sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:textColor="@color/text_muted" android:textSize="8sp" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/sub_wallet_card" android:layout_width="0dp" android:layout_height="88dp" android:layout_marginStart="7dp" android:layout_weight="1" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:gravity="center_horizontal" android:orientation="vertical" android:padding="9dp">
+                        <ImageView android:layout_width="30dp" android:layout_height="30dp" android:background="@drawable/bg_home_metric" android:contentDescription="@string/sub_wallet_title" android:padding="7dp" android:src="@drawable/ic_nav_money" app:tint="@color/accent_mid" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:includeFontPadding="false" android:text="@string/sub_wallet_title" android:visibility="gone" android:textColor="@color/text_secondary" android:textSize="8sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_wallet_voice" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:autoSizeMaxTextSize="10sp" android:autoSizeMinTextSize="7sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="2" android:textColor="@color/text_primary" android:textSize="10sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_wallet_summary" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:autoSizeMaxTextSize="8sp" android:autoSizeMinTextSize="6sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:textColor="@color/text_muted" android:textSize="8sp" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/sub_atmosphere_card" android:layout_width="0dp" android:layout_height="88dp" android:layout_marginStart="7dp" android:layout_weight="1" android:background="@drawable/bg_home_module" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground" android:gravity="center_horizontal" android:orientation="vertical" android:padding="9dp">
+                        <ImageView android:layout_width="30dp" android:layout_height="30dp" android:background="@drawable/bg_home_metric" android:contentDescription="@string/atmosphere_title" android:padding="7dp" android:src="@drawable/ic_atmosphere" app:tint="@color/accent_mid" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:includeFontPadding="false" android:text="@string/atmosphere_title" android:visibility="gone" android:textColor="@color/text_secondary" android:textSize="8sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_atmosphere_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:autoSizeMaxTextSize="10sp" android:autoSizeMinTextSize="7sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="2" android:textColor="@color/text_primary" android:textSize="10sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/sub_atmosphere_summary" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:autoSizeMaxTextSize="8sp" android:autoSizeMinTextSize="6sp" android:autoSizeStepGranularity="1sp" android:autoSizeTextType="uniform" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:textColor="@color/text_muted" android:textSize="8sp" />
+                    </LinearLayout>
                 </LinearLayout>
-                <ProgressBar android:id="@+id/achievements_home_progress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="6dp" android:layout_marginTop="7dp" android:max="100" android:progressBackgroundTint="@color/outline_subtle" android:progressTint="@color/accent_hot" />
-                <TextView android:id="@+id/button_achievements" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:minHeight="48dp" android:layout_marginTop="7dp" android:gravity="center_vertical" android:text="@string/achievements_home_action" android:textColor="@color/accent_mid" android:textSize="10sp" android:textStyle="bold" />
+                <TextView android:id="@+id/sub_wallet_pay" style="@style/Widget.SubHub.OutlineAction" android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="7dp" android:text="@string/sub_wallet_pay" android:textColor="@color/accent_mid" android:visibility="gone" />
+                <TextView android:id="@+id/sub_wallet_pause" style="@style/Widget.SubHub.OutlineAction" android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="6dp" android:textColor="@color/accent_mid" android:visibility="gone" />
+                <LinearLayout android:id="@+id/sub_modules_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:background="@drawable/bg_home_module" android:orientation="vertical" android:padding="14dp" android:visibility="gone">
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/sub_dashboard_empty_title" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/sub_dashboard_empty_body" android:textColor="@color/text_secondary" android:textSize="10sp" />
+                </LinearLayout>
             </LinearLayout>
-
-
         </LinearLayout>
     </ScrollView>
-
     <include layout="@layout/view_bottom_pill_nav" />
 </FrameLayout>

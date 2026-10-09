@@ -64,4 +64,22 @@
     <item name="export_preview_button" type="id" />
     <item name="export_preview_image" type="id" />
     <item name="export_results_list" type="id" />
+    <string name="gallery_preview">Preview</string>
+    <string name="gallery_preview_hint">Preview the selected media</string>
+    <string name="gallery_look">Look</string>
+    <string name="gallery_areas_count">%1$d areas</string>
+    <string name="gallery_quality_draft">Draft</string>
+    <string name="gallery_quality_balanced">Balanced</string>
+    <string name="gallery_quality_high">High</string>
+    <string name="gallery_quality_best">Best</string>
+    <string name="gallery_videos">Videos</string>
+    <string name="gallery_best_detection">Every frame</string>
+    <string name="gallery_faster_detection">Faster</string>
+    <string name="gallery_faster_note">Faster checks alternate frames and can miss brief content.</string>
+    <string name="gallery_video_preview_note">This previews one frame of the video.</string>
+    <string name="gallery_ready">Ready to export</string>
+    <string name="gallery_preview_ready">Preview ready</string>
+    <string name="gallery_cancel_export">Cancel export</string>
+    <string name="gallery_item_number">Item %1$d</string>
+    <string name="gallery_export_progress">Export progress: %1$d%%</string>
 </resources>
