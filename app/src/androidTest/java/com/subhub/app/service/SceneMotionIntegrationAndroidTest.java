@@ -9,6 +9,7 @@ import com.subhub.app.detection.TrackedObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
+import android.view.accessibility.AccessibilityEvent;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -102,6 +103,34 @@ public final class SceneMotionIntegrationAndroidTest {
             assertTrue(scope, cancelled(scene));
             assertNull(scope, coordinator(service).currentKey());
         }
+    }
+
+    @Test public void obsoleteLookupRecoveryCannotResetNewerDocument() throws Exception {
+        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+        long now = SystemClock.uptimeMillis();
+        begin(service, 1, now, false, true);
+        Field packageField = ScreenshotAccessibilityService.class.getDeclaredField("foregroundPackage");
+        packageField.setAccessible(true);
+        packageField.set(service, "fixture");
+        Class<?> pendingType = Class.forName(ScreenshotAccessibilityService.class.getName() + "$PendingScrollEvent");
+        Constructor<?> constructor = pendingType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        AccessibilityEvent event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_SCROLLED);
+        try {
+            Object pending = constructor.newInstance(event, 1L, now, 1L, 1L, 1, "fixture", 0L, false);
+            // Synthetic scope explicitly matches everything except the now-obsolete document.
+            Field scope = pendingType.getDeclaredField("scope");
+            scope.setAccessible(true);
+            scope.set(pending, new ScrollLookupScope(1, 0, 1, 1, 1, "fixture", false));
+            ((AtomicLong) field(service, "visualDocumentEpoch")).set(2);
+            Method recovery = ScreenshotAccessibilityService.class.getDeclaredMethod(
+                    "recoverScrollLookupGap", pendingType, String.class);
+            recovery.setAccessible(true);
+            recovery.invoke(service, pending, "queue-age");
+            assertEquals(2, ((AtomicLong) field(service, "visualDocumentEpoch")).get());
+            assertEquals(1, ((AtomicLong) field(service, "motionGeneration")).get());
+            assertEquals(0, ((AtomicLong) field(service, "cumulativeScrollY")).get());
+        } finally { event.recycle(); }
     }
 
     @Test public void oldGenerationCanQueryButCannotInsertOrMoveEventCacheEvidence() throws Exception {

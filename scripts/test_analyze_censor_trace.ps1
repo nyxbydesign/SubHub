@@ -199,6 +199,27 @@ try {
     Assert-Equal 1 $violationResult.captureAdmission.dispatchGapsBelowPlatformMinimum 'short gap remains visible'
     Assert-Equal 1 $violationResult.captureAdmission.dispatchClockOrIdentityResets 'reset not mistaken for interval'
 
+    $lookupFixture = Join-Path $temporaryRoot 'scroll-lookup.log'
+    Write-Fixture $lookupFixture @(
+        'SCROLL_LOOKUP v=1 id=1 status=queued sourceUptimeMs=950 receivedUptimeMs=1000 startedUptimeMs=0 resolvedUptimeMs=0 appliedUptimeMs=0 callbackUs=250 outstanding=1',
+        'SCROLL_LOOKUP v=1 id=1 status=applied sourceUptimeMs=950 receivedUptimeMs=1000 startedUptimeMs=1020 resolvedUptimeMs=1120 appliedUptimeMs=1130 callbackUs=0 outstanding=1',
+        'SCROLL_LOOKUP v=1 id=1 status=released sourceUptimeMs=950 receivedUptimeMs=1000 startedUptimeMs=1020 resolvedUptimeMs=1120 appliedUptimeMs=1130 callbackUs=0 outstanding=1',
+        'SCROLL_LOOKUP_GAP reason=queue-age')
+    $lookupResult = & $analyzer $lookupFixture | ConvertFrom-Json
+    Assert-Equal 3 $lookupResult.parsing.scrollLookupRecords 'raw lookup count'
+    Assert-Equal 3 $lookupResult.parsing.parsedScrollLookupRecords 'parsed lookup count'
+    Assert-Equal 250 $lookupResult.scrollLookup.callbackUs.p50 'main callback duration'
+    Assert-Equal 20 $lookupResult.scrollLookup.queueWaitMs.p50 'queue wait'
+    Assert-Equal 100 $lookupResult.scrollLookup.lookupWallMs.p50 'owner resolution'
+    Assert-Equal 10 $lookupResult.scrollLookup.mainDeliveryMs.p50 'main delivery'
+    Assert-Equal 180 $lookupResult.scrollLookup.sourceToApplyMs.p50 'source-to-apply delay'
+    foreach ($bad in @(
+            'SCROLL_LOOKUP v=2 future=1',
+            'SCROLL_LOOKUP v=1 id=1 status=applied sourceUptimeMs=950 receivedUptimeMs=1000 startedUptimeMs=1020 resolvedUptimeMs=1010 appliedUptimeMs=1130 callbackUs=0 outstanding=1',
+            'SCROLL_LOOKUP v=1 id=1 status=queued sourceUptimeMs=950 receivedUptimeMs=1000 startedUptimeMs=0 resolvedUptimeMs=0 appliedUptimeMs=0 callbackUs=0 outstanding=1 extra=1')) {
+        Write-Fixture $lookupFixture @($bad)
+        Assert-Throws { & $analyzer $lookupFixture } '*SCROLL_LOOKUP*incomplete*'
+    }
     Write-Output 'analyze_censor_trace regression checks passed.'
 } finally {
     $resolvedTemporaryRoot = [IO.Path]::GetFullPath($temporaryRoot)

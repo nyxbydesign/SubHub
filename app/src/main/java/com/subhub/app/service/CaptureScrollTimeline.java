@@ -100,6 +100,12 @@ final class CaptureScrollTimeline {
         final CaptureTimeReference timeReference;
         final boolean pixelTimeKnown;
 
+        Phase withUnresolvedMotion(boolean unresolved) {
+            return !unresolved || phaseUncertain ? this : new Phase(scrollX, scrollY,
+                    motionGeneration, screenshotUptimeMillis, resolvedFromMotion, true,
+                    maximumDeliveryDelayMs, timeReference);
+        }
+
         private Phase(
                 long scrollX,
                 long scrollY,

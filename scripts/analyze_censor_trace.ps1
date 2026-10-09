@@ -148,6 +148,9 @@ foreach ($requestedPath in $Path) {
     $captureAdmissions = [Collections.Generic.List[object]]::new()
     $captureDispatchGaps = [Collections.Generic.List[long]]::new()
     $rawCaptureAdmissions = 0
+    $scrollLookups = [Collections.Generic.List[object]]::new()
+    $rawScrollLookups = 0
+    $scrollLookupGaps = [Collections.Generic.List[string]]::new()
     $previousCaptureDispatch = $null
     $captureDispatchClockResets = 0
     $scrolls = [Collections.Generic.List[object]]::new()
@@ -750,6 +753,33 @@ foreach ($requestedPath in $Path) {
             })
             continue
         }
+        if ($line.Contains('SCROLL_LOOKUP_GAP ')) {
+            if ($line -notmatch 'SCROLL_LOOKUP_GAP reason=([a-z_-]+)$') {
+                throw 'Unsupported SCROLL_LOOKUP_GAP record; parsing is incomplete.'
+            }
+            $scrollLookupGaps.Add($Matches[1])
+            continue
+        }
+        if ($line.Contains('SCROLL_LOOKUP ')) {
+            $rawScrollLookups++
+            if ($line -notmatch 'SCROLL_LOOKUP v=1 id=(\d+) status=(queued|released|rejected|stale|expired|applied|failed) sourceUptimeMs=(\d+) receivedUptimeMs=(\d+) startedUptimeMs=(\d+) resolvedUptimeMs=(\d+) appliedUptimeMs=(\d+) callbackUs=(\d+) outstanding=(\d+)$') {
+                throw 'Unsupported SCROLL_LOOKUP record; parsing is incomplete.'
+            }
+            $lookup = [pscustomobject]@{
+                id = [long]$Matches[1]; status = $Matches[2]; source = [long]$Matches[3]
+                received = [long]$Matches[4]; started = [long]$Matches[5]; resolved = [long]$Matches[6]
+                applied = [long]$Matches[7]; callbackUs = [long]$Matches[8]; outstanding = [int]$Matches[9]
+            }
+            if ($lookup.id -le 0 -or $lookup.source -gt $lookup.received -or
+                    ($lookup.started -gt 0 -and $lookup.started -lt $lookup.received) -or
+                    ($lookup.resolved -gt 0 -and ($lookup.started -le 0 -or $lookup.resolved -lt $lookup.started)) -or
+                    ($lookup.applied -gt 0 -and ($lookup.resolved -le 0 -or $lookup.applied -lt $lookup.resolved)) -or
+                    ($lookup.status -eq 'applied' -and $lookup.applied -le 0)) {
+                throw 'Inconsistent SCROLL_LOOKUP clocks; parsing is incomplete.'
+            }
+            $scrollLookups.Add($lookup)
+            continue
+        }
         if ($line.Contains('CAPTURE_ADMISSION ')) {
             $rawCaptureAdmissions++
             if ($line -notmatch 'CAPTURE_ADMISSION v=1 action=(defer|busy|dispatch|complete|failure) requestId=(\d+) uptimeMs=(\d+) eligibleMs=(\d+) inFlight=(true|false) reason=([a-z0-9-]+)$') {
@@ -997,10 +1027,14 @@ foreach ($requestedPath in $Path) {
             captureAdmissionRecords = $rawCaptureAdmissions
             parsedCaptureAdmissionRecords = $captureAdmissions.Count
             unparsedCaptureAdmissionRecords = $rawCaptureAdmissions - $captureAdmissions.Count
+            scrollLookupRecords = $rawScrollLookups
+            parsedScrollLookupRecords = $scrollLookups.Count
+            unparsedScrollLookupRecords = $rawScrollLookups - $scrollLookups.Count
             complete = ($rawOverlayRecords -eq $publishes.Count) -and
                 ($rawQualityRecords -eq $quality.Count + $streamingQuality.Count) -and
                 ($rawScrollMetadata -eq $scrollMetadata.Count) -and
-                ($rawCaptureAdmissions -eq $captureAdmissions.Count)
+                ($rawCaptureAdmissions -eq $captureAdmissions.Count) -and
+                ($rawScrollLookups -eq $scrollLookups.Count)
         }
         bytes = (Get-Item -LiteralPath $resolved).Length
         selection = $selection
@@ -1215,6 +1249,17 @@ foreach ($requestedPath in $Path) {
                 $startupSessionSummaries.activationToFirstOverlayMs)
             qualityBeforeFirstOverlayViolations = @($startupSessionSummaries |
                 Where-Object qualityStartedAfterFirstOverlay -eq $false).Count
+        }
+        scrollLookup = [ordered]@{
+            records = $scrollLookups.Count
+            statuses = Get-GroupCounts @($scrollLookups) 'status'
+            gaps = @($scrollLookupGaps)
+            callbackUs = Get-Distribution @($scrollLookups | Where-Object status -in @('queued','rejected') | ForEach-Object callbackUs)
+            queueWaitMs = Get-Distribution @($scrollLookups | Where-Object status -eq 'applied' | ForEach-Object { $_.started - $_.received })
+            lookupWallMs = Get-Distribution @($scrollLookups | Where-Object status -eq 'applied' | ForEach-Object { $_.resolved - $_.started })
+            mainDeliveryMs = Get-Distribution @($scrollLookups | Where-Object status -eq 'applied' | ForEach-Object { $_.applied - $_.resolved })
+            sourceToApplyMs = Get-Distribution @($scrollLookups | Where-Object status -eq 'applied' | ForEach-Object { $_.applied - $_.source })
+            outstanding = Get-Distribution @($scrollLookups.outstanding)
         }
         captureAdmission = [ordered]@{
             records = $captureAdmissions.Count

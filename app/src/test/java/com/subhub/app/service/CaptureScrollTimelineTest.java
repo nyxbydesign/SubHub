@@ -98,4 +98,16 @@ public final class CaptureScrollTimelineTest {
         assertFalse(phase.pixelTimeKnown);
         assertEquals(CaptureTimeReference.Kind.WINDOW_CLIENT_RECEIPT, phase.timeReference.kind);
     }
+
+    @Test public void unresolvedOwnerLookupKeepsPhaseUncertainWithoutInventingPixelTime() {
+        CaptureScrollTimeline timeline = new CaptureScrollTimeline();
+        CaptureScrollTimeline.Phase phase = timeline.resolve(
+                CaptureTimeReference.accessibility(true, 100, 150, 155), 0, 0, 1);
+        CaptureScrollTimeline.Phase pending = phase.withUnresolvedMotion(true);
+        assertTrue(pending.phaseUncertain);
+        assertFalse(pending.pixelTimeKnown);
+        assertEquals(phase.scrollY, pending.scrollY);
+        assertEquals(phase.timeReference, pending.timeReference);
+        assertTrue(pending.withUnresolvedMotion(false).phaseUncertain);
+    }
 }
