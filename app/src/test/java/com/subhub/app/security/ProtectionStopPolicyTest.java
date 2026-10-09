@@ -5,9 +5,11 @@ import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
 public final class ProtectionStopPolicyTest {
-    @Test public void normalProtectionCanStop() {
-        assertEquals(ProtectionStopPolicy.Decision.ALLOW,
+    @Test public void permanentServiceRequiresDomWithoutHardcoreToo() {
+        assertEquals(ProtectionStopPolicy.Decision.REQUIRE_CONTROLLER,
                 ProtectionStopPolicy.evaluate(false, false, false, false));
+        assertEquals(ProtectionStopPolicy.Decision.ALLOW,
+                ProtectionStopPolicy.evaluate(false, false, true, false));
     }
 
     @Test public void hardcoreRequiresControllerUntilDomModeIsUnlocked() {

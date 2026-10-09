@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
@@ -37,6 +38,8 @@ public final class CensorRenderer implements AutoCloseable {
     private final Paint nearest = new Paint();
     private final Paint cyanShift = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint redShift = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Matrix borderMatrix = new Matrix();
+    private long animationTime;
 
     public CensorRenderer(Context context) {
         this(context, null);
@@ -74,6 +77,17 @@ public final class CensorRenderer implements AutoCloseable {
             Bitmap source,
             List<Detection> detections,
             CensorAppearance appearance) {
+        drawAtTime(target, source, detections, appearance, 0L);
+    }
+
+    /** Deterministic animation frames without changing the still-image export contract. */
+    public void drawAtTime(
+            Bitmap target,
+            Bitmap source,
+            List<Detection> detections,
+            CensorAppearance appearance,
+            long timeMillis) {
+        animationTime = Math.max(0L, timeMillis);
         Canvas canvas = new Canvas(target);
         if (appearance.isReverseMode()) {
             drawEffect(canvas, source, new RectF(0, 0, target.getWidth(), target.getHeight()),
@@ -194,7 +208,8 @@ public final class CensorRenderer implements AutoCloseable {
         int clamped = Math.max(1, Math.min(100, intensity));
         int cell = Math.max(2, Math.min(7, 7 - clamped / 20));
         float contrast = .35f + clamped / 100f * .65f;
-        long seed = id * 1103515245L + Float.floatToIntBits(rect.left);
+        long seed = id * 1103515245L + Float.floatToIntBits(rect.left)
+                + animationTime / 90L * 6364136223846793005L;
         for (float y = rect.top; y < rect.bottom; y += cell) {
             for (float x = rect.left; x < rect.right; x += cell) {
                 seed = seed * 6364136223846793005L + 1442695040888963407L;
@@ -239,11 +254,12 @@ public final class CensorRenderer implements AutoCloseable {
         int sourceBandHeight = Math.max(3, sourceRegion.height() / 11);
         for (int index = 0; index < bands; index++) {
             int available = Math.max(1, sourceRegion.height() - sourceBandHeight);
-            int sourceTop = sourceRegion.top + hashInt(id * 131L + index * 31L) % available;
+            long tick = animationTime / 90L;
+            int sourceTop = sourceRegion.top + hashInt(id * 131L + index * 31L + tick * 961L) % available;
             int sourceBottom = Math.min(sourceRegion.bottom, sourceTop + sourceBandHeight);
             float topRatio = (sourceTop - sourceRegion.top) / (float) sourceRegion.height();
             float bottomRatio = (sourceBottom - sourceRegion.top) / (float) sourceRegion.height();
-            float offset = ((index % 3) - 1) * shift;
+            float offset = ((index + tick) % 3 - 1) * shift;
             Rect bandSource = new Rect(sourceRegion.left, sourceTop,
                     sourceRegion.right, sourceBottom);
             RectF bandDestination = new RectF(rect.left + offset,
@@ -278,7 +294,9 @@ public final class CensorRenderer implements AutoCloseable {
         Paint yellow = new Paint(Paint.ANTI_ALIAS_FLAG);
         yellow.setColor(appearance.getEffectPalette().third());
         yellow.setStrokeWidth(Math.max(3f, spacing / 5f));
-        float shift = id * 7f % spacing;
+        // Complete whole stripe cycles so a cached four-second loop has no seam.
+        float cycles = Math.max(1, Math.round(4000f / (spacing * 25f)));
+        float shift = ((animationTime % 4000L) / 4000f * spacing * cycles + id * 7f) % spacing;
         float rise = rect.height() * .45f;
         for (float x = rect.left - rect.width(); x < rect.right + rect.width(); x += spacing) {
             canvas.drawLine(x + shift, rect.bottom, x + shift + rise, rect.top, red);
@@ -418,6 +436,11 @@ public final class CensorRenderer implements AutoCloseable {
             border.setShader(new SweepGradient(rect.centerX(), rect.centerY(), new int[]{
                     Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE,
                     Color.MAGENTA, Color.RED}, null));
+        }
+        if (border.getShader() != null && appearance.isAnimateBorder()) {
+            borderMatrix.setRotate((animationTime % 4000L) / 4000f * 360f,
+                    rect.centerX(), rect.centerY());
+            border.getShader().setLocalMatrix(borderMatrix);
         }
         drawShape(canvas, rect, border, appearance);
         canvas.restoreToCount(save);

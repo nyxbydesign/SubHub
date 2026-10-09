@@ -47,7 +47,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> hardcoreAccessibility;
     private boolean updatingHardcore;
     private boolean editingUnlocked;
-    private final java.util.List<View> domActions = new java.util.ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,8 +103,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     if (!updatingHardcore) changeHardcoreMode(checked);
                 });
         binding.buttonAccessibilitySettings.setOnClickListener(
-                view -> ControllerPinGate.require(this,
-                        () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)), false));
+                view -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         applyEditState();
     }
@@ -156,7 +154,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         sections.get("privacy")
                 .content()
                 .addView(
-                        permissionAction(
+                        settingsAction(
                                 getString(R.string.settings_overlay),
                                 () ->
                                         startActivity(
@@ -167,7 +165,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         sections.get("privacy")
                 .content()
                 .addView(
-                        permissionAction(
+                        settingsAction(
                                 getString(R.string.settings_notifications),
                                 () ->
                                         startActivity(
@@ -180,7 +178,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         sections.get("privacy")
                 .content()
                 .addView(
-                        permissionAction(
+                        settingsAction(
                                 getString(R.string.settings_battery),
                                 () ->
                                         startActivity(
@@ -195,9 +193,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                         .putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY, true))));
         addHelpAction(helpActions, settingsAction(getString(R.string.settings_updates),
                 () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
-        addHelpAction(helpActions, settingsAction(getString(R.string.diagnostics_lab_title),
-                () -> startActivity(new Intent(this, DiagnosticsActivity.class)
-                        .putExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, true))));
         addHelpAction(helpActions, binding.buttonDiagnostics);
         getOnBackPressedDispatcher()
                 .addCallback(
@@ -241,12 +236,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         params.topMargin = dp(6);
         row.setLayoutParams(params);
         return row;
-    }
-
-    private TextView permissionAction(String title, Runnable action) {
-        TextView control = settingsAction(title, () -> ControllerPinGate.require(this, action, false));
-        domActions.add(control);
-        return control;
     }
 
     private void addGroup(SettingsSection definition, View... controls) {
@@ -346,9 +335,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchHardcoreMode.setEnabled(true);
         binding.buttonAccessibilitySettings.setEnabled(true);
         ControllerPinGate.markLocked(binding.switchHardcoreMode);
-        ControllerPinGate.markLocked(binding.buttonAccessibilitySettings);
         ControllerPinGate.markLocked(sections.get("apps").header());
-        for (View control : domActions) ControllerPinGate.markLocked(control);
         binding.appListCard.refresh();
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         refreshHardcoreState();

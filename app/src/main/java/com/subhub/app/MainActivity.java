@@ -207,7 +207,7 @@ public final class MainActivity extends AppCompatActivity {
 
         binding.commitmentCard.addOnLayoutChangeListener((view, left, top, right, bottom,
                 oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (durationDisplay == 1 && right - left != oldRight - oldLeft)
+            if (durationDisplay > 0 && right - left != oldRight - oldLeft)
                 binding.commitmentCard.post(this::sizeServiceCountdown);
         });
         binding.buttonProtection.setOnClickListener(this::toggleProtection);
@@ -281,6 +281,9 @@ public final class MainActivity extends AppCompatActivity {
             }
             if (CommitmentManager.isActive(this) && ControllerPinManager.isDomModeActive()) {
                 CommitmentManager.emergencyRelease(this);
+                updateProtectionButton(false);
+                renderCommitmentState();
+                return;
             }
         }
         if (ScreenCaptureService.isRunning()) {
@@ -360,7 +363,6 @@ public final class MainActivity extends AppCompatActivity {
                 showStatus(R.string.pact_start_unavailable);
                 return;
             }
-            binding.commitmentStartPanel.resetToPermanent();
         }
         renderCommitmentState();
     }
@@ -392,15 +394,16 @@ public final class MainActivity extends AppCompatActivity {
                     .addTransition(new android.transition.Fade()).setDuration(380);
             android.transition.TransitionManager.beginDelayedTransition(binding.commitmentCard, change);
         }
-        if (next == 1 && durationDisplay != 1) sizeServiceCountdown();
+        if (next != 0 && durationDisplay != next) sizeServiceCountdown();
         binding.commitmentCard.setVisibility(View.VISIBLE);
         binding.commitmentStartPanel.setVisibility(next == 0 ? View.VISIBLE : View.GONE);
         binding.commitmentActivePanel.setVisibility(next != 0 ? View.VISIBLE : View.GONE);
-        binding.serviceCountdown.setVisibility(next == 1 ? View.VISIBLE : View.GONE);
-        binding.serviceDurationPermanentStatus.setVisibility(next == 2 ? View.VISIBLE : View.GONE);
+        binding.serviceCountdown.setVisibility(next != 0 ? View.VISIBLE : View.GONE);
         if (next == 1) binding.serviceCountdown.setCountdown(
                 CommitmentManager.remainingMillis(this), CommitmentManager.originalDurationMillis(this),
                 CommitmentManager.isCountdownHidden(this), animate);
+        else if (next == 2) binding.serviceCountdown.setPermanent(
+                binding.commitmentStartPanel.isCountdownHidden(), animate);
         else binding.serviceCountdown.stop();
         durationDisplay = next;
     }
@@ -418,6 +421,8 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void updateProtectionButton(boolean running) {
+        binding.buttonProtection.setAlpha(1f);
+        androidx.core.view.ViewCompat.setStateDescription(binding.buttonProtection, null);
         PaidPauseManager paidPause = new PaidPauseManager(this);
         if (paidPause.isActive()) {
             binding.buttonProtection.setEnabled(false);
@@ -430,6 +435,7 @@ public final class MainActivity extends AppCompatActivity {
         binding.buttonProtection.setEnabled(true);
         binding.buttonProtection.setText(
                 running || appModeRunning ? R.string.stop_protection : R.string.start_protection);
+        if (running || appModeRunning) ControllerPinGate.markLocked(binding.buttonProtection);
     }
 
     @Override

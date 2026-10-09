@@ -27,8 +27,6 @@
             <TextView style="@style/Widget.SubHub.SectionHeader" android:text="@string/help_rework_tools" />
             <Button android:id="@+id/help_diagnostics" style="@style/Widget.SubHub.CompactOutlineButton"
                 android:layout_width="match_parent" android:layout_marginTop="10dp" android:text="@string/diagnostics_title" />
-            <Button android:id="@+id/help_censor_lab" style="@style/Widget.SubHub.CompactOutlineButton"
-                android:layout_width="match_parent" android:layout_marginTop="6dp" android:text="@string/diagnostics_lab_title" />
         </LinearLayout>
         <TextView style="@style/Widget.SubHub.SectionHeader" android:text="@string/help_rework_questions"
             android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="22dp" />

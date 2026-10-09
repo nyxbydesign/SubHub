@@ -10,6 +10,9 @@ import static org.junit.Assert.*;
 import android.view.*;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.Until;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
 import org.junit.*;
@@ -76,6 +79,46 @@ public class SettingsGroupsAndroidTest {
             onView(withTagValue(org.hamcrest.Matchers.is("settings:apps"))).perform(revealAboveNavigation(), click());
             scenario.onActivity(a -> assertFalse(a.findViewById(R.id.app_list_content).isShown()));
         }
+    }
+
+    @Test public void subCanOpenAndroidPermissionSettingsWithoutUnlockingDom() {
+        ControllerPinManager.enterSubMode();
+        UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            scenario.onActivity(a -> {
+                View accessibility = a.findViewById(R.id.button_accessibility_settings);
+                assertTrue(accessibility.isEnabled());
+                assertEquals(1f, accessibility.getAlpha(), .01f);
+                assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
+            });
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_accessibility_settings))
+                    .perform(revealAboveNavigation(), click());
+            returnFromAndroidSettings(device);
+            int[] labels = {R.string.settings_overlay, R.string.settings_notifications, R.string.settings_battery};
+            for (int label : labels) {
+                onView(androidx.test.espresso.matcher.ViewMatchers.withText(label))
+                        .check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                                androidx.test.espresso.matcher.ViewMatchers.isEnabled()))
+                        .perform(revealAboveNavigation(), click());
+                returnFromAndroidSettings(device);
+            }
+            scenario.recreate();
+            scenario.onActivity(a -> {
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertEquals(1f, a.findViewById(R.id.button_accessibility_settings).getAlpha(), .01f);
+                assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
+            });
+        }
+    }
+
+    private static void returnFromAndroidSettings(UiDevice device) {
+        assertNotNull("The permission action must open Android Settings",
+                device.wait(Until.findObject(By.pkg("com.android.settings")), 8000));
+        assertFalse(ControllerPinManager.isDomModeActive());
+        device.pressBack();
+        assertNotNull("Back must return to SubHub without a role change",
+                device.wait(Until.findObject(By.pkg("com.subhub.app")), 8000));
+        assertFalse(ControllerPinManager.isDomModeActive());
     }
 
     private static void collect(View v, List<String> keys) {
