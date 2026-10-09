@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Ultra-only bundled Latin OCR feeding the same local text-risk classifier as Accessibility. */
@@ -21,24 +22,41 @@ public final class OcrTextSmutDetector implements AutoCloseable {
     public interface Callback {
         void onComplete(List<Detection> detections);
         void onFailure(Exception error);
+        /** Input pixels are no longer in use; must be lightweight and independent of worker life. */
+        default void onRecognitionFinished() { }
     }
 
     private final TextRecognizer recognizer;
     private final TextSmutDetectionFactory factory;
     private final AtomicBoolean warmupRequested = new AtomicBoolean();
+    private final OcrRecognizerLease lifetime;
 
     public OcrTextSmutDetector(SmutTextClassifier classifier) {
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+        lifetime = new OcrRecognizerLease(recognizer::close);
         factory = new TextSmutDetectionFactory(classifier);
     }
 
     /** Starts bundled model initialization without delaying the first real screenshot. */
     public void warmUp(Executor callbackExecutor) {
         if (callbackExecutor == null || !warmupRequested.compareAndSet(false, true)) return;
+        OcrRecognizerLease.Operation operation = lifetime.begin();
+        if (operation == null) return;
         Bitmap warmup = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888);
         warmup.eraseColor(android.graphics.Color.WHITE);
-        recognizer.process(InputImage.fromBitmap(warmup, 0))
-                .addOnCompleteListener(callbackExecutor, ignored -> warmup.recycle());
+        try {
+            // Recycling this tiny fixture requires no classifier work or service-owned executor.
+            // Completion also runs for cancellation, including close during model warmup.
+            recognizer.process(InputImage.fromBitmap(warmup, 0))
+                    .addOnCompleteListener(Runnable::run, ignored -> {
+                        try { warmup.recycle(); }
+                        finally { operation.close(); }
+                    });
+        } catch (RuntimeException error) {
+            warmup.recycle();
+            operation.close();
+            throw error;
+        }
     }
 
     public void detect(
@@ -54,10 +72,40 @@ public final class OcrTextSmutDetector implements AutoCloseable {
         }
         int ocrWidth = bitmap.getWidth();
         int ocrHeight = bitmap.getHeight();
-        recognizer.process(InputImage.fromBitmap(bitmap, 0))
-                .addOnSuccessListener(callbackExecutor, text -> callback.onComplete(mapDetections(
-                        text, config, ocrWidth, ocrHeight, sourceWidth, sourceHeight)))
-                .addOnFailureListener(callbackExecutor, callback::onFailure);
+        OcrRecognizerLease.Operation operation = lifetime.begin();
+        if (operation == null) {
+            callback.onFailure(new IllegalStateException("OCR detector is closed"));
+            return;
+        }
+        try {
+            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                .addOnCompleteListener(Runnable::run, task -> {
+                    try { callback.onRecognitionFinished(); }
+                    finally { operation.close(); }
+                    OcrCallbackDispatcher.dispatch(
+                        callbackExecutor, () -> {
+                            if (!task.isSuccessful()) {
+                                Exception error = task.isCanceled()
+                                        ? new CancellationException("OCR task cancelled") : task.getException();
+                                callback.onFailure(error != null ? error
+                                        : new IllegalStateException("OCR task completed without a result"));
+                                return;
+                            }
+                            List<Detection> mapped;
+                            try {
+                                mapped = mapDetections(task.getResult(), config,
+                                        ocrWidth, ocrHeight, sourceWidth, sourceHeight);
+                            } catch (RuntimeException error) {
+                                callback.onFailure(error);
+                                return;
+                            }
+                            callback.onComplete(mapped);
+                        }, callback::onFailure);
+                });
+        } catch (RuntimeException error) {
+            operation.close();
+            throw error;
+        }
     }
 
     private List<Detection> mapDetections(
@@ -102,6 +150,6 @@ public final class OcrTextSmutDetector implements AutoCloseable {
     }
 
     @Override public void close() {
-        recognizer.close();
+        lifetime.close();
     }
 }

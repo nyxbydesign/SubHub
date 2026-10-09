@@ -4619,10 +4619,14 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         }
         Bitmap ocrBitmap = prepared.bitmap;
         activeOcrBitmap.set(ocrBitmap);
-        callbackExecutor.execute(() -> startOcrWhenVisualIdle(
-                ocrBitmap, prepared.sourceWidth, prepared.sourceHeight,
-                epoch, scrollX, scrollY, requestedMotionGeneration,
-                currentTextConfig, callbackExecutor, now));
+        try {
+            callbackExecutor.execute(() -> startOcrWhenVisualIdle(
+                    ocrBitmap, prepared.sourceWidth, prepared.sourceHeight,
+                    epoch, scrollX, scrollY, requestedMotionGeneration,
+                    currentTextConfig, callbackExecutor, now));
+        } catch (RejectedExecutionException stopped) {
+            abandonQueuedOcr(ocrBitmap);
+        }
     }
 
     private void startOcrWhenVisualIdle(
@@ -4645,11 +4649,15 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (now - queuedAtUptime >= OCR_VISUAL_IDLE_TIMEOUT_MS) {
                 abandonQueuedOcr(ocrBitmap);
             } else {
-                callbackExecutor.schedule(() -> startOcrWhenVisualIdle(
-                                ocrBitmap, sourceWidth, sourceHeight,
-                                epoch, scrollX, scrollY, requestedMotionGeneration,
-                                requestedTextConfig, callbackExecutor, queuedAtUptime),
-                        OCR_VISUAL_IDLE_RETRY_MS, TimeUnit.MILLISECONDS);
+                try {
+                    callbackExecutor.schedule(() -> startOcrWhenVisualIdle(
+                                    ocrBitmap, sourceWidth, sourceHeight,
+                                    epoch, scrollX, scrollY, requestedMotionGeneration,
+                                    requestedTextConfig, callbackExecutor, queuedAtUptime),
+                            OCR_VISUAL_IDLE_RETRY_MS, TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException stopped) {
+                    abandonQueuedOcr(ocrBitmap);
+                }
             }
             return;
         }
@@ -4658,6 +4666,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             screenshotText.detect(ocrBitmap, requestedTextConfig,
                     sourceWidth, sourceHeight, callbackExecutor,
                     new OcrTextSmutDetector.Callback() {
+                        @Override public void onRecognitionFinished() {
+                            releaseOcrBitmap(ocrBitmap);
+                        }
+
                         @Override public void onComplete(List<Detection> detections) {
                             long completedAt = SystemClock.uptimeMillis();
                             boolean stale = !isOcrRequestCurrent(
@@ -6317,9 +6329,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (qualityInferenceWorker != null) qualityInferenceWorker.shutdownNow();
         if (screenshotText != null) screenshotText.close();
         screenshotText = null;
-        releaseOcrBitmap(activeOcrBitmap.get());
+        // Queued OCR work drains through its stale-request gate. In-flight SDK work releases
+        // input pixels at its terminal callback, not while the recognizer may still read them.
         ocrRunning.set(false);
-        if (ocrWorker != null) ocrWorker.shutdownNow();
+        if (ocrWorker != null) ocrWorker.shutdown();
         if (textWorker != null) textWorker.shutdownNow();
         if (detector != null) detector.close();
         if (fastDetector != null) fastDetector.close();
