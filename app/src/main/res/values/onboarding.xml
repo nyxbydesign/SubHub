@@ -5,7 +5,7 @@
     <string name="tour_next">Continue</string>
     <string name="tour_skip">Skip setup</string>
     <string name="tour_finish">Finish</string>
-    <string name="tour_replay">Setup tour</string>
+    <string name="tour_replay">Setup Tour</string>
     <string name="tour_features_help">Configure features in Dom mode. Start them with Enter Service on Home. Rituals contains Keyholder, subliminal messages and popups.</string>
     <string name="tour_keyholder_help">Optional: use a PIN for in-person approval or Google Authenticator for remote approval.</string>
     <string name="tour_permissions">Permissions</string>

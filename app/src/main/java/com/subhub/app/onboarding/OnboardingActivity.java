@@ -40,15 +40,15 @@ public final class OnboardingActivity extends PreferencePage {
         replay = getIntent().getBooleanExtra(REPLAY, false);
         FeatureModuleManager modules = new FeatureModuleManager(this);
         censor = modules.isCensorEnabled();
-        limits = modules.isLimitsEnabled();
-        wallet = modules.isWalletEnabled();
+        limits = true;
+        wallet = true;
         style = new SettingsRepository(this).loadAppearance().getType();
         if (!replay && state == null && OnboardingState.inProgress(this)) {
             android.content.SharedPreferences draft = getSharedPreferences("subhub_onboarding", 0);
             step = draft.getInt("draft_step", 0);
             censor = draft.getBoolean("draft_censor", censor);
-            limits = draft.getBoolean("draft_limits", limits);
-            wallet = draft.getBoolean("draft_wallet", wallet);
+
+
             style =
                     CensorAppearance.Type.fromPreference(
                             draft.getString("draft_style", style.getPreferenceValue()));
@@ -58,8 +58,8 @@ public final class OnboardingActivity extends PreferencePage {
         if (state != null) {
             step = Math.max(0, Math.min(STEPS - 1, state.getInt("step")));
             censor = state.getBoolean("censor");
-            limits = state.getBoolean("limits");
-            wallet = state.getBoolean("wallet");
+
+
             style = CensorAppearance.Type.fromPreference(state.getString("style"));
             appearanceChanged = state.getBoolean("appearance_changed");
         }
@@ -79,6 +79,7 @@ public final class OnboardingActivity extends PreferencePage {
     protected void onResume() {
         super.onResume();
         if (resumeRefresh && body != null && step >= 3) render();
+        if (appSelection != null) appSelection.reload();
         resumeRefresh = false;
     }
 
@@ -109,6 +110,7 @@ public final class OnboardingActivity extends PreferencePage {
     private void render() {
         if (isFinishing() || isDestroyed()) return;
         saveDraft();
+        appSelection = null;
         setContentView(R.layout.activity_onboarding);
         page = findViewById(R.id.tour_content);
         body = page;
@@ -128,7 +130,7 @@ public final class OnboardingActivity extends PreferencePage {
         }
         int[] titles = {
             R.string.tour_welcome,
-            R.string.tour_choose_features,
+            R.string.tour_select_apps,
             R.string.tour_choose_style,
             R.string.keyholder_home_title,
             R.string.tour_permissions,
@@ -168,65 +170,17 @@ public final class OnboardingActivity extends PreferencePage {
         explain(body, R.drawable.ic_tab_home, R.string.tour_sub_title, R.string.tour_sub_help);
     }
 
-    private void features() {
-        feature(
-                R.drawable.ic_tab_home,
-                R.string.global_feature_censor,
-                R.string.tour_censor_help,
-                censor,
-                v -> censor = v);
-        feature(
-                R.drawable.ic_tab_settings,
-                R.string.global_feature_limits,
-                R.string.tour_limits_help,
-                limits,
-                v -> limits = v);
-        feature(
-                R.drawable.ic_settings_wallet,
-                R.string.global_feature_wallet,
-                R.string.tour_wallet_help,
-                wallet,
-                v -> wallet = v);
-        LinearLayout apps = card(body);
-        text(apps, getString(R.string.settings_apps), 17, false)
-                .setTypeface(null, android.graphics.Typeface.BOLD);
-        button(
-                apps,
-                getString(R.string.tour_choose_apps),
-                () -> {
-                    if (!replay && !ControllerPinManager.hasCredentials(this))
-                        ControllerPinManager.useWithoutKeyholder(this);
-                    ControllerPinGate.require(
-                            this,
-                            () -> startActivity(new Intent(this, SetupAppsActivity.class)),
-                            false);
-                });
-    }
+    private com.subhub.app.settings.AppSelectionPanel appSelection;
 
-    private void feature(
-            int icon,
-            int name,
-            int explanation,
-            boolean enabled,
-            java.util.function.Consumer<Boolean> change) {
-        LinearLayout c = card(body);
-        c.setBackgroundResource(enabled ? R.drawable.bg_sub_hero : R.drawable.bg_card);
-        LinearLayout line = new LinearLayout(this);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-        c.addView(line, new LinearLayout.LayoutParams(-1, -2));
-        icon(line, icon);
-        StateToggle control = new StateToggle(this);
-        control.setText(name);
-        control.setTextColor(getColor(R.color.text_primary));
-        control.setChecked(enabled);
-        control.setOnCheckedChangeListener(
-                (button, value) -> {
-                    change.accept(value);
-                    saveDraft();
-                    c.setBackgroundResource(value ? R.drawable.bg_sub_hero : R.drawable.bg_card);
-                });
-        line.addView(control, new LinearLayout.LayoutParams(0, -2, 1));
-        text(c, getString(explanation), 14, true);
+    private void features() {
+        LinearLayout apps = card(body);
+        appSelection = new com.subhub.app.settings.AppSelectionPanel(this);
+        apps.addView(appSelection, new LinearLayout.LayoutParams(-1, -2));
+        appSelection.bind(this,
+                () -> ControllerPinManager.isDomModeActive()
+                        || !replay && !ControllerPinManager.hasCredentials(this),
+                this::saveDraft);
+        appSelection.load();
     }
 
     private void appearance() {
@@ -368,14 +322,10 @@ public final class OnboardingActivity extends PreferencePage {
             wallet = saved.isWalletEnabled();
         }
         LinearLayout choices = card(body);
-        text(choices, getString(R.string.settings_features), 17, false)
+        text(choices, getString(R.string.settings_apps), 17, false)
                 .setTypeface(null, android.graphics.Typeface.BOLD);
-        if (censor) text(choices, getString(R.string.global_feature_censor), 15, false);
-        if (limits) text(choices, getString(R.string.global_feature_limits), 15, false);
-        if (wallet) text(choices, getString(R.string.global_feature_wallet), 15, false);
-        if (!censor && !limits && !wallet)
-            text(choices, getString(R.string.tour_features_none), 14, true);
         AppModeManager apps = new AppModeManager(this);
+        if (apps.isAllApps()) text(choices, getString(R.string.app_selection_all), 15, false);
         text(
                 choices,
                 getResources()
@@ -443,7 +393,7 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void finishSetup() {
         if (!replay) {
-            new FeatureModuleManager(this).save(censor, limits, wallet);
+
             if (appearanceChanged) {
                 SettingsRepository settings = new SettingsRepository(this);
                 CensorAppearance old = settings.loadAppearance();

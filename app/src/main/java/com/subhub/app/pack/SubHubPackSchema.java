@@ -81,6 +81,7 @@ public final class SubHubPackSchema {
         return lower.contains("paypal") || lower.contains("secret") || lower.contains("client_id")
                 || lower.contains("vault") || lower.contains("wallet_id")
                 || lower.contains("selected_packages") || lower.contains("included_packages")
+                || lower.startsWith("app_include_all")
                 || lower.contains("package_used")
                 || lower.contains("allowance_minutes:") || lower.contains("armed")
                 || lower.contains("commitment_") || lower.contains("hardcore_mode")

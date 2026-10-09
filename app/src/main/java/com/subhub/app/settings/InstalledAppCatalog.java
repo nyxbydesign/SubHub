@@ -11,6 +11,14 @@ import java.util.*;
 
 /** Application-only app discovery; never builds rows or retains a settings page. */
 final class InstalledAppCatalog {
+    static Set<String> packageNames(Context app) {
+        Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        Set<String> names = new LinkedHashSet<>();
+        for (ResolveInfo info : app.getPackageManager().queryIntentActivities(launcher, PackageManager.MATCH_ALL))
+            if (info.activityInfo != null && !app.getPackageName().equals(info.activityInfo.packageName))
+                names.add(info.activityInfo.packageName);
+        return names;
+    }
     static List<Entry> load(Context app) throws InterruptedException {
         PackageManager packages = app.getPackageManager();
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);

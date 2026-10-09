@@ -20,6 +20,9 @@ import java.util.Set;
 public final class AppModeManager {
     public static final String KEY_ARMED = "app_mode_armed";
     public static final String KEY_INCLUDED_PACKAGES = "app_included_packages_v1";
+    public static final String KEY_ALL_APPS = "app_include_all_v1";
+    private static final String KEY_ALL_APPS_PACKAGES = "app_include_all_packages_v1";
+    private static final String KEY_SCOPE_REVISION = "app_include_revision_v1";
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -41,30 +44,74 @@ public final class AppModeManager {
         syncProtectionSession(wasArmed, armed);
     }
 
+    /** Effective runtime scope; All Apps never changes the saved checkbox selection. */
     public Set<String> getIncludedPackages() {
         migrateAppSelection();
-        return AppModePolicy.sanitizePackages(
-                preferences.getStringSet(KEY_INCLUDED_PACKAGES,
-                Collections.emptySet()));
+        if (isAllApps()) return AppModePolicy.sanitizePackages(preferences.getStringSet(
+                KEY_ALL_APPS_PACKAGES, getSelectedPackages()));
+        return getSelectedPackages();
     }
 
-    /** Publish one selection without changing service state, feature switches or allowances. */
+    public Set<String> getSelectedPackages() {
+        migrateAppSelection();
+        return AppModePolicy.sanitizePackages(preferences.getStringSet(
+                KEY_INCLUDED_PACKAGES, Collections.emptySet()));
+    }
+
+    /** Edit the retained selection without disabling a global override or changing allowances. */
     public void saveIncludedPackages(Set<String> packages) {
-        preferences.edit()
-                .putStringSet(
-                        KEY_INCLUDED_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
-                .apply();
+        synchronized (AppModeManager.class) {
+            preferences.edit().putStringSet(KEY_INCLUDED_PACKAGES,
+                    new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages))).apply();
+        }
+    }
+
+    public boolean isAllApps() {
+        return preferences.getBoolean(KEY_ALL_APPS, false);
+    }
+
+    public long scopeRevision() {
+        return preferences.getLong(KEY_SCOPE_REVISION, 0);
+    }
+
+    public void saveAllApps(Set<String> installedPackages) {
+        synchronized (AppModeManager.class) {
+            preferences.edit().putStringSet(KEY_ALL_APPS_PACKAGES,
+                    new LinkedHashSet<>(AppModePolicy.sanitizePackages(installedPackages)))
+                    .putBoolean(KEY_ALL_APPS, true)
+                    .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1).apply();
+        }
+    }
+
+    public void setAllAppsEnabled(boolean enabled) {
+        synchronized (AppModeManager.class) {
+            preferences.edit().putBoolean(KEY_ALL_APPS, enabled)
+                    .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1).apply();
+        }
+    }
+
+    /** An All Apps refresh cannot replace a later user selection. */
+    public boolean refreshAllApps(long expectedRevision, Set<String> installedPackages) {
+        synchronized (AppModeManager.class) {
+            if (!isAllApps() || expectedRevision != scopeRevision()) return false;
+            preferences.edit().putStringSet(KEY_ALL_APPS_PACKAGES,
+                    new LinkedHashSet<>(AppModePolicy.sanitizePackages(installedPackages))).apply();
+            return true;
+        }
     }
 
     public void save(boolean armed, Set<String> packages) {
         boolean wasArmed = isArmed();
+        synchronized (AppModeManager.class) {
         preferences.edit()
                 .putBoolean(KEY_ARMED, armed)
                 .putStringSet(
                         KEY_INCLUDED_PACKAGES,
                         new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
+                .putBoolean(KEY_ALL_APPS, false)
+                .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1)
                 .commit();
+        }
         syncProtectionSession(wasArmed, armed);
     }
 
@@ -88,27 +135,14 @@ public final class AppModeManager {
                             preferences.getBoolean("app_mode_kind_explicit_v2", false),
                             censor,
                             legacy);
-            Set<String> installed = new LinkedHashSet<>();
-            if (all) {
-                android.content.Intent launcher =
-                        new android.content.Intent(android.content.Intent.ACTION_MAIN)
-                                .addCategory(android.content.Intent.CATEGORY_LAUNCHER);
-                for (android.content.pm.ResolveInfo info :
-                        context.getPackageManager()
-                                .queryIntentActivities(
-                                        launcher, android.content.pm.PackageManager.MATCH_ALL)) {
-                    if (info.activityInfo != null
-                            && !context.getPackageName().equals(info.activityInfo.packageName))
-                        installed.add(info.activityInfo.packageName);
-                }
-            }
             preferences
                     .edit()
                     .putStringSet(
                             KEY_INCLUDED_PACKAGES,
                             new LinkedHashSet<>(
                                     LegacyAppSelection.merge(
-                                            all, censor, limits, whispers, installed)))
+                                            false, censor, limits, whispers, Collections.emptySet())))
+                    .putBoolean(KEY_ALL_APPS, all)
                     .remove("app_mode_kind")
                     .remove("app_mode_kind_explicit_v2")
                     .remove("app_mode_selected_packages")

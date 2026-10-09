@@ -43,12 +43,12 @@ public class OnboardingAndroidTest {
         assertFalse(ControllerPinManager.hasCredentials(context));assertTrue(ControllerPinManager.allowsUnkeyedAccess(context));
         assertFalse(new com.subhub.app.appmode.AppModeManager(context).isArmed());
     }
-    @Test public void selectedFeaturesAndStyleSurviveRecreationAndFinishWithoutStartingService(){
+    @Test public void selectedAppsAndStyleSurviveRecreationAndFinishWithoutStartingService(){
         new FeatureModuleManager(context).save(true,true,true,false);
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)){
             onView(withId(R.id.tour_next)).perform(click());
-            onView(withText(R.string.global_feature_wallet)).perform(scrollTo(),click());
-            tour.onActivity(a->capture(a,"tour-features.png"));
+            onView(withId(R.id.tour_step_title)).check(matches(withText(R.string.tour_select_apps)));
+            tour.onActivity(a->capture(a,"tour-apps.png"));
             onView(withId(R.id.tour_next)).perform(click());
             onView(withText(R.string.style_blur)).perform(scrollTo(),click());tour.recreate();
             onView(withText(R.string.style_blur)).check(matches(isSelected()));
@@ -59,7 +59,7 @@ public class OnboardingAndroidTest {
             onView(withId(R.id.tour_next)).perform(click());
             onView(withId(R.id.tour_next)).perform(click());
         }
-        assertFalse(new FeatureModuleManager(context).isWalletEnabled());
+        assertTrue(new FeatureModuleManager(context).isWalletEnabled());
         assertEquals(CensorAppearance.Type.BLUR,new SettingsRepository(context).loadAppearance().getType());
         assertFalse(new com.subhub.app.appmode.AppModeManager(context).isArmed());
         assertFalse(ControllerPinManager.hasCredentials(context));
@@ -69,18 +69,18 @@ public class OnboardingAndroidTest {
         new SettingsRepository(context).saveAppearance(CensorAppearance.Type.GLITCH,71,false,false);
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(new Intent(context,OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY,true))){
             onView(withId(R.id.tour_next)).perform(click());
-            onView(withText(R.string.global_feature_wallet)).perform(scrollTo()).check(matches(isEnabled())).perform(click());
+            onView(withId(R.id.tour_step_title)).check(matches(withText(R.string.tour_select_apps)));
             onView(withId(R.id.tour_next)).perform(click());
             onView(withText(R.string.style_blur)).perform(scrollTo(),click());
             onView(withId(R.id.tour_skip)).perform(click());
         }
-        FeatureModuleManager modules=new FeatureModuleManager(context);assertFalse(modules.isCensorEnabled());assertTrue(modules.isLimitsEnabled());assertFalse(modules.isWalletEnabled());assertTrue(modules.isSubliminalEnabled());
+        FeatureModuleManager modules=new FeatureModuleManager(context);assertFalse(modules.isCensorEnabled());assertTrue(modules.isLimitsEnabled());assertTrue(modules.isWalletEnabled());assertTrue(modules.isSubliminalEnabled());
         assertEquals(CensorAppearance.Type.GLITCH,new SettingsRepository(context).loadAppearance().getType());
     }
     @Test public void incompleteSetupResumesAfterCredentialsAreConfigured() {
         new FeatureModuleManager(context).save(true,true,true,false);
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)) {
-            onView(withId(R.id.tour_next)).perform(click());onView(withText(R.string.global_feature_wallet)).perform(scrollTo(),click());
+            onView(withId(R.id.tour_next)).perform(click());onView(withId(R.id.tour_step_title)).check(matches(withText(R.string.tour_select_apps)));
             onView(withId(R.id.tour_next)).perform(click());onView(withText(R.string.style_blur)).perform(scrollTo(),click());
         }
         ControllerPinManager.setPin(context,"2468");assertTrue(OnboardingState.shouldStart(context));
@@ -89,7 +89,7 @@ public class OnboardingAndroidTest {
             onView(withText(R.string.style_blur)).perform(scrollTo()).check(matches(isSelected()));
             onView(withId(R.id.tour_skip)).perform(click());
         }
-        assertFalse(new FeatureModuleManager(context).isWalletEnabled());assertEquals(CensorAppearance.Type.BLUR,new SettingsRepository(context).loadAppearance().getType());assertFalse(OnboardingState.inProgress(context));
+        assertTrue(new FeatureModuleManager(context).isWalletEnabled());assertEquals(CensorAppearance.Type.BLUR,new SettingsRepository(context).loadAppearance().getType());assertFalse(OnboardingState.inProgress(context));
     }
     @Test public void allSixStepsExplainTheirActionsAndKeepTheFooterOutsideTheScroll() {
         try(ActivityScenario<OnboardingActivity> tour=ActivityScenario.launch(OnboardingActivity.class)) {
