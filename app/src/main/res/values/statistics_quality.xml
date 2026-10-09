@@ -1,20 +1,21 @@
 <resources>
-<string name="stats_tab_activity">Activity</string><string name="stats_tab_totals">Totals</string><string name="stats_tab_sessions">Sessions</string>
 <string name="stats_period_week">Last 7 days</string><string name="stats_period_month">Last 30 days</string><string name="stats_period_year">This year</string>
 <string name="stats_no_activity_period">No activity recorded for this measure.</string>
-<string name="stats_history_from">Daily records start %1$s. Earlier activity is included in Totals.</string>
+<string name="stats_history_from">Dated history from %1$s.</string>
 <string name="stats_previous_month">Previous month</string><string name="stats_next_month">Next month</string><string name="stats_no_daily_month">No daily records for this month.</string>
-<string name="stats_totals_explanation">All-time counters include activity recorded before daily history was available.</string>
-<string name="stats_service_sessions">Service &amp; sessions</string><string name="stats_censor_limits">Censor &amp; Limits</string><string name="stats_exports">Exports</string>
 <string name="stats_assessed">Assessed</string><string name="stats_days_value">%1$d days</string>
-<string name="stats_saved_sessions">Latest %1$d saved sessions</string><string name="stats_no_duration">No duration recorded</string><string name="stats_previous">Previous</string><string name="stats_next">Next</string><string name="stats_page">%1$d / %2$d</string>
-<item type="id" name="stats_tab_activity"/><item type="id" name="stats_tab_totals"/><item type="id" name="stats_tab_sessions"/>
-<item type="id" name="stats_sessions_previous"/><item type="id" name="stats_sessions_next"/><item type="id" name="stats_empty_activity"/>
-<string name="stats_include_empty">Include empty sessions</string>
-<string name="stats_no_nonempty_sessions">No sessions with recorded time or activity.</string>
-<plurals name="stats_saved_count"><item quantity="one">%d saved session</item><item quantity="other">%d saved sessions</item></plurals>
-<item type="id" name="stats_sessions_empty_filter"/>
+<item type="id" name="stats_empty_activity"/>
 <string name="stats_seconds_value">%1$d s</string>
+<string name="stats_all_time">All time</string>
+<string name="stats_more_totals">More totals</string>
+<string name="stats_fewer_totals">Fewer totals</string>
+<string name="stats_recent_sessions">Recent sessions</string>
+<string name="stats_more_sessions">Show more</string>
+<string name="stats_fewer_sessions">Show fewer</string>
+<item type="id" name="stats_lifetime_summary"/>
+<item type="id" name="stats_totals_details"/>
+<item type="id" name="stats_sessions_more"/>
+<item type="id" name="stats_totals_toggle"/>
 <string name="settings_apps_unavailable">Could not load installed apps.</string>
 <string name="custom_images_unavailable">Could not load images.</string>
 </resources>
