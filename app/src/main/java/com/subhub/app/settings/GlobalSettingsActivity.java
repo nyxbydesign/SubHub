@@ -128,7 +128,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleCensor.setChecked(modules.isCensorEnabled());
         binding.switchModuleLimits.setChecked(modules.isLimitsEnabled());
         binding.switchModuleWallet.setChecked(modules.isWalletEnabled());
-        binding.switchModuleWhispers.setChecked(modules.isSubliminalEnabled());
         binding.armed.setChecked(appMode.isArmed());
         binding.modeGroup.check(appMode.getMode() == AppModePolicy.Mode.SELECTED_APPS
                 ? R.id.mode_selected : R.id.mode_always);
@@ -152,7 +151,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleCensor.setOnCheckedChangeListener((button, checked) -> saveModules());
         binding.switchModuleLimits.setOnCheckedChangeListener((button, checked) -> saveModules());
         binding.switchModuleWallet.setOnCheckedChangeListener((button, checked) -> saveModules());
-        binding.switchModuleWhispers.setOnCheckedChangeListener((button,checked)->saveModules());
         binding.switchHardcoreMode.setOnCheckedChangeListener((button, checked) -> {
             if (!updatingHardcore) changeHardcoreMode(checked);
         });
@@ -316,7 +314,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (selectedGroup.equals("privacy")) com.subhub.app.privacy.PrivacyControls.bind(this,focusedGroups.get("privacy"),this::displayGroup);
         if (modules == null) return;
         groupSummaries.get("features").setText(getString(R.string.settings_features_summary,
-                (modules.isCensorEnabled() ? 1 : 0) + (modules.isLimitsEnabled() ? 1 : 0) + (modules.isWalletEnabled() ? 1 : 0) + (modules.isSubliminalEnabled()?1:0)));
+                (modules.isCensorEnabled() ? 1 : 0) + (modules.isLimitsEnabled() ? 1 : 0) + (modules.isWalletEnabled() ? 1 : 0)));
         groupSummaries.get("apps").setText(getString(R.string.settings_apps_count,appMode.getSelectedPackages().size(),appMode.getTimerPackages().size(),appMode.getSubliminalPackages().size()));
         if(appMode.getMode()==com.subhub.app.appmode.AppModePolicy.Mode.ALWAYS)groupSummaries.get("apps").setText(getString(R.string.settings_apps_all,appMode.getTimerPackages().size(),appMode.getSubliminalPackages().size()));
         boolean overlay=android.provider.Settings.canDrawOverlays(this);
@@ -363,7 +361,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchModuleCensor.setEnabled(modulesEditable);
         binding.switchModuleLimits.setEnabled(modulesEditable);
         binding.switchModuleWallet.setEnabled(modulesEditable);
-        binding.switchModuleWhispers.setEnabled(modulesEditable);
         binding.switchHardcoreMode.setEnabled(editingUnlocked);
         binding.buttonHardcoreSystem.setEnabled(editingUnlocked);
         binding.buttonHardcoreRestricted.setEnabled(editingUnlocked);
@@ -910,7 +907,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (!ControllerPinManager.isSessionUnlocked()) return;
         boolean censor = binding.switchModuleCensor.isChecked();
         modules.save(censor, binding.switchModuleLimits.isChecked(),
-                binding.switchModuleWallet.isChecked(),binding.switchModuleWhispers.isChecked());
+                binding.switchModuleWallet.isChecked());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
     }
 
