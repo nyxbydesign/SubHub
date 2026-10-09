@@ -35,6 +35,7 @@ import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityStudioBinding;
 import com.subhub.app.pack.PackSettingCatalog;
 import com.subhub.app.pack.SubHubPack;
+import com.subhub.app.pack.SubHubPackArchive;
 import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.pack.SubHubPackSchema;
 import com.subhub.app.security.ControllerPinManager;
@@ -116,7 +117,7 @@ public final class StudioActivity extends AppCompatActivity {
         setupTabs();
         setupEditor();
         binding.buttonImport.setOnClickListener(view -> importPicker.launch(
-                new String[]{"application/zip", "application/octet-stream", "*/*"}));
+                new String[]{SubHubPackArchive.MIME_TYPE, "application/octet-stream", "*/*"}));
         binding.buttonBlank.setOnClickListener(view -> openDraft(manager.createBlank()));
         binding.buttonCapture.setOnClickListener(view -> storageAction(manager::captureCurrent, this::openDraft));
         renderLibrary();
@@ -781,7 +782,7 @@ public final class StudioActivity extends AppCompatActivity {
         SubHubPack snapshot = pack.snapshot();
         storageAction(() -> manager.exportForShare(snapshot), file -> {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".updates", file);
-            Intent send = new Intent(Intent.ACTION_SEND).setType("application/zip")
+            Intent send = new Intent(Intent.ACTION_SEND).setType(SubHubPackArchive.MIME_TYPE)
                     .putExtra(Intent.EXTRA_STREAM, uri)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try { startActivity(Intent.createChooser(send, getString(R.string.studio_share_chooser))); }

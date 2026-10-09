@@ -1,6 +1,8 @@
 # SubHub pack format
 
-`.subhubpack` is SubHub Studio's portable pack format. It is a bounded ZIP archive designed for local creation, review, sharing, and reversible application. Packs use schema version 4 and the shared typed setting catalog. Only the current schema is accepted; earlier packs must be recreated. There are no legacy setting aliases, lock groups, or identity migrations. Both pack and origin identities must be canonical UUIDs.
+`.sub` is SubHub Studio's portable pack format. It is a bounded ZIP archive designed for local creation, review, sharing, and reversible application. Packs use schema version 4 and the shared typed setting catalog. Only the current schema is accepted; earlier packs must be recreated. There are no legacy setting aliases, lock groups, or identity migrations. Both pack and origin identities must be canonical UUIDs.
+
+Existing `.subhubpack` files with the current schema remain importable. The file-ending change does not change archive contents or the schema.
 
 ## Archive layout
 

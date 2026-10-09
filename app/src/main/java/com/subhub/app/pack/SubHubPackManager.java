@@ -40,6 +40,8 @@ import java.util.UUID;
 
 /** Draft/library storage plus reversible, journaled activation for portable SubHub packs. */
 public final class SubHubPackManager {
+    // Private storage names stay stable so existing libraries, drafts and active packs remain readable.
+    private static final String STORAGE_EXTENSION = ".subhubpack";
     private static final String STATE_PREFS = "subhub_pack_state_v1";
     private static final String KEY_ACTIVE_ID = "active_pack_id";
     private static final String KEY_ACTIVE_BACKUP = "active_pack_backup";
@@ -631,7 +633,7 @@ public final class SubHubPackManager {
     private List<Record> list(File directory, boolean draft) {
         List<Record> result = new ArrayList<>();
         File[] files = directory.listFiles(file -> file.isFile()
-                && file.getName().endsWith(SubHubPackArchive.EXTENSION));
+                && file.getName().endsWith(STORAGE_EXTENSION));
         if (files != null) for (File file : files) {
             try {
                 SubHubPackArchive.Overview overview = SubHubPackArchive.readOverview(file);
@@ -689,7 +691,7 @@ public final class SubHubPackManager {
 
     private static File fileFor(File directory, String id) {
         String safe = id == null ? "invalid" : id.replaceAll("[^A-Za-z0-9-]", "");
-        return new File(directory, safe + SubHubPackArchive.EXTENSION);
+        return new File(directory, safe + STORAGE_EXTENSION);
     }
 
     private static void applyJson(SharedPreferences.Editor editor, PackSettingCatalog.Field field, Object value) {

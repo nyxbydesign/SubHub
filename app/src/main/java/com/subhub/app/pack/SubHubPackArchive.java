@@ -23,9 +23,10 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-/** Strict ZIP codec for the current .subhubpack format only. */
+/** Strict ZIP codec for the current .sub format only. */
 public final class SubHubPackArchive {
-    public static final String EXTENSION = ".subhubpack";
+    public static final String EXTENSION = ".sub";
+    public static final String MIME_TYPE = "application/zip";
     private static final int MAX_MANIFEST_BYTES = 512 * 1024;
     private static final int MAX_SECTION_BYTES = 2 * 1024 * 1024;
     private static final long MAX_ASSET_BYTES = 25L * 1024L * 1024L;
@@ -156,7 +157,7 @@ public final class SubHubPackArchive {
         try {
             JSONObject manifest = new JSONObject(new String(manifestBytes, StandardCharsets.UTF_8));
             if (!SubHubPack.FORMAT.equals(manifest.optString("format"))) {
-                throw new IOException("Not a .subhubpack archive");
+                throw new IOException("Not a SubHub pack archive");
             }
             if (manifest.optInt("schemaVersion", -1) != SubHubPack.SCHEMA_VERSION) {
                 throw new IOException("Unsupported pack format; recreate the arrangement in Studio");

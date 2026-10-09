@@ -121,7 +121,7 @@ Studio is the portable pack creator built into SubHub, reachable from Settings i
 - Use the four-step Details, Features, Images and Review editor. Configure each of the 115 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
 - Mix feature modules, Censor and text filters, generic Limits, tribute rules and caps, Subliminal Messaging, Popup Storm settings, and embedded private images. Preview/remove images and choose an optional cover.
 - Use the shared color wheel and precise RGB sliders, with independent gradient endpoints.
-- Autosave drafts, preview the result, import or export `.subhubpack` files, and share them through Android’s standard share sheet.
+- Autosave drafts, preview the result, import or export `.sub` files, and share them through Android’s standard share sheet.
 - Review selected sections and a before/after summary before activation. Previous values are backed up locally and restored when the arrangement is deactivated or replaced.
 - One pack can be active at a time. Dom mode is required to apply or restore settings; packs do not add a second setting-lock system. Creating and editing a draft is also available in Sub mode.
 
