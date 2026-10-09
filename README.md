@@ -48,7 +48,7 @@ SubHub brings the rules, active session, and progress into one Android app. Choo
 
 - **App Mode by default.** Accessibility supplies foreground-app awareness and visible-text geometry without a new capture prompt every session.
 - **Screen Capture when wanted.** MediaProjection remains an explicit alternate path.
-- **Assigned means assigned.** Filtering sleeps outside the configured app scope.
+- **Included apps.** Every enabled service feature uses the same include/exclude list in Settings → Apps.
 - **Tracked overlays.** Detected regions use temporal tracking. Live stability and responsiveness depend on the workload and device; UI screenshots are not performance benchmarks.
 - **One render system.** Blackout, Blur, Pixelate, Custom Image, TV Static, Glitch, Privacy Tape, and Error Popup share the tracked overlay pipeline.
 
@@ -73,7 +73,7 @@ Three detection levels—Low, Medium, and High—offer Balanced Coverage, More C
 
 ### Limits
 
-Give each limited app its own allowance, share one allowance across the set, or use both. App-specific allowances may differ from the default. Usage resets at local midnight; when time is spent, SubHub returns the covered app to Home.
+Limits shows today's recorded app usage, a combined daily budget, and separate allowances beside each included app. Use either budget or both; the smaller remaining allowance applies. Usage resets at local midnight, and exhausted apps return to Home. Changing the included list preserves the day's recorded combined usage.
 
 <p align="center">
   <img src="docs/screenshots/ui-map/page-map/02-limits.png" alt="Individual and shared daily app limits" width="42%" />
@@ -81,9 +81,9 @@ Give each limited app its own allowance, share one allowance across the set, or 
 
 ### Wallet / Tribute
 
-Wallet is optional. Rules can count only deliberately enabled events: a new stable temptation, lingering on one still screen, tapping a visible censor, opening an assigned app, or a rate-limited Hardcore tamper signal. Every event is gated behind active service and the Wallet master switch.
+Wallet is optional. Rules can count only deliberately enabled events: a new stable temptation, lingering on one still screen, tapping a visible censor, opening an included app, or a rate-limited Hardcore tamper signal. Every event is gated behind active service and the Wallet master switch.
 
-The Dom sets prices, batching, grace, correction time, and daily or weekly caps. Review what is owed and settle it through PayPal. Merchant credentials and saved-wallet tokens are encrypted with Android Keystore and stay bound to the selected Sandbox or Live environment.
+Wallet places the amount due, payment action, and recent ledger in one compact overview. Dom opens Rules & caps, Paid pause, PayPal, or Corrections to configure them; Back returns to the overview. Review what is owed and settle it through PayPal. Merchant credentials and saved-wallet tokens are encrypted with Android Keystore and stay bound to the selected Sandbox or Live environment.
 
 <p align="center">
   <img src="docs/screenshots/ui-map/page-map/03-wallet.png" alt="Tribute wallet and settlement action" width="30%" />
@@ -97,13 +97,13 @@ The Dom sets prices, batching, grace, correction time, and daily or weekly caps.
 
 #### Subliminal Messaging
 
-Faint randomized phrases can follow service through separately assigned apps. Obedience, focus, beta/cuck, findom, and custom phrase packs run through one touch-through Accessibility overlay—without waking the image detector. Presence, timing, text size, and voice are configured in Dom mode; Sub mode sees only the active summary.
+Faint randomized phrases can follow service through the shared included-app list. Obedience, focus, beta/cuck, findom, and custom phrase packs run through one touch-through Accessibility overlay—without waking the image detector. Presence, timing, text size, and voice are configured in Dom mode; Sub mode sees only the active summary.
 
-Subliminal Messaging has its own per-app assignment and does not require Censor, Limits, or Wallet.
+Subliminal Messaging does not require Censor, Limits, or Wallet; each feature keeps its global enable control.
 
 #### Popup Storm
 
-Configure intensity, choose an image library, and try a bounded ten-second preview without enabling service participation. Popup Storm and Subliminal Messaging have separate controls on the Atmosphere page.
+Configure intensity, choose an image library, and try a bounded ten-second preview without enabling service participation. Popup Storm and Subliminal Messaging have separate controls on Rituals. Packs appear first, with direct Import and Library actions. Rituals also opens Achievements and Gallery Censor; Statistics stays on Home. Gallery offers a media preview, separate appearance and body-area editors, video position and export controls, and filename-based results. Exports keep originals unless deletion is explicitly selected.
 
 <p align="center">
   <img src="docs/screenshots/ui-map/page-map/14-atmosphere.png" alt="Independent Atmosphere feature controls" width="30%" />
@@ -115,10 +115,10 @@ Configure intensity, choose an image library, and try a bounded ten-second previ
 
 ### Studio / Pack Maker
 
-Studio is the portable pack creator built into SubHub, reachable from Settings in both Dom and Sub mode, and from Censor Tools in Dom mode. Drafting a pack never changes live settings.
+Studio is the portable pack creator built into SubHub, reachable from Rituals and as the last item in Settings → Features. Drafting a pack never changes live settings.
 
 - Start with a blank draft, capture the current setup, or duplicate an existing arrangement.
-- Use the four-step Details, Features, Images and Review editor. Configure each of the 115 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
+- Use the four-step Details, Features, Images and Review editor. Configure each of the 114 transferable settings directly in the draft, copy a section from the current setup, or reset that section to defaults.
 - Mix feature modules, Censor and text filters, generic Limits, tribute rules and caps, Subliminal Messaging, Popup Storm settings, and embedded private images. Preview/remove images and choose an optional cover.
 - Use the shared color wheel and precise RGB sliders, with independent gradient endpoints.
 - Autosave drafts, preview the result, import or export `.sub` files, and share them through Android’s standard share sheet.
@@ -163,14 +163,14 @@ Dom mode holds every rule. Sub mode keeps only the active scene: choose a servic
 
 | Dom mode | Sub mode |
 |---|---|
-| Configure modules, assigned apps, limits, censor appearance, Wallet rules, and Android access. | Start service, follow the timer, review active rules, and settle an enabled Wallet balance. |
+| Configure modules, included apps, limits, censor appearance, Wallet rules, and Android access. | Start service, follow the timer, review active rules, and settle an enabled Wallet balance. |
 | Protected by the controller PIN. | One focused Home surface with no edit fields; Home and Settings remain in the bottom navigation. |
 
 A session begins when service starts—not when SubHub opens—and persists until service ends.
 
 1. Install the universal APK, or the APK matching your device’s ABI, from [Downloads](https://github.com/confiteor48/SubHub/releases/latest).
 2. Set the controller PIN and configure the participating features in Dom mode.
-3. In Settings, choose All apps or Assigned apps only. Censor, Limits, and Subliminal assignments stay independent. Grant the Android access required by the features you use.
+3. In Settings → Apps, choose the one included-app list. Each globally enabled service feature uses it. Settings groups Features, Apps, Privacy & permissions, and Help & about; grant the Android access required by the features you use.
 4. Hand over to Sub mode, choose a duration, and enter service.
 
 Disable a feature and it stops participating in service. Android permissions and the controller’s configuration remain separate from a pack or draft.
@@ -201,7 +201,7 @@ In the app, open **Updates → Dev updates** in Dom mode to opt in. It is off by
 
 ## Screenshots & media kit
 
-Browse the [complete current UI gallery](docs/screenshots/ui-map/README.md), including Dom/Sub navigation, app assignments, Appearance, Wallet, Atmosphere, and all four Pack Maker steps. Captures use synthetic data on an Android emulator and show the development build; the published APK may differ.
+Browse the [complete current UI gallery](docs/screenshots/ui-map/README.md), including Dom/Sub navigation, app inclusion, Appearance, Wallet, Atmosphere, and all four Pack Maker steps. Captures use synthetic data on an Android emulator and show the development build; the published APK may differ.
 
 Ready-to-share marketing materials:
 

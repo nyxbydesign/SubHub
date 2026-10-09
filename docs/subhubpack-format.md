@@ -34,7 +34,7 @@ Studio rejects duplicate or unsafe paths, unknown sections, missing entries, mis
 | `subliminal` | Preset, timing, opacity, text size, phrase groups, and custom phrases |
 | `popup` | Popup Storm behavior and embedded popup images |
 
-`PackSettingCatalog` is the single allowlist for capture, native draft controls, validation and typed preference writes. Its 115 fields cover every transferable setting across the six sections, including independent border gradient start/end colors. Unknown fields are discarded; malformed known fields, invalid choices, out-of-range values and incompatible relationships are rejected. String sets stay JSON arrays, integer preferences stay integers, timing longs stay longs and float preferences stay floats. Money controls display decimal amounts but store minor units; percentage controls preserve the runtime ratio. Detection uses `detection_quality` (`low`, `medium`, `high`) and `detection_confidence_percent`; retired detection and Wallet rule keys are not migrated.
+`PackSettingCatalog` is the single allowlist for capture, native draft controls, validation and typed preference writes. Its 114 fields cover every transferable setting across the six sections, including independent border gradient start/end colors. The retired Censor app-scope field is ignored after the original archive passes raw integrity validation. Unknown fields are discarded; malformed known fields, invalid choices, out-of-range values and incompatible relationships are rejected. String sets stay JSON arrays, integer preferences stay integers, timing longs stay longs and float preferences stay floats. Money controls display decimal amounts but store minor units; percentage controls preserve the runtime ratio. Detection uses `detection_quality` (`low`, `medium`, `high`) and `detection_confidence_percent`; retired detection and Wallet rule keys are not migrated.
 
 Studio's Details → Features → Images → Review editor never writes live preferences. Section controls offer full configuration, current-setting copy and defaults. Missing fields receive catalog defaults when opened for editing, while imported partial sections remain partial until edited. Image reads, thumbnail decoding, archive I/O and draft persistence run off the UI thread. Each image is limited to 25 MiB, with at most 64 images per feature, a single cover in the creator and a 256 MiB total archive limit. Covers are presentation assets, never applied as feature images. Local library previews do not load image payloads; operations validate the complete archive before use.
 
@@ -44,7 +44,7 @@ An arrangement never carries:
 
 - PayPal access tokens, saved payer or wallet identifiers, approval/verification state, or transaction history. Merchant client ID, secret, environment and fallback recipient link may be included **only** in the opt-in encrypted attachment below, never in ordinary sections.
 - Controller PIN material, permission state, Accessibility or Device Admin state, or Hardcore activation state.
-- App package names, app assignments, per-app usage, or per-app allowance overrides.
+- App package names, the included-app list, per-app usage, or per-app allowance overrides.
 - Current service state, release time, session data, statistics, achievements, ledger history, Wallet currency, automatic-payment consent, Popup Storm photosensitivity acknowledgement, update state, or private filesystem paths.
 
 Hardcore and service-duration fields are recommendations shown during activation. Studio never applies them automatically.
