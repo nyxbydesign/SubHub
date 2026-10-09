@@ -3,8 +3,6 @@ package com.subhub.app.help;
 import static androidx.test.espresso.intent.Intents.intended;
 import static androidx.test.espresso.intent.Intents.intending;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasComponent;
-import static androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra;
-import static org.hamcrest.Matchers.allOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -108,14 +106,10 @@ public final class HelpReworkAndroidTest {
         try (ActivityScenario<HelpActivity> scenario = ActivityScenario.launch(HelpActivity.class)) {
             scenario.onActivity(activity -> {
                 activity.findViewById(R.id.help_diagnostics).performClick();
-                activity.findViewById(R.id.help_censor_lab).performClick();
                 activity.findViewById(R.id.button_accessibility).performClick();
                 activity.findViewById(R.id.button_updates).performClick();
             });
-            intended(allOf(hasComponent(DiagnosticsActivity.class.getName()),
-                    hasExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, false)));
-            intended(allOf(hasComponent(DiagnosticsActivity.class.getName()),
-                    hasExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, true)));
+            intended(hasComponent(DiagnosticsActivity.class.getName()));
             intended(hasComponent(PermissionSetupActivity.class.getName()));
             intended(hasComponent(UpdatesActivity.class.getName()));
             assertFalse(ControllerPinManager.isDomModeActive());
@@ -125,7 +119,6 @@ public final class HelpReworkAndroidTest {
                 assertEquals(.45f, activity.findViewById(R.id.button_language).getAlpha(), .01f);
                 assertTrue(activity.findViewById(R.id.button_fix_permissions).isShown());
                 assertNotNull(activity.findViewById(R.id.help_diagnostics));
-                assertNotNull(activity.findViewById(R.id.help_censor_lab));
                 assertTrue(activity.findViewById(R.id.button_accessibility).isShown());
             });
         }
@@ -134,5 +127,18 @@ public final class HelpReworkAndroidTest {
     private static LinearLayout question(HelpActivity activity, String key) {
         return activity.findViewById(R.id.help_sections)
                 .findViewWithTag("help_question:help_rework_" + key + "_title");
+    }
+
+    @Test public void censorLabRemainsInsideDiagnosticsInSubMode() {
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<DiagnosticsActivity> page = ActivityScenario.launch(DiagnosticsActivity.class)) {
+            page.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.censor_lab_card).isShown());
+                assertTrue(a.findViewById(R.id.button_censor_lab_start).isEnabled());
+                assertFalse(ControllerPinManager.isDomModeActive());
+            });
+            page.recreate();
+            page.onActivity(a -> assertTrue(a.findViewById(R.id.censor_lab_card).isShown()));
+        }
     }
 }

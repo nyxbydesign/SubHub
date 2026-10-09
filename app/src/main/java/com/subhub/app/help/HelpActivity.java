@@ -63,8 +63,8 @@ public final class HelpActivity extends AppCompatActivity {
         binding.buttonLanguage.setOnClickListener(view -> showLanguageChooser());
         binding.buttonUpdates.setOnClickListener(view ->
                 startActivity(new Intent(this, UpdatesActivity.class)));
-        binding.helpDiagnostics.setOnClickListener(view -> openDiagnostics(false));
-        binding.helpCensorLab.setOnClickListener(view -> openDiagnostics(true));
+        binding.helpDiagnostics.setOnClickListener(view ->
+                startActivity(new Intent(this, DiagnosticsActivity.class)));
         addSections();
         PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> {
             if (ControllerPinManager.isDomModeActive()) {
@@ -209,11 +209,6 @@ public final class HelpActivity extends AppCompatActivity {
         binding.buttonLanguage.setVisibility(View.VISIBLE);
         ControllerPinGate.markLocked(binding.buttonFixPermissions);
         ControllerPinGate.markLocked(binding.buttonLanguage);
-    }
-
-    private void openDiagnostics(boolean lab) {
-        startActivity(new Intent(this, DiagnosticsActivity.class)
-                .putExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, lab));
     }
 
     private static final class Question {

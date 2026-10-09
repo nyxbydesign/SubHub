@@ -193,9 +193,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                         .putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY, true))));
         addHelpAction(helpActions, settingsAction(getString(R.string.settings_updates),
                 () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
-        addHelpAction(helpActions, settingsAction(getString(R.string.diagnostics_lab_title),
-                () -> startActivity(new Intent(this, DiagnosticsActivity.class)
-                        .putExtra(DiagnosticsActivity.EXTRA_SHOW_CENSOR_LAB, true))));
         addHelpAction(helpActions, binding.buttonDiagnostics);
         getOnBackPressedDispatcher()
                 .addCallback(
