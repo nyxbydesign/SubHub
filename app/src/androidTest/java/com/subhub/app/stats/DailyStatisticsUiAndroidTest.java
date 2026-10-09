@@ -48,7 +48,7 @@ public class DailyStatisticsUiAndroidTest {
             detail.onActivity(a->{
                 Map<String,Long> expected=store.days(today.toString(),today.toString()).get(today.toString());
                 assertEquals(context.getString(R.string.daily_compact_summary,StatsSnapshot.formatDuration(expected.get("service_ms")/1000),expected.get("censors")),homeText[0]);
-                assertTrue(((TextView)a.findViewById(R.id.daily_day_summary)).getText().toString().contains(today.toString()));
+                assertTrue(((TextView)a.findViewById(R.id.daily_day_summary)).getText().toString().contains(today.format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM))));
             });
             onView(withId(R.id.daily_range_7)).perform(scrollTo(),click());
             onView(withId(R.id.daily_range_year)).perform(scrollTo(),click());

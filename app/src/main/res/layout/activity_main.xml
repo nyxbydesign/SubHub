@@ -25,8 +25,9 @@
             <include layout="@layout/view_primary_header" />
             <include layout="@layout/view_global_notice" />
 
-            <!-- One command deck: readiness, duration, and action. -->
+            <!-- One command deck: readiness, duration, action, and arrangement. -->
             <LinearLayout
+                android:id="@+id/home_service_widget"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"

@@ -140,7 +140,11 @@ public final class MainActivity extends AppCompatActivity {
         dailyStats = new com.subhub.app.stats.DailyStatsPanel(this, true);
         android.widget.LinearLayout homeContent = findViewById(R.id.page_content);
         android.widget.LinearLayout.LayoutParams dailyParams = new android.widget.LinearLayout.LayoutParams(-1, -2); dailyParams.topMargin = dp(12);
-        homeContent.addView(dailyStats, Math.min(3, homeContent.getChildCount()), dailyParams);
+        android.widget.LinearLayout serviceWidget = findViewById(R.id.home_service_widget);
+        homeContent.removeView(binding.subDashboard);
+        binding.subDashboard.setBackground(null); binding.subDashboard.setPadding(0,dp(14),0,0);
+        serviceWidget.addView(binding.subDashboard,new android.widget.LinearLayout.LayoutParams(-1,-2));
+        homeContent.addView(dailyStats,homeContent.indexOfChild(serviceWidget)+1,dailyParams);
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_home, R.string.app_name,
                 0);
         editLockButton = findViewById(R.id.button_edit_lock);
