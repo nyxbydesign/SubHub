@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:paddingBottom="28dp">
+        <include layout="@layout/view_secondary_header" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="@dimen/primary_header_top" android:layout_marginBottom="14dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/page_margin" android:text="@string/permission_setup_intro"
+            android:textColor="@color/text_secondary" android:textSize="14sp" android:lineSpacingExtra="2dp" />
+        <TextView android:id="@+id/permission_setup_status" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="10dp" android:textColor="@color/accent_text" android:textSize="13sp"
+            android:accessibilityLiveRegion="polite" />
+        <LinearLayout android:id="@+id/permission_step_one" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="12dp" android:background="@drawable/bg_card"
+            android:orientation="vertical" android:padding="14dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:layout_width="40dp" android:layout_height="40dp"
+                    android:background="@drawable/bg_permission_step" android:gravity="center"
+                    android:text="@string/permission_setup_number_one" android:textColor="@color/accent_text" android:textSize="16sp"
+                    android:importantForAccessibility="no" />
+                <TextView android:id="@+id/permission_step_one_title" android:layout_width="0dp"
+                    android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp"
+                    android:text="@string/permission_setup_step_one" android:textColor="@color/text_primary"
+                    android:textSize="15sp" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/permission_step_one_body" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:text="@string/permission_setup_step_one_body" android:textColor="@color/text_secondary"
+                android:textSize="14sp" android:lineSpacingExtra="2dp" />
+            <Button android:id="@+id/permission_step_one_open" style="@style/Widget.SubHub.CompactOutlineButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                android:layout_marginTop="10dp" android:text="@string/permission_setup_open_accessibility" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/permission_step_two" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="12dp" android:background="@drawable/bg_card"
+            android:orientation="vertical" android:padding="14dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:layout_width="40dp" android:layout_height="40dp"
+                    android:background="@drawable/bg_permission_step" android:gravity="center"
+                    android:text="@string/permission_setup_number_two" android:textColor="@color/accent_text" android:textSize="16sp"
+                    android:importantForAccessibility="no" />
+                <TextView android:id="@+id/permission_step_two_title" android:layout_width="0dp"
+                    android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp"
+                    android:text="@string/permission_setup_step_two" android:textColor="@color/text_primary"
+                    android:textSize="15sp" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/permission_step_two_body" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:text="@string/permission_setup_step_two_body" android:textColor="@color/text_secondary"
+                android:textSize="14sp" android:lineSpacingExtra="2dp" />
+            <Button android:id="@+id/permission_step_two_open" style="@style/Widget.SubHub.CompactOutlineButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                android:layout_marginTop="10dp" android:text="@string/permission_setup_open_app_settings" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/permission_step_three" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="12dp" android:background="@drawable/bg_card"
+            android:orientation="vertical" android:padding="14dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:layout_width="40dp" android:layout_height="40dp"
+                    android:background="@drawable/bg_permission_step" android:gravity="center"
+                    android:text="@string/permission_setup_number_three" android:textColor="@color/accent_text" android:textSize="16sp"
+                    android:importantForAccessibility="no" />
+                <TextView android:id="@+id/permission_step_three_title" android:layout_width="0dp"
+                    android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp"
+                    android:text="@string/permission_setup_step_three" android:textColor="@color/text_primary"
+                    android:textSize="15sp" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/permission_step_three_body" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="10dp"
+                android:text="@string/permission_setup_step_three_body" android:textColor="@color/text_secondary"
+                android:textSize="14sp" android:lineSpacingExtra="2dp" />
+            <Button android:id="@+id/permission_step_three_open" style="@style/Widget.SubHub.CompactOutlineButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+                android:layout_marginTop="10dp" android:text="@string/permission_setup_open_accessibility" />
+        </LinearLayout>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="14dp"
+            android:text="@string/permission_setup_footer" android:textColor="@color/text_secondary"
+            android:textSize="12sp" android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+</ScrollView>

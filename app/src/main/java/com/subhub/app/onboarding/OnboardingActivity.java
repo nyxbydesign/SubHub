@@ -346,6 +346,9 @@ public final class OnboardingActivity extends PreferencePage {
                     checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                             == PackageManager.PERMISSION_GRANTED,
                     () -> notifications.launch(Manifest.permission.POST_NOTIFICATIONS));
+        if (runtime)
+            button(body, getString(R.string.permission_setup_open), () -> startActivity(
+                    new Intent(this, com.subhub.app.help.PermissionSetupActivity.class)));
         if (!runtime && !wallet) text(body, getString(R.string.tour_no_permissions), 15, true);
     }
 

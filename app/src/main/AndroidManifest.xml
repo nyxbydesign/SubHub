@@ -102,6 +102,7 @@
         <activity android:name=".stats.AchievementsActivity" android:exported="false" />
         <activity android:name=".popup.PopupStormActivity" android:exported="false" />
         <activity android:name=".help.HelpActivity" android:exported="false" />
+        <activity android:name=".help.PermissionSetupActivity" android:exported="false" />
         <activity
             android:name=".update.UpdatesActivity"
             android:exported="false" />

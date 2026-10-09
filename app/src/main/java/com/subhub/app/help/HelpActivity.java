@@ -54,7 +54,7 @@ public final class HelpActivity extends AppCompatActivity {
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonFixPermissions.setOnClickListener(view -> repairNextPermission());
         binding.buttonAccessibility.setOnClickListener(view ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+                startActivity(new Intent(this, PermissionSetupActivity.class)));
         binding.buttonLanguage.setOnClickListener(view -> showLanguageChooser());
         binding.buttonUpdates.setOnClickListener(view ->
                 startActivity(new Intent(this, UpdatesActivity.class)));
@@ -63,13 +63,11 @@ public final class HelpActivity extends AppCompatActivity {
             editMode = ControllerEditMode.bind(this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> {
                 int actionVisibility = editing ? View.VISIBLE : View.GONE;
                 binding.buttonFixPermissions.setVisibility(actionVisibility);
-                binding.buttonAccessibility.setVisibility(actionVisibility);
                 binding.buttonLanguage.setVisibility(actionVisibility);
             });
         } else {
             PrimaryHeader.editLockButton(binding.getRoot()).setVisibility(View.GONE);
             binding.buttonFixPermissions.setVisibility(View.GONE);
-            binding.buttonAccessibility.setVisibility(View.GONE);
             binding.buttonLanguage.setVisibility(View.GONE);
         }
     }
@@ -137,6 +135,12 @@ public final class HelpActivity extends AppCompatActivity {
     }
 
     private void repairNextPermission() {
+        if (!ControllerPinManager.isDomModeActive()) return;
+        if (new com.subhub.app.settings.FeatureModuleManager(this).hasRuntimeFeature()
+                && !new com.subhub.app.appmode.AppModeManager(this).isAccessibilityEnabled()) {
+            startActivity(new Intent(this, PermissionSetupActivity.class));
+            return;
+        }
         if (!Settings.canDrawOverlays(this)) {
             overlaySettings.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName())));
@@ -153,6 +157,9 @@ public final class HelpActivity extends AppCompatActivity {
 
     private void renderPermissions() {
         List<String> missing = new ArrayList<>();
+        if (new com.subhub.app.settings.FeatureModuleManager(this).hasRuntimeFeature()
+                && !new com.subhub.app.appmode.AppModeManager(this).isAccessibilityEnabled())
+            missing.add(getString(R.string.tour_accessibility_title));
         if (!Settings.canDrawOverlays(this)) missing.add(getString(R.string.permission_overlay_name));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
