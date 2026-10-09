@@ -165,7 +165,11 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void welcome() {
         text(body, getString(R.string.tour_intro), 16, true);
-        preview(body, style, dp(175));
+        SetupFeaturePreviewView features = new SetupFeaturePreviewView(this);
+        features.setTag("setup-feature-overview");
+        LinearLayout.LayoutParams featureParams = new LinearLayout.LayoutParams(-1, -2);
+        featureParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        body.addView(features, featureParams);
         explain(body, R.drawable.ic_tab_settings, R.string.tour_dom_title, R.string.tour_dom_help);
         explain(body, R.drawable.ic_tab_home, R.string.tour_sub_title, R.string.tour_sub_help);
     }
@@ -204,8 +208,8 @@ public final class OnboardingActivity extends PreferencePage {
                     (LinearLayout.LayoutParams) item.getLayoutParams();
             itemParams.setMargins(dp(4), dp(4), dp(4), dp(8));
             item.setLayoutParams(itemParams);
-            item.setBackgroundResource(
-                    style == chosen ? R.drawable.bg_sub_hero : R.drawable.bg_card);
+            item.setBackgroundResource(R.drawable.bg_choice_card);
+            item.setSelected(style == chosen);
             preview(item, chosen, dp(86));
             Button pick =
                     button(
@@ -217,6 +221,7 @@ public final class OnboardingActivity extends PreferencePage {
                                 render();
                             });
             pick.setSelected(style == chosen);
+            pick.setTag("setup-style:" + chosen.getPreferenceValue());
             pick.setTextColor(
                     getColor(style == chosen ? R.color.text_primary : R.color.accent_hot));
             pick.setBackgroundResource(
@@ -371,7 +376,9 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void preview(LinearLayout parent, CensorAppearance.Type type, int height) {
         CensorPreviewView preview = new CensorPreviewView(this, null);
-        preview.setPhonePreview(true);
+        // Keep the woman in the main preview, and use close-up effects in the
+        // small choices so blur/pixelation remain legible at thumbnail size.
+        preview.setPhonePreview(parent == body);
         preview.setTag(type.getPreferenceValue());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, height);
         p.bottomMargin = dp(14);

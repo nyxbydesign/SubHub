@@ -188,6 +188,17 @@ public final class CensorPreviewView extends View {
                                 "rectangle",
                                 "SubHub",
                                 "Access blocked."));
+                if (type == CensorAppearance.Type.PIXELATE) {
+                    // At phone-preview scale, the ordinary thin border can disappear.
+                    // This demonstration outline never changes saved censor settings.
+                    Canvas outlined = new Canvas(phoneBitmap);
+                    brush.setStyle(Paint.Style.STROKE);
+                    brush.setStrokeWidth(3);
+                    brush.setColor(getContext().getColor(com.subhub.app.R.color.accent_text));
+                    outlined.drawRect(94, 166, 146, 191, brush);
+                    outlined.drawRect(102, 227, 144, 251, brush);
+                    brush.setStyle(Paint.Style.FILL);
+                }
             } finally {
                 source.recycle();
             }
@@ -272,6 +283,15 @@ public final class CensorPreviewView extends View {
         torso.close();
         brush.setColor(Color.rgb(191, 116, 184));
         canvas.drawPath(torso, brush);
+        // Fine, contrasting fabric stripes give blur and pixelation source detail
+        // to obscure. A flat-color outfit otherwise looks unchanged when censored.
+        int fabric = canvas.save();
+        canvas.clipPath(torso);
+        brush.setColor(Color.rgb(78, 43, 100));
+        for (int y = 154; y < 255; y += 8) canvas.drawRect(90, y, 150, y + 4, brush);
+        brush.setColor(Color.rgb(225, 191, 238));
+        for (int x = 101; x < 145; x += 14) canvas.drawRect(x, 154, x + 3, 255, brush);
+        canvas.restoreToCount(fabric);
         // A simple fitted outfit and facial detail keep the demo non-explicit.
         brush.setStyle(Paint.Style.STROKE);
         brush.setStrokeWidth(2);
