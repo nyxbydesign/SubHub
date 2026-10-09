@@ -16,8 +16,11 @@ public final class DailyDurationRecorder {
         if (app != null) return;
         app = context.getApplicationContext();
         DailyStatsStore store = DailyStatsStore.get(app);
-        try { store.syncStats(app.getSharedPreferences(StatsRepository.PREFS_NAME, 0)); store.syncWallet(); }
-        catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Daily migration pending"); }
+        store.queueStats(app.getSharedPreferences(StatsRepository.PREFS_NAME, 0));
+        worker.execute(() -> {
+            try { store.syncWallet(); }
+            catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet migration pending"); }
+        });
         worker.scheduleWithFixedDelay(DailyDurationRecorder::sample, 0, 5, TimeUnit.SECONDS);
     }
     public static void changed() { if (app != null) worker.execute(DailyDurationRecorder::sample); }

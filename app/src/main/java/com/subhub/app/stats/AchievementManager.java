@@ -33,6 +33,7 @@ import java.util.Set;
 
 /** Persistent implementation of the recovered and expanded achievement contracts. */
 public final class AchievementManager {
+    private static final Object UNLOCK_LOCK = new Object();
     private static final String PREFS_NAME = "betablocker_achievements";
     private static final String KEY_UNLOCKED = "unlocked";
     private static final String KEY_PENDING = "pending_notifications";
@@ -71,26 +72,31 @@ public final class AchievementManager {
     }
 
     public List<Achievement> checkAchievements(StatsSnapshot stats) {
-        List<Achievement> newlyUnlocked = new ArrayList<>();
-        for (Achievement value : ACHIEVEMENTS) {
-            if (unlocked.contains(value.id) || !qualifies(value.id, stats)) continue;
-            unlocked.add(value.id);
-            newlyUnlocked.add(value);
-        }
-        if (!newlyUnlocked.isEmpty()) {
-            Set<String> pending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
-            Set<String> updatedPending = new LinkedHashSet<>(
-                    pending == null ? Collections.emptySet() : pending);
-            long unlockedAt = System.currentTimeMillis();
-            SharedPreferences.Editor editor = preferences.edit()
-                    .putStringSet(KEY_UNLOCKED, new LinkedHashSet<>(unlocked));
-            for (Achievement value : newlyUnlocked) {
-                updatedPending.add(value.id);
-                editor.putLong(KEY_UNLOCKED_AT_PREFIX + value.id, unlockedAt);
+        synchronized (UNLOCK_LOCK) {
+            Set<String> current = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
+            if (current != null) unlocked.addAll(current);
+            List<Achievement> newlyUnlocked = new ArrayList<>();
+            for (Achievement value : ACHIEVEMENTS) {
+                if (unlocked.contains(value.id) || !qualifies(value.id, stats)) continue;
+                unlocked.add(value.id);
+                newlyUnlocked.add(value);
             }
-            editor.putStringSet(KEY_PENDING, updatedPending).apply();
+            if (!newlyUnlocked.isEmpty()) {
+                Set<String> pending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
+                Set<String> updatedPending = new LinkedHashSet<>(
+                        pending == null ? Collections.emptySet() : pending);
+                long unlockedAt = System.currentTimeMillis();
+                SharedPreferences.Editor editor = preferences.edit()
+                        .putStringSet(KEY_UNLOCKED, new LinkedHashSet<>(unlocked));
+                for (Achievement value : newlyUnlocked) {
+                    updatedPending.add(value.id);
+                    editor.putLong(KEY_UNLOCKED_AT_PREFIX + value.id, unlockedAt);
+                }
+                editor.putStringSet(KEY_PENDING, updatedPending).apply();
+            }
+            return newlyUnlocked;
+
         }
-        return newlyUnlocked;
     }
 
     private void backfillLegacyUnlockDates() {
@@ -112,13 +118,16 @@ public final class AchievementManager {
     }
 
     public List<Achievement> takePendingNotifications() {
-        Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
-        Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
-        if (pending.isEmpty()) return Collections.emptyList();
-        List<Achievement> result = new ArrayList<>();
-        for (Achievement value : ACHIEVEMENTS) if (pending.contains(value.id)) result.add(value);
-        preferences.edit().remove(KEY_PENDING).apply();
-        return result;
+        synchronized (UNLOCK_LOCK) {
+            Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
+            Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
+            if (pending.isEmpty()) return Collections.emptyList();
+            List<Achievement> result = new ArrayList<>();
+            for (Achievement value : ACHIEVEMENTS) if (pending.contains(value.id)) result.add(value);
+            preferences.edit().remove(KEY_PENDING).apply();
+            return result;
+
+        }
     }
 
     private boolean qualifies(String id, StatsSnapshot stats) {

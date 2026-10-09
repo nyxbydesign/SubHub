@@ -21,7 +21,9 @@ public final class StateToggle extends SwitchMaterial {
     private boolean touchFeedback;
     private ValueAnimator releaseFeedback;
 
-    public StateToggle(Context context) { this(context, null); }
+    public StateToggle(Context context) {
+        this(context, null);
+    }
 
     public StateToggle(Context context, AttributeSet attributes) {
         super(context, attributes);
@@ -37,7 +39,8 @@ public final class StateToggle extends SwitchMaterial {
         setBackground(null);
     }
 
-    @Override public boolean onTouchEvent(MotionEvent event) {
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
         if (isEnabled() && event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             clearTouchFeedback();
             touchX = event.getX();
@@ -55,11 +58,12 @@ public final class StateToggle extends SwitchMaterial {
                 releaseFeedback = ValueAnimator.ofFloat(0, 1);
                 releaseFeedback.setDuration(90);
                 releaseFeedback.setInterpolator(new DecelerateInterpolator());
-                releaseFeedback.addUpdateListener(animation -> {
-                    feedbackProgress = (float) animation.getAnimatedValue();
-                    if (feedbackProgress == 1) touchFeedback = false;
-                    invalidate();
-                });
+                releaseFeedback.addUpdateListener(
+                        animation -> {
+                            feedbackProgress = (float) animation.getAnimatedValue();
+                            if (feedbackProgress == 1) touchFeedback = false;
+                            invalidate();
+                        });
                 releaseFeedback.start();
             }
         }
@@ -75,62 +79,94 @@ public final class StateToggle extends SwitchMaterial {
         invalidate();
     }
 
-    @Override protected void onDetachedFromWindow() {
+    @Override
+    protected void onDetachedFromWindow() {
         clearTouchFeedback();
         super.onDetachedFromWindow();
     }
 
-    @Override public void setChecked(boolean checked) {
+    @Override
+    public void setChecked(boolean checked) {
         super.setChecked(checked);
         // There is no sliding thumb to animate. Finish SwitchCompat's otherwise
         // invisible 250ms animation without delaying the native checked state.
         jumpDrawablesToCurrentState();
     }
 
-    @Override public void onMeasure(int widthSpec, int heightSpec) {
+    @Override
+    public void onMeasure(int widthSpec, int heightSpec) {
         statusPaint.setTextSize(12 * getResources().getDisplayMetrics().scaledDensity);
-        int statusWidth = Math.max(dp(64), Math.round(Math.max(
-                statusPaint.measureText(getTextOn().toString()),
-                statusPaint.measureText(getTextOff().toString()))) + dp(24));
-        setSwitchMinWidth(statusWidth);
+        int statusWidth =
+                Math.max(
+                        dp(64),
+                        Math.round(
+                                        Math.max(
+                                                statusPaint.measureText(getTextOn().toString()),
+                                                statusPaint.measureText(getTextOff().toString())))
+                                + dp(24));
+        if (getSwitchMinWidth() != statusWidth) setSwitchMinWidth(statusWidth);
         super.onMeasure(widthSpec, heightSpec);
     }
 
-    @Override protected void onDraw(Canvas canvas) {
+    @Override
+    protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         int width = getSwitchMinWidth();
         int height = Math.max(dp(32), Math.round(statusPaint.getTextSize()) + dp(14));
-        float left = getLayoutDirection() == LAYOUT_DIRECTION_RTL
-                ? getPaddingLeft() : getWidth() - getPaddingRight() - width;
+        float left =
+                getLayoutDirection() == LAYOUT_DIRECTION_RTL
+                        ? getPaddingLeft()
+                        : getWidth() - getPaddingRight() - width;
         float top = (getHeight() - height) / 2f;
         statusBounds.set(left, top, left + width, top + height);
         statusPaint.setStyle(Paint.Style.FILL);
-        statusPaint.setColor(getContext().getColor(isChecked()
-                ? R.color.control_checked_surface : R.color.surface_card_raised));
+        statusPaint.setColor(
+                getContext()
+                        .getColor(
+                                isChecked()
+                                        ? R.color.control_checked_surface
+                                        : R.color.surface_card_raised));
         statusPaint.setAlpha(isEnabled() ? 255 : 110);
         canvas.drawRoundRect(statusBounds, dp(10), dp(10), statusPaint);
         statusPaint.setStyle(Paint.Style.STROKE);
         statusPaint.setStrokeWidth(dp(1));
-        statusPaint.setColor(getContext().getColor(isChecked()
-                ? R.color.control_checked_outline : R.color.text_muted));
+        statusPaint.setColor(
+                getContext()
+                        .getColor(
+                                isChecked()
+                                        ? R.color.control_checked_outline
+                                        : R.color.text_muted));
         statusPaint.setAlpha(isEnabled() ? 255 : 110);
         canvas.drawRoundRect(statusBounds, dp(10), dp(10), statusPaint);
         statusPaint.setStyle(Paint.Style.FILL);
         statusPaint.setTextAlign(Paint.Align.CENTER);
-        statusPaint.setColor(getContext().getColor(isChecked()
-                ? R.color.control_checked_text : R.color.text_secondary));
+        statusPaint.setColor(
+                getContext()
+                        .getColor(
+                                isChecked()
+                                        ? R.color.control_checked_text
+                                        : R.color.text_secondary));
         statusPaint.setAlpha(isEnabled() ? 255 : 110);
         Paint.FontMetrics metrics = statusPaint.getFontMetrics();
         float baseline = statusBounds.centerY() - (metrics.ascent + metrics.descent) / 2f;
-        canvas.drawText((isChecked() ? getTextOn() : getTextOff()).toString(),
-                statusBounds.centerX(), baseline, statusPaint);
+        canvas.drawText(
+                (isChecked() ? getTextOn() : getTextOff()).toString(),
+                statusBounds.centerX(),
+                baseline,
+                statusPaint);
         if (isEnabled() && (isFocused() || isHovered())) {
             feedbackPaint.setColor(getContext().getColor(R.color.control_focus));
             feedbackPaint.setAlpha(170);
             feedbackPaint.setStyle(Paint.Style.STROKE);
             feedbackPaint.setStrokeWidth(dp(1));
-            canvas.drawRoundRect(dp(1), dp(1), getWidth() - dp(1), getHeight() - dp(1),
-                    dp(10), dp(10), feedbackPaint);
+            canvas.drawRoundRect(
+                    dp(1),
+                    dp(1),
+                    getWidth() - dp(1),
+                    getHeight() - dp(1),
+                    dp(10),
+                    dp(10),
+                    feedbackPaint);
         }
         if (isEnabled() && touchFeedback) {
             feedbackPaint.setColor(getContext().getColor(R.color.control_focus));

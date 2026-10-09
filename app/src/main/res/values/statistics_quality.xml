@@ -15,4 +15,6 @@
 <plurals name="stats_saved_count"><item quantity="one">%d saved session</item><item quantity="other">%d saved sessions</item></plurals>
 <item type="id" name="stats_sessions_empty_filter"/>
 <string name="stats_seconds_value">%1$d s</string>
+<string name="settings_apps_unavailable">Could not load installed apps.</string>
+<string name="custom_images_unavailable">Could not load images.</string>
 </resources>

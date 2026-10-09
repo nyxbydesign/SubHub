@@ -1064,7 +1064,6 @@
     <string name="achievement_subliminal_10000">Second Nature</string>
     <string name="achievement_desc_subliminal_10000">Receive 10,000 subliminal messages</string>
     <string name="home_arrangement_title">Your Arrangement</string>
-    <string name="home_arrangement_hint">Tap a card for details</string>
     <string name="arrangement_detail_line">%1$s\n%2$s</string>
     <string name="arrangement_apps">Assigned Apps</string>
     <string name="arrangement_all_apps">Every Supported App</string>

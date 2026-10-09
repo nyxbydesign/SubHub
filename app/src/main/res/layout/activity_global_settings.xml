@@ -212,12 +212,14 @@
                             android:layout_height="wrap_content"
                             android:layout_gravity="center"
                             android:layout_marginTop="14dp" />
-                        <LinearLayout
+                        <ListView
                             android:id="@+id/app_list"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:orientation="vertical" />
+                            android:layout_height="360dp"
+                            android:nestedScrollingEnabled="true"
+                            android:divider="@android:color/transparent"
+                            android:dividerHeight="6dp"
+                            android:clipToPadding="false" />
                     </LinearLayout>
                 </LinearLayout>
                 <LinearLayout

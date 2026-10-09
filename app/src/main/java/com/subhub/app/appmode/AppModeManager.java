@@ -94,6 +94,22 @@ public final class AppModeManager {
         editor.commit();
     }
 
+    /** UI-only scope edits publish all choices together without rewriting service state. */
+    public void saveUiSelections(AppModePolicy.Mode mode, Set<String> censorPackages,
+            Set<String> timerPackages, Set<String> subliminalPackages) {
+        preferences.edit()
+                .putString(KEY_MODE, mode == AppModePolicy.Mode.SELECTED_APPS
+                        ? MODE_SELECTED : MODE_ALWAYS)
+                .putBoolean(KEY_MODE_EXPLICIT, true)
+                .putStringSet(KEY_SELECTED_PACKAGES,
+                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(censorPackages)))
+                .putStringSet(KEY_TIMER_PACKAGES,
+                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(timerPackages)))
+                .putStringSet(KEY_SUBLIMINAL_PACKAGES,
+                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(subliminalPackages)))
+                .apply();
+    }
+
     /** Compatibility overload for tests and older integrations. */
     public void saveAppSelections(Set<String> censorPackages, Set<String> timerPackages) {
         saveAppSelections(censorPackages, timerPackages, getSubliminalPackages());

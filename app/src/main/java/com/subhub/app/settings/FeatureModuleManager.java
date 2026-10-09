@@ -34,7 +34,7 @@ public final class FeatureModuleManager {
     }
 
     public void setSubliminalEnabled(boolean enabled) {
-        preferences.edit().putBoolean(KEY_SUBLIMINAL_ENABLED, enabled).commit();
+        preferences.edit().putBoolean(KEY_SUBLIMINAL_ENABLED, enabled).apply();
     }
 
     public boolean hasRuntimeFeature() {
@@ -48,7 +48,7 @@ public final class FeatureModuleManager {
                 .putBoolean(KEY_LIMITS_ENABLED, limits)
                 .putBoolean(KEY_WALLET_ENABLED, wallet)
                 .putBoolean(KEY_SUBLIMINAL_ENABLED, subliminal)
-                .commit();
+                .apply();
     }
 
     /** Compatibility overload used by older callers; preserves the independent new module. */
