@@ -106,7 +106,7 @@ final class PackSectionEditor {
                 StateToggle check = new StateToggle(activity);
                 check.setText(field.label);
                 check.setTextColor(activity.getColor(R.color.text_primary));
-                check.setTextSize(14f);
+                com.subhub.app.util.UiIdentity.textSize(check, R.dimen.ui_text_body);
                 check.setMinHeight(dp(48));
                 check.setTag(field.key);
                 check.setChecked(working.optBoolean(field.key));
@@ -209,7 +209,7 @@ final class PackSectionEditor {
         }
         EditText input = new EditText(activity, null, 0, R.style.Widget_SubHub_Input);
         input.setMinHeight(dp(48));
-        input.setTextSize(14f);
+        com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
         input.setTextColor(activity.getColor(R.color.text_primary));
         boolean multiline = field.kind == PackSettingCatalog.Kind.SELECTION
                 || "subliminal_custom_phrases".equals(field.key) || "error_popup_text".equals(field.key);
@@ -452,7 +452,8 @@ final class PackSectionEditor {
         TextView result = new TextView(activity);
         result.setText(text);
         result.setTextColor(activity.getColor(heading ? R.color.text_primary : R.color.text_secondary));
-        result.setTextSize(heading ? 14f : 12f);
+        com.subhub.app.util.UiIdentity.textSize(result,
+                heading ? R.dimen.ui_text_row_title : R.dimen.ui_text_label);
         result.setPadding(0, dp(4), 0, dp(4));
         if (heading) ViewCompat.setAccessibilityHeading(result, true);
         return result;
@@ -464,7 +465,6 @@ final class PackSectionEditor {
         result.setAllCaps(false);
         result.setMinHeight(dp(48));
         result.setMinimumHeight(dp(48));
-        result.setTextSize(14f);
         result.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         return result;

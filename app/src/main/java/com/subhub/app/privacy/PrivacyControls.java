@@ -129,7 +129,7 @@ public final class PrivacyControls {
         StateToggle control = new StateToggle(activity);
         control.setId(id);
         control.setText(label);
-        control.setTextSize(14);
+        com.subhub.app.util.UiIdentity.textSize(control, R.dimen.ui_text_body);
         control.setTextColor(activity.getColor(R.color.text_primary));
         control.setChecked(value);
         control.setOnCheckedChangeListener(
@@ -156,7 +156,7 @@ public final class PrivacyControls {
     private void help(int label) {
         TextView text = new TextView(activity);
         text.setText(label);
-        text.setTextSize(12);
+        com.subhub.app.util.UiIdentity.textSize(text, R.dimen.ui_text_label);
         text.setTextColor(activity.getColor(R.color.text_secondary));
         int pad = Math.round(8 * activity.getResources().getDisplayMetrics().density);
         text.setPadding(0, 0, 0, pad);

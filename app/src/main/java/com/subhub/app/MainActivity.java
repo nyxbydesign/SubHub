@@ -737,14 +737,14 @@ public final class MainActivity extends AppCompatActivity {
             row.setPadding(0, dp(11), 0, dp(11));
             TextView label = new TextView(this);
             label.setText(detail.label);
-            label.setTextSize(12);
+            com.subhub.app.util.UiIdentity.textSize(label, R.dimen.ui_text_label);
             label.setTextColor(getColor(R.color.accent_text));
             label.setTypeface(null, android.graphics.Typeface.BOLD);
             androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
             row.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
             TextView value = new TextView(this);
             value.setText(detail.value);
-            value.setTextSize(15);
+            com.subhub.app.util.UiIdentity.textSize(value, R.dimen.ui_text_section);
             value.setTextColor(getColor(R.color.text_primary));
             value.setPadding(0, dp(4), 0, 0);
             value.setLineSpacing(dp(2), 1f);

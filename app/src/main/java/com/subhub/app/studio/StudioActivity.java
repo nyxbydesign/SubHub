@@ -316,7 +316,7 @@ public final class StudioActivity extends AppCompatActivity {
             StateToggle include = new StateToggle(this);
             include.setText(getString(R.string.pack_editor_include_section, sectionTitle(section)));
             include.setTextColor(getColor(R.color.text_primary));
-            include.setTextSize(14f);
+            com.subhub.app.util.UiIdentity.textSize(include, R.dimen.ui_text_body);
             include.setMinHeight(dp(48));
             include.setTag("pack_include:" + section);
             card.addView(include);
@@ -960,7 +960,7 @@ public final class StudioActivity extends AppCompatActivity {
     private Button outlineButton(String text) {
         Button button = new Button(this, null, 0, R.style.Widget_SubHub_CompactOutlineButton);
         button.setText(text);
-        button.setTextSize(14f);
+        com.subhub.app.util.UiIdentity.textSize(button, R.dimen.ui_text_body);
         button.setAllCaps(false);
         button.setMinHeight(dp(48));
         button.setMinimumHeight(dp(48));
@@ -979,7 +979,8 @@ public final class StudioActivity extends AppCompatActivity {
         TextView value = new TextView(this);
         value.setText(text);
         value.setTextColor(getColor(title ? R.color.text_primary : R.color.text_secondary));
-        value.setTextSize(title ? 15f : 12f);
+        com.subhub.app.util.UiIdentity.textSize(value,
+                title ? R.dimen.ui_text_section : R.dimen.ui_text_label);
         if (title) value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         if (!title) value.setPadding(0, dp(3), 0, 0);
         return value;

@@ -22,28 +22,28 @@
             android:id="@+id/censor_lab_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="@dimen/ui_gap_section"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_lab_title"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/censor_lab_status"
                 style="@style/Widget.SubHub.DiagnosticsText"
-                android:layout_marginTop="8dp" />
+                android:layout_marginTop="@dimen/ui_gap_control" />
 
             <TextView
                 android:id="@+id/censor_lab_sync_marker"
                 android:layout_width="match_parent"
                 android:layout_height="96dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:background="@color/accent"
                 android:gravity="center"
                 android:textColor="@color/background"
@@ -54,7 +54,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:orientation="horizontal">
 
                 <Button
@@ -76,35 +76,35 @@
             <Button
                 android:id="@+id/button_censor_lab_save"
                 style="@style/Widget.SubHub.PrimaryButton"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:text="@string/diagnostics_lab_save" />
 
             <Button
                 android:id="@+id/button_censor_lab_attach"
                 style="@style/Widget.SubHub.PrimaryButton"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:text="@string/diagnostics_lab_share_bundle" />
 
             <Button
                 android:id="@+id/button_censor_lab_share_trace"
                 style="@style/Widget.SubHub.PrimaryButton"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:text="@string/diagnostics_lab_share_trace" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="@dimen/ui_gap_section"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_runtime"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
@@ -115,16 +115,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_performance"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
@@ -136,7 +136,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:minHeight="52dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:text="@string/diagnostics_overlay"
                 android:textColor="@color/text_primary" />
 
@@ -145,22 +145,22 @@
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_overlay_desc"
                 android:textColor="@color/text_muted"
-                android:textSize="11sp" />
+                android:textSize="@dimen/ui_text_caption" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_configuration"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
@@ -171,16 +171,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_permissions"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
@@ -191,16 +191,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/ui_card_padding">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/diagnostics_build"
-                android:textColor="@color/accent"
+                android:textColor="@color/accent_text"
                 android:textStyle="bold" />
 
             <TextView
@@ -211,7 +211,7 @@
         <Button
             android:id="@+id/button_refresh"
             style="@style/Widget.SubHub.PrimaryButton"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/ui_gap_group"
             android:text="@string/diagnostics_refresh" />
     </LinearLayout>
 </ScrollView>

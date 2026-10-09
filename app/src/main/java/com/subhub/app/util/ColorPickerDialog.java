@@ -33,7 +33,7 @@ public final class ColorPickerDialog {
         preview.setMinHeight(padding * 3);
         preview.setGravity(android.view.Gravity.CENTER);
         preview.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
-        preview.setTextSize(18);
+        com.subhub.app.util.UiIdentity.textSize(preview, R.dimen.ui_text_title);
         preview.setTag("color_preview");
         body.addView(preview);
         Wheel wheel = new Wheel(context);
@@ -72,7 +72,7 @@ public final class ColorPickerDialog {
             final int channel = index;
             captions[index] = new TextView(context);
             captions[index].setTextColor(context.getColor(R.color.text_primary));
-            captions[index].setTextSize(14);
+            com.subhub.app.util.UiIdentity.textSize(captions[index], R.dimen.ui_text_row_title);
             body.addView(captions[index]);
             SeekBar slider = new SeekBar(context);
             sliders[index] = slider; slider.setMax(255);

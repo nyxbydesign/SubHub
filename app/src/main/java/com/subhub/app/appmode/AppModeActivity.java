@@ -389,7 +389,7 @@ public final class AppModeActivity extends AppCompatActivity {
     private void message(int label) {
         TextView empty = new TextView(this);
         empty.setText(label);
-        empty.setTextSize(13);
+        com.subhub.app.util.UiIdentity.textSize(empty, R.dimen.ui_text_body);
         empty.setTextColor(getColor(R.color.text_secondary));
         empty.setPadding(0, dp(8), 0, dp(8));
         binding.perAppAllowancesList.addView(empty, new LinearLayout.LayoutParams(-1, -2));

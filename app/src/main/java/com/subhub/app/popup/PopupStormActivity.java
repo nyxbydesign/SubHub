@@ -415,7 +415,6 @@ public final class PopupStormActivity extends AppCompatActivity {
             option.setTag(values[index]);
             option.setText(labels[index]);
             option.setTextColor(getColor(R.color.text_primary));
-            option.setTextSize(11);
             option.setEnabled(ControllerPinManager.isSessionUnlocked());
             option.setSelected(values[index].equals(selected));
             option.setMinHeight(dp(48));
@@ -451,7 +450,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         input.setMaxLines(1);
         input.setText(preferences.getString(key, defaultValue));
         input.setTextColor(getColor(R.color.text_primary));
-        input.setTextSize(12);
+        com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
         input.setEnabled(ControllerPinManager.isSessionUnlocked());
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         View.OnFocusChangeListener save = (view, focused) -> {
@@ -519,7 +518,6 @@ public final class PopupStormActivity extends AppCompatActivity {
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                 Button remove = new Button(this);
                 remove.setText(R.string.popup_remove);
-                remove.setTextSize(11);
                 remove.setAllCaps(false);
                 remove.setBackgroundResource(R.drawable.bg_outline_button);
                 remove.setTextColor(getColor(R.color.accent));
