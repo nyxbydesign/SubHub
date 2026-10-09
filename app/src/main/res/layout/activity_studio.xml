@@ -43,7 +43,7 @@
                 android:orientation="vertical">
                 <Button android:id="@+id/button_import" style="@style/Widget.SubHub.PrimaryButton"
                     android:text="@string/studio_import" />
-                <TextView android:id="@+id/library_empty" android:layout_width="match_parent"
+                <TextView android:textSize="@dimen/ui_text_body" android:id="@+id/library_empty" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_group"
                     android:background="@drawable/bg_card" android:padding="@dimen/ui_card_padding"
                     android:text="@string/studio_library_empty" android:textColor="@color/text_muted" />
@@ -54,7 +54,7 @@
             <LinearLayout android:id="@+id/drafts_panel" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_group"
                 android:orientation="vertical" android:visibility="gone">
-                <TextView android:id="@+id/drafts_empty" android:layout_width="match_parent"
+                <TextView android:textSize="@dimen/ui_text_body" android:id="@+id/drafts_empty" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:background="@drawable/bg_card"
                     android:padding="@dimen/ui_card_padding" android:text="@string/studio_drafts_empty"
                     android:textColor="@color/text_muted" />
@@ -155,7 +155,7 @@
                     <CheckBox android:id="@+id/recommend_hardcore" android:layout_width="match_parent"
                         android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_control"
                         android:text="@string/studio_recommend_hardcore"
-                        android:textColor="@color/text_primary" />
+                        />
                     <Spinner android:id="@+id/recommend_duration" android:layout_width="match_parent"
                         android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="@dimen/ui_gap_inline" />
                 </LinearLayout>

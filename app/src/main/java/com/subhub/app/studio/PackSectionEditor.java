@@ -100,12 +100,11 @@ final class PackSectionEditor {
                 }
             }
             LinearLayout row = column();
-            row.setPadding(0, dp(5), 0, dp(5));
+            row.setPadding(0, 0, 0, 0);
             rows.put(field.key, row);
             if (field.kind == PackSettingCatalog.Kind.BOOLEAN) {
                 StateToggle check = new StateToggle(activity);
                 check.setText(field.label);
-                check.setTextColor(activity.getColor(R.color.text_primary));
                 com.subhub.app.util.UiIdentity.textSize(check, R.dimen.ui_text_body);
                 check.setMinHeight(dp(48));
                 check.setTag(field.key);
@@ -125,7 +124,9 @@ final class PackSectionEditor {
                 control.setContentDescription(activity.getString(field.label));
                 name.setLabelFor(control.getId());
                 controls.put(field.key, control);
-                row.addView(control);
+                LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(-1, -2);
+                controlParams.topMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_inline);
+                row.addView(control, controlParams);
             }
             if ("censor_coverage".equals(field.key)) {
                 row.addView(label(activity.getString(R.string.pack_editor_image_coverage_help), false));
@@ -189,8 +190,9 @@ final class PackSectionEditor {
             for (String value : field.choices) {
                 labels.add(activity.getString(PackSettingCatalog.choiceLabel(field, value)));
             }
-            spinner.setAdapter(new ArrayAdapter<>(activity,
-                    android.R.layout.simple_spinner_dropdown_item, labels));
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(activity, R.layout.view_form_spinner_value, labels);
+            adapter.setDropDownViewResource(R.layout.view_form_spinner_option);
+            spinner.setAdapter(adapter);
             spinner.setMinimumHeight(dp(48));
             spinner.setSelection(Math.max(0, field.choices.indexOf(String.valueOf(working.opt(field.key)))));
             spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
@@ -210,19 +212,18 @@ final class PackSectionEditor {
         EditText input = new EditText(activity, null, 0, R.style.Widget_SubHub_Input);
         input.setMinHeight(dp(48));
         com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
-        input.setTextColor(activity.getColor(R.color.text_primary));
         boolean multiline = field.kind == PackSettingCatalog.Kind.SELECTION
                 || "subliminal_custom_phrases".equals(field.key) || "error_popup_text".equals(field.key);
         if (multiline) {
-            input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+            com.subhub.app.util.UiIdentity.inputType(input, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
             input.setMinLines(3);
             input.setMaxLines(8);
             input.setHorizontallyScrolling(false);
         } else if (field.kind == PackSettingCatalog.Kind.TEXT || field.kind == PackSettingCatalog.Kind.COLOR) {
-            input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            com.subhub.app.util.UiIdentity.inputType(input, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             input.setSingleLine(true);
         } else {
-            input.setInputType(InputType.TYPE_CLASS_NUMBER
+            com.subhub.app.util.UiIdentity.inputType(input, InputType.TYPE_CLASS_NUMBER
                     | (field.kind == PackSettingCatalog.Kind.MONEY || field.kind == PackSettingCatalog.Kind.DECIMAL
                     || field.kind == PackSettingCatalog.Kind.RATIO ? InputType.TYPE_NUMBER_FLAG_DECIMAL : 0));
             input.setSingleLine(true);
@@ -418,7 +419,6 @@ final class PackSectionEditor {
             }
             if (field.group == R.string.pack_group_timing && !"subliminal_advanced".equals(field.key)) {
                 controls.get(field.key).setEnabled(working.optBoolean("subliminal_advanced"));
-                controls.get(field.key).setAlpha(working.optBoolean("subliminal_advanced") ? 1f : .55f);
             }
         }
     }
@@ -449,13 +449,13 @@ final class PackSectionEditor {
     }
 
     private TextView label(String text, boolean heading) {
-        TextView result = new TextView(activity);
+        TextView result = (TextView) android.view.LayoutInflater.from(activity).inflate(
+                heading ? R.layout.view_form_label : R.layout.view_form_help, null, false);
         result.setText(text);
-        result.setTextColor(activity.getColor(heading ? R.color.text_primary : R.color.text_secondary));
-        com.subhub.app.util.UiIdentity.textSize(result,
-                heading ? R.dimen.ui_text_row_title : R.dimen.ui_text_label);
-        result.setPadding(0, dp(4), 0, dp(4));
-        if (heading) ViewCompat.setAccessibilityHeading(result, true);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = heading ? 0
+                : activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_inline);
+        result.setLayoutParams(params);
         return result;
     }
 

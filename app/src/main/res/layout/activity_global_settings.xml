@@ -45,9 +45,7 @@
                     android:text="@string/hardcore_title" />
                 <com.subhub.app.util.StateToggle
                     android:id="@+id/switch_hardcore_mode"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:minHeight="48dp" android:textSize="@dimen/ui_text_row_title"
-                    android:textColor="@color/text_primary" android:text="@string/hardcore_title" />
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/hardcore_title" />
                 <TextView style="@style/Widget.SubHub.FieldHelp"
                     android:layout_marginTop="0dp"
                     android:text="@string/hardcore_body" />

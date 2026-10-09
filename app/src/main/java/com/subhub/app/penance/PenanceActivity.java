@@ -357,19 +357,15 @@ public final class PenanceActivity extends AppCompatActivity {
         boolean editable = enabled && ControllerPinManager.isSessionUnlocked();
         binding.paidPauseAmount.setEnabled(editable);
         binding.paidPauseMinutes.setEnabled(editable);
-        binding.paidPauseAmount.setAlpha(enabled ? 1f : 0.45f);
-        binding.paidPauseMinutes.setAlpha(enabled ? 1f : 0.45f);
     }
 
     private void syncRuleInputState(CompoundButton toggle, EditText amount, View... dependents) {
         boolean ruleEnabled = toggle.isChecked();
         boolean editable = ruleEnabled && ControllerPinManager.isSessionUnlocked();
         amount.setEnabled(editable);
-        amount.setAlpha(ruleEnabled ? 1f : 0.45f);
         if (dependents == null) return;
         for (View dependent : dependents) {
             dependent.setEnabled(editable);
-            dependent.setAlpha(ruleEnabled ? 1f : 0.45f);
         }
     }
 

@@ -156,7 +156,6 @@ public final class CensorImageEditor implements AutoCloseable {
             row.addView(preview, new LinearLayout.LayoutParams(dp(56), dp(56)));
             SwitchMaterial enabled = new com.subhub.app.util.StateToggle(activity);
             enabled.setText(R.string.custom_images_enabled);
-            enabled.setTextColor(activity.getColor(R.color.text_primary));
             enabled.setChecked(entry.isEnabled());
             enabled.setEnabled(editing);
             enabled.setMinimumHeight(dp(48));

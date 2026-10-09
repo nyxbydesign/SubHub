@@ -27,12 +27,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_lab_title"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_lab_title" />
 
             <TextView
                 android:id="@+id/censor_lab_status"
@@ -100,12 +98,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_runtime"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_runtime" />
 
             <TextView
                 android:id="@+id/runtime_status"
@@ -120,12 +116,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_performance"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_performance" />
 
             <TextView
                 android:id="@+id/performance_status"
@@ -135,10 +129,8 @@
                 android:id="@+id/switch_diagnostics_overlay"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="52dp"
                 android:layout_marginTop="@dimen/ui_gap_control"
-                android:text="@string/diagnostics_overlay"
-                android:textColor="@color/text_primary" />
+                android:text="@string/diagnostics_overlay" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -156,12 +148,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_configuration"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_configuration" />
 
             <TextView
                 android:id="@+id/configuration_status"
@@ -176,12 +166,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_permissions"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_permissions" />
 
             <TextView
                 android:id="@+id/permissions_status"
@@ -196,12 +184,10 @@
             android:orientation="vertical"
             android:padding="@dimen/ui_card_padding">
 
-            <TextView
+            <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/diagnostics_build"
-                android:textColor="@color/accent_text"
-                android:textStyle="bold" />
+                android:text="@string/diagnostics_build" />
 
             <TextView
                 android:id="@+id/build_status"

@@ -435,7 +435,6 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.gradientEnd.setEnabled(active && editing);
         binding.gradientColors.setAlpha(active ? 1f : .5f);
         binding.switchAnimateBorder.setEnabled(active && editing);
-        binding.switchAnimateBorder.setAlpha(active ? 1f : .5f);
         setEnabledRecursive(binding.borderEffectGroup, active && editing);
         binding.borderEffectGroup.setAlpha(active ? 1f : .5f);
     }

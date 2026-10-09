@@ -70,16 +70,15 @@ public final class ColorPickerDialog {
         };
         for (int index = 0; index < 4; index++) {
             final int channel = index;
-            captions[index] = new TextView(context);
-            captions[index].setTextColor(context.getColor(R.color.text_primary));
-            com.subhub.app.util.UiIdentity.textSize(captions[index], R.dimen.ui_text_row_title);
+            captions[index] = (TextView) android.view.LayoutInflater.from(context)
+                    .inflate(R.layout.view_form_label, body, false);
             body.addView(captions[index]);
             SeekBar slider = new SeekBar(context);
             sliders[index] = slider; slider.setMax(255);
             slider.setKeyProgressIncrement(1);
             slider.setFocusable(true);
             slider.setFocusableInTouchMode(true);
-            slider.setMinimumHeight(padding * 3);
+            slider.setMinimumHeight(context.getResources().getDimensionPixelSize(R.dimen.control_min_height));
             slider.setProgressTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.accent)));
             slider.setThumbTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.accent_text)));
             slider.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.outline_subtle)));

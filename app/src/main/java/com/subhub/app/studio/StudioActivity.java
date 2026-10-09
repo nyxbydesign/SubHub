@@ -248,8 +248,9 @@ public final class StudioActivity extends AppCompatActivity {
                 getString(R.string.studio_recommend_30d),
                 getString(R.string.studio_recommend_permanent)
         };
-        binding.recommendDuration.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, durations));
+        ArrayAdapter<String> durationAdapter = new ArrayAdapter<>(this, R.layout.view_form_spinner_value, durations);
+        durationAdapter.setDropDownViewResource(R.layout.view_form_spinner_option);
+        binding.recommendDuration.setAdapter(durationAdapter);
         addMetadataWatcher(binding.packName);
         addMetadataWatcher(binding.packAuthor);
         addMetadataWatcher(binding.packDescription);
@@ -315,7 +316,6 @@ public final class StudioActivity extends AppCompatActivity {
 
             StateToggle include = new StateToggle(this);
             include.setText(getString(R.string.pack_editor_include_section, sectionTitle(section)));
-            include.setTextColor(getColor(R.color.text_primary));
             com.subhub.app.util.UiIdentity.textSize(include, R.dimen.ui_text_body);
             include.setMinHeight(dp(48));
             include.setTag("pack_include:" + section);

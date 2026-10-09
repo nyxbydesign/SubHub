@@ -30,18 +30,16 @@
                 android:layout_marginTop="@dimen/ui_gap_group" android:background="@drawable/bg_card"
                 android:orientation="vertical" android:padding="12dp">
                 <com.subhub.app.util.StateToggle android:id="@+id/total_limit_enabled"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
-                    android:text="@string/limits_combined" android:textColor="@color/text_primary"
-                    android:textSize="@dimen/ui_text_row_title" android:textStyle="bold" />
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/limits_combined" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="@dimen/ui_gap_inline">
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:layout_marginEnd="10dp" android:labelFor="@id/total_limit_minutes"
                         android:text="@string/limits_daily_minutes" android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_body" />
                     <EditText android:id="@+id/total_limit_minutes" style="@style/Widget.SubHub.Input"
-                        android:layout_width="104dp" android:layout_height="48dp" android:minHeight="48dp"
-                        android:gravity="center" android:inputType="number" android:maxLength="4" android:singleLine="true"
-                        android:includeFontPadding="false" android:textSize="@dimen/ui_text_row_title" />
+                        android:layout_width="104dp" android:layout_height="48dp"
+                        android:gravity="center" android:inputType="number" android:maxLength="4" android:singleLine="true" />
                 </LinearLayout>
                 <TextView android:id="@+id/limits_combined_usage" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_control"
@@ -55,9 +53,8 @@
                 android:layout_marginHorizontal="@dimen/page_margin" android:layout_marginTop="@dimen/ui_gap_group"
                 android:background="@drawable/bg_card" android:orientation="vertical">
                 <com.subhub.app.util.StateToggle android:id="@+id/per_app_limit_enabled"
-                    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
-                    android:text="@string/limits_per_app" android:textColor="@color/text_primary"
-                    android:textSize="@dimen/ui_text_row_title" android:textStyle="bold" />
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/limits_per_app" />
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:gravity="end" android:text="@string/limits_minutes_per_day"
                     android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_caption" />

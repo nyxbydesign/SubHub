@@ -92,24 +92,24 @@
             android:orientation="vertical" android:padding="@dimen/ui_gap_group">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/subliminal_packs_title" />
-            <GridLayout android:id="@+id/message_packs_grid" android:layout_width="match_parent"
-                android:layout_height="wrap_content" android:columnCount="2">
-            <CheckBox android:id="@+id/pack_obedience" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+            <com.subhub.app.util.SelectionGrid android:id="@+id/message_packs_grid" android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+            <CheckBox android:id="@+id/pack_obedience" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
-                android:text="@string/subliminal_pack_obedience" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_focus" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:text="@string/subliminal_pack_obedience" />
+            <CheckBox android:id="@+id/pack_focus" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
-                android:text="@string/subliminal_pack_focus" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_beta" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:text="@string/subliminal_pack_focus" />
+            <CheckBox android:id="@+id/pack_beta" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
-                android:text="@string/subliminal_pack_beta" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_findom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:text="@string/subliminal_pack_beta" />
+            <CheckBox android:id="@+id/pack_findom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
-                android:text="@string/subliminal_pack_findom" android:textColor="@color/text_primary" />
-            <CheckBox android:id="@+id/pack_custom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp" android:layout_columnWeight="1"
+                android:text="@string/subliminal_pack_findom" />
+            <CheckBox android:id="@+id/pack_custom" style="@style/Widget.SubHub.GridSelectionTile" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:minHeight="@dimen/control_min_height" android:buttonTint="@color/toggle_tint"
-                android:text="@string/subliminal_pack_custom" android:textColor="@color/text_primary" />
-            </GridLayout>
+                android:text="@string/subliminal_pack_custom" />
+            </com.subhub.app.util.SelectionGrid>
             <LinearLayout android:id="@+id/custom_phrases_section"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical">
@@ -117,12 +117,9 @@
                 android:text="@string/subliminal_custom_title" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
                 android:text="@string/subliminal_custom_help" />
-            <EditText android:id="@+id/custom_phrases" android:layout_width="match_parent"
-                android:layout_height="150dp" android:layout_marginTop="@dimen/ui_gap_control"
-                android:background="@drawable/bg_header_card" android:gravity="top|start"
-                android:hint="@string/subliminal_custom_hint" android:inputType="textMultiLine"
-                android:padding="12dp" android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_muted" />
+            <EditText android:id="@+id/custom_phrases" style="@style/Widget.SubHub.Input" android:layout_width="match_parent"
+                android:layout_height="150dp" android:layout_marginTop="@dimen/ui_gap_inline" android:gravity="top|start"
+                android:hint="@string/subliminal_custom_hint" android:inputType="textMultiLine" />
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>

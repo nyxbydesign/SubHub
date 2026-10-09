@@ -10,6 +10,12 @@ public final class UiIdentity {
     private UiIdentity() {}
 
     public static void textSize(TextView view, @DimenRes int size) {
-        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, view.getResources().getDimension(size));
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, view.getResources().getDimensionPixelSize(size));
+    }
+
+    public static void inputType(android.widget.EditText view, int type) {
+        android.graphics.Typeface typeface = view.getTypeface();
+        view.setInputType(type);
+        view.setTypeface(typeface);
     }
 }

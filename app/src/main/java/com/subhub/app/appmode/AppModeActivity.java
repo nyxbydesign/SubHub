@@ -292,11 +292,9 @@ public final class AppModeActivity extends AppCompatActivity {
         boolean perAppEnabled = binding.perAppLimitEnabled.isChecked();
         for (EditText input : allowanceInputs.values()) {
             input.setEnabled(editingUnlocked && perAppEnabled);
-            input.setAlpha(perAppEnabled ? 1f : 0.5f);
         }
         binding.totalLimitMinutes.setEnabled(
                 editingUnlocked && binding.totalLimitEnabled.isChecked());
-        binding.totalLimitMinutes.setAlpha(binding.totalLimitEnabled.isChecked() ? 1f : 0.5f);
         renderTimerUsage();
     }
 

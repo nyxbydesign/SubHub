@@ -203,7 +203,8 @@ public final class ControllerPinGate {
         TextView view = new TextView(activity);
         view.setText(text);
         view.setTextColor(activity.getColor(R.color.text_secondary));
-        com.subhub.app.util.UiIdentity.textSize(view, R.dimen.ui_text_label);
+        com.subhub.app.util.UiIdentity.textSize(view, R.dimen.ui_text_caption);
+        view.setIncludeFontPadding(false);
         view.setPadding(0, 0, 0, dp(activity, 10));
         return view;
     }
@@ -213,10 +214,8 @@ public final class ControllerPinGate {
         input.setHint(hint);
         input.setSingleLine(true);
         input.setMaxLines(1);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER
+        com.subhub.app.util.UiIdentity.inputType(input, InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        input.setTextColor(activity.getColor(R.color.text_primary));
-        input.setHintTextColor(activity.getColor(R.color.text_muted));
         input.setBackgroundTintList(null);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

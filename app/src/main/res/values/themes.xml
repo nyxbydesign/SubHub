@@ -163,29 +163,39 @@
     <style name="Widget.SubHub.FieldLabel" parent="">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:layout_marginTop">@dimen/ui_gap_control</item>
         <item name="android:textColor">@color/text_primary</item>
         <item name="android:textSize">@dimen/ui_text_label</item>
         <item name="android:textStyle">bold</item>
+        <item name="android:includeFontPadding">false</item>
     </style>
 
     <style name="Widget.SubHub.FieldHelp" parent="">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">3dp</item>
+        <item name="android:layout_marginTop">@dimen/ui_gap_inline</item>
         <item name="android:textColor">@color/text_secondary</item>
         <item name="android:textSize">@dimen/ui_text_caption</item>
         <item name="android:lineSpacingExtra">2dp</item>
+        <item name="android:includeFontPadding">false</item>
     </style>
 
     <style name="Widget.SubHub.Input" parent="Widget.AppCompat.EditText">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">48dp</item>
+        <item name="android:layout_marginTop">@dimen/ui_gap_inline</item>
+        <item name="android:minHeight">@dimen/control_min_height</item>
         <item name="android:background">@drawable/bg_input</item>
-        <item name="android:paddingStart">12dp</item>
-        <item name="android:paddingEnd">12dp</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:paddingStart">@dimen/ui_gap_group</item>
+        <item name="android:paddingEnd">@dimen/ui_gap_group</item>
+        <item name="android:paddingTop">@dimen/ui_gap_control</item>
+        <item name="android:paddingBottom">@dimen/ui_gap_control</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:textColor">@color/control_text</item>
         <item name="android:textColorHint">@color/text_muted</item>
         <item name="android:textSize">@dimen/ui_text_body</item>
     </style>
@@ -306,61 +316,26 @@
         <item name="android:elevation">2dp</item>
     </style>
 
-    <style name="Widget.SubHub.RuleToggle" parent="">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:buttonTint">@color/toggle_tint</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="android:textSize">@dimen/ui_text_caption</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:includeFontPadding">false</item>
+    <style name="Widget.SubHub.RuleToggle" parent="Widget.SubHub.Switch">
     </style>
 
-    <style name="Widget.SubHub.RuleHelp" parent="">
-    <item name="android:layout_width">match_parent</item>
-    <item name="android:layout_height">wrap_content</item>
-    <item name="android:minHeight">0dp</item>
-    <item name="android:textColor">@color/text_secondary</item>
-    <item name="android:textSize">@dimen/ui_text_caption</item>
-    <item name="android:includeFontPadding">false</item>
-</style>
+    <style name="Widget.SubHub.RuleHelp" parent="Widget.SubHub.FieldHelp">
+    </style>
 
-    <style name="Widget.SubHub.RuleCostLabel" parent="">
-    <item name="android:layout_width">match_parent</item>
-    <item name="android:layout_height">wrap_content</item>
-    <item name="android:minHeight">20dp</item>
-    <item name="android:gravity">center_vertical</item>
-    <item name="android:includeFontPadding">false</item>
-    <item name="android:text">@string/penance_rule_cost_label</item>
-    <item name="android:textColor">@color/text_secondary</item>
-    <item name="android:textSize">@dimen/ui_text_caption</item>
-    <item name="android:textStyle">bold</item>
-</style>
+    <style name="Widget.SubHub.RuleCostLabel" parent="Widget.SubHub.WalletFieldLabel">
+        <item name="android:text">@string/penance_rule_cost_label</item>
+    </style>
 
-    <style name="Widget.SubHub.MoneyInput" parent="">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">3dp</item>
-        <item name="android:background">@drawable/bg_input</item>
+    <style name="Widget.SubHub.MoneyInput" parent="Widget.SubHub.Input">
         <item name="android:hint">@string/penance_strike_hint</item>
         <item name="android:inputType">numberDecimal</item>
         <item name="android:maxLines">1</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:paddingHorizontal">10dp</item>
-        <item name="android:paddingTop">8dp</item>
-        <item name="android:paddingBottom">8dp</item>
         <item name="android:singleLine">true</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="android:textColorHint">@color/text_muted</item>
-        <item name="android:textSize">@dimen/ui_text_body</item>
     </style>
 
     <style name="Widget.SubHub.IntegerInput" parent="Widget.SubHub.MoneyInput">
         <item name="android:inputType">number</item>
+        <item name="android:hint">@null</item>
     </style>
 
     <style name="Widget.SubHub.FieldTile" parent="">
@@ -377,21 +352,11 @@
     </style>
 
     <style name="Widget.SubHub.WalletFieldLabel" parent="Widget.SubHub.FieldLabel">
-    <item name="android:layout_height">wrap_content</item>
-    <item name="android:minHeight">0dp</item>
-    <item name="android:layout_marginTop">0dp</item>
-    <item name="android:gravity">center_vertical</item>
-    <item name="android:includeFontPadding">false</item>
-    <item name="android:textSize">@dimen/ui_text_caption</item>
-</style>
+        <item name="android:layout_marginTop">0dp</item>
+    </style>
 
     <style name="Widget.SubHub.WalletFieldHelp" parent="Widget.SubHub.FieldHelp">
-    <item name="android:layout_height">wrap_content</item>
-    <item name="android:minHeight">0dp</item>
-    <item name="android:layout_marginTop">2dp</item>
-    <item name="android:includeFontPadding">false</item>
-    <item name="android:textSize">@dimen/ui_text_caption</item>
-</style>
+    </style>
 
     <style name="Widget.SubHub.HomeStatCard" parent="">
         <item name="android:layout_width">0dp</item>
@@ -476,8 +441,8 @@
         <item name="android:buttonTint">@color/toggle_tint</item>
         <item name="android:paddingStart">9dp</item>
         <item name="android:paddingEnd">7dp</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="android:textSize">@dimen/ui_text_caption</item>
+        <item name="android:textColor">@color/control_text</item>
+        <item name="android:textSize">@dimen/ui_text_body</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:elevation">2dp</item>
     </style>
@@ -542,11 +507,12 @@
         <item name="android:gravity">center_vertical</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColor">@color/control_text</item>
         <item name="android:textSize">@dimen/ui_text_body</item>
         <item name="thumbTint">@color/switch_thumb_tint</item>
         <item name="trackTint">@color/switch_track_tint</item>
         <item name="useMaterialThemeColors">false</item>
+        <item name="android:textStyle">normal</item>
     </style>
 
     <style name="Widget.SubHub.CheckBox" parent="Widget.AppCompat.CompoundButton.CheckBox">
@@ -554,7 +520,7 @@
         <item name="android:gravity">center_vertical</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColor">@color/control_text</item>
         <item name="android:textSize">@dimen/ui_text_body</item>
     </style>
 
@@ -563,7 +529,7 @@
         <item name="android:gravity">center_vertical</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColor">@color/control_text</item>
         <item name="android:textSize">@dimen/ui_text_body</item>
     </style>
 
@@ -579,7 +545,7 @@
         <item name="android:background">@drawable/bg_selection_tile</item>
         <item name="android:drawableEnd">@drawable/selection_indicator</item>
         <item name="android:drawablePadding">8dp</item>
-        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColor">@color/control_text</item>
         <item name="android:textSize">@dimen/ui_text_body</item>
         <item name="android:gravity">center_vertical</item>
     </style>
@@ -590,18 +556,7 @@
         <item name="android:layout_gravity">fill_horizontal</item>
     </style>
 
-    <style name="Widget.SubHub.SettingsToggle" parent="Widget.SubHub.Switch">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_columnWeight">1</item>
-        <item name="android:layout_gravity">fill_horizontal</item>
-        <item name="android:layout_margin">2dp</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:minHeight">@dimen/control_min_height</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="android:textSize">@dimen/ui_text_caption</item>
-    </style>
+    <style name="Widget.SubHub.SettingsToggle" parent="Widget.SubHub.Switch" />
 
     <style name="Widget.SubHub.SettingsAction" parent="">
         <item name="android:layout_width">0dp</item>
@@ -731,14 +686,13 @@
     <item name="android:layout_width">match_parent</item>
     <item name="android:layout_height">wrap_content</item>
     <item name="android:orientation">vertical</item>
-    <item name="android:padding">@dimen/ui_tile_padding</item>
+    <item name="android:padding">@dimen/ui_card_padding_compact</item>
     <item name="android:layout_marginTop">8dp</item>
     <item name="android:background">@drawable/bg_card</item>
 </style>
-    <style name="Widget.SubHub.WalletFieldTile" parent="Widget.SubHub.FieldTile">
-    <item name="android:background">@null</item>
-    <item name="android:minHeight">0dp</item>
-    <item name="android:padding">3dp</item>
-    <item name="android:elevation">0dp</item>
-</style>
+    <style name="Widget.SubHub.WalletFieldTile" parent="">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+    </style>
 </resources>

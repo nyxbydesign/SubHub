@@ -40,15 +40,13 @@ public final class AppSelectionPanel extends LinearLayout {
         all = new StateToggle(context);
         all.setId(R.id.all_apps);
         all.setText(R.string.app_selection_all);
-        all.setTextColor(context.getColor(R.color.text_primary));
         com.subhub.app.util.UiIdentity.textSize(all, R.dimen.ui_text_body);
         all.setMinHeight(dp(48));
         addView(all, new LayoutParams(-1, -2));
-        allHelp = new TextView(context);
+        allHelp = (TextView) android.view.LayoutInflater.from(context)
+                .inflate(R.layout.view_form_help, this, false);
         allHelp.setText(R.string.app_selection_all_help);
-        allHelp.setTextColor(context.getColor(R.color.text_secondary));
-        com.subhub.app.util.UiIdentity.textSize(allHelp, R.dimen.ui_text_label);
-        addView(allHelp, new LayoutParams(-1, -2));
+        addView(allHelp);
         count = new TextView(context);
         count.setId(R.id.selected_count);
         count.setTextColor(context.getColor(R.color.text_secondary));

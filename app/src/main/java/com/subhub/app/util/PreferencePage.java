@@ -31,7 +31,7 @@ public abstract class PreferencePage extends AppCompatActivity {
     protected LinearLayout card(LinearLayout parent) {
         LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL);
         card.setBackgroundResource(R.drawable.bg_card);
-        int inset = getResources().getDimensionPixelSize(R.dimen.ui_card_padding);
+        int inset = getResources().getDimensionPixelSize(R.dimen.ui_card_padding_compact);
         int gap = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         card.setPadding(inset, gap, inset, gap);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = gap;
@@ -44,11 +44,23 @@ public abstract class PreferencePage extends AppCompatActivity {
                 : size == 14 ? R.dimen.ui_text_row_title
                 : size == 13 ? R.dimen.ui_text_body
                 : size == 12 ? R.dimen.ui_text_label : R.dimen.ui_text_caption;
-        view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(textSize));
+        UiIdentity.textSize(view, textSize);
         view.setTextColor(getColor(muted ? R.color.text_secondary : R.color.text_primary));
         int gap = getResources().getDimensionPixelSize(R.dimen.ui_gap_inline);
         view.setPadding(0, gap, 0, gap); view.setLineSpacing(dp(2), 1);
         parent.addView(view, new LinearLayout.LayoutParams(-1, -2)); return view;
+    }
+    protected TextView fieldHelp(LinearLayout parent, CharSequence value) {
+        TextView view = (TextView) getLayoutInflater().inflate(R.layout.view_form_help, parent, false);
+        view.setText(value);
+        parent.addView(view);
+        return view;
+    }
+    protected TextView fieldLabel(LinearLayout parent, CharSequence value) {
+        TextView view = (TextView) getLayoutInflater().inflate(R.layout.view_form_label, parent, false);
+        view.setText(value);
+        parent.addView(view);
+        return view;
     }
     protected Button button(LinearLayout parent, CharSequence label, Runnable action) {
         Button button = (Button) getLayoutInflater().inflate(R.layout.view_ux_action, parent, false);
@@ -60,17 +72,17 @@ public abstract class PreferencePage extends AppCompatActivity {
         parent.addView(button, params); return button;
     }
     protected View toggle(LinearLayout parent, int label, boolean enabled, Consumer<Boolean> changed) {
-        StateToggle toggle = new StateToggle(this); toggle.setText(label);
-        toggle.setTextColor(getColor(R.color.text_primary)); toggle.setChecked(enabled);
+        StateToggle toggle = (StateToggle) getLayoutInflater().inflate(R.layout.view_form_toggle, parent, false); toggle.setText(label);
+        toggle.setChecked(enabled);
         toggle.setOnCheckedChangeListener((button, checked) -> changed.accept(checked));
         parent.addView(toggle, new LinearLayout.LayoutParams(-1, -2)); return toggle;
     }
     protected EditText input(LinearLayout parent, int hint, int inputType) {
         EditText input = (EditText) getLayoutInflater().inflate(R.layout.view_preference_input, parent, false);
         input.setSingleLine(); input.setHint(hint);
-        input.setInputType(inputType); input.setTextColor(getColor(R.color.text_primary));
-        input.setHintTextColor(getColor(R.color.text_secondary)); input.setMinHeight(dp(48));
-        parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
+        com.subhub.app.util.UiIdentity.inputType(input, inputType);
+        input.setMinHeight(dp(48));
+        parent.addView(input); return input;
     }
     protected void notice(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }
     protected int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }

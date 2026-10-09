@@ -54,14 +54,12 @@ final class AppLimitRow extends LinearLayout {
         allowance.setContentDescription(
                 context.getString(R.string.app_timer_allowance_accessibility, name));
         allowance.setBackgroundResource(R.drawable.bg_input);
-        allowance.setInputType(InputType.TYPE_CLASS_NUMBER);
+        com.subhub.app.util.UiIdentity.inputType(allowance, InputType.TYPE_CLASS_NUMBER);
         allowance.setFilters(new InputFilter[] {new InputFilter.LengthFilter(4)});
         allowance.setSingleLine(true);
         allowance.setIncludeFontPadding(false);
-        allowance.setTextColor(context.getColor(R.color.text_primary));
         com.subhub.app.util.UiIdentity.textSize(allowance, R.dimen.ui_text_body);
         allowance.setGravity(Gravity.CENTER);
-        allowance.setPadding(dp(8), dp(8), dp(8), dp(8));
         allowance.setText(minutes);
         LayoutParams inputParams = new LayoutParams(dp(88), dp(48));
         if (large) {

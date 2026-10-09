@@ -17,10 +17,10 @@
                 <Button android:id="@+id/button_protection" style="@style/Widget.SubHub.ServiceButton" android:layout_height="wrap_content" android:minHeight="48dp" android:layout_marginTop="@dimen/ui_gap_group" android:background="@drawable/bg_home_primary_action" android:backgroundTint="@null" android:elevation="0dp" android:text="@string/start_protection" android:textSize="@dimen/ui_text_body" />
                 <LinearLayout android:id="@+id/protection_status_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal" android:gravity="center_vertical" android:orientation="horizontal" android:visibility="gone">
                     <View android:id="@+id/protection_status_dot" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_status_dot" />
-                    <TextView android:id="@+id/protection_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/status_inactive" />
+                    <TextView android:textSize="@dimen/ui_text_body" android:id="@+id/protection_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/status_inactive" />
                 </LinearLayout>
-                <TextView android:id="@+id/runtime_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
-                <TextView android:id="@+id/mode_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
+                <TextView android:textSize="@dimen/ui_text_body" android:id="@+id/runtime_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
+                <TextView android:textSize="@dimen/ui_text_body" android:id="@+id/mode_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
             </LinearLayout>
             <LinearLayout android:id="@+id/sub_dashboard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/home_primary_content_gap" android:background="@drawable/bg_home_dashboard" android:orientation="vertical" android:padding="13dp" android:visibility="gone">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">

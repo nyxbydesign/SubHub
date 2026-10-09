@@ -130,7 +130,6 @@ public final class PrivacyControls {
         control.setId(id);
         control.setText(label);
         com.subhub.app.util.UiIdentity.textSize(control, R.dimen.ui_text_body);
-        control.setTextColor(activity.getColor(R.color.text_primary));
         control.setChecked(value);
         control.setOnCheckedChangeListener(
                 (button, checked) -> {
@@ -154,13 +153,12 @@ public final class PrivacyControls {
     }
 
     private void help(int label) {
-        TextView text = new TextView(activity);
+        TextView text = (TextView) android.view.LayoutInflater.from(activity)
+                .inflate(R.layout.view_form_help, container, false);
         text.setText(label);
-        com.subhub.app.util.UiIdentity.textSize(text, R.dimen.ui_text_label);
-        text.setTextColor(activity.getColor(R.color.text_secondary));
-        int pad = Math.round(8 * activity.getResources().getDisplayMetrics().density);
-        text.setPadding(0, 0, 0, pad);
-        container.addView(text, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) text.getLayoutParams();
+        params.bottomMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_control);
+        container.addView(text, params);
     }
 
     private void notice(String text) {
