@@ -88,7 +88,6 @@ import java.util.Set;
 public final class MainActivity extends AppCompatActivity {
     public static final String EXTRA_SUPPRESS_PERMISSION_READINESS =
             "com.subhub.app.extra.SUPPRESS_PERMISSION_READINESS";
-    private static final long PACT_UNTIL_RELEASED = -1L;
     private ActivityMainBinding binding;
     private TextView editLockButton;
     private MediaProjectionManager projectionManager;
@@ -101,10 +100,6 @@ public final class MainActivity extends AppCompatActivity {
     private boolean startFlowAwaitingNotification;
     private final EnumSet<HomePermissionPolicy.Requirement> attemptedPermissions =
             EnumSet.noneOf(HomePermissionPolicy.Requirement.class);
-    private long selectedPactDurationMs = PACT_UNTIL_RELEASED;
-    private long selectedPactMinimumMs, selectedPactMaximumMs;
-    private boolean selectedPactHidden;
-    private TextView pactSelectionSummary;
     private String achievementPreviewFingerprint = "";
     private com.subhub.app.util.AsyncUiScope uiData;
     private final java.util.List<android.content.SharedPreferences> achievementSources =
@@ -135,13 +130,6 @@ public final class MainActivity extends AppCompatActivity {
                             .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
             finish();
             return;
-        }
-        if (savedInstanceState != null) {
-            selectedPactDurationMs =
-                    savedInstanceState.getLong("ux_pact_selection", PACT_UNTIL_RELEASED);
-            selectedPactMinimumMs = savedInstanceState.getLong("ux_pact_min", 0);
-            selectedPactMaximumMs = savedInstanceState.getLong("ux_pact_max", 0);
-            selectedPactHidden = savedInstanceState.getBoolean("ux_pact_hidden", false);
         }
         uiData = com.subhub.app.util.AsyncUiScope.forPage(this);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
@@ -229,15 +217,6 @@ public final class MainActivity extends AppCompatActivity {
         binding.buttonAchievements.setOnClickListener(
                 view -> startActivity(new Intent(this, AchievementsActivity.class)));
         binding.buttonCommitmentView.setVisibility(View.GONE);
-        binding.commitmentTimer1h.setOnClickListener(view -> selectPactDuration(60L * 60L * 1000L));
-        binding.commitmentTimer24h.setOnClickListener(
-                view -> selectPactDuration(24L * 60L * 60L * 1000L));
-        binding.commitmentTimer7d.setOnClickListener(
-                view -> selectPactDuration(7L * 24L * 60L * 60L * 1000L));
-        binding.commitmentTimer30d.setOnClickListener(
-                view -> selectPactDuration(30L * 24L * 60L * 60L * 1000L));
-        binding.commitmentTimerPermanent.setOnClickListener(
-                view -> selectPactDuration(PACT_UNTIL_RELEASED));
         binding.subWalletPay.setOnClickListener(
                 view -> startActivity(new Intent(this, PenanceActivity.class)));
         binding.subWalletPause.setOnClickListener(view -> beginPaidPause());
@@ -319,6 +298,7 @@ public final class MainActivity extends AppCompatActivity {
             updateProtectionButton(false);
             return;
         }
+        if (!binding.commitmentStartPanel.validateSelection()) return;
         if (!featureModules.isCensorEnabled()
                 || new SettingsRepository(this).loadCaptureMethod() == CaptureMethod.APP_MODE) {
             if (!appMode.isAccessibilityEnabled()) {
@@ -370,94 +350,23 @@ public final class MainActivity extends AppCompatActivity {
         Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
     }
 
-    private void selectPactDuration(long durationMillis) {
-        if (CommitmentManager.isActive(this)) return;
-        if (durationMillis > 0) {
-            com.subhub.app.commitment.PactStartDialog.show(
-                    this,
-                    durationMillis,
-                    (minimum, maximum, hidden) -> {
-                        selectedPactDurationMs = durationMillis;
-                        selectedPactMinimumMs = minimum;
-                        selectedPactMaximumMs = maximum;
-                        selectedPactHidden = hidden;
-                        renderPactSelection();
-                    });
-            return;
-        }
-        selectedPactDurationMs = durationMillis;
-        selectedPactMinimumMs = selectedPactMaximumMs = 0;
-        selectedPactHidden = false;
-        renderPactSelection();
-    }
-
     private void startSelectedPact() {
         if (CommitmentManager.isActive(this)) return;
-        if (selectedPactDurationMs > 0L) {
+        com.subhub.app.commitment.ServiceDurationView.Selection selection =
+                binding.commitmentStartPanel.selection();
+        if (selection.minimum > 0) {
             boolean started =
                     CommitmentManager.start(
-                            this,
-                            selectedPactMinimumMs > 0
-                                    ? selectedPactMinimumMs
-                                    : selectedPactDurationMs,
-                            selectedPactMaximumMs > 0
-                                    ? selectedPactMaximumMs
-                                    : selectedPactDurationMs,
-                            selectedPactHidden);
+                            this, selection.minimum, selection.maximum, selection.hidden);
             if (!started) {
                 new AppModeManager(this).setArmed(false);
                 startService(ScreenCaptureService.stopIntent(this));
                 showStatus(R.string.pact_start_unavailable);
                 return;
             }
-            selectedPactDurationMs = PACT_UNTIL_RELEASED;
-            selectedPactMinimumMs = selectedPactMaximumMs = 0;
-            selectedPactHidden = false;
+            binding.commitmentStartPanel.resetToPermanent();
         }
         renderCommitmentState();
-    }
-
-    private void renderPactSelection() {
-        pactButton(binding.commitmentTimer1h, 60L * 60L * 1000L);
-        pactButton(binding.commitmentTimer24h, 24L * 60L * 60L * 1000L);
-        pactButton(binding.commitmentTimer7d, 7L * 24L * 60L * 60L * 1000L);
-        pactButton(binding.commitmentTimer30d, 30L * 24L * 60L * 60L * 1000L);
-        pactButton(binding.commitmentTimerPermanent, PACT_UNTIL_RELEASED);
-        if (pactSelectionSummary == null) {
-            pactSelectionSummary = new TextView(this);
-            pactSelectionSummary.setTextColor(getColor(R.color.text_secondary));
-            pactSelectionSummary.setPadding(0, dp(8), 0, dp(4));
-            binding.commitmentStartPanel.addView(pactSelectionSummary);
-        }
-        pactSelectionSummary.setVisibility(selectedPactDurationMs > 0 ? View.VISIBLE : View.GONE);
-        if (selectedPactDurationMs > 0) {
-            long minimum =
-                    selectedPactMinimumMs > 0 ? selectedPactMinimumMs : selectedPactDurationMs;
-            long maximum =
-                    selectedPactMaximumMs > 0 ? selectedPactMaximumMs : selectedPactDurationMs;
-            String duration =
-                    minimum == maximum
-                            ? CommitmentActivity.formatDuration(minimum)
-                            : getString(
-                                    R.string.pact_selection_range,
-                                    CommitmentActivity.formatDuration(minimum),
-                                    CommitmentActivity.formatDuration(maximum));
-            pactSelectionSummary.setText(
-                    getString(
-                            R.string.pact_selection_summary,
-                            duration,
-                            getString(
-                                    selectedPactHidden
-                                            ? R.string.pact_selection_hidden
-                                            : R.string.pact_selection_visible)));
-        }
-    }
-
-    private void pactButton(TextView button, long duration) {
-        boolean selected = selectedPactDurationMs == duration;
-        button.setBackgroundResource(
-                selected ? R.drawable.bg_home_duration_selected : R.drawable.bg_home_duration_idle);
-        button.setTextColor(getColor(selected ? R.color.text_primary : R.color.text_secondary));
     }
 
     private void renderCommitmentState() {
@@ -485,7 +394,6 @@ public final class MainActivity extends AppCompatActivity {
                             : getString(
                                     R.string.commitment_active_remaining,
                                     CommitmentManager.countdownLabel(this)));
-        renderPactSelection();
     }
 
     private void updateProtectionButton(boolean running) {
@@ -507,6 +415,7 @@ public final class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (binding != null) {
+            binding.commitmentStartPanel.reload();
             uiTimer.removeCallbacks(uiTick);
             uiTimer.post(uiTick);
             renderCommitmentState();
@@ -1493,10 +1402,6 @@ public final class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
-        state.putLong("ux_pact_selection", selectedPactDurationMs);
-        state.putLong("ux_pact_min", selectedPactMinimumMs);
-        state.putLong("ux_pact_max", selectedPactMaximumMs);
-        state.putBoolean("ux_pact_hidden", selectedPactHidden);
         super.onSaveInstanceState(state);
     }
 

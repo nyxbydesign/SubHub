@@ -23,19 +23,11 @@
     <item name="authenticator_confirmation" type="id" />
     <item name="authenticator_confirm_button" type="id" />
     <string name="pact_time_hidden">Time remaining is hidden</string>
-    <string name="pact_options_title">Pact options</string>
-    <string name="pact_options_help">Choose a fixed duration or agree to a random time within the range below. The duration is chosen once when the Pact starts. Hiding the countdown conceals it in Sub mode; the controller can still inspect it.</string>
-    <string name="pact_random_duration">Random duration</string>
     <string name="pact_hide_countdown">Hide countdown</string>
     <string name="pact_minimum_hours">Minimum hours</string>
     <string name="pact_maximum_hours">Maximum hours</string>
-    <string name="pact_confirm_start">Use these options</string>
     <string name="pact_range_invalid">Use an ordered range between 0.5 and 720 hours.</string>
     <string name="pact_start_unavailable">A Pact is already active, or the new Pact could not be saved.</string>
-    <string name="pact_selection_range">Between %1$s and %2$s</string>
-    <string name="pact_selection_summary">%1$s · %2$s</string>
-    <string name="pact_selection_hidden">Countdown hidden</string>
-    <string name="pact_selection_visible">Countdown visible</string>
     <string name="keyholder_your_key">YOUR KEYHOLDER</string>
     <string name="keyholder_paired_help">Your keyholder has the setup key in Google Authenticator or their chosen authenticator. Ask them for the current six-digit code when you need Dom access.</string>
     <string name="keyholder_how">A little trust. One little key.</string>
@@ -58,4 +50,6 @@
     <string name="keyholder_pending_help">Nothing changes until you confirm. Keep the pairing key private.</string>
     <item name="keyholder_pair_button" type="id" />
     <string name="keyholder_manual_hide">Hide setup key</string>
+    <string name="service_duration_permanent">Permanent</string>
+    <string name="service_duration_random">Random</string>
 </resources>

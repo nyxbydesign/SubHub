@@ -17,6 +17,25 @@
             android:layout_marginTop="@dimen/primary_header_top" />
 
         <LinearLayout
+            android:id="@+id/inactive_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+            <com.subhub.app.commitment.ServiceDurationView
+                android:id="@+id/duration_selection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+            <Button android:id="@+id/duration_open_home"
+                style="@style/Widget.SubHub.CompactOutlineButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:text="@string/tour_open_home" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/active_panel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -58,13 +77,6 @@
                 android:text="@string/commitment_emergency_release"
                 android:visibility="gone" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/commitment_safety_note"
-                android:textColor="@color/text_muted"
-                android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

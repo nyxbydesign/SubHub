@@ -3,7 +3,7 @@ package com.subhub.app.commitment;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 
-/** Explicit bounds shared by the start dialog and persistent commitment manager. */
+/** Explicit bounds shared by the duration widget and persistent commitment manager. */
 public final class PactDuration {
     public static final long MIN = 30L * 60_000;
     public static final long MAX = 30L * 24 * 60 * 60_000;

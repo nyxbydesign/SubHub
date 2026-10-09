@@ -1,78 +1,102 @@
 package com.subhub.app.commitment;
 
-import com.subhub.app.util.PrimaryHeader;
-
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityCommitmentBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsActivity;
+import com.subhub.app.util.PrimaryHeader;
 
 import java.util.Locale;
 
-/** Read-only pact countdown with a Dom recovery release. Pacts start from Sub Home. */
+/** Duration choices before service, or the active lock countdown and guarded Dom release. */
 public final class CommitmentActivity extends AppCompatActivity {
     public static final String EXTRA_DURATION_MS = "commitment_duration_ms";
     private ActivityCommitmentBinding binding;
     private ControllerEditMode editMode;
     private final Handler timer = new Handler(Looper.getMainLooper());
-    private final Runnable tick = new Runnable() {
-        @Override public void run() {
-            renderState();
-            if (CommitmentManager.isActive(CommitmentActivity.this)) {
-                timer.postDelayed(this, 1000L);
-            }
-        }
-    };
+    private final Runnable tick =
+            new Runnable() {
+                @Override
+                public void run() {
+                    renderState();
+                    if (CommitmentManager.isActive(CommitmentActivity.this)) {
+                        timer.postDelayed(this, 1000L);
+                    }
+                }
+            };
 
-    @Override protected void onCreate(Bundle savedInstanceState) {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = ActivityCommitmentBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.commitment_title, true);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        binding.durationSelection.setHeadingVisible(false);
+        binding.durationOpenHome.setOnClickListener(
+                view -> {
+                    if (!binding.durationSelection.validateSelection()) return;
+                    startActivity(
+                            new Intent(this, MainActivity.class)
+                                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+                    finish();
+                });
         binding.buttonEmergencyRelease.setOnClickListener(view -> confirmEmergencyRelease());
-        editMode = ControllerEditMode.bind(
-                this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
+        editMode =
+                ControllerEditMode.bind(
+                        this,
+                        PrimaryHeader.editLockButton(binding.getRoot()),
+                        editing -> applyEditState());
         renderState();
     }
 
-    @Override protected void onResume() {
+    @Override
+    protected void onResume() {
         super.onResume();
         if (editMode != null) editMode.refresh();
+        binding.durationSelection.reload();
         timer.removeCallbacks(tick);
         timer.post(tick);
     }
 
-    @Override protected void onPause() {
+    @Override
+    protected void onPause() {
         timer.removeCallbacks(tick);
         super.onPause();
     }
 
     private void confirmEmergencyRelease() {
+        if (!ControllerPinManager.isSessionUnlocked() || !CommitmentManager.isActive(this)) return;
         com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.commitment_emergency_title)
                 .setMessage(R.string.commitment_emergency_body)
                 .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.commitment_release_now, (dialog, which) -> {
-                    CommitmentManager.emergencyRelease(this);
-                    openSettings();
-                })
+                .setPositiveButton(
+                        R.string.commitment_release_now,
+                        (dialog, which) -> {
+                            if (!ControllerPinManager.isSessionUnlocked()
+                                    || !CommitmentManager.isActive(this)) return;
+                            CommitmentManager.emergencyRelease(this);
+                            openSettings();
+                        })
                 .show();
     }
 
     private void openSettings() {
-        startActivity(new Intent(this, SettingsActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        startActivity(
+                new Intent(this, SettingsActivity.class)
+                        .addFlags(
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         finish();
     }
 
@@ -80,6 +104,7 @@ public final class CommitmentActivity extends AppCompatActivity {
         if (binding == null) return;
         boolean active = CommitmentManager.isActive(this);
         binding.activePanel.setVisibility(active ? View.VISIBLE : View.GONE);
+        binding.inactivePanel.setVisibility(active ? View.GONE : View.VISIBLE);
         if (active) binding.countdown.setText(CommitmentManager.countdownLabel(this));
         applyEditState();
     }
@@ -87,7 +112,9 @@ public final class CommitmentActivity extends AppCompatActivity {
     private void applyEditState() {
         if (binding == null) return;
         boolean editing = ControllerPinManager.isSessionUnlocked();
-        binding.buttonEmergencyRelease.setVisibility(editing ? View.VISIBLE : View.GONE);
+        binding.durationSelection.setEditable(editing);
+        binding.buttonEmergencyRelease.setVisibility(
+                editing && CommitmentManager.isActive(this) ? View.VISIBLE : View.GONE);
     }
 
     public static String formatDuration(long milliseconds) {
@@ -101,7 +128,8 @@ public final class CommitmentActivity extends AppCompatActivity {
                 : String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, remainder);
     }
 
-    @Override protected void onDestroy() {
+    @Override
+    protected void onDestroy() {
         timer.removeCallbacks(tick);
         binding = null;
         super.onDestroy();

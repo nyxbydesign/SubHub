@@ -625,7 +625,6 @@
     <string name="commitment_pact_sealed">Service Locked</string>
     <string name="commitment_active_body">Service stays locked until the countdown ends, then may stop normally.</string>
     <string name="commitment_emergency_release">Release service lock</string>
-    <string name="commitment_safety_note">When the countdown reaches zero, service can be released normally again.</string>
     <string name="commitment_emergency_title">End the service lock?</string>
     <string name="commitment_emergency_body">Dom mode can use this recovery action to release service immediately.</string>
     <string name="commitment_release_now">Release service lock</string>
