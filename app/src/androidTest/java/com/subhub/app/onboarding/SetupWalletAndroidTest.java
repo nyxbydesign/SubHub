@@ -55,35 +55,45 @@ public class SetupWalletAndroidTest {
         ControllerPinManager.enterSubMode();
     }
 
-    @Test public void compactRulesSurviveRecreationAndSaveWithoutChangingHiddenPolicy() {
+    @Test public void compactRulesAndCapsSurviveRecreationAndSave() {
         try (ActivityScenario<OnboardingActivity> tour = walletPage()) {
             tour.onActivity(a -> {
                 SetupWalletRulesView panel = panel(a);
                 assertNotNull(panel.findViewWithTag("setup-wallet-graphic"));
-                assertNull(a.findViewById(R.id.daily_cap));
-                assertNull(a.findViewById(R.id.weekly_cap));
-                assertNull(a.findViewById(R.id.mercy_minutes));
+                assertNotNull(a.findViewById(R.id.daily_cap));
+                assertNotNull(a.findViewById(R.id.weekly_cap));
+                assertNotNull(a.findViewById(R.id.mercy_minutes));
+                assertNull(panel.findViewWithTag("setup-wallet-toggle:tamper_attempt"));
+                View artwork = panel.findViewWithTag("setup-wallet-graphic");
+                View rules = ((android.view.ViewGroup) artwork.getParent()).getChildAt(1);
+                assertTrue("Space below the artwork", rules.getTop() - artwork.getBottom()
+                        >= a.getResources().getDimensionPixelSize(R.dimen.ui_gap_section));
                 ScrollView scroll = a.findViewById(R.id.tour_scroll);
                 assertTrue("Normal setup fits one page", scroll.getChildAt(0).getHeight() <= scroll.getHeight());
                 toggle(panel, PenanceInfraction.CENSORED_TAP).setChecked(true);
                 amount(panel, PenanceInfraction.CENSORED_TAP).setText("2.35");
                 amount(panel, PenanceInfraction.NEW_DETECTION).setText("1.25");
                 ((EditText) panel.findViewWithTag("setup-wallet-timing:new_detection")).setText("3");
+                ((EditText) a.findViewById(R.id.daily_cap)).setText("6.50");
+                ((EditText) a.findViewById(R.id.weekly_cap)).setText("23.00");
+                ((EditText) a.findViewById(R.id.mercy_minutes)).setText("25");
                 capture(a, "setup-wallet-native.png");
             });
             tour.recreate();
             tour.onActivity(a -> {
                 assertTrue(toggle(panel(a), PenanceInfraction.CENSORED_TAP).isChecked());
                 assertEquals("2.35", amount(panel(a), PenanceInfraction.CENSORED_TAP).getText().toString());
+                assertEquals("6.50", ((EditText) a.findViewById(R.id.daily_cap)).getText().toString());
+                assertEquals("25", ((EditText) a.findViewById(R.id.mercy_minutes)).getText().toString());
             });
             onView(withId(R.id.tour_next)).perform(click());
             PenanceManager saved = new PenanceManager(context);
             assertEquals(235, saved.getInfractionCents(PenanceInfraction.CENSORED_TAP));
             assertEquals(125, saved.getStrikeCents());
             assertEquals(3, saved.getDetectionBatch());
-            assertEquals(700, saved.getDailyCapCents());
-            assertEquals(2500, saved.getWeeklyCapCents());
-            assertEquals(17, saved.getMercyMinutes());
+            assertEquals(650, saved.getDailyCapCents());
+            assertEquals(2300, saved.getWeeklyCapCents());
+            assertEquals(25, saved.getMercyMinutes());
         }
     }
 
@@ -103,10 +113,12 @@ public class SetupWalletAndroidTest {
             assertEquals(700, new PenanceManager(context).getDailyCapCents());
             resumed.onActivity(a -> {
                 assertNotNull(panel(a));
-                amount(panel(a), PenanceInfraction.NEW_DETECTION).setText("1.20");
+                assertNotNull(((EditText) a.findViewById(R.id.daily_cap)).getError());
+                ((EditText) a.findViewById(R.id.daily_cap)).setText("8.00");
             });
             onView(withId(R.id.tour_next)).perform(click());
-            assertEquals(120, new PenanceManager(context).getStrikeCents());
+            assertEquals(701, new PenanceManager(context).getStrikeCents());
+            assertEquals(800, new PenanceManager(context).getDailyCapCents());
         }
     }
 
@@ -121,10 +133,61 @@ public class SetupWalletAndroidTest {
             tour.onActivity(a -> {
                 assertFalse(toggle(panel(a), PenanceInfraction.NEW_DETECTION).isEnabled());
                 assertFalse(amount(panel(a), PenanceInfraction.NEW_DETECTION).isEnabled());
+                assertFalse(a.findViewById(R.id.daily_cap).isEnabled());
+                assertFalse(a.findViewById(R.id.mercy_minutes).isEnabled());
                 amount(panel(a), PenanceInfraction.NEW_DETECTION).setText("5.00");
+                ((EditText) a.findViewById(R.id.daily_cap)).setText("9.00");
             });
             onView(withId(R.id.tour_next)).perform(click());
             assertEquals(100, new PenanceManager(context).getStrikeCents());
+            assertEquals(700, new PenanceManager(context).getDailyCapCents());
+        }
+    }
+
+    @Test public void capsAndCorrectionRejectInvalidDraftsWithoutSavingOtherChanges() {
+        try (ActivityScenario<OnboardingActivity> tour = walletPage()) {
+            tour.onActivity(a -> {
+                amount(panel(a), PenanceInfraction.NEW_DETECTION).setText("2.00");
+                ((EditText) a.findViewById(R.id.daily_cap)).setText("1.00");
+            });
+            onView(withId(R.id.tour_next)).perform(click());
+            tour.onActivity(a -> {
+                assertNotNull(((EditText) a.findViewById(R.id.daily_cap)).getError());
+                ((EditText) a.findViewById(R.id.daily_cap)).setText("8.00");
+                ((EditText) a.findViewById(R.id.weekly_cap)).setText("7.00");
+            });
+            onView(withId(R.id.tour_next)).perform(click());
+            tour.onActivity(a -> {
+                assertNotNull(((EditText) a.findViewById(R.id.weekly_cap)).getError());
+                ((EditText) a.findViewById(R.id.weekly_cap)).setText("30.00");
+                ((EditText) a.findViewById(R.id.mercy_minutes)).setText("-1");
+            });
+            onView(withId(R.id.tour_next)).perform(click());
+            assertEquals(100, new PenanceManager(context).getStrikeCents());
+            assertEquals(700, new PenanceManager(context).getDailyCapCents());
+            tour.onActivity(a -> {
+                assertNotNull(((EditText) a.findViewById(R.id.mercy_minutes)).getError());
+                ((EditText) a.findViewById(R.id.mercy_minutes)).setText("0");
+            });
+            onView(withId(R.id.tour_next)).perform(click());
+            assertEquals(200, new PenanceManager(context).getStrikeCents());
+            assertEquals(800, new PenanceManager(context).getDailyCapCents());
+            assertEquals(3000, new PenanceManager(context).getWeeklyCapCents());
+            assertEquals(0, new PenanceManager(context).getMercyMinutes());
+        }
+    }
+
+    @Test public void editingVisibleRulesPreservesControlAttemptConfiguration() {
+        new PenanceManager(context).configure(true,
+                Map.of(PenanceInfraction.NEW_DETECTION, 100, PenanceInfraction.TAMPER_ATTEMPT, 300),
+                700, 2500, 17, 10, 1, 31);
+        try (ActivityScenario<OnboardingActivity> tour = walletPage()) {
+            tour.onActivity(a -> amount(panel(a), PenanceInfraction.NEW_DETECTION).setText("1.50"));
+            onView(withId(R.id.tour_next)).perform(click());
+            PenanceManager saved = new PenanceManager(context);
+            assertTrue(saved.isInfractionEnabled(PenanceInfraction.TAMPER_ATTEMPT));
+            assertEquals(300, saved.getInfractionCents(PenanceInfraction.TAMPER_ATTEMPT));
+            assertEquals(31, saved.getTamperCooldownMinutes());
         }
     }
 
