@@ -31,6 +31,8 @@ These repository rules apply to every automated or human-assisted change.
 
 ## Required verification
 
+Native text-fit checks must also cover text drawn directly on Canvas inside artwork. TextView bounds checks cannot detect that overflow; measure each drawn string against its allotted region and inspect a native artwork render after copy changes.
+
 Before merging or tagging a release, run:
 
 `./gradlew testDebugUnitTest lintDebug assembleDebug`
