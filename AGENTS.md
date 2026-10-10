@@ -42,6 +42,9 @@ For direct ADB instrumentation, first confirm the declared runner with
 `com.subhub.app.test/com.subhub.app.SubHubTestRunner`. Do not assume the stock
 `AndroidJUnitRunner`; the custom runner prepares the controller PIN without
 overriding each test's Dom/Sub state.
+For first-launch or unkeyed onboarding tests, add `-e controller_fixture false`.
+The runner otherwise prepares a PIN before activity creation, which changes the
+fresh-setup behavior being tested. Keep the fixture enabled for ordinary screen tests.
 
 For Windows 10 emulator setup when the bundled screenshot helper fails, follow
 [Android capture fallback](docs/censor-lab/android-capture-fallback.md). Check supported
