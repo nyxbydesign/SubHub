@@ -137,8 +137,13 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
         showConnectionIfRequested();
+    }
+
+    public void showSectionHome() {
+        openWalletEditor("");
     }
 
     @Override protected void onResume() {

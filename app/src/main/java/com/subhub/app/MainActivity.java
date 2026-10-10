@@ -734,6 +734,7 @@ public final class MainActivity extends AppCompatActivity {
                 content.findViewById(R.id.arrangement_detail_preview);
         if (title == R.string.sub_censor_title) {
             preview.setAppearance(new SettingsRepository(this).loadAppearance());
+            preview.setSquarePreview(true);
             preview.setVisibility(View.VISIBLE);
         }
         for (ArrangementDetail detail : details) {
@@ -742,21 +743,21 @@ public final class MainActivity extends AppCompatActivity {
             seam.setBackgroundColor(getColor(R.color.outline_subtle));
             rows.addView(seam, new android.widget.LinearLayout.LayoutParams(-1, dp(1)));
             android.widget.LinearLayout row = new android.widget.LinearLayout(this);
-            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setOrientation(android.widget.LinearLayout.VERTICAL);
             row.setPadding(0, dp(16), 0, dp(16));
             TextView label = new TextView(this);
             label.setText(detail.label);
             com.subhub.app.util.UiIdentity.textSize(label, R.dimen.ui_text_label);
             label.setTextColor(getColor(R.color.accent_text));
             label.setPadding(0, 0, dp(16), 0);
-            row.addView(label, new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
+            row.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
             TextView value = new TextView(this);
             value.setText(detail.value);
             com.subhub.app.util.UiIdentity.textSize(value, R.dimen.ui_text_section);
             value.setTextColor(getColor(R.color.text_primary));
-            value.setGravity(android.view.Gravity.END);
+            value.setPadding(0, dp(6), 0, 0);
             value.setLineSpacing(dp(2), 1f);
-            row.addView(value, new android.widget.LinearLayout.LayoutParams(0, -2, 1.5f));
+            row.addView(value, new android.widget.LinearLayout.LayoutParams(-1, -2));
             rows.addView(row, new android.widget.LinearLayout.LayoutParams(-1, -2));
         }
         content.findViewById(R.id.arrangement_detail_close)

@@ -22,6 +22,35 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class ArrangementSheetAndroidTest {
+    @Test public void walletReselectReturnsToOverviewAndArtworkCanBeReviewed() {
+        boolean originalDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        com.subhub.app.security.ControllerPinManager.enterDomMode();
+        try (ActivityScenario<com.subhub.app.penance.PenanceActivity> scenario =
+                ActivityScenario.launch(com.subhub.app.penance.PenanceActivity.class)) {
+            scenario.onActivity(activity -> {
+                try {
+                    java.lang.reflect.Method open = activity.getClass().getDeclaredMethod("openWalletEditor", String.class);
+                    open.setAccessible(true);
+                    java.lang.reflect.Field section = activity.getClass().getDeclaredField("expandedWalletSection");
+                    section.setAccessible(true);
+                    open.invoke(activity, "rules");
+                    assertEquals("rules", section.get(activity));
+                    activity.findViewById(R.id.nav_money).performClick();
+                    assertEquals("", section.get(activity));
+                    activity.findViewById(R.id.nav_money).performClick();
+                    assertEquals("", section.get(activity));
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+                com.subhub.app.onboarding.SetupFeaturePreviewView artwork =
+                        new com.subhub.app.onboarding.SetupFeaturePreviewView(activity);
+                artwork.measure(View.MeasureSpec.makeMeasureSpec(984, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                artwork.layout(0, 0, artwork.getMeasuredWidth(), artwork.getMeasuredHeight());
+                save(artwork, "setup-artwork");
+            });
+        } finally {
+            if (!originalDom) com.subhub.app.security.ControllerPinManager.enterSubMode();
+        }
+    }
     @Test public void assignmentsOpenReadableSheetsWithPreviewOnlyForCensor() throws Exception {
         SettingsRepository settings = new SettingsRepository(ApplicationProvider.getApplicationContext());
         java.util.Map<String, ?> before = settings.preferences().getAll();
@@ -37,7 +66,7 @@ public final class ArrangementSheetAndroidTest {
                             preview.getVisibility());
                     if (card == R.id.sub_censor_card) {
                         assertEquals(settings.loadAppearance().getType().getPreferenceValue(), preview.getTag());
-                        assertTrue(preview.getHeight() > preview.getWidth());
+                        assertEquals(preview.getWidth(), preview.getHeight());
                     }
                     assertTrue(content.getWidth() > 0);
                     checkText(content);

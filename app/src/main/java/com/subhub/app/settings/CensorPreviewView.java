@@ -29,6 +29,13 @@ public final class CensorPreviewView extends View {
     private String phoneStyle;
     private boolean phonePreview;
     private CensorAppearance appearance;
+    private boolean squarePreview;
+    private android.graphics.Bitmap squareBitmap;
+
+    public void setSquarePreview(boolean enabled) {
+        squarePreview = enabled;
+        invalidate();
+    }
 
     /** Render the saved style on the same synthetic sample used by style selection. */
     public void setAppearance(CensorAppearance value) {
@@ -37,6 +44,8 @@ public final class CensorPreviewView extends View {
         phonePreview = true;
         if (phoneBitmap != null) phoneBitmap.recycle();
         phoneBitmap = null;
+        if (squareBitmap != null) squareBitmap.recycle();
+        squareBitmap = null;
         invalidate();
     }
 
@@ -62,6 +71,33 @@ public final class CensorPreviewView extends View {
         float width = getWidth();
         float height = getHeight();
         if (width <= 0f || height <= 0f) return;
+
+        if (squarePreview && appearance != null) {
+            if (squareBitmap == null) {
+                android.graphics.Bitmap source = android.graphics.Bitmap.createBitmap(
+                        128, 128, android.graphics.Bitmap.Config.ARGB_8888);
+                Canvas sample = new Canvas(source);
+                paint.setShader(new LinearGradient(0, 0, 128, 128,
+                        PLUM_LIGHT, CYAN, Shader.TileMode.CLAMP));
+                sample.drawRect(0, 0, 128, 128, paint);
+                paint.setShader(null);
+                paint.setColor(PLUM);
+                for (int x = 0; x < 128; x += 16) sample.drawRect(x, 0, x + 8, 128, paint);
+                squareBitmap = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true);
+                try (com.subhub.app.capture.CensorRenderer renderer =
+                        new com.subhub.app.capture.CensorRenderer(getContext(), null)) {
+                    renderer.draw(squareBitmap, source, java.util.Collections.singletonList(
+                            new com.subhub.app.detection.Detection("preview", "preview", 1f,
+                                    new com.subhub.app.detection.BBox(32, 32, 64, 64), false, false)), appearance);
+                } finally { source.recycle(); }
+            }
+            paint.setShader(null);
+            float edge = Math.min(width, height);
+            canvas.drawBitmap(squareBitmap, null,
+                    new RectF((width - edge) / 2, (height - edge) / 2,
+                            (width + edge) / 2, (height + edge) / 2), paint);
+            return;
+        }
 
         String style = String.valueOf(getTag());
         if (phonePreview) {

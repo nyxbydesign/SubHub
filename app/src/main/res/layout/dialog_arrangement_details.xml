@@ -41,7 +41,7 @@
                         android:textSize="@dimen/ui_text_title" />
                 </LinearLayout>
                 <com.subhub.app.settings.CensorPreviewView android:id="@+id/arrangement_detail_preview"
-                    android:layout_width="100dp" android:layout_height="192dp"
+                    android:layout_width="88dp" android:layout_height="88dp"
                     android:layout_marginStart="16dp" android:visibility="gone" />
             </LinearLayout>
             <LinearLayout android:id="@+id/arrangement_detail_rows" android:layout_width="match_parent"

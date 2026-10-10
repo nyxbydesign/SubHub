@@ -102,15 +102,22 @@ public final class SetupFeaturePreviewView extends FrameLayout {
         paint.setStyle(Paint.Style.FILL);
         paint.setPathEffect(null);
         paint.setColor(Color.rgb(26, 19, 34));
-        canvas.drawRect(26f, 143f, 102f, 173f, paint);
+        canvas.drawRect(26f, 143f, 102f, 180f, paint);
         paint.setColor(primaryText);
         paint.setTypeface(bold);
         paint.setTextSize(12f);
         canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_censor), 29f, 153f, paint);
         paint.setColor(secondaryText);
         paint.setTypeface(normal);
-        paint.setTextSize(10f);
-        canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_censor_help), 29f, 167f, paint);
+        paint.setTextSize(8f);
+        String help = getContext().getString(com.subhub.app.R.string.tour_scene_censor_help);
+        int split = paint.breakText(help, true, 70f, null);
+        if (split < help.length()) {
+            int space = help.lastIndexOf(' ', split);
+            if (space > 0) split = space;
+        }
+        drawFittedText(canvas, help.substring(0, split).trim(), 29f, 166f, 70f);
+        if (split < help.length()) drawFittedText(canvas, help.substring(split).trim(), 29f, 176f, 70f);
         canvas.restoreToCount(checkpoint);
     }
     @Override protected void onDraw(Canvas canvas) {
@@ -166,7 +173,7 @@ public final class SetupFeaturePreviewView extends FrameLayout {
         paint.setStyle(Paint.Style.STROKE); paint.setColor(accentText); paint.setStrokeWidth(1.7f);
         canvas.drawPath(PATH_9, paint);
         paint.setStyle(Paint.Style.FILL); paint.setColor(primaryText); paint.setTypeface(bold); paint.setTextSize(14f); canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_wallet), 180f, 51f, paint);
-        paint.setStyle(Paint.Style.FILL); paint.setColor(secondaryText); paint.setTypeface(normal); paint.setTextSize(12f); canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_wallet_help), 180f, 70f, paint);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(secondaryText); paint.setTypeface(normal); paint.setTextSize(12f); drawFittedText(canvas, getContext().getString(com.subhub.app.R.string.tour_scene_wallet_help), 180f, 70f, 130f);
         paint.setPathEffect(null);
         paint.setStyle(Paint.Style.FILL); paint.setColor(dialogSurface); canvas.drawCircle(152f, 142f, 19f, paint);
         paint.setStyle(Paint.Style.STROKE); paint.setColor(defaultOutline); paint.setStrokeWidth(3f);
@@ -178,7 +185,15 @@ public final class SetupFeaturePreviewView extends FrameLayout {
         paint.setStyle(Paint.Style.STROKE); paint.setColor(primaryText); paint.setStrokeWidth(2f);
         canvas.drawPath(PATH_11, paint);
         paint.setStyle(Paint.Style.FILL); paint.setColor(primaryText); paint.setTypeface(bold); paint.setTextSize(14f); canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_limits), 180f, 137f, paint);
-        paint.setStyle(Paint.Style.FILL); paint.setColor(secondaryText); paint.setTypeface(normal); paint.setTextSize(12f); canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_limits_help), 180f, 156f, paint);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(secondaryText); paint.setTypeface(normal); paint.setTextSize(12f); drawFittedText(canvas, getContext().getString(com.subhub.app.R.string.tour_scene_limits_help), 180f, 156f, 130f);
         canvas.restoreToCount(checkpoint);
+    }
+
+    private void drawFittedText(Canvas canvas, String text, float x, float baseline, float width) {
+        float originalSize = paint.getTextSize();
+        float measured = paint.measureText(text);
+        if (measured > width) paint.setTextSize(originalSize * width / measured);
+        canvas.drawText(text, x, baseline, paint);
+        paint.setTextSize(originalSize);
     }
 }
