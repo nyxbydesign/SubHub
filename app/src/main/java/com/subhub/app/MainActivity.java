@@ -715,7 +715,8 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void showArrangementDetails(int title, List<ArrangementDetail> details) {
-        Dialog dialog = new Dialog(this);
+        com.google.android.material.bottomsheet.BottomSheetDialog dialog =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this);
         View content =
                 LayoutInflater.from(this).inflate(R.layout.dialog_arrangement_details, null, false);
         ((TextView) content.findViewById(R.id.arrangement_detail_title)).setText(title);
@@ -725,59 +726,60 @@ public final class MainActivity extends AppCompatActivity {
                 : title == R.string.sub_wallet_title ? R.drawable.ic_nav_money : R.drawable.ic_atmosphere);
         android.widget.ScrollView body = content.findViewById(R.id.arrangement_detail_body);
         android.widget.LinearLayout rows = content.findViewById(R.id.arrangement_detail_rows);
+        TextView summary = content.findViewById(R.id.arrangement_detail_summary);
+        summary.setText(details.get(0).value);
+        ((TextView) content.findViewById(R.id.arrangement_detail_summary_label))
+                .setText(details.get(0).label);
+        com.subhub.app.settings.CensorPreviewView preview =
+                content.findViewById(R.id.arrangement_detail_preview);
+        if (title == R.string.sub_censor_title) {
+            preview.setAppearance(new SettingsRepository(this).loadAppearance());
+            preview.setVisibility(View.VISIBLE);
+        }
         for (ArrangementDetail detail : details) {
-            if (rows.getChildCount() > 0) {
-                View seam = new View(this);
-                seam.setBackgroundColor(getColor(R.color.outline_subtle));
-                rows.addView(seam, new android.widget.LinearLayout.LayoutParams(-1, dp(1)));
-            }
+            if (detail == details.get(0)) continue;
+            View seam = new View(this);
+            seam.setBackgroundColor(getColor(R.color.outline_subtle));
+            rows.addView(seam, new android.widget.LinearLayout.LayoutParams(-1, dp(1)));
             android.widget.LinearLayout row = new android.widget.LinearLayout(this);
-            row.setOrientation(android.widget.LinearLayout.VERTICAL);
-            row.setPadding(0, dp(11), 0, dp(11));
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(16), 0, dp(16));
             TextView label = new TextView(this);
             label.setText(detail.label);
             com.subhub.app.util.UiIdentity.textSize(label, R.dimen.ui_text_label);
             label.setTextColor(getColor(R.color.accent_text));
-            label.setTypeface(null, android.graphics.Typeface.BOLD);
-            androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
-            row.addView(label, new android.widget.LinearLayout.LayoutParams(-1, -2));
+            label.setPadding(0, 0, dp(16), 0);
+            row.addView(label, new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
             TextView value = new TextView(this);
             value.setText(detail.value);
             com.subhub.app.util.UiIdentity.textSize(value, R.dimen.ui_text_section);
             value.setTextColor(getColor(R.color.text_primary));
-            value.setPadding(0, dp(4), 0, 0);
+            value.setGravity(android.view.Gravity.END);
             value.setLineSpacing(dp(2), 1f);
-            row.addView(value, new android.widget.LinearLayout.LayoutParams(-1, -2));
+            row.addView(value, new android.widget.LinearLayout.LayoutParams(0, -2, 1.5f));
             rows.addView(row, new android.widget.LinearLayout.LayoutParams(-1, -2));
         }
         content.findViewById(R.id.arrangement_detail_close)
                 .setOnClickListener(view -> dialog.dismiss());
         dialog.setContentView(content);
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT);
-        }
         dialog.setOnShowListener(
                 ignored -> {
-                    Window shown = dialog.getWindow();
-                    int width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(28), dp(560));
-                    rows.measure(View.MeasureSpec.makeMeasureSpec(width - dp(36), View.MeasureSpec.EXACTLY),
+                    android.widget.FrameLayout sheet = dialog.findViewById(
+                            com.google.android.material.R.id.design_bottom_sheet);
+                    if (sheet != null) sheet.setBackgroundColor(Color.TRANSPARENT);
+                    dialog.getBehavior().setState(
+                            com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+                    dialog.getBehavior().setSkipCollapsed(true);
+                    int width = sheet == null ? getResources().getDisplayMetrics().widthPixels
+                            : sheet.getWidth();
+                    View bodyContent = body.getChildAt(0);
+                    bodyContent.measure(View.MeasureSpec.makeMeasureSpec(width - dp(36), View.MeasureSpec.EXACTLY),
                             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
                     android.view.ViewGroup.LayoutParams scrollParams = body.getLayoutParams();
-                    scrollParams.height = Math.min(rows.getMeasuredHeight(),
+                    scrollParams.height = Math.min(bodyContent.getMeasuredHeight(),
                             Math.round(getResources().getDisplayMetrics().heightPixels * .58f));
                     body.setLayoutParams(scrollParams);
-                    if (shown != null)
-                        shown.setLayout(
-                                Math.min(
-                                        getResources().getDisplayMetrics().widthPixels - dp(28),
-                                        dp(560)),
-                                WindowManager.LayoutParams.WRAP_CONTENT);
                 });
-        PremiumMotion.styleDialog(dialog);
         dialog.show();
     }
 

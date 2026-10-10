@@ -28,6 +28,17 @@ public final class CensorPreviewView extends View {
     private android.graphics.Bitmap phoneBitmap;
     private String phoneStyle;
     private boolean phonePreview;
+    private CensorAppearance appearance;
+
+    /** Render the saved style on the same synthetic sample used by style selection. */
+    public void setAppearance(CensorAppearance value) {
+        appearance = value;
+        setTag(value.getType().getPreferenceValue());
+        phonePreview = true;
+        if (phoneBitmap != null) phoneBitmap.recycle();
+        phoneBitmap = null;
+        invalidate();
+    }
 
     public void setPhonePreview(boolean enabled) {
         phonePreview = enabled;
@@ -151,10 +162,10 @@ public final class CensorPreviewView extends View {
             sample.drawRoundRect(86, 459, 154, 465, 3, 3, brush);
             phoneBitmap = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true);
             CensorAppearance.Type type = CensorAppearance.Type.fromPreference(style);
-            if (type == CensorAppearance.Type.CUSTOM) type = CensorAppearance.Type.BOX;
+            if (appearance == null && type == CensorAppearance.Type.CUSTOM) type = CensorAppearance.Type.BOX;
             try (com.subhub.app.capture.CensorRenderer renderer =
                     new com.subhub.app.capture.CensorRenderer(
-                            getContext(), java.util.Collections.emptyList())) {
+                            getContext(), appearance == null ? java.util.Collections.emptyList() : null)) {
                 renderer.draw(
                         phoneBitmap,
                         source,
@@ -173,7 +184,7 @@ public final class CensorPreviewView extends View {
                                         new com.subhub.app.detection.BBox(102, 227, 42, 24),
                                         false,
                                         false)),
-                        new CensorAppearance(
+                        appearance != null ? appearance : new CensorAppearance(
                                 type,
                                 65,
                                 0f,
@@ -188,7 +199,7 @@ public final class CensorPreviewView extends View {
                                 "rectangle",
                                 "SubHub",
                                 "Access blocked."));
-                if (type == CensorAppearance.Type.PIXELATE) {
+                if (appearance == null && type == CensorAppearance.Type.PIXELATE) {
                     // At phone-preview scale, the ordinary thin border can disappear.
                     // This demonstration outline never changes saved censor settings.
                     Canvas outlined = new Canvas(phoneBitmap);
