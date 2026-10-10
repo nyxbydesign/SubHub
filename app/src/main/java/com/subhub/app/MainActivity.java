@@ -5,7 +5,6 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -787,7 +786,6 @@ public final class MainActivity extends AppCompatActivity {
         DetectorConfig detector = repository.loadDetectorConfig();
         TextSmutConfig text = repository.loadTextSmutConfig();
         CensorAppearance appearance = repository.loadAppearance();
-        AppModeManager appMode = new AppModeManager(this);
         List<ArrangementDetail> lines = new ArrayList<>();
         lines.add(
                 detailLine(
@@ -831,14 +829,10 @@ public final class MainActivity extends AppCompatActivity {
                         appearance.isShowText()
                                 ? friendlyPhraseNames(phraseGroups)
                                 : getString(R.string.popup_off)));
-        lines.add(
-                detailLine(
-                        R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
         return lines;
     }
 
     private List<ArrangementDetail> limitsArrangementDetails() {
-        AppModeManager appMode = new AppModeManager(this);
         AppTimerManager timers = new AppTimerManager(this);
         AppTimerManager.Settings settings = timers.loadSettings();
         List<ArrangementDetail> lines = new ArrayList<>();
@@ -848,26 +842,8 @@ public final class MainActivity extends AppCompatActivity {
                         settings.totalEnabled
                                 ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                                 : getString(R.string.popup_off)));
-        Set<String> packages = appMode.getIncludedPackages();
-        if (settings.perAppEnabled && !packages.isEmpty()) {
-            List<String> allowances = new ArrayList<>();
-            for (String packageName : packages) {
-                allowances.add(
-                        getString(
-                                R.string.arrangement_app_allowance,
-                                appLabel(packageName),
-                                timers.allowanceMinutes(packageName)));
-            }
-            Collections.sort(allowances, String.CASE_INSENSITIVE_ORDER);
-            lines.add(
-                    detailLine(
-                            R.string.arrangement_limits_individual,
-                            android.text.TextUtils.join("\n", allowances)));
-        } else {
-            lines.add(
-                    detailLine(
-                            R.string.arrangement_limits_individual, getString(R.string.popup_off)));
-        }
+        lines.add(detailLine(R.string.arrangement_limits_individual,
+                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)));
         return lines;
     }
 
@@ -919,7 +895,6 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private List<ArrangementDetail> subliminalArrangementDetails() {
-        AppModeManager appMode = new AppModeManager(this);
         SubliminalSettings settings = new SubliminalSettingsRepository(this).load();
         List<String> voices = new ArrayList<>();
         for (String pack : settings.getEnabledPacks()) voices.add(friendlySubliminalPack(pack));
@@ -935,9 +910,6 @@ public final class MainActivity extends AppCompatActivity {
                 detailLine(
                         R.string.arrangement_subliminal_intensity,
                         friendlyPreset(settings.getPreset())));
-        lines.add(
-                detailLine(
-                        R.string.arrangement_apps, appLabels(appMode.getIncludedPackages())));
         return lines;
     }
 
@@ -960,10 +932,6 @@ public final class MainActivity extends AppCompatActivity {
                         popup.isEnabled()
                                 ? getString(R.string.atmosphere_state_on)
                                 : getString(R.string.popup_off)));
-        lines.add(
-                detailLine(
-                        R.string.arrangement_apps,
-                        appLabels(new AppModeManager(this).getIncludedPackages())));
         return lines;
     }
 
@@ -982,24 +950,6 @@ public final class MainActivity extends AppCompatActivity {
         for (ArrangementDetail row : censorArrangementRows())
             lines.add(getString(R.string.arrangement_detail_line, getString(row.label), row.value));
         return android.text.TextUtils.join("\n\n", lines);
-    }
-
-    private String appLabels(Set<String> packages) {
-        if (packages == null || packages.isEmpty()) return getString(R.string.arrangement_no_apps);
-        List<String> labels = new ArrayList<>();
-        for (String packageName : packages) labels.add(appLabel(packageName));
-        Collections.sort(labels, String.CASE_INSENSITIVE_ORDER);
-        return android.text.TextUtils.join(", ", labels);
-    }
-
-    private String appLabel(String packageName) {
-        try {
-            ApplicationInfo info = getPackageManager().getApplicationInfo(packageName, 0);
-            CharSequence label = getPackageManager().getApplicationLabel(info);
-            return label == null ? packageName : label.toString();
-        } catch (PackageManager.NameNotFoundException ignored) {
-            return packageName;
-        }
     }
 
     private String friendlyCategories(Set<String> categories) {
