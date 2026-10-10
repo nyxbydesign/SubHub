@@ -120,7 +120,7 @@ public final class AuthenticatorActivity extends PreferencePage {
         page.addView(setup);
         ImageView image = setup.findViewById(R.id.authenticator_pairing_qr);
         try {
-            BitMatrix matrix = new QRCodeWriter().encode("otpauth://totp/SubHub:Controller?secret=" + pendingSecret
+            BitMatrix matrix = new QRCodeWriter().encode("otpauth://totp/SubHub:Dom?secret=" + pendingSecret
                     + "&issuer=SubHub&algorithm=SHA1&digits=6&period=30", BarcodeFormat.QR_CODE, 600, 600);
             int[] pixels = new int[600 * 600];
             for (int y = 0; y < 600; y++) for (int x = 0; x < 600; x++) pixels[y * 600 + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;

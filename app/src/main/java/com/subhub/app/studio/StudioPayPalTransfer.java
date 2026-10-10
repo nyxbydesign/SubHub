@@ -180,7 +180,7 @@ final class StudioPayPalTransfer {
         value.show();
     }
     private boolean allowed() {
-        if (!ControllerPinManager.isDomModeActive()) { toast("Unlock Dom Space first."); return false; }
+        if (!ControllerPinManager.isDomModeActive()) { toast("Unlock Dom first."); return false; }
         if (busy) { toast("PayPal encryption is still running."); return false; }
         return !activity.isFinishing() && !activity.isDestroyed();
     }
