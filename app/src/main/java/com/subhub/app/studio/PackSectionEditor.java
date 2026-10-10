@@ -185,7 +185,8 @@ final class PackSectionEditor {
             return pick;
         }
         if (!field.choices.isEmpty() && field.kind != PackSettingCatalog.Kind.SELECTION) {
-            Spinner spinner = new Spinner(activity);
+            Spinner spinner = new androidx.appcompat.widget.AppCompatSpinner(activity, null,
+                    androidx.appcompat.R.attr.spinnerStyle, Spinner.MODE_DROPDOWN);
             List<String> labels = new ArrayList<>();
             for (String value : field.choices) {
                 labels.add(activity.getString(PackSettingCatalog.choiceLabel(field, value)));
@@ -197,6 +198,7 @@ final class PackSectionEditor {
             spinner.setSelection(Math.max(0, field.choices.indexOf(String.valueOf(working.opt(field.key)))));
             spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
                 @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                    if (updating || position != spinner.getSelectedItemPosition()) return;
                     String choice = field.choices.get(position);
                     changed(field, field.kind == PackSettingCatalog.Kind.INTEGER ? Integer.parseInt(choice) : choice);
                 }
@@ -431,7 +433,8 @@ final class PackSectionEditor {
         if (field != null) {
             groups.get(field.group).setVisibility(View.VISIBLE);
             View control = controls.get(key);
-            if (control != null) control.requestFocus();
+            if (control != null) control.requestRectangleOnScreen(
+                    new android.graphics.Rect(0, 0, control.getWidth(), control.getHeight()), true);
         }
     }
 

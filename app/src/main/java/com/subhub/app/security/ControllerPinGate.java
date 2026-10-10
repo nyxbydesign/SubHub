@@ -41,6 +41,7 @@ public final class ControllerPinGate {
         dialog.setOnShowListener(ignored -> {
             styleDialog(activity, dialog);
             bindSubmit(dialog, pin, confirmation);
+            com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     String value = pin.getText().toString();
                     if (!value.equals(confirmation.getText().toString())) {
@@ -75,6 +76,7 @@ public final class ControllerPinGate {
             dialog.setOnShowListener(ignored -> {
                 styleDialog(activity, dialog);
                 bindSubmit(dialog, pin, confirmation);
+                com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     if (!ControllerPinManager.isDomModeActive()) { dialog.dismiss(); return; }
                     if (!pin.getText().toString().equals(confirmation.getText().toString()))
@@ -143,6 +145,7 @@ public final class ControllerPinGate {
         dialog.setOnShowListener(ignored -> {
             styleDialog(activity, dialog);
             bindSubmit(dialog, pin);
+            com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     if (credential.verify()) {
                         dialog.dismiss();

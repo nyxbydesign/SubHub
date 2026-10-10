@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.SubHub" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:windowSoftInputMode">stateAlwaysHidden|adjustResize</item>
         <item name="android:fontFamily">sans-serif</item>
         <item name="android:windowBackground">@drawable/bg_main</item>
         <item name="android:statusBarColor">@color/background</item>
@@ -34,6 +35,16 @@
         <item name="checkboxStyle">@style/Widget.SubHub.CheckBox</item>
         <item name="android:radioButtonStyle">@style/Widget.SubHub.RadioButton</item>
         <item name="radioButtonStyle">@style/Widget.SubHub.RadioButton</item>
+        <item name="spinnerStyle">@style/Widget.SubHub.Spinner</item>
+    </style>
+
+    <style name="Widget.SubHub.Spinner" parent="Widget.AppCompat.Spinner">
+        <item name="android:background">@drawable/bg_spinner</item>
+        <item name="android:popupBackground">@drawable/bg_native_dialog</item>
+        <item name="android:dropDownWidth">match_parent</item>
+        <item name="android:spinnerMode">dropdown</item>
+        <item name="android:minHeight">@dimen/control_min_height</item>
+        <item name="popupTheme">@style/ThemeOverlay.SubHub.AlertDialog</item>
     </style>
 
     <style name="Animation.SubHub.Activity" parent="@android:style/Animation.Activity">
@@ -50,6 +61,7 @@
 
     <style name="ThemeOverlay.SubHub.AlertDialog"
         parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="android:windowSoftInputMode">stateAlwaysHidden|adjustResize</item>
         <item name="android:windowAnimationStyle">@style/Animation.SubHub.Dialog</item>
         <item name="colorSurface">@color/dialog_surface</item>
         <item name="colorOnSurface">@color/text_primary</item>
