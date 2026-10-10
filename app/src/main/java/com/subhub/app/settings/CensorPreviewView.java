@@ -77,12 +77,9 @@ public final class CensorPreviewView extends View {
                 android.graphics.Bitmap source = android.graphics.Bitmap.createBitmap(
                         128, 128, android.graphics.Bitmap.Config.ARGB_8888);
                 Canvas sample = new Canvas(source);
-                paint.setShader(new LinearGradient(0, 0, 128, 128,
-                        PLUM_LIGHT, CYAN, Shader.TileMode.CLAMP));
-                sample.drawRect(0, 0, 128, 128, paint);
                 paint.setShader(null);
-                paint.setColor(PLUM);
-                for (int x = 0; x < 128; x += 16) sample.drawRect(x, 0, x + 8, 128, paint);
+                paint.setColor(PLUM_LIGHT);
+                sample.drawRect(32, 32, 96, 96, paint);
                 squareBitmap = source.copy(android.graphics.Bitmap.Config.ARGB_8888, true);
                 try (com.subhub.app.capture.CensorRenderer renderer =
                         new com.subhub.app.capture.CensorRenderer(getContext(), null)) {

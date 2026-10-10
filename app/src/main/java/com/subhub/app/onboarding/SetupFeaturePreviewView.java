@@ -87,8 +87,8 @@ public final class SetupFeaturePreviewView extends FrameLayout {
         float scale = width / 328f;
         int height = Math.round(214f * scale);
         setMeasuredDimension(width, resolveSize(height, heightSpec));
-        phone.measure(MeasureSpec.makeMeasureSpec(Math.round(92f * scale), MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(Math.round(180f * scale), MeasureSpec.EXACTLY));
+        phone.measure(MeasureSpec.makeMeasureSpec(Math.round(100f * scale), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(Math.round(200f * scale), MeasureSpec.EXACTLY));
     }
     @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         float scale = getWidth() / 328f;
@@ -102,11 +102,11 @@ public final class SetupFeaturePreviewView extends FrameLayout {
         paint.setStyle(Paint.Style.FILL);
         paint.setPathEffect(null);
         paint.setColor(Color.rgb(26, 19, 34));
-        canvas.drawRect(26f, 143f, 102f, 180f, paint);
+        canvas.drawRect(26f, 156f, 111f, 193f, paint);
         paint.setColor(primaryText);
         paint.setTypeface(bold);
         paint.setTextSize(12f);
-        canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_censor), 29f, 153f, paint);
+        canvas.drawText(getContext().getString(com.subhub.app.R.string.tour_scene_censor), 29f, 167f, paint);
         paint.setColor(secondaryText);
         paint.setTypeface(normal);
         paint.setTextSize(8f);
@@ -116,8 +116,10 @@ public final class SetupFeaturePreviewView extends FrameLayout {
             int space = help.lastIndexOf(' ', split);
             if (space > 0) split = space;
         }
-        drawFittedText(canvas, help.substring(0, split).trim(), 29f, 166f, 70f);
-        if (split < help.length()) drawFittedText(canvas, help.substring(split).trim(), 29f, 176f, 70f);
+        drawFittedText(canvas, help.substring(0, split).trim(), 29f, 180f, 70f);
+        if (split < help.length()) drawFittedText(canvas, help.substring(split).trim(), 29f, 190f, 70f);
+        paint.setColor(accentText);
+        canvas.drawRoundRect(56f, 194f, 82f, 196f, 1f, 1f, paint);
         canvas.restoreToCount(checkpoint);
     }
     @Override protected void onDraw(Canvas canvas) {
