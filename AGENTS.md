@@ -45,6 +45,12 @@ overriding each test's Dom/Sub state.
 For first-launch or unkeyed onboarding tests, add `-e controller_fixture false`.
 The runner otherwise prepares a PIN before activity creation, which changes the
 fresh-setup behavior being tested. Keep the fixture enabled for ordinary screen tests.
+For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
+separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
+focus check does not verify recreated screens.
+Spinner value and option TextViews must not inherit interactive EditText flags.
+Keep them nonfocusable and nonclickable so taps reach the spinner or option list;
+verify opening, choosing, and saving with native taps rather than `setSelection` alone.
 
 For Windows 10 emulator setup when the bundled screenshot helper fails, follow
 [Android capture fallback](docs/censor-lab/android-capture-fallback.md). Check supported
