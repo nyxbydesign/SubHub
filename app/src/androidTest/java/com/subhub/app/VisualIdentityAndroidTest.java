@@ -131,7 +131,7 @@ public final class VisualIdentityAndroidTest {
                 settle();
                 final int number = step;
                 page.onActivity(a -> inspect(a, "setup-" + number));
-                if (step == 2) {
+                if (step == 1) {
                     for (String style : new String[] {"pixelate", "blur"}) {
                         page.onActivity(a -> a.findViewById(android.R.id.content)
                                 .findViewWithTag("setup-style:" + style).performClick());

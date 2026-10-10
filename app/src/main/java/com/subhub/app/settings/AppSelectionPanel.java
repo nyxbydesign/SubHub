@@ -75,6 +75,13 @@ public final class AppSelectionPanel extends LinearLayout {
         refresh();
     }
 
+    /** Setup owns a bounded viewport, so let its app list use all remaining height. */
+    public void fillAvailableHeight() {
+        LinearLayout content = findViewById(R.id.app_list_content);
+        content.setLayoutParams(new LayoutParams(-1, 0, 1));
+        list.setLayoutParams(new LayoutParams(-1, 0, 1));
+    }
+
     public void bind(AppCompatActivity activity, BooleanSupplier editable, Runnable changed) {
         this.editable = editable;
         this.changed = changed;

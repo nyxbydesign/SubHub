@@ -66,10 +66,19 @@ public class SetupPickerAndroidTest {
                 capture(activity, "setup-mobile.png");
             });
             onView(withId(R.id.tour_next)).perform(click());
+            onView(withId(R.id.tour_next)).perform(click());
+            onView(withId(R.id.tour_next)).perform(click());
             awaitApps(tour, instrument);
             tour.onActivity(activity -> {
                 assertFalse(text(activity.findViewById(android.R.id.content)).contains("Whispers"));
                 ListView list = activity.findViewById(R.id.app_list);
+                View card = activity.findViewById(android.R.id.content).findViewWithTag("setup-app-card");
+                android.graphics.Rect cardBounds = new android.graphics.Rect(), scrollBounds = new android.graphics.Rect();
+                card.getGlobalVisibleRect(cardBounds);
+                activity.findViewById(R.id.tour_scroll).getGlobalVisibleRect(scrollBounds);
+                assertTrue("Apps use the available height", Math.abs(cardBounds.bottom
+                        - scrollBounds.bottom + activity.findViewById(R.id.tour_content).getPaddingBottom()) <= 3);
+                assertTrue("App list is tall", list.getHeight() > activity.getResources().getDisplayMetrics().density * 360);
                 IncludedAppRow row = (IncludedAppRow) list.getChildAt(0);
                 assertNotNull(row);
                 CheckBox choice = row.choice();
@@ -81,9 +90,9 @@ public class SetupPickerAndroidTest {
             });
             tour.recreate();
             awaitApps(tour, instrument);
-            onView(withId(R.id.tour_progress)).check(matches(withText(context.getString(R.string.tour_progress, 2, 6))));
+            onView(withId(R.id.tour_progress)).check(matches(withText(context.getString(R.string.tour_progress, 4, 6))));
             assertEquals(selected.get(), new AppModeManager(context).getSelectedPackages().contains(changedPackage.get()));
-            for (int step = 1; step < 5; step++) onView(withId(R.id.tour_next)).perform(click());
+            for (int step = 3; step < 5; step++) onView(withId(R.id.tour_next)).perform(click());
             tour.onActivity(activity -> {
                 String content = text(activity.findViewById(android.R.id.content));
                 assertFalse(content.contains("Whispers"));
