@@ -37,7 +37,7 @@ jobs:
     - name: Verify and apply tested dependency updates
       uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
       with:
-        script: "const policy = {\"repository\":\"confiteor48/SubHub\",\"branch\":\"master\",\"dependencyFiles\"\
+        script: "const policy = {\"repository\":\"nyxbydesign/SubHub\",\"branch\":\"master\",\"dependencyFiles\"\
           :[\"app/build.gradle\",\"build.gradle\",\"gradle/wrapper/gradle-wrapper.properties\"],\"requiredWorkflows\"\
           :[{\"path\":\"android-ci.yml\",\"steps\":[\"Test, lint, and build universal APK\"]}],\"mergeMethod\":\"\
           rebase\"};\n// Embedded in a default-branch workflow. Never check out or execute PR code here.\nfunction\
