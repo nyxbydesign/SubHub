@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 def releaseVersion = new Properties()
@@ -46,6 +47,7 @@ android {
         applicationId 'com.subhub.app'
         minSdk 26
         targetSdk 35
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' }
         versionCode appVersionCode
         versionName appVersionName
         buildConfigField 'String', 'BUILD_DATE',
@@ -65,6 +67,8 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    kotlinOptions { jvmTarget = '17' }
 
     signingConfigs {
         release {
@@ -99,6 +103,7 @@ android {
     packaging {
         resources {
             excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE']
+            excludes += ['darwin-aarch64/**', 'win32-x86-64/**', 'linux-aarch64/**', 'linux-x86-64/**']
         }
     }
 
@@ -110,6 +115,11 @@ android {
 }
 
 dependencies {
+    implementation('computer.iroh:iroh-android:1.2.0') {
+        exclude group: 'net.java.dev.jna', module: 'jna'
+    }
+    // Iroh's older JNA transitive packages 4 KiB native libraries.
+    implementation 'net.java.dev.jna:jna:5.19.1@aar'
     implementation 'com.google.zxing:core:3.5.4'
     implementation 'androidx.biometric:biometric:1.1.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
