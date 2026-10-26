@@ -9,9 +9,25 @@ import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
 
-/** Person identity stays prominent without repeating device and contract details. */
+/** Person identity and device selection stay visible throughout profile navigation. */
 public final class ProfileViews {
     private ProfileViews() {}
+
+    public static String targetDiscriminator(Context context, PersonSnapshot person) {
+        return targetDiscriminator(context, person.id, person.device);
+    }
+
+    /** Peer IDs carry a relationship generation after the stable 64-character device identity. */
+    public static String targetDiscriminator(Context context, PersonId id, String device) {
+        String label = device == null ? "" : device.trim();
+        if (id.isLocal()) return label.isEmpty() ? context.getString(R.string.role_this_device) : label;
+        String identity = id.value();
+        if (identity.startsWith("remote_") && identity.length() > 72 && identity.charAt(71) == '_') {
+            String peer = identity.substring(7, 71);
+            if (peer.matches("[0-9a-f]{64}")) identity = peer.substring(0, 8) + "…" + peer.substring(60);
+        }
+        return label.isEmpty() ? identity : context.getString(R.string.profile_target_device_identity, label, identity);
+    }
 
     public static void identity(LinearLayout parent, PersonSnapshot person) {
         Context context = parent.getContext();
@@ -28,6 +44,8 @@ public final class ProfileViews {
         TextView name = PersonUi.text(copy, person.name, true);
         name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 26);
         ViewCompat.setAccessibilityHeading(name, true);
+        PersonUi.text(copy, targetDiscriminator(context, person), false)
+                .setTag("person_target:" + person.id.value());
         PersonUi.text(copy, PersonUi.connection(context, person), false);
         hero.addView(row, new LinearLayout.LayoutParams(-1, -2));
         parent.addView(hero, new LinearLayout.LayoutParams(-1, -2));
@@ -44,7 +62,8 @@ public final class ProfileViews {
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
         size.setMarginStart(PersonUi.dp(context, 14));
         row.addView(content, size);
-        PersonUi.row(content, 0, person.name, PersonUi.connection(context, person), null);
+        PersonUi.row(content, 0, person.name,
+                targetDiscriminator(context, person) + "\n" + PersonUi.connection(context, person), null);
         TextView arrow = new TextView(context);
         arrow.setText("›");
         arrow.setTextSize(24);
@@ -65,7 +84,7 @@ public final class ProfileViews {
         return card;
     }
 
-    private static TextView avatar(Context context, String name) {
+    public static TextView avatar(Context context, String name) {
         TextView value = new TextView(context);
         String[] words = name.trim().split("\\s+");
         String initials = words.length == 0 || words[0].isEmpty() ? "?"

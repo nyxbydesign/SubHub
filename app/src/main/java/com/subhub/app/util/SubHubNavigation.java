@@ -86,10 +86,10 @@ public final class SubHubNavigation {
                 || active == Screen.ATMOSPHERE || domMode && (active == Screen.STATS || active == Screen.CONTRACT)) {
             selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
         }
+        ((TextView) root.findViewById(R.id.nav_home_label)).setText(R.string.role_overview);
         bindTab(activity, root.findViewById(R.id.nav_home),
                 root.findViewById(R.id.nav_home_icon), root.findViewById(R.id.nav_home_label),
                 selected, Screen.HOME, MainActivity.class);
-        ((TextView) root.findViewById(R.id.nav_home_label)).setText(R.string.role_overview);
         bindTab(activity, root.findViewById(R.id.nav_people),
                 root.findViewById(R.id.nav_people_icon), root.findViewById(R.id.nav_people_label),
                 selected, Screen.PEOPLE, com.subhub.app.people.PeopleActivity.class);
@@ -131,63 +131,29 @@ public final class SubHubNavigation {
                 : navigation.getResources().getDisplayMetrics().widthPixels;
         int minimumTarget = navigation.getResources()
                 .getDimensionPixelSize(R.dimen.control_min_height);
-        int desiredMargin = navigation.getResources()
-                .getDimensionPixelSize(R.dimen.bottom_nav_margin);
-        int minimumMargin = navigation.getResources()
-                .getDimensionPixelSize(R.dimen.bottom_nav_min_margin);
         int horizontalPadding = navigation.getPaddingLeft() + navigation.getPaddingRight();
-        int available = Math.max(0, pageWidth - horizontalPadding - 2 * minimumMargin);
-        int[] targetWidths = new int[visibleTabs.size()];
-        for (int index = 0; index < visibleTabs.size(); index++) {
-            ViewGroup tab = (ViewGroup) visibleTabs.get(index);
-            TextView label = (TextView) tab.getChildAt(1);
-            targetWidths[index] = Math.max(minimumTarget,
-                    (int) Math.ceil(label.getPaint().measureText(label.getText().toString()))
-                            + 2 * minimumMargin);
-        }
-
-        // Give long names their natural width. Enlarge the grid before splitting words
-        // or shrinking the user's font setting; child order remains the navigation order.
+        // A single rail preserves the viewport at large text sizes. Labels retain the
+        // system font scale and wrap inside their own target instead of adding tab rows.
         int columns = visibleTabs.size();
-        int[] columnWidths;
-        int naturalWidth;
-        while (true) {
-            columnWidths = new int[columns];
-            for (int index = 0; index < targetWidths.length; index++) {
-                columnWidths[index % columns] = Math.max(columnWidths[index % columns],
-                        targetWidths[index]);
-            }
-            naturalWidth = 0;
-            for (int width : columnWidths) naturalWidth += width;
-            if (naturalWidth <= available || columns == 1) break;
-            columns = columns == visibleTabs.size() && columns > 3
-                    ? (columns + 1) / 2 : columns - 1;
-        }
+        if (tabs.getColumnCount() < columns) tabs.setColumnCount(columns);
         ViewGroup.MarginLayoutParams params =
                 (ViewGroup.MarginLayoutParams) navigation.getLayoutParams();
-        int margin = Math.min(desiredMargin, Math.max(minimumMargin,
-                (pageWidth - horizontalPadding - naturalWidth) / 2));
-        if (params.leftMargin != margin || params.rightMargin != margin) {
-            params.leftMargin = margin;
-            params.rightMargin = margin;
+        if (params.leftMargin != 0 || params.rightMargin != 0 || params.bottomMargin != 0) {
+            params.leftMargin = 0;
+            params.rightMargin = 0;
+            params.bottomMargin = 0;
             navigation.setLayoutParams(params);
         }
-        int contentWidth = pageWidth - horizontalPadding - 2 * margin;
-        int extra = contentWidth - naturalWidth;
-        for (int column = 0; column < columns; column++) {
-            columnWidths[column] = extra >= 0
-                    ? columnWidths[column] + extra / columns + (column < extra % columns ? 1 : 0)
-                    : contentWidth / columns;
-        }
+        int contentWidth = Math.max(minimumTarget * columns, pageWidth - horizontalPadding);
         int visibleIndex = 0;
         for (int index = 0; index < tabs.getChildCount(); index++) {
             View tab = tabs.getChildAt(index);
             boolean visible = tab.getVisibility() == View.VISIBLE;
-            int row = visible ? visibleIndex / columns : 0;
             int column = visible ? visibleIndex % columns : 0;
-            int width = visible ? columnWidths[column] : 0;
+            int width = visible ? contentWidth / columns
+                    + (column < contentWidth % columns ? 1 : 0) : 0;
             GridLayout.LayoutParams tabParams = (GridLayout.LayoutParams) tab.getLayoutParams();
-            GridLayout.Spec rowSpec = GridLayout.spec(row, GridLayout.FILL);
+            GridLayout.Spec rowSpec = GridLayout.spec(0, GridLayout.FILL);
             GridLayout.Spec columnSpec = GridLayout.spec(column, GridLayout.FILL);
             if (tabParams.width != width || !tabParams.rowSpec.equals(rowSpec)
                     || !tabParams.columnSpec.equals(columnSpec)) {
@@ -198,8 +164,10 @@ public final class SubHubNavigation {
             }
             if (visible) visibleIndex++;
         }
+        if (tabs.getColumnCount() != columns) tabs.setColumnCount(columns);
+        if (tabs.getRowCount() != 1) tabs.setRowCount(1);
 
-        // Reserve the measured pill, including labels enlarged by the system font setting.
+        // Reserve the measured rail, including labels enlarged by the system font setting.
         // Padding belongs to the scroll content so the final control can scroll above it.
         int pillHeight = Math.max(navigation.getHeight(), navigation.getResources()
                 .getDimensionPixelSize(R.dimen.bottom_nav_height));
@@ -238,10 +206,18 @@ public final class SubHubNavigation {
         ViewCompat.setAccessibilityDelegate(tab, TAB_ACCESSIBILITY);
         if (label != null) label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         if (icon != null) icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        if (label != null) label.setTextColor(activity.getColor(R.color.text_primary));
+        if (label != null) label.setTextColor(activity.getColor(selected
+                ? R.color.accent_text : R.color.text_secondary));
         if (icon != null) ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(
-                activity.getColor(selected ? R.color.accent : R.color.text_primary)));
-        tab.setBackgroundResource(R.drawable.bg_bottom_tab_active);
+                activity.getColor(selected ? R.color.accent_text : R.color.text_secondary)));
+        tab.setBackgroundResource(R.drawable.bg_shell_tab);
+        if (label != null) {
+            label.setSingleLine(false);
+            label.setEllipsize(null);
+            label.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY);
+            tab.setContentDescription(label.getText());
+            androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, label.getText());
+        }
         tab.setOnClickListener(view -> {
             if (selected && target.isInstance(activity)) return;
             if (selected && activity instanceof PenanceActivity) {

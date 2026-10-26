@@ -98,6 +98,14 @@ public class RemoteProtocolTest {
         assertNotEquals(PairingInvite.fingerprint(DOM,SUB,invite.id),PairingInvite.fingerprint(SUB,DOM,invite.id));
     }
 
+    @Test public void invitationCodeSharesWithoutCustomSchemeAndAcceptsPaste() {
+        PairingInvite invite=PairingInvite.create(DOM,"route with spaces +/",1000);
+        assertTrue(invite.code().startsWith("pair?"));assertFalse(invite.code().contains("subhubapp://"));
+        PairingInvite pasted=PairingInvite.parse("  "+invite.code()+"  ",1001);
+        assertEquals(invite.id,pasted.id);assertEquals(invite.tokenHash(),pasted.tokenHash());assertEquals(invite.route,pasted.route);
+        assertEquals(invite.link(),pasted.link());
+    }
+
     @Test public void invitationRejectsExpiryDuplicatesAndUntrustedUriForms() {
         PairingInvite invite = PairingInvite.create(DOM,"ticket",1000);
         assertThrows(IllegalArgumentException.class, () -> PairingInvite.parse(invite.link(),invite.expiresAt));

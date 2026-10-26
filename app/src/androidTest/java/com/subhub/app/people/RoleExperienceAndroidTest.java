@@ -60,6 +60,8 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public final class RoleExperienceAndroidTest {
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @org.junit.Rule public final org.junit.rules.TestName testName = new org.junit.rules.TestName();
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
@@ -131,7 +133,7 @@ public final class RoleExperienceAndroidTest {
             });
             tap(home, R.id.nav_contract);
             ContractActivity contract = resumed(ContractActivity.class);
-            await(() -> visibleChildCount(ContractActivity.class, R.id.role_page_body) >= 4);
+            await(() -> hasTag(contract, "person_contract_scope"));
             capture(contract, "sub-contract");
             onMain(() -> {
                 assertFalse(hasInput(contract.findViewById(R.id.role_page_body)));
@@ -147,11 +149,11 @@ public final class RoleExperienceAndroidTest {
             capture(settings, "sub-settings");
             onMain(() -> {
                 assertNull(settings.findViewById(R.id.apps_card));
-                assertTrue(settings.findViewById(R.id.settings_connection).isShown());
+                assertNull(settings.findViewById(R.id.settings_connection));
                 assertTrue(settings.findViewById(R.id.settings_connections_security).isShown());
                 assertFalse(settings.findViewById(R.id.hardcore_card).isShown());
                 assertFalse(settings.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertTrue(settings.findViewById(R.id.button_help).isShown());
+                assertFalse(settings.findViewById(R.id.button_help).isShown());
                 assertFits(settings.getWindow().getDecorView());
             });
         }
@@ -225,8 +227,15 @@ public final class RoleExperienceAndroidTest {
             ServiceDurationActivity guarded = resumed(ServiceDurationActivity.class);
             AtomicReference<View> stale = new AtomicReference<>();
             onMain(() -> stale.set(guarded.findViewById(R.id.commitment_timer_24h)));
-            tap(guarded, R.id.button_edit_lock);
-            resumed(MainActivity.class);
+            onMain(() -> assertFalse(guarded.findViewById(R.id.button_edit_lock).isShown()));
+            tap(guarded, R.id.button_back);
+            resumed(PersonActivity.class);
+            await(() -> hasTag(person, "person_duration"));
+            tap(person, R.id.button_back);
+            await(() -> hasTag(person, "person_session:local"));
+            tap(person, R.id.nav_home);
+            MainActivity returnedHome = resumed(MainActivity.class);
+            tap(returnedHome, R.id.button_edit_lock);
             assertFalse(ControllerPinManager.isDomModeActive());
             onMain(() -> {
                 // Even an already-delivered stale listener must no longer persist a choice.
@@ -275,7 +284,9 @@ public final class RoleExperienceAndroidTest {
             onMain(() -> {
                 assertNull(person.getWindow().getDecorView().findViewWithTag("person_duration:" + remoteId.value()));
                 assertNull(person.getWindow().getDecorView().findViewWithTag("person_duration"));
-                assertNull(person.getWindow().getDecorView().findViewWithTag("person_apps"));
+                View apps = person.getWindow().getDecorView().findViewWithTag("person_apps");
+                assertNotNull(apps);
+                assertFalse(apps.isClickable());
                 PersonRoutes.editSection(person, remoteId, "censor");
                 PersonRoutes.editSection(person, remoteId, "apps");
                 PersonRoutes.editSection(person, remoteId, "duration");
@@ -339,7 +350,7 @@ public final class RoleExperienceAndroidTest {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<ContractActivity> scenario = ActivityScenario.launch(ContractActivity.class)) {
             ContractActivity activity = resumed(ContractActivity.class);
-            await(() -> visibleChildCount(ContractActivity.class, R.id.role_page_body) >= 4);
+            await(() -> hasTag(activity, "person_contract_scope"));
             AtomicReference<ServiceCountdownView> witness = new AtomicReference<>();
             onMain(() -> {
                 LinearLayout body = activity.findViewById(R.id.role_page_body);
@@ -499,50 +510,55 @@ public final class RoleExperienceAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void connectionAndSecurityEntriesKeepTheirLocalRoleAndTarget() throws Exception {
+    public void keyholderDestinationUsesTheAssignedRelationshipWithoutPinControls() throws Exception {
         AtomicReference<PersonId> target = new AtomicReference<>();
         People.installConnectionUi(new ConnectionUi() {
-            public void openPairing(Activity activity) { fail("Settings must open the selected relationship"); }
+            public void openPairing(Activity activity) { fail("A paired Sub must open its relationship"); }
             public void openConnection(Activity activity, PersonId id) { target.set(id); }
         });
+        People.installKeyholder(com.subhub.app.security.KeyholderPresentationAndroidTest.provider(
+                com.subhub.app.security.KeyholderProvider.State.READY, "Synthetic Dom"));
+        People.installRemoteAuthority(() -> true);
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             GlobalSettingsActivity settings = resumed(GlobalSettingsActivity.class);
-            tap(settings, R.id.settings_connection);
+            onMain(() -> assertNull(settings.findViewById(R.id.settings_connection)));
+            tap(settings, R.id.settings_connections_security);
+            com.subhub.app.security.AuthenticatorActivity keyholder = resumed(com.subhub.app.security.AuthenticatorActivity.class);
+            onMain(() -> {
+                assertNull(keyholder.findViewById(R.id.keyholder_pin_change_button));
+                assertNull(keyholder.findViewById(R.id.keyholder_remove_pin));
+                assertNull(keyholder.findViewById(R.id.keyholder_pair_device));
+                assertNull(keyholder.findViewById(R.id.authenticator_pairing_qr));
+                assertEquals("Synthetic Dom", ((TextView) keyholder.findViewById(R.id.keyholder_assigned_dom)).getText().toString());
+                assertEquals(context.getString(R.string.keyholder_home_title),
+                        ((TextView) keyholder.findViewById(R.id.primary_header_title)).getText().toString());
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertHeaderTextClearsControls(keyholder);
+            });
+            capture(keyholder, "sub-keyholder");
+            tap(keyholder, R.id.settings_connection);
             assertEquals(PersonId.LOCAL, target.get());
             assertFalse(ControllerPinManager.isDomModeActive());
-            tap(settings, R.id.settings_connections_security);
-            com.subhub.app.security.AuthenticatorActivity connection =
-                    resumed(com.subhub.app.security.AuthenticatorActivity.class);
-            onMain(() -> {
-                assertNull(connection.findViewById(R.id.keyholder_pin_change_button));
-                assertNull(connection.findViewById(R.id.keyholder_pair_button));
-                assertNull(connection.findViewById(R.id.authenticator_pairing_qr));
-                assertNull(connection.findViewById(R.id.keyholder_pair_device));
-                assertEquals(context.getString(R.string.role_security),
-                        ((TextView) connection.findViewById(R.id.primary_header_title)).getText().toString());
-                assertFalse(ControllerPinManager.isDomModeActive());
-                assertHeaderTextClearsControls(connection);
-            });
-            capture(connection, "sub-security");
-            onMain(connection::finish);
+            onMain(keyholder::finish);
             resumed(GlobalSettingsActivity.class);
+            People.installKeyholder(com.subhub.app.security.KeyholderPresentationAndroidTest.provider(
+                    com.subhub.app.security.KeyholderProvider.State.NONE, ""));
+            People.installRemoteAuthority(() -> false);
             ControllerPinManager.enterDomMode();
             scenario.recreate();
             GlobalSettingsActivity domSettings = resumed(GlobalSettingsActivity.class);
             onMain(() -> {
-                assertEquals(View.GONE, domSettings.findViewById(R.id.settings_connection).getVisibility());
+                assertNull(domSettings.findViewById(R.id.settings_connection));
                 assertNull(domSettings.findViewById(R.id.apps_card));
-                assertTrue(domSettings.findViewById(R.id.settings_connections_security).isShown());
             });
             tap(domSettings, R.id.settings_connections_security);
-            com.subhub.app.security.AuthenticatorActivity security =
-                    resumed(com.subhub.app.security.AuthenticatorActivity.class);
+            com.subhub.app.security.AuthenticatorActivity local = resumed(com.subhub.app.security.AuthenticatorActivity.class);
             onMain(() -> {
-                assertNotNull(security.findViewById(R.id.keyholder_pin_change_button));
-                assertNotNull(security.findViewById(R.id.keyholder_pair_button));
-                assertNull(security.findViewById(R.id.keyholder_pair_device));
-                assertHeaderTextClearsControls(security);
+                assertNotNull(local.findViewById(R.id.keyholder_pin_change_button));
+                assertNotNull(local.findViewById(R.id.keyholder_pair_device));
+                assertNull(local.findViewById(R.id.authenticator_pairing_qr));
+                assertHeaderTextClearsControls(local);
             });
         }
     }
@@ -694,6 +710,31 @@ public final class RoleExperienceAndroidTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void openRemoteProfileRemovesEndWhenItsRuntimeBecomesStale() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        AtomicReference<PersonSnapshot> current = new AtomicReference<>(remoteSession(peer,
+                PersonSnapshot.Freshness.CURRENT, true, true, "generation"));
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { return current.get(); }
+        });
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { }
+        });
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> hasTag(profile, "person_session:" + peer.value()));
+            current.set(remoteSession(peer, PersonSnapshot.Freshness.STALE, true, false, "generation"));
+            await(() -> bodyContains(profile, context.getString(R.string.role_stale_data)));
+            onMain(() -> assertNull(profile.findViewById(R.id.person_session_action)));
+            assertTrue(bodyContains(profile, "Synthetic Alex"));
+        }
+    }
+
     private PersonSnapshot remoteSession(PersonId id, PersonSnapshot.Freshness runtime,
             boolean endCapability, boolean active, String identity) {
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT);
@@ -713,7 +754,7 @@ public final class RoleExperienceAndroidTest {
             public PersonSnapshot load(PersonId id) {
                 return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", "Unknown",
                         PersonSnapshot.Connection.PAIRED, PersonSnapshot.Freshness.CURRENT, 0,
-                        EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT), Collections.emptyList(),
+                        EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.VIEW_STATS), Collections.emptyList(),
                         List.of(new PersonSnapshot.Allowance("com.android.chrome", "Chrome", -1, 35)),
                         "EUR", 0, 0, 0, 0, false,
                         new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
@@ -726,11 +767,103 @@ public final class RoleExperienceAndroidTest {
             PersonActivity profile = resumed(PersonActivity.class);
             await(() -> hasTag(profile, "person_tab:contracts"));
             tapTag(profile, "person_tab:contracts");
+            await(() -> hasTag(profile, "person_contract_scope"));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_app_time)));
+            tap(profile, R.id.button_back);
+            await(() -> hasTag(profile, "person_tab:stats"));
+            tapTag(profile, "person_tab:stats");
             await(() -> bodyContains(profile, context.getString(R.string.role_allowance_unknown, 35)));
             assertChildHasNoSession(profile);
             assertFalse(bodyContains(profile, context.getString(R.string.role_allowance_usage, 0, 35)));
             onMain(() -> assertNoUsageProgress(profile.findViewById(R.id.role_page_body)));
             capture(profile, "remote-allowance-unknown");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void homePersonSelectionSurvivesRecreationAndQuickControlsKeepTheirTarget() throws Exception {
+        PersonId alex = new PersonId("peer:synthetic-alex"), sam = new PersonId("peer:synthetic-sam");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(alex, sam); }
+            public PersonSnapshot load(PersonId id) { return remote(id); }
+        });
+        List<String> routes = new java.util.ArrayList<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { }
+            public void editSection(Activity activity, PersonId id, String section) { routes.add(id.value() + ":" + section); }
+        });
+        Map<String, ?> before = new LinkedHashMap<>(new SettingsRepository(context).preferences().getAll());
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            MainActivity home = resumed(MainActivity.class);
+            await(() -> hasTag(home, "home_person_choice:" + sam.value()));
+            tapTag(home, "home_person_choice:" + sam.value());
+            await(() -> hasTag(home, "home_person_edit:" + sam.value() + ":censor"));
+            scenario.recreate();
+            MainActivity recreated = resumed(MainActivity.class);
+            await(() -> hasTag(recreated, "home_person_edit:" + sam.value() + ":censor"));
+            tapTag(recreated, "home_person_edit:" + sam.value() + ":censor");
+            assertEquals(List.of(sam.value() + ":censor"), routes);
+            assertFalse(hasTag(recreated, "home_person_edit:" + alex.value() + ":censor"));
+            capture(recreated, "dom-home-selected-person");
+            assertEquals(before, new SettingsRepository(context).preferences().getAll());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void subContractExpandsOneReadOnlySectionAndRestoresIt() throws Exception {
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<ContractActivity> scenario = ActivityScenario.launch(ContractActivity.class)) {
+            ContractActivity contract = resumed(ContractActivity.class);
+            await(() -> hasTag(contract, "contract_section:censor"));
+            onMain(() -> assertEquals(View.GONE, contract.findViewById(R.id.role_page_body)
+                    .findViewWithTag("contract_details:censor").getVisibility()));
+            tapTag(contract, "contract_section:censor");
+            onMain(() -> assertTrue(contract.findViewById(R.id.role_page_body)
+                    .findViewWithTag("contract_details:censor").isShown()));
+            tapTag(contract, "contract_section:limits");
+            onMain(() -> {
+                assertEquals(View.GONE, contract.findViewById(R.id.role_page_body)
+                        .findViewWithTag("contract_details:censor").getVisibility());
+                assertTrue(contract.findViewById(R.id.role_page_body)
+                        .findViewWithTag("contract_details:limits").isShown());
+            });
+            scenario.recreate();
+            ContractActivity recreated = resumed(ContractActivity.class);
+            await(() -> hasTag(recreated, "contract_section:limits"));
+            onMain(() -> assertTrue(recreated.findViewById(R.id.role_page_body)
+                    .findViewWithTag("contract_details:limits").isShown()));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            capture(recreated, "sub-contract-expanded-limits");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void contractScopePrecedesFeaturesAndTargetIdentityDoesNotDependOnGeneration() throws Exception {
+        PersonId first = new PersonId("remote_" + String.join("", Collections.nCopies(64, "a")) + "_first-generation");
+        PersonId renamedGeneration = new PersonId("remote_" + String.join("", Collections.nCopies(64, "a")) + "_next-generation");
+        PersonId second = new PersonId("remote_" + String.join("", Collections.nCopies(64, "b")) + "_first-generation");
+        String firstLabel = ProfileViews.targetDiscriminator(context, first, "Pixel 8");
+        assertEquals(firstLabel, ProfileViews.targetDiscriminator(context, renamedGeneration, "Pixel 8"));
+        assertNotEquals(firstLabel, ProfileViews.targetDiscriminator(context, second, "Pixel 8"));
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<PersonActivity> page = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> hasTag(profile, "person_tab:contracts"));
+            tapTag(profile, "person_tab:contracts");
+            await(() -> hasTag(profile, "person_contract_scope"));
+            onMain(() -> {
+                ViewGroup body = profile.findViewById(R.id.role_page_body);
+                View scope = body.findViewWithTag("person_contract_scope");
+                View features = body.findViewWithTag("person_contract_features");
+                assertNotNull(features);
+                assertTrue(body.indexOfChild(scope) < body.indexOfChild(features));
+                assertNotNull(scope.findViewWithTag("person_apps"));
+                assertNotNull(scope.findViewWithTag("person_duration"));
+                assertFalse(contains(body, context.getString(R.string.role_app_time)));
+            });
         }
     }
 
@@ -967,7 +1100,10 @@ public final class RoleExperienceAndroidTest {
             AtomicReference<Boolean> ready = new AtomicReference<>(false);
             onMain(() -> {
                 View root = activity.getWindow().getDecorView();
-                boolean settled = activity.hasWindowFocus() && !root.isLayoutRequested();
+                boolean settled = activity.hasWindowFocus() && !root.isLayoutRequested()
+                        && !containsVisibleText(root, activity.getString(R.string.role_loading));
+                View snackbar = root.findViewById(com.google.android.material.R.id.snackbar_text);
+                if (snackbar != null && snackbar.isShown()) settled = false;
                 ViewGroup nav = activity.findViewById(R.id.bottom_navigation);
                 if (nav != null) for (int i = 0; i < nav.getChildCount(); i++) {
                     View child = nav.getChildAt(i);
@@ -977,15 +1113,7 @@ public final class RoleExperienceAndroidTest {
             });
             return ready.get();
         });
-        CountDownLatch frame = new CountDownLatch(1);
-        onMain(() -> {
-            View root = activity.getWindow().getDecorView();
-            root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);
-            root.invalidate();
-        });
-        assertTrue("No hardware frame committed", frame.await(5, TimeUnit.SECONDS));
-        Bitmap pixels = automation().takeScreenshot();
-        assertNotNull(pixels);
+        Bitmap pixels = settledCompositorPixels(activity, name);
         String run = InstrumentationRegistry.getArguments().getString("evidence_run", "candidate-1");
         if (!run.matches("[A-Za-z0-9_-]+")) throw new AssertionError("Invalid evidence namespace");
         File folder = new File(context.getFilesDir(), "ui-v3/" + run);
@@ -995,6 +1123,71 @@ public final class RoleExperienceAndroidTest {
         try (FileOutputStream output = new FileOutputStream(new File(folder, name + "-" + scale + "-" + width + ".png"))) {
             assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally { pixels.recycle(); }
+    }
+
+    private static boolean containsVisibleText(View view, String text) {
+        if (!view.isShown()) return false;
+        if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++)
+                if (containsVisibleText(group.getChildAt(i), text)) return true;
+        }
+        return false;
+    }
+
+    /** Frame commits precede compositor transitions; compare actual pixels before accepting a render. */
+    private Bitmap settledCompositorPixels(Activity activity, String captureName) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        long stableSince = 0;
+        Bitmap previous = null;
+        try {
+            do {
+                CountDownLatch committed = new CountDownLatch(1);
+                onMain(() -> {
+                    View root = activity.getWindow().getDecorView();
+                    root.getViewTreeObserver().registerFrameCommitCallback(committed::countDown);
+                    root.invalidate();
+                });
+                assertTrue("No native render frame committed", committed.await(2, TimeUnit.SECONDS));
+                Bitmap current = automation().takeScreenshot();
+                assertNotNull(current);
+                long now = SystemClock.uptimeMillis();
+                boolean same = previous != null && previous.sameAs(current);
+                if (!same) stableSince = now;
+                if (previous != null) previous.recycle();
+                previous = current;
+                AtomicReference<Boolean> stillReady = new AtomicReference<>(false);
+                onMain(() -> {
+                    View root = activity.getWindow().getDecorView();
+                    View snackbar = root.findViewById(com.google.android.material.R.id.snackbar_text);
+                    stillReady.set(activity.hasWindowFocus() && !root.isLayoutRequested()
+                            && !containsVisibleText(root, activity.getString(R.string.role_loading))
+                            && (snackbar == null || !snackbar.isShown()));
+                });
+                if (!stillReady.get()) stableSince = now;
+                if (same && stillReady.get() && now - stableSince >= 200) {
+                    Bitmap result = previous; previous = null; return result;
+                }
+            } while (SystemClock.uptimeMillis() < deadline);
+            throw new AssertionError("Native compositor did not settle");
+        } catch (Exception | AssertionError failure) {
+            try {
+                if (previous == null) previous = automation().takeScreenshot();
+                if (previous != null) {
+                    String run = InstrumentationRegistry.getArguments().getString("evidence_run", "candidate-1");
+                    if (!run.matches("[A-Za-z0-9_-]+")) throw new AssertionError("Invalid evidence namespace");
+                    File folder = new File(context.getFilesDir(), "ui-v3/" + run);
+                    assertTrue(folder.isDirectory() || folder.mkdirs());
+                    File retained = new File(folder, captureName + "-compositor-failure-"
+                            + SystemClock.uptimeMillis() + ".png");
+                    try (FileOutputStream output = new FileOutputStream(retained)) {
+                        assertTrue(previous.compress(Bitmap.CompressFormat.PNG, 100, output));
+                    }
+                }
+            } catch (Exception | AssertionError exportFailure) { failure.addSuppressed(exportFailure); }
+            throw failure;
+        } finally { if (previous != null) previous.recycle(); }
     }
 
     private String witnessPrefix() { return Integer.toHexString(testName.getMethodName().hashCode()); }

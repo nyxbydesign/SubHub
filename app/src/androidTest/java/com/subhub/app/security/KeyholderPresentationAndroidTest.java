@@ -19,6 +19,7 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class KeyholderPresentationAndroidTest {
+    @org.junit.Rule public final IntegrationFixture integration = new IntegrationFixture();
     @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automationState = new com.subhub.app.UiAutomationStateRule();
     @Test public void androidScreenshotContainsTheKeyholderHeader() {
         ControllerPinManager.enterDomMode();
@@ -47,87 +48,90 @@ public class KeyholderPresentationAndroidTest {
             } finally { screenshot.recycle(); }
         } finally { ControllerPinManager.enterSubMode(); }
     }
-    @Test public void confirmationPairsUsingTheEnteredSixDigitCode() throws Exception {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        context.getSharedPreferences("subhub_controller_auth", 0).edit().clear().commit();
-        ControllerPinManager.enterDomMode();
-        try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(
-                new android.content.Intent(context,AuthenticatorActivity.class).putExtra("keyholder_method","remote"))) {
-            onView(withId(R.id.keyholder_pair_button)).perform(scrollTo(),click());
-            java.util.concurrent.atomic.AtomicReference<String> confirmation=new java.util.concurrent.atomic.AtomicReference<>();
-            scenario.onActivity(activity -> {
-                String secret=((android.widget.TextView)activity.findViewById(R.id.authenticator_manual_key)).getText().toString();
-                try { confirmation.set(Totp.code(secret,System.currentTimeMillis()/30000)); }
-                catch (java.security.GeneralSecurityException error) { throw new AssertionError(error); }
+    @Test public void localAndRemoteChoicesShareOneSetupAndSurviveRecreation() {
+        try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
+            scenario.onActivity(a -> {
+                assertNotNull(a.findViewById(R.id.keyholder_setup_local));
+                assertNotNull(a.findViewById(R.id.keyholder_pair_device));
+                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertEquals(0, a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             });
-            onView(withId(R.id.authenticator_confirmation)).perform(scrollTo(),replaceText(confirmation.get()),closeSoftKeyboard());
-            onView(withId(R.id.authenticator_confirm_button)).perform(scrollTo(),click());
-            long deadline=android.os.SystemClock.elapsedRealtime()+5000;
-            while(!new ControllerAuthenticator(context).isPaired() && android.os.SystemClock.elapsedRealtime()<deadline) android.os.SystemClock.sleep(50);
-            assertTrue(new ControllerAuthenticator(context).isPaired());
-        } finally {
-            context.getSharedPreferences("subhub_controller_auth",0).edit().clear().commit();
-            ControllerPinManager.enterSubMode();
+            scenario.recreate();
+            scenario.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.keyholder_pin_change_button).isShown());
+                assertTrue(a.findViewById(R.id.keyholder_pair_device).isShown());
+            });
         }
     }
-    @Test public void handoverUsesExistingThemedControlsAndCancellationDoesNotPair() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        context.getSharedPreferences("subhub_controller_auth", 0).edit().clear().commit();
-        ControllerPinManager.enterDomMode();
-        try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
-            scenario.onActivity(activity -> {
-                assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
-                assertNotNull(activity.findViewById(R.id.primary_header));
-                // Render only the unpaired overview, which contains no pairing key or credential.
-                android.view.View root = activity.getWindow().getDecorView();
-                root.post(() -> {
-                    Bitmap image = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
-                    root.draw(new Canvas(image));
-                    try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "keyholder-overview.png"))) {
-                        image.compress(Bitmap.CompressFormat.PNG, 100, out);
-                    } catch (Exception error) { throw new AssertionError(error); }
-                    finally { image.recycle(); }
-                });
-            });
-            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
-            onView(withId(R.id.keyholder_pin_header)).perform(scrollTo());
-            scenario.onActivity(activity -> {
-                android.view.View root = activity.getWindow().getDecorView();
-                Bitmap image = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
-                root.draw(new Canvas(image));
-                try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "keyholder-remote-overview.png"))) {
-                    image.compress(Bitmap.CompressFormat.PNG, 100, out);
-                } catch (Exception error) { throw new AssertionError(error); }
-                finally { image.recycle(); }
-            });
-            onView(withId(R.id.keyholder_pair_button)).perform(scrollTo(), click());
-            scenario.onActivity(activity -> {
-                android.widget.ImageView qr = activity.findViewById(R.id.authenticator_pairing_qr);
-                assertNotEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
-                assertNotNull(qr.getDrawable());
-                assertFalse(activity.findViewById(R.id.authenticator_manual_key).isShown());
-                assertFalse(activity.findViewById(R.id.authenticator_confirm_button).isEnabled());
-                // Replace the secret-bearing QR before rendering any preview evidence.
-                qr.setImageResource(R.drawable.ic_keyholder);
-                android.view.View root = activity.getWindow().getDecorView();
-                root.post(() -> {
-                    Bitmap image = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
-                    root.draw(new Canvas(image));
-                    try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "keyholder-pairing-redacted.png"))) {
-                        image.compress(Bitmap.CompressFormat.PNG, 100, out);
-                    } catch (Exception error) { throw new AssertionError(error); }
-                    finally { image.recycle(); }
-                });
-            });
-            onView(withId(R.id.authenticator_manual_toggle)).perform(scrollTo(),click());
-            scenario.onActivity(activity -> assertTrue(activity.findViewById(R.id.authenticator_manual_key).isShown()));
-            onView(withId(R.id.authenticator_manual_toggle)).perform(click());
-            onView(withId(R.id.authenticator_confirmation)).perform(scrollTo(), replaceText("123456"), closeSoftKeyboard());
-            scenario.onActivity(activity -> assertTrue(activity.findViewById(R.id.authenticator_confirm_button).isEnabled()));
-            onView(withId(R.id.authenticator_confirm_button)).perform(scrollTo());
-            assertFalse(new ControllerAuthenticator(context).isPaired());
-            onView(withText(android.R.string.cancel)).perform(scrollTo(), click());
-            assertFalse(new ControllerAuthenticator(context).isPaired());
-        } finally { ControllerPinManager.enterSubMode(); }
+
+    @Test public void pairedPendingAndUnavailableStatesNeverOfferPinOrManualEnrollment() {
+        for (KeyholderProvider.State state : new KeyholderProvider.State[] {
+                KeyholderProvider.State.READY, KeyholderProvider.State.PENDING, KeyholderProvider.State.UNAVAILABLE}) {
+            com.subhub.app.people.People.installKeyholder(provider(state, "Synthetic Dom"));
+            try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
+                scenario.onActivity(a -> assertRemote(a, state));
+                scenario.recreate();
+                scenario.onActivity(a -> assertRemote(a, state));
+            }
+        }
+    }
+
+    private static void assertRemote(AuthenticatorActivity activity, KeyholderProvider.State state) {
+        assertEquals("Synthetic Dom", ((android.widget.TextView) activity.findViewById(R.id.keyholder_assigned_dom)).getText().toString());
+        int expected = state == KeyholderProvider.State.READY ? R.string.role_connection_paired
+                : state == KeyholderProvider.State.PENDING ? R.string.keyholder_pairing_in_progress : R.string.keyholder_unavailable;
+        assertEquals(activity.getString(expected), ((android.widget.TextView) activity.findViewById(R.id.keyholder_setup_status)).getText().toString());
+        assertNull(activity.findViewById(R.id.keyholder_setup_local));
+        assertNull(activity.findViewById(R.id.keyholder_pin_change_button));
+        assertNull(activity.findViewById(R.id.keyholder_remove_pin));
+        assertNull(activity.findViewById(R.id.keyholder_remove_authenticator));
+        assertNull(activity.findViewById(R.id.keyholder_pair_device));
+        assertNull(activity.findViewById(R.id.authenticator_pairing_qr));
+        assertFalse(activity.findViewById(R.id.button_edit_lock).isShown());
+        assertTrue(activity.findViewById(R.id.settings_connection).isShown());
+    }
+
+    public static KeyholderProvider provider(KeyholderProvider.State state, String name) {
+        return new KeyholderProvider() {
+            public State state() { return state; }
+            public String assignedDomName() { return name; }
+            public ControllerAuthenticator.Result verifyCode(String code) { return ControllerAuthenticator.Result.UNAVAILABLE; }
+        };
+    }
+
+    /** Restores runtime integration identities, not replacement defaults, after isolated UI fixtures. */
+    public static final class IntegrationFixture extends org.junit.rules.ExternalResource {
+        private final java.util.Map<java.lang.reflect.Field, Object> hooks = new java.util.LinkedHashMap<>();
+        private final java.util.Map<String, java.util.Map<String, ?>> prefs = new java.util.LinkedHashMap<>();
+        private boolean dom;
+        @Override protected void before() throws Throwable {
+            dom = ControllerPinManager.isDomModeActive();
+            for (java.lang.reflect.Field field : com.subhub.app.people.People.class.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers()) && !java.lang.reflect.Modifier.isFinal(field.getModifiers())) {
+                    field.setAccessible(true); hooks.put(field, field.get(null));
+                }
+            }
+            Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+            for (String name : new String[] {com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,
+                    "subhub_controller_auth", "subhub_home", "subhub_onboarding"})
+                prefs.put(name, new java.util.LinkedHashMap<>(context.getSharedPreferences(name, 0).getAll()));
+            com.subhub.app.people.People.installKeyholder(provider(KeyholderProvider.State.NONE, ""));
+            com.subhub.app.people.People.installRemoteAuthority(() -> false);
+            com.subhub.app.people.People.installRemoteRepository(null);
+            com.subhub.app.people.People.installLocalProjection(java.util.function.UnaryOperator.identity());
+            com.subhub.app.people.People.installConnectionUi(null);
+        }
+        @Override protected void after() {
+            try {
+                Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+                for (java.util.Map.Entry<String, java.util.Map<String, ?>> entry : prefs.entrySet())
+                    com.subhub.app.settings.SharedPreferenceTestRestore.restore(context.getSharedPreferences(entry.getKey(), 0), entry.getValue());
+            } finally {
+                try {
+                    for (java.util.Map.Entry<java.lang.reflect.Field, Object> entry : hooks.entrySet()) entry.getKey().set(null, entry.getValue());
+                } catch (IllegalAccessException error) { throw new AssertionError(error); }
+                finally { if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode(); }
+            }
+        }
     }
 }

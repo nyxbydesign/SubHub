@@ -16,6 +16,71 @@ import com.subhub.app.util.SubHubNavigation;
 public final class PersonActivity extends RolePage {
     private PersonId personId;
     private String section = "profile";
+    private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private java.util.List<Object> rendered;
+    private boolean observing;
+    private final Runnable observe = new Runnable() {
+        @Override public void run() {
+            if (!observing) return;
+            observePerson();
+            clock.postDelayed(this, 2000);
+        }
+    };
+
+    @Override protected void onResume() {
+        super.onResume();
+        observing = true;
+        clock.postDelayed(observe, 2000);
+    }
+
+    @Override protected void onPause() {
+        observing = false;
+        clock.removeCallbacks(observe);
+        if (data != null) data.cancel("person-observe");
+        super.onPause();
+    }
+
+    private void observePerson() {
+        if (personId == null || !ControllerPinManager.isDomModeActive()
+                || data.isPending("person") || data.isPending("person-observe")) return;
+        PersonId requested = personId;
+        PersonRepository repository = People.repository(getApplicationContext());
+        data.load("person-observe", () -> repository.load(requested), person -> {
+            if (!observing || !ControllerPinManager.isDomModeActive() || !requested.equals(personId)) return;
+            java.util.List<Object> next = signature(person);
+            if (next.equals(rendered)) return;
+            android.view.ViewParent ancestor = body.getParent();
+            while (ancestor != null && !(ancestor instanceof android.widget.ScrollView)) ancestor = ancestor.getParent();
+            android.widget.ScrollView scroll = ancestor instanceof android.widget.ScrollView
+                    ? (android.widget.ScrollView) ancestor : null;
+            int position = scroll == null ? 0 : scroll.getScrollY();
+            String currentSection = section;
+            rendered = next;
+            render(person);
+            if (scroll != null) scroll.post(() -> {
+                if (observing && currentSection.equals(section)) scroll.scrollTo(0, position);
+            });
+        }, failure -> {
+            if (observing) { rendered = null; unavailable(); }
+        });
+    }
+
+    private static java.util.List<Object> signature(PersonSnapshot person) {
+        java.util.List<Object> result = new java.util.ArrayList<>(java.util.Arrays.asList(
+                person.id, person.name, person.device, person.contractName, person.serviceLabel,
+                person.connection, person.freshness, person.lastSyncedAt, person.capabilities,
+                person.currency, person.protectedSeconds, person.activityEvents, person.tributeCents,
+                person.sessions, person.serviceActive, person.sessionIdentity,
+                person.sync.contract, person.sync.stats, person.sync.runtime,
+                person.sync.desiredRevision, person.sync.appliedRevision));
+        for (PersonSnapshot.Section section : person.sections)
+            java.util.Collections.addAll(result, section.key, section.title, section.summary, section.details);
+        for (PersonSnapshot.Allowance allowance : person.allowances)
+            java.util.Collections.addAll(result, allowance.packageName, allowance.label,
+                    allowance.usedMillis, allowance.dailyMinutes);
+        return result;
+    }
+
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -36,12 +101,14 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void refresh() {
         if (personId == null) return;
+        data.cancel("person-observe");
         data.cancel("contract-cover");
         loading();
         PersonId requested = personId;
         PersonRepository repository = People.repository(getApplicationContext());
         data.load("person", () -> repository.load(requested), person -> {
             if (!ControllerPinManager.isDomModeActive() || !requested.equals(personId)) return;
+            rendered = signature(person);
             render(person);
         }, failure -> unavailable());
     }
@@ -60,6 +127,8 @@ public final class PersonActivity extends RolePage {
             title("stats".equals(section) ? R.string.role_stats
                     : "connection".equals(section) ? R.string.role_connection : R.string.role_contract);
             PersonUi.text(body, person.name, true);
+            PersonUi.text(body, ProfileViews.targetDiscriminator(this, person), false)
+                    .setTag("person_target:" + person.id.value());
             if ("stats".equals(section)) stats(person);
             else if ("connection".equals(section)) connection(person);
             else contracts(person);
@@ -130,46 +199,70 @@ public final class PersonActivity extends RolePage {
         boolean editable = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
                 && (person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
                         : ControllerPinManager.isDomModeActive() && People.connectionUi() != null);
-        for (PersonSnapshot.Section value : person.sections) {
-            LinearLayout row = PersonUi.row(active, PersonUi.icon(value.key), value.title, value.summary,
-                    editable ? () -> {
-                        if (person.id.isLocal()) PersonRoutes.editSection(this, person.id, value.key);
-                        else if (ControllerPinManager.isDomModeActive() && People.connectionUi() != null)
-                            People.connectionUi().editSection(this, person.id, value.key);
-                    } : null);
-            row.setTag("apps".equals(value.key) ? "person_apps" : "person_section:" + value.key);
-            if (!editable && !value.details.isEmpty()) PersonUi.text(active, value.details, false);
+        LinearLayout scope = PersonUi.card(body);
+        scope.setTag("person_contract_scope");
+        PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+        PersonSnapshot.Section apps = contractSection(person, "apps");
+        if (apps != null) contractSection(scope, person, apps, editable);
+        else {
+            PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.person_apps_title),
+                    getString(R.string.role_unknown_data), editable ? () -> editSection(person, "apps") : null)
+                    .setTag("person_apps");
         }
-        if (editable && !person.id.isLocal()) {
-            if (person.sections.stream().noneMatch(value -> "apps".equals(value.key)))
-                PersonUi.row(active, R.drawable.ic_settings_apps, getString(R.string.person_apps_title), "",
-                        () -> editRemoteSection(person, "apps")).setTag("person_apps");
-            if (person.sections.stream().noneMatch(value -> "duration".equals(value.key)))
-                PersonUi.row(active, R.drawable.ic_nav_limits, getString(R.string.person_duration_title), "",
-                        () -> editRemoteSection(person, "duration")).setTag("person_duration");
+        PersonSnapshot.Section duration = contractSection(person, "duration");
+        if (duration != null) contractSection(scope, person, duration, editable);
+        else {
+            LinearLayout row = PersonUi.row(scope, R.drawable.ic_nav_limits,
+                    getString(R.string.person_duration_title), person.id.isLocal()
+                            ? ServiceDurationSettings.label(this, true) : getString(R.string.role_unknown_data),
+                    editable ? () -> editSection(person, "duration") : null);
+            if (editable) row.setTag("person_duration");
+        }
+        LinearLayout features = null;
+        for (PersonSnapshot.Section value : person.sections) {
+            if ("apps".equals(value.key) || "duration".equals(value.key)) continue;
+            if (features == null) {
+                features = PersonUi.card(body);
+                features.setTag("person_contract_features");
+                PersonUi.text(features, getString(R.string.profile_contract_features), true);
+            }
+            contractSection(features, person, value, editable);
         }
         if (editable && person.id.isLocal()) {
-            PersonUi.row(active, R.drawable.ic_nav_limits, getString(R.string.person_duration_title),
-                    ServiceDurationSettings.label(this, true),
-                    () -> PersonRoutes.editSection(this, person.id, "duration")).setTag("person_duration");
             PersonUi.action(body, R.string.role_saved_contracts,
                     () -> {
                         if (PersonRoutes.canEditLocal(this, person.id)) startActivity(
                                 new Intent(this, StudioActivity.class)
                                         .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
                     }, false).setTag("person_saved_contracts");
-        } else if (person.id.isLocal()) {
-            PersonUi.row(active, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
-                    ServiceDurationSettings.label(this, true), null);
         }
         if (!person.id.isLocal() && editable) PersonUi.action(body, R.string.role_saved_contracts, () -> {
             ConnectionUi ui = People.connectionUi();
             if (ui != null && ControllerPinManager.isDomModeActive()) ui.openContracts(this, person.id);
         }, false).setTag("person_saved_contracts");
-        PersonUi.allowances(body, person);
     }
 
-    private void editRemoteSection(PersonSnapshot person, String section) {
+    private PersonSnapshot.Section contractSection(PersonSnapshot person, String key) {
+        for (PersonSnapshot.Section value : person.sections) if (key.equals(value.key)) return value;
+        return null;
+    }
+
+    private void contractSection(LinearLayout parent, PersonSnapshot person,
+            PersonSnapshot.Section value, boolean editable) {
+        int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
+                : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
+        LinearLayout row = PersonUi.row(parent, icon, value.title, value.summary,
+                editable ? () -> editSection(person, value.key) : null);
+        row.setTag("apps".equals(value.key) ? "person_apps"
+                : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
+        if (!editable && !value.details.isEmpty()) PersonUi.text(parent, value.details, false);
+    }
+
+    private void editSection(PersonSnapshot person, String section) {
+        if (person.id.isLocal()) {
+            PersonRoutes.editSection(this, person.id, section);
+            return;
+        }
         ConnectionUi ui = People.connectionUi();
         if (!person.id.isLocal() && person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
                 && ControllerPinManager.isDomModeActive() && ui != null)
@@ -183,6 +276,7 @@ public final class PersonActivity extends RolePage {
         }
         LinearLayout card = PersonUi.card(body);
         freshness(card, person.sync.stats);
+        PersonUi.allowances(body, person);
         if (person.sync.stats == PersonSnapshot.Freshness.UNKNOWN) return;
         PersonUi.row(card, R.drawable.ic_nav_stats, getString(R.string.role_stat_service_time),
                 StatsSnapshot.formatDuration(person.protectedSeconds), null);
@@ -190,7 +284,6 @@ public final class PersonActivity extends RolePage {
         PersonUi.row(card, 0, getString(R.string.role_stat_sessions), Integer.toString(person.sessions), null);
         if (WalletCurrency.isSupported(person.currency)) PersonUi.row(card, 0,
                 getString(R.string.role_stat_tribute), WalletCurrency.format(person.currency, person.tributeCents), null);
-        PersonUi.allowances(body, person);
         if (person.id.isLocal()) PersonUi.action(body, R.string.role_view_stats,
                 () -> startActivity(new Intent(this, StatsActivity.class)), false).setTag("person_full_stats");
         else if (People.connectionUi() != null) PersonUi.action(body, R.string.role_view_stats, () -> {

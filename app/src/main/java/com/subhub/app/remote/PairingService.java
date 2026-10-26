@@ -13,12 +13,13 @@ public final class PairingService {
     private final RemoteStore store;
     private final RemoteSecrets secrets;
     private final PeerTransport transport;
+    private final RemoteKeyholder authenticator;
     private final BooleanSupplier keyholder;
     private final String deviceName;
 
-    public PairingService(RemoteStore store,RemoteSecrets secrets,PeerTransport transport,
+    public PairingService(RemoteStore store,RemoteSecrets secrets,PeerTransport transport,RemoteKeyholder authenticator,
             BooleanSupplier keyholder,String deviceName) {
-        this.store=store;this.secrets=secrets;this.transport=transport;this.keyholder=keyholder;
+        this.store=store;this.secrets=secrets;this.transport=transport;this.authenticator=java.util.Objects.requireNonNull(authenticator);this.keyholder=keyholder;
         this.deviceName=RemoteProtocol.deviceName(deviceName);
     }
 
@@ -33,11 +34,19 @@ public final class PairingService {
 
     public void accept(String link,String name,long now) throws GeneralSecurityException {
         requireKeyholder();
-        PairingInvite invite=PairingInvite.parse(link,now);
+        acceptConfirmed(PairingInvite.parse(link,now),name);
+    }
+    void acceptConfirmed(PairingInvite invite,String name)throws GeneralSecurityException {
         if(invite.domIdentity.equals(transport.localIdentity())) throw new IllegalArgumentException("Cannot pair with this device");
-        secrets.savePending(invite);
-        try { store.acceptInvite(invite,name); }
-        catch(RuntimeException failure) { secrets.removePending(invite.id);throw failure; }
+        synchronized(store){
+            if(store.peer(invite.domIdentity,invite.id)!=null)throw new SecurityException("Invitation already used");
+            for(RemoteStore.Peer existing:store.peers(false))if(existing.localRole==RemoteProtocol.Role.SUB)throw new SecurityException("A Dom is already assigned or pending");
+            String prior=secrets.pendingLink(invite.id);
+            if(prior!=null&&!prior.equals(invite.link()))throw new SecurityException("Invitation changed");
+            if(prior==null)secrets.savePending(invite);
+            try { store.acceptInvite(invite,name); }
+            catch(RuntimeException failure) { if(prior==null)secrets.removePending(invite.id);throw failure; }
+        }
     }
 
     public void approve(String invitation,String candidate,String fingerprint,long now) {
@@ -70,21 +79,27 @@ public final class PairingService {
         PairingInvite invite=PairingInvite.restore(link);
         if(!invite.domIdentity.equals(peer.identity) || !invite.id.equals(peer.generation)) throw new SecurityException("Pairing identity mismatch");
         try {
-            write(connection,new JSONObject().put("version",1).put("type","pair_request")
+            write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_request")
                     .put("invite",invite.id).put("secret",invite.secret()).put("name",deviceName).put("route",transport.inviteRoute()));
             JSONObject response=read(connection);
-            if("pair_pending".equals(response.getString("type"))) return false;
+            requireAuthVersion(response);
+            if("pair_pending".equals(response.getString("type"))){
+                if(!peer.generation.equals(response.getString("generation")))throw new SecurityException("Pairing identity changed");
+                write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_pending_ack").put("generation",peer.generation));return false;
+            }
             String fingerprint=PairingInvite.fingerprint(peer.identity,transport.localIdentity(),peer.generation);
             if(!"pair_approved".equals(response.getString("type")) || !peer.generation.equals(response.getString("generation"))
                     || !fingerprint.equals(response.getString("fingerprint"))) throw new SecurityException("Pairing approval mismatch");
-            write(connection,new JSONObject().put("version",1).put("type","pair_confirmed")
-                    .put("generation",peer.generation).put("fingerprint",fingerprint));
+            String authSecret=authenticator.provisionSub(peer,transport.localIdentity());
+            write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_confirmed")
+                    .put("generation",peer.generation).put("fingerprint",fingerprint).put("authSecret",authSecret));
             JSONObject ready=read(connection);
+            requireAuthVersion(ready);
             if(!"pair_ready".equals(ready.getString("type")) || !peer.generation.equals(ready.getString("generation"))) {
                 throw new SecurityException("Pairing completion mismatch");
             }
-            store.activate(peer.identity,peer.generation);secrets.removePending(peer.generation);
-            try{write(connection,new JSONObject().put("version",1).put("type","pair_ready_ack").put("generation",peer.generation));}catch(IOException alreadyCommitted){/* Retrying cannot revoke a completed pairing. */}
+            store.activate(peer.identity,peer.generation);com.subhub.app.security.ControllerPinManager.lockNow();secrets.removePending(peer.generation);
+            try{write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_ready_ack").put("generation",peer.generation));}catch(IOException alreadyCommitted){/* Retrying cannot revoke a completed pairing. */}
             return true;
         } catch(JSONException invalid) { throw new IOException("Invalid pairing message"); }
     }
@@ -92,7 +107,7 @@ public final class PairingService {
     boolean handle(PeerTransport.Connection connection,JSONObject request,long now) throws IOException {
         String candidate=RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
         try {
-            RemoteProtocol.requireVersion(request);
+            requireAuthVersion(request);
             if(!"pair_request".equals(request.getString("type"))) throw new JSONException("Expected pairing request");
             String id=RemoteProtocol.identifier(request.getString("invite"));
             byte[] token=Base64.getUrlDecoder().decode(request.getString("secret"));
@@ -103,22 +118,31 @@ public final class PairingService {
             if(!store.approvedInvite(id,candidate,tokenHash)) {
                 store.bindInvite(id,candidate,tokenHash,now);
                 store.describeCandidate(id,candidate,request.getString("name"),request.getString("route"));
-                write(connection,new JSONObject().put("version",1).put("type","pair_pending"));
+                write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_pending").put("generation",id));
+                try{JSONObject receipt=read(connection);requireAuthVersion(receipt);if(!"pair_pending_ack".equals(receipt.getString("type"))||!id.equals(receipt.getString("generation")))throw new SecurityException("Pairing receipt mismatch");}catch(IOException closedAfterReply){/* The bound request remains pending if its receipt is lost. */}
                 return false;
             }
             String fingerprint=PairingInvite.fingerprint(transport.localIdentity(),candidate,id);
-            write(connection,new JSONObject().put("version",1).put("type","pair_approved")
+            write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_approved")
                     .put("generation",id).put("fingerprint",fingerprint));
             JSONObject confirmed=read(connection);
+            requireAuthVersion(confirmed);
             if(!"pair_confirmed".equals(confirmed.getString("type")) || !id.equals(confirmed.getString("generation"))
                     || !fingerprint.equals(confirmed.getString("fingerprint"))) throw new SecurityException("Pairing confirmation mismatch");
+            try { authenticator.receiveDom(store.peer(candidate,id),transport.localIdentity(),confirmed.getString("authSecret")); }
+            catch(GeneralSecurityException unavailable){throw new IOException("Keyholder provisioning unavailable");}
             store.activate(candidate,id);
             store.setRoute(candidate,id,request.getString("route"));
-            write(connection,new JSONObject().put("version",1).put("type","pair_ready").put("generation",id));
+            write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_ready").put("generation",id));
             secrets.removePending(id);
-            try{JSONObject receipt=read(connection);if(!"pair_ready_ack".equals(receipt.optString("type")) || !id.equals(receipt.optString("generation")))throw new SecurityException("Pairing receipt mismatch");}catch(IOException closedAfterReady){/* Ready may have been received before the final connection close. */}
+            try{JSONObject receipt=read(connection);requireAuthVersion(receipt);if(!"pair_ready_ack".equals(receipt.optString("type")) || !id.equals(receipt.optString("generation")))throw new SecurityException("Pairing receipt mismatch");}catch(IOException closedAfterReady){/* Ready may have been received before the final connection close. */}
             return true;
         } catch(JSONException | IllegalArgumentException invalid) { throw new IOException("Invalid pairing message"); }
+    }
+
+    private static void requireAuthVersion(JSONObject message)throws JSONException {
+        RemoteProtocol.requireVersion(message);
+        if(RemoteProtocol.integer(message,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");
     }
 
     private void requireKeyholder() {

@@ -41,11 +41,12 @@ public abstract class RemotePage extends AppCompatActivity {
         if(!ControllerPinManager.hasCredentials(this)){notice(R.string.remote_credentials);return;}
         ControllerPinGate.unlock(this,()->{if(ControllerPinManager.isSessionUnlocked())action.run();},false);
     }
-    protected <T> void work(Callable<T> action,Consumer<T> success) {
+    protected <T> void work(Callable<T> action,Consumer<T> success) { work(action,success,()->notice(R.string.remote_failure)); }
+    protected <T> void work(Callable<T> action,Consumer<T> success,Runnable failure) {
         feature.submit(action).whenComplete((result,error)->runOnUiThread(()->{
             if(isFinishing() || isDestroyed())return;
             if(requiresDom()&&!ControllerPinManager.isDomModeActive()){finish();return;}
-            if(error!=null)notice(R.string.remote_failure);else success.accept(result);
+            if(error!=null)failure.run();else success.accept(result);
         }));
     }
     protected void notice(int text){Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
@@ -54,6 +55,10 @@ public abstract class RemotePage extends AppCompatActivity {
     protected EditText input(LinearLayout target,int label,String value) {
         text(target,getString(label),false);EditText editor=new EditText(this);editor.setText(value);
         editor.setSaveEnabled(false);editor.setSingleLine(false);target.addView(editor,new LinearLayout.LayoutParams(-1,-2));return editor;
+    }
+    protected void target(){
+        text(body,peer.name,true);
+        text(body,ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
     }
     protected String observed(RemoteProtocol.Stream stream) {
         long time=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));

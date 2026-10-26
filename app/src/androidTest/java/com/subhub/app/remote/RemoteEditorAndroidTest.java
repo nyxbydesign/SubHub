@@ -38,8 +38,8 @@ public class RemoteEditorAndroidTest {
     @After public void cleanup()throws Exception {singleton.set(null,previous);feature.shutdownForTest();source.close();context.deleteDatabase(database+".db");context.deleteDatabase(database+"source.db");File assets=new File(context.getNoBackupFilesDir(),"remote-assets/"+peer.identity+"/"+generation);if(assets.isDirectory())try(java.util.stream.Stream<java.nio.file.Path> paths=java.nio.file.Files.walk(assets.toPath())){for(java.nio.file.Path path:paths.sorted(Comparator.reverseOrder()).toArray(java.nio.file.Path[]::new))java.nio.file.Files.delete(path);}ControllerPinManager.enterSubMode();}
     @Test public void draftAndInvalidRawBudgetSurviveRecreation()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
-            ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("name")).setText("Draft remains");((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
-            ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("Draft remains",((EditText)controls(a).get("name")).getText().toString());assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
+            ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
+            ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
             tap(page,R.string.remote_save_contract);assertTrue(feature.contracts.library(peer).isEmpty());
         }
     }
@@ -155,11 +155,38 @@ public class RemoteEditorAndroidTest {
             byte[] before=java.nio.file.Files.readAllBytes(output.toPath());assertThrows(SecurityException.class,()->feature.contracts.exportAuthorized(peer,feature.contracts.current(peer),()->new FileOutputStream(output)));assertArrayEquals(before,java.nio.file.Files.readAllBytes(output.toPath()));
         }finally{if(revoker.get()!=null)revoker.get().join(3000);output.delete();}
     }
+    @Test public void fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry()throws Exception {
+        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
+            ready(page,"service_duration");page.onActivity(a->{
+                assertNull(controls(a).get("name"));assertNull(find(a.body,context.getString(R.string.role_retry)));
+                EditText minimum=(EditText)controls(a).get("service_minimum"),maximum=(EditText)controls(a).get("service_maximum");
+                assertFalse(minimum.isShown());assertFalse(maximum.isShown());minimum.setText("");maximum.setText("invalid");
+            });
+            tap(page,R.string.remote_save_contract);await(()->feature.contracts.library(peer).size()==1);
+        }
+    }
+    @Test public void failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire()throws Exception {
+        feature.store.getWritableDatabase().delete("remote_objects","stream=?",new String[]{RemoteProtocol.Stream.BASELINE.name()});
+        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
+            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(find(a.body,context.getString(R.string.role_retry))!=null));return found.get();});
+            JSONObject restored=RemoteConfigurationAndroidTest.configuration();restored.getJSONObject("contract").put("name","Restored baseline");
+            String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",restored,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
+            tap(page,R.string.role_retry);ready(page,"service_duration");
+        }
+        feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()));
+        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            AtomicReference<View> runtime=new AtomicReference<>();page.onActivity(a->runtime.set(find(a.body,context.getString(R.string.remote_runtime))));tapView(runtime.get());
+            page.recreate();page.onActivity(a->{try{java.lang.reflect.Field selected=RemoteStatsActivity.class.getDeclaredField("selected");selected.setAccessible(true);assertEquals(RemoteProtocol.Stream.RUNTIME,selected.get(a));assertEquals(View.GONE,find(a.body,context.getString(R.string.role_stale_data)).getVisibility());}catch(Exception e){throw new AssertionError(e);}});
+            feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()-91_000));
+            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(find(a.body,context.getString(R.string.role_stale_data))!=null&&find(a.body,context.getString(R.string.role_stale_data)).getVisibility()==View.VISIBLE));return found.get();});
+        }
+    }
+
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
         JSONObject saved=feature.contracts.current(peer);saved.getJSONObject("contract").put("name","Saved contract fixture");feature.contracts.save(peer,saved);
         for(String section:Arrays.asList("apps","duration","censor"))try(ActivityScenario<RemoteContractActivity> page=open(section)) {
-            ready(page,"name");inspectLayout(page,"contract-"+section);
+            ready(page,"apps".equals(section)?"apps_all":"duration".equals(section)?"service_duration":"name");inspectLayout(page,"contract-"+section);
         }
         try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()){readyLibrary(page);inspectLayout(page,"library");}
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}

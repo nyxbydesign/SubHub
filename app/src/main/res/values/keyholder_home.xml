@@ -3,7 +3,7 @@
     <string name="keyholder_home_unpaired">Let the Dom keep the keys. Set up PIN or code approval.</string>
     <string name="keyholder_home_paired">The Dom holds the keys · View your arrangement</string>
     <string name="keyholder_intro_title">Keyholder</string>
-    <string name="keyholder_intro_body">Use a PIN in person or Google Authenticator for remote approval.</string>
+    <string name="keyholder_intro_body">Set a local PIN or pair with your Dom’s device.</string>
     <string name="keyholder_intro_open">Set up Keyholder</string>
     <string name="keyholder_intro_dismiss">Got it</string>
     <string name="keyholder_pin_heading">In person · Private PIN</string>

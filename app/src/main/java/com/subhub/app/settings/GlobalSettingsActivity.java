@@ -44,7 +44,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private final Map<String, com.subhub.app.util.ExpandableSectionView> sections =
             new LinkedHashMap<>();
     private LinearLayout categoryMenu, privacyControls;
-    private View keyholderAction, connectionAction;
+    private View keyholderAction;
     private String selectedGroup = "";
 
     private HardcoreModeManager hardcore;
@@ -148,15 +148,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         categoryMenu = new LinearLayout(this);
         categoryMenu.setOrientation(LinearLayout.VERTICAL);
         container.addView(categoryMenu, new LinearLayout.LayoutParams(-1, -2));
-        connectionAction = settingsAction(getString(R.string.role_connection), () -> {
-            if (ControllerPinManager.isDomModeActive()) return;
-            ConnectionUi ui = People.connectionUi();
-            if (ui != null) ui.openConnection(this, PersonId.LOCAL);
-            else Toast.makeText(this, R.string.role_pairing_unavailable, Toast.LENGTH_SHORT).show();
-        });
-        connectionAction.setId(R.id.settings_connection);
-        categoryMenu.addView(connectionAction);
-        keyholderAction = settingsAction(getString(R.string.role_security), () ->
+        keyholderAction = settingsAction(getString(R.string.keyholder_home_title), () ->
                 startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
         keyholderAction.setId(R.id.settings_connections_security);
         categoryMenu.addView(keyholderAction);
@@ -209,6 +201,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         addHelpAction(helpActions, settingsAction(getString(R.string.settings_updates),
                 () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class))));
         addHelpAction(helpActions, binding.buttonDiagnostics);
+        com.subhub.app.people.PersonUi.text(sections.get("help").content(),
+                getString(R.string.settings_build_summary, com.subhub.app.BuildConfig.VERSION_NAME,
+                        com.subhub.app.BuildConfig.BUILD_DATE), false).setTag("settings_build_info");
         getOnBackPressedDispatcher()
                 .addCallback(
                         this,
@@ -259,8 +254,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                 new com.subhub.app.util.ExpandableSectionView(
                         this, key, definition.title, definition.icon);
         section.addControls(controls);
-        section.setCollapsible(false);
-        section.setSummaryVisible(!key.equals("privacy"));
+        section.setCollapsible(true);
+        section.setSummaryVisible(false);
+        section.header().setOnClickListener(view -> {
+            selectedGroup = key;
+            displayGroup();
+        });
         sections.put(key, section);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.topMargin = dp(10);
@@ -277,9 +276,27 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         if (!sections.containsKey(selectedGroup)
                 || protectedGroup(selectedGroup) && !ControllerPinManager.isDomModeActive())
             selectedGroup = "";
-        for (Map.Entry<String, com.subhub.app.util.ExpandableSectionView> section :
-                sections.entrySet())
-            section.getValue().setExpanded(section.getKey().equals(selectedGroup));
+        boolean detail = !selectedGroup.isEmpty();
+        keyholderAction.setVisibility(detail ? View.GONE : View.VISIBLE);
+        PrimaryHeader.backButton(binding.getRoot()).setVisibility(detail ? View.VISIBLE : View.GONE);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> {
+            selectedGroup = "";
+            displayGroup();
+        });
+        PrimaryHeader.editLockButton(binding.getRoot()).setVisibility(detail ? View.GONE : View.VISIBLE);
+        SettingsSection selected = SettingsSection.fromKey(selectedGroup);
+        PrimaryHeader.bind(binding.getRoot(), detail ? 0 : R.drawable.ic_tab_settings,
+                selected == null ? R.string.global_settings_title : selected.title, 0);
+        for (Map.Entry<String, com.subhub.app.util.ExpandableSectionView> section : sections.entrySet()) {
+            boolean active = section.getKey().equals(selectedGroup);
+            section.getValue().setVisibility(!detail || active ? View.VISIBLE : View.GONE);
+            section.getValue().setExpanded(active);
+            section.getValue().header().setVisibility(active ? View.GONE : View.VISIBLE);
+            TextView arrow = section.getValue().findViewById(R.id.section_arrow);
+            arrow.setText("");
+            arrow.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_wallet_chevron, 0);
+            androidx.core.view.ViewCompat.setStateDescription(section.getValue().header(), null);
+        }
         com.subhub.app.privacy.PrivacyControls.bind(
                     this, privacyControls, this::displayGroup);
         if (appMode == null) return;
@@ -352,7 +369,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
         keyholderAction.setVisibility(View.VISIBLE);
-        connectionAction.setVisibility(ControllerPinManager.isDomModeActive() ? View.GONE : View.VISIBLE);
         displayGroup();
     }
 

@@ -10,12 +10,12 @@
     <string name="remote_managed_contract">Managed contract</string>
     <string name="remote_pairing">Pair device</string>
     <string name="remote_create_invite">Create invitation</string>
-    <string name="remote_copy_invite">Copy invitation</string>
-    <string name="remote_share_invite">Share invitation</string>
+    <string name="remote_copy_invite">Copy code</string>
+    <string name="remote_share_invite">Share code</string>
     <string name="remote_cancel_invite">Cancel invitation</string>
     <string name="remote_pair_question">Do you want to pair with this device?</string>
     <string name="remote_approve">Pair with device</string>
-    <string name="remote_invite_input">Invitation link</string>
+    <string name="remote_invite_input">Invitation code</string>
     <string name="remote_sync_now">Sync now</string>
     <string name="remote_unpair">Unpair</string>
     <string name="remote_failure">Could not complete this action. Check the connection and try again.</string>
@@ -75,4 +75,16 @@
     <string name="remote_end_rejected">End request rejected: the session changed</string>
     <string name="remote_end_received">End request received by device</string>
     <string name="remote_check_fields">Check the highlighted values</string>
+    <string name="remote_keyholder_code">Keyholder code</string>
+    <string name="remote_minutes">minutes</string>
+    <string name="remote_paste_code">Paste code</string>
+    <string name="remote_expires_at">Expires at %1$s</string>
+    <string name="remote_sync_details">Connection details</string>
+    <string name="remote_sub_device">Sub device</string>
+    <string name="remote_dom_device">Dom device</string>
+    <string name="remote_shared_controls">Shared controls</string>
+    <string name="remote_shared_scope">Contract settings and artwork\nStatistics and configured app usage\nDevice and session state</string>
+    <string name="remote_pairing_scope">The Dom manages contract settings and artwork, receives statistics, app names and configured app usage, and can end the active session. Device state and a keyholder code for local recovery are shared with this paired device.</string>
+    <string name="remote_fingerprint">Device fingerprint</string>
+    <string name="remote_app_count">%1$d apps</string>
 </resources>

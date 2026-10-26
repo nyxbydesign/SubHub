@@ -38,7 +38,7 @@ public final class RemotePersonRepository implements PersonRepository {
         String currency=stats==null?"EUR":stats.optString("currency","EUR");
         long tribute=stats==null?0:stats.optLong("USD".equals(currency)?"assessedUSD":"assessedEUR");
         return new PersonSnapshot(id,peer.name,runtime==null?"":runtime.optString("device",""),configuration==null?context.getString(R.string.remote_unknown):configuration.getJSONObject("contract").getString("name"),
-                service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(configuration),allowances(peer,configuration),currency,
+                service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity);
     }
@@ -64,7 +64,7 @@ public final class RemotePersonRepository implements PersonRepository {
         long confirmed=Long.parseLong(store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0")),age=System.currentTimeMillis()-confirmed;
         return peer.state==RemoteStore.State.ACTIVE && confirmed>0 && age>=0 && age<=lifetime?PersonSnapshot.Freshness.CURRENT:PersonSnapshot.Freshness.STALE;
     }
-    private List<PersonSnapshot.Section> sections(JSONObject configuration) throws Exception {
+    private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration) throws Exception {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
         for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
             List<String> parts=new ArrayList<>();String[] names="atmosphere".equals(group)?new String[]{"subliminal","popup"}:new String[]{group};
@@ -74,6 +74,17 @@ public final class RemotePersonRepository implements PersonRepository {
             int title="censor".equals(group)?R.string.sub_censor_title:"limits".equals(group)?R.string.sub_limits_title:"wallet".equals(group)?R.string.sub_wallet_title:R.string.atmosphere_title;
             result.add(new PersonSnapshot.Section(group,context.getString(title),"",String.join("\n",parts)));
         }
+        JSONObject appDoc=configuration.getJSONObject("apps"),service=configuration.getJSONObject("service");
+        List<String> names=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
+            JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);names.add(app==null?id:app.optString("label",id));
+        }
+        String appSummary=appDoc.getBoolean("all")?context.getString(R.string.remote_all_apps):context.getString(R.string.remote_app_count,names.size());
+        result.add(new PersonSnapshot.Section("apps",context.getString(R.string.remote_apps),appSummary,String.join("\n",names)));
+        long duration=service.getLong("duration");String rendered;
+        if(duration==-1)rendered=context.getResources().getStringArray(R.array.remote_duration_choices)[0];
+        else if(duration==-2)rendered=(service.getLong("minimum")/60_000)+"–"+(service.getLong("maximum")/60_000)+" "+context.getString(R.string.remote_minutes);
+        else rendered=(duration/60_000)+" "+context.getString(R.string.remote_minutes);
+        result.add(new PersonSnapshot.Section("duration",context.getString(R.string.remote_duration),rendered,""));
         return result;
     }
     private List<PersonSnapshot.Allowance> allowances(RemoteStore.Peer peer,JSONObject configuration) throws Exception {

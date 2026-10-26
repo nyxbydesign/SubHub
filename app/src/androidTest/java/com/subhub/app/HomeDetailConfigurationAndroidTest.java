@@ -33,6 +33,8 @@ import org.junit.*;
 
 @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
 public final class HomeDetailConfigurationAndroidTest {
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private SharedPreferences prefs, auth;
@@ -68,6 +70,7 @@ public final class HomeDetailConfigurationAndroidTest {
     @Test public void limitsListsDistinctInstalledAppAllowancesAndEmptySelection() throws Exception {
         try (ActivityScenario<ContractActivity> scenario = launch()) {
             awaitContract(scenario, false);
+            openContractSection("limits");
             inspect("home-limits-allowances.png", text -> {
                 assertTrue(text.contains("Chrome · 35 min"));
                 assertTrue(text.contains("Settings · 75 min"));
@@ -76,6 +79,7 @@ public final class HomeDetailConfigurationAndroidTest {
             new AppModeManager(context).saveIncludedPackages(Set.of());
             scenario.recreate();
             awaitContract(scenario, false);
+            openContractSection("limits");
             inspect(null, text -> {
                 assertTrue(text.contains(context.getString(R.string.arrangement_no_apps)));
                 assertFalse(text.contains("Chrome · 35 min"));
@@ -142,14 +146,14 @@ public final class HomeDetailConfigurationAndroidTest {
     }
 
     private void assertEffectDetails() {
+        openContractSection("atmosphere");
         onView(withId(R.id.role_page_body)).check((body, missing) -> {
             if (missing != null) throw missing;
-            ViewGroup cards = (ViewGroup) body;
-            String effects = null;
-            for (int index = 0; index < cards.getChildCount(); index++) {
-                View card = cards.getChildAt(index);
-                if (containsExact(card, context.getString(R.string.atmosphere_title))) effects = text(card);
-            }
+            View detail = body.findViewWithTag("contract_details:atmosphere");
+            assertNotNull(detail);
+            assertTrue(detail.isShown());
+            String effects = text(detail);
+            checkTextFits(detail);
             assertNotNull("Contract contains its effect settings", effects);
             assertTrue(effects.contains(context.getString(R.string.arrangement_detail_line,
                     context.getString(R.string.atmosphere_whispers_title),
@@ -163,15 +167,31 @@ public final class HomeDetailConfigurationAndroidTest {
         });
     }
 
+    private static void openContractSection(String key) {
+        AtomicBoolean expanded = new AtomicBoolean();
+        onView(withTagValue(is("contract_details:" + key))).check((detail, missing) -> {
+            if (missing != null) throw missing;
+            expanded.set(detail.getVisibility() == View.VISIBLE);
+        });
+        if (!expanded.get()) onView(withTagValue(is("contract_section:" + key)))
+                .perform(revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+        awaitCommittedFrame();
+        onView(withTagValue(is("contract_details:" + key))).check((detail, missing) -> {
+            if (missing != null) throw missing;
+            assertTrue(detail.isShown());
+            checkTextFits(detail);
+        });
+    }
+
     private void assertSecurityDetails(com.subhub.app.security.AuthenticatorActivity activity) {
         View content = activity.findViewById(android.R.id.content);
         String copy = text(content);
-        assertTrue(copy.contains(context.getString(R.string.role_security)));
+        assertTrue(copy.contains(context.getString(R.string.keyholder_home_title)));
         assertTrue(copy.contains(context.getString(R.string.keyholder_status_pin)));
-        assertTrue(copy.contains(context.getString(R.string.authenticator_paired)));
+        assertNull(activity.findViewById(R.id.authenticator_pairing_qr));
         assertFalse(copy.contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
-        assertNull(activity.findViewById(R.id.keyholder_pair_device));
-        assertNull(activity.findViewById(R.id.keyholder_pin_change_button));
+        assertTrue(activity.findViewById(R.id.keyholder_pair_device).isShown());
+        assertTrue(activity.findViewById(R.id.keyholder_pin_change_button).isShown());
         assertNull(activity.findViewById(R.id.keyholder_pair_button));
         checkTextFits(content);
     }

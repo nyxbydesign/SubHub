@@ -46,8 +46,8 @@ public class PairingServiceAndroidTest {
         domSecrets=new RemoteSecrets(context,dn,dn);subSecrets=new RemoteSecrets(context,sn,sn);
         domTransport=IrohPeerTransport.open(context,seed(),new String[0],10_000);
         subTransport=IrohPeerTransport.open(context,seed(),new String[0],10_000);
-        dom=new PairingService(domStore,domSecrets,domTransport,domAccess::get,"Dom fixture");
-        sub=new PairingService(subStore,subSecrets,subTransport,subAccess::get,"Sub fixture");
+        dom=new PairingService(domStore,domSecrets,domTransport,new RemoteKeyholder(context,domStore,domSecrets),domAccess::get,"Dom fixture");
+        sub=new PairingService(subStore,subSecrets,subTransport,new RemoteKeyholder(context,subStore,subSecrets),subAccess::get,"Sub fixture");
         server=Executors.newSingleThreadExecutor();
     }
     @After public void cleanup() throws Exception {
@@ -62,6 +62,8 @@ public class PairingServiceAndroidTest {
         assertThrows(SecurityException.class, () -> sub.accept(invite.link(),"Dom fixture",1001));
         assertTrue(subStore.peers(true).isEmpty());
         subAccess.set(true);sub.accept(invite.link(),"Dom fixture",1001);
+        assertThrows(SecurityException.class,()->sub.accept(invite.code(),"Dom fixture",1001));
+        assertNotNull(subSecrets.pendingLink(invite.id));
         assertFalse(handshake(invite,1002,false));
         assertNull(domStore.peer(subTransport.localIdentity(),invite.id));
         assertEquals(RemoteStore.State.PENDING,subStore.peer(domTransport.localIdentity(),invite.id).state);
@@ -94,6 +96,29 @@ public class PairingServiceAndroidTest {
         assertEquals(RemoteStore.State.PENDING,subStore.peer(domTransport.localIdentity(),invite.id).state);
         assertTrue(handshake(invite,invite.expiresAt+1000,false));
         assertEquals(RemoteStore.State.ACTIVE,subStore.peer(domTransport.localIdentity(),invite.id).state);
+    }
+
+    @Test public void cancelledApprovedInvitationCannotCompleteOrProvision()throws Exception {
+        PairingInvite invite=dom.create(1000);sub.accept(invite.code(),"Dom fixture",1001);assertFalse(handshake(invite,1002,false));
+        dom.approve(invite.id,subTransport.localIdentity(),PairingInvite.fingerprint(domTransport.localIdentity(),subTransport.localIdentity(),invite.id),1003);
+        dom.cancel(invite.id);assertEquals(RemoteStore.State.REVOKED,domStore.peer(subTransport.localIdentity(),invite.id).state);
+        assertFalse(domStore.approvedInvite(invite.id,subTransport.localIdentity(),invite.tokenHash()));
+        assertNull(domSecrets.controllerSecret(RemoteProtocol.Role.DOM,subTransport.localIdentity(),invite.id));
+        assertThrows(SecurityException.class,()->domStore.bindInvite(invite.id,subTransport.localIdentity(),invite.tokenHash(),1004));
+    }
+    @Test public void sharedPayloadIsPlainCodeAndOldHandshakeDoesNotProvision()throws Exception {
+        PairingInvite invite=dom.create(1000);android.content.Intent shared=PairingActivity.sharePayload(invite);
+        assertEquals(android.content.Intent.ACTION_SEND,shared.getAction());assertEquals("text/plain",shared.getType());
+        String payload=shared.getStringExtra(android.content.Intent.EXTRA_TEXT);assertTrue(payload!=null&&!payload.contains("subhubapp://"));
+        assertTrue(invite.tokenHash().equals(PairingInvite.parse(payload,1001).tokenHash()));
+        JSONObject old=new JSONObject().put("version",1).put("type","pair_request").put("invite",invite.id).put("secret",invite.secret()).put("name","Sub fixture").put("route",subTransport.inviteRoute());
+        PeerTransport.Connection connection=new PeerTransport.Connection(){
+            public String authenticatedPeerIdentity(){return subTransport.localIdentity();}
+            public InputStream input(){return new ByteArrayInputStream(new byte[0]);}
+            public OutputStream output(){return new ByteArrayOutputStream();}
+            public void setReadTimeoutMillis(long timeout){}public boolean isDirect(){return true;}public void close(){}
+        };
+        assertThrows(IOException.class,()->dom.handle(connection,old,1001));old.put("authVersion",2);assertThrows(SecurityException.class,()->dom.handle(connection,old,1001));assertTrue(domStore.peers(true).isEmpty());
     }
 
     private boolean handshake(PairingInvite invite,long now,boolean dropReady) throws Exception {
