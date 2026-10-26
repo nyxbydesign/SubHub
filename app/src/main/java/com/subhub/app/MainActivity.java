@@ -37,6 +37,7 @@ import com.subhub.app.permissions.HomePermissionPolicy;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.HardcoreReadinessNotificationManager;
 import com.subhub.app.service.ScreenCaptureService;
@@ -104,7 +105,8 @@ public final class MainActivity extends AppCompatActivity {
             finish();
             return;
         }
-        localSessionPage = getIntent().getBooleanExtra(EXTRA_LOCAL_SESSION, false);
+        localSessionPage = DeviceRolePreferences.supportsSub(this)
+                && getIntent().getBooleanExtra(EXTRA_LOCAL_SESSION, false);
         if (com.subhub.app.onboarding.OnboardingState.shouldStart(this)) {
             startActivity(
                     new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)
@@ -127,6 +129,7 @@ public final class MainActivity extends AppCompatActivity {
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
                         result -> {
+                            if (!DeviceRolePreferences.supportsSub(this)) return;
                             if (result.getResultCode() == Activity.RESULT_OK
                                     && result.getData() != null) {
                                 // Persist the approved start before rendering the lock. The
@@ -149,6 +152,7 @@ public final class MainActivity extends AppCompatActivity {
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
                         ignored -> {
+                            if (!DeviceRolePreferences.supportsSub(this)) return;
                             if (startFlowAwaitingOverlay) {
                                 startFlowAwaitingOverlay = false;
                                 if (Settings.canDrawOverlays(this)) requestProjection();
@@ -165,6 +169,7 @@ public final class MainActivity extends AppCompatActivity {
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
                         ignored -> {
+                            if (!DeviceRolePreferences.supportsSub(this)) return;
                             HardcoreModeManager hardcore = new HardcoreModeManager(this);
                             if (hardcore.isAdminActive()) hardcore.finishActivation();
                             continuePermissionReadinessFlow();
@@ -198,8 +203,12 @@ public final class MainActivity extends AppCompatActivity {
         binding.subLimitsCard.setOnClickListener(openContract);
         binding.subWalletCard.setOnClickListener(openContract);
         binding.subAtmosphereCard.setOnClickListener(openContract);
-        AppShortcuts.install(this);
-        ControllerPinGate.ensureConfigured(this, () -> handleShortcutIntent(getIntent()));
+        if (DeviceRolePreferences.supportsSub(this)) AppShortcuts.install(this);
+        ControllerPinGate.ensureConfigured(this, () -> {
+            if (!DeviceRolePreferences.supportsSub(this))
+                ControllerPinGate.unlock(this, this::renderEditState, false);
+            else handleShortcutIntent(getIntent());
+        });
     }
 
     @Override
@@ -210,7 +219,8 @@ public final class MainActivity extends AppCompatActivity {
             finish();
             return;
         }
-        localSessionPage = intent.getBooleanExtra(EXTRA_LOCAL_SESSION, false);
+        localSessionPage = DeviceRolePreferences.supportsSub(this)
+                && intent.getBooleanExtra(EXTRA_LOCAL_SESSION, false);
         if (roleHome != null) roleHome.setSessionPage(localSessionPage);
         handleShortcutIntent(intent);
         renderEditState();
@@ -218,6 +228,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void handleShortcutIntent(Intent intent) {
         if (intent == null) return;
+        if (!DeviceRolePreferences.supportsSub(this)) { intent.setAction(Intent.ACTION_MAIN); return; }
         String action = intent.getAction();
         intent.setAction(Intent.ACTION_MAIN);
         if (AppShortcuts.ACTION_START_PROTECTION.equals(action)) {
@@ -227,6 +238,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void toggleProtection(View view) {
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         FeatureModuleManager featureModules = new FeatureModuleManager(this);
         AppModeManager appMode = new AppModeManager(this);
         boolean stopping =
@@ -268,6 +280,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void continueStartFlow() {
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         if (!Settings.canDrawOverlays(this)) {
             showStatus(R.string.overlay_permission_needed);
             startFlowAwaitingOverlay = true;
@@ -281,6 +294,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void requestProjection() {
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         if (MediaProjectionLeaseRegistry.owner() != null) {
             new AppModeManager(this).setArmed(false);
             updateProtectionButton(false);
@@ -295,6 +309,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void startSelectedPact() {
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         if (CommitmentManager.isActive(this)) return;
         com.subhub.app.commitment.ServiceDurationView.Selection selection =
                 binding.commitmentStartPanel.selection();
@@ -316,6 +331,11 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderCommitmentState() {
         if (binding == null) return;
+        if (!DeviceRolePreferences.supportsSub(this)) {
+            binding.commitmentCard.setVisibility(View.GONE);
+            binding.serviceCountdown.stop();
+            return;
+        }
         boolean active = CommitmentManager.isActive(this);
         AppModeManager appMode = new AppModeManager(this);
         CaptureMethod method = new SettingsRepository(this).loadCaptureMethod();
@@ -367,6 +387,10 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void updateProtectionButton(boolean running) {
+        if (!DeviceRolePreferences.supportsSub(this)) {
+            binding.buttonProtection.setVisibility(View.GONE);
+            return;
+        }
         binding.buttonProtection.setAlpha(1f);
         androidx.core.view.ViewCompat.setStateDescription(binding.buttonProtection, null);
         boolean sessionActive = running || CommitmentManager.isActive(this)
@@ -382,6 +406,15 @@ public final class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (binding != null) {
+            if (!DeviceRolePreferences.supportsSub(this)) {
+                localSessionPage = false;
+                if (roleHome != null) roleHome.setSessionPage(false);
+                uiTimer.removeCallbacks(uiTick);
+                uiTimer.post(uiTick);
+                renderEditState();
+                renderPermissionReadiness();
+                return;
+            }
             binding.commitmentStartPanel.reload();
             uiTimer.removeCallbacks(uiTick);
             uiTimer.post(uiTick);
@@ -405,6 +438,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void continuePermissionReadinessFlow() {
         if (binding == null || isFinishing()) return;
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         renderPermissionReadiness();
         for (HomePermissionPolicy.Requirement requirement : missingPermissions()) {
             if (!attemptedPermissions.add(requirement)) continue;
@@ -437,6 +471,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private List<HomePermissionPolicy.Requirement> missingPermissions() {
+        if (!DeviceRolePreferences.supportsSub(this)) return java.util.Collections.emptyList();
         FeatureModuleManager modules = new FeatureModuleManager(this);
         boolean runtimeFeature = modules.hasRuntimeFeature();
         boolean screenRecordingCensor =
@@ -464,6 +499,10 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderPermissionReadiness() {
         if (binding == null) return;
+        if (!DeviceRolePreferences.supportsSub(this)) {
+            findViewById(R.id.global_notice_host).setVisibility(View.GONE);
+            return;
+        }
         List<HomePermissionPolicy.Requirement> missing = missingPermissions();
         String fingerprint = missing.toString();
         if (missing.isEmpty()) fingerprint = "";
@@ -531,12 +570,15 @@ public final class MainActivity extends AppCompatActivity {
         if (ControllerPinManager.isDomModeActive()) {
             ControllerPinManager.enterSubMode();
             renderEditState();
-        } else ControllerPinGate.unlock(this, this::renderEditState, false);
+        } else if (DeviceRolePreferences.supportsDom(this)) ControllerPinGate.unlock(this, this::renderEditState, false);
     }
 
     private void renderEditState() {
         if (binding == null) return;
         ControllerEditMode.renderButton(this, editLockButton);
+        editLockButton.setVisibility(DeviceRolePreferences.supportsDom(this)
+                || ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
+        if (!DeviceRolePreferences.supportsSub(this)) editLockButton.setText(R.string.role_dom);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(localSessionPage ? View.VISIBLE : View.GONE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         PrimaryHeader.bind(binding.getRoot(), 0,
@@ -551,8 +593,21 @@ public final class MainActivity extends AppCompatActivity {
                 binding.pageContent.getPaddingTop(),
                 binding.pageContent.getPaddingEnd(),
                 bottom);
-        SubHubNavigation.bind(this, binding.getRoot(), localSessionPage && ControllerPinManager.isDomModeActive()
-                ? SubHubNavigation.Screen.PEOPLE : SubHubNavigation.Screen.HOME);
+        SubHubNavigation.bind(this, binding.getRoot(), localSessionPage
+                ? DeviceRolePreferences.supportsDom(this) && ControllerPinManager.isDomModeActive()
+                        ? SubHubNavigation.Screen.PEOPLE : SubHubNavigation.Screen.CONTRACT
+                : SubHubNavigation.Screen.HOME);
+        if (!DeviceRolePreferences.supportsSub(this)) {
+            findViewById(R.id.home_service_widget).setVisibility(View.GONE);
+            binding.subDashboard.setVisibility(View.GONE);
+            binding.commitmentCard.setVisibility(View.GONE);
+            binding.buttonProtection.setVisibility(View.GONE);
+            binding.subWalletPay.setVisibility(View.GONE);
+            binding.subWalletPause.setVisibility(View.GONE);
+            binding.serviceCountdown.stop();
+            if (roleHome != null) roleHome.refresh(true);
+            return;
+        }
         renderSubDashboard();
         renderCommitmentState();
         updateProtectionButton(ScreenCaptureService.isRunning());
@@ -561,6 +616,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderSubDashboard() {
         if (binding == null) return;
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         boolean walletEnabled = new FeatureModuleManager(this).isWalletEnabled();
         binding.subDashboard.setVisibility(View.GONE);
         long now = System.currentTimeMillis();
@@ -591,6 +647,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void beginPaidPause() {
+        if (!DeviceRolePreferences.supportsSub(this)) return;
         PenanceManager wallet = new PenanceManager(this);
         if (!wallet.requestPaidPause(System.currentTimeMillis())) {
             showStatus(R.string.paid_pause_unavailable);
@@ -621,6 +678,10 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderRuntimeState() {
         if (binding == null) return;
+        if (!DeviceRolePreferences.supportsSub(this)) {
+            if (roleHome != null) roleHome.refresh(false);
+            return;
+        }
         boolean manual = ScreenCaptureService.isRunning();
         boolean automatic = ScreenshotAccessibilityService.isRecognitionActive();
         boolean armed = new AppModeManager(this).isArmed();
@@ -668,8 +729,7 @@ public final class MainActivity extends AppCompatActivity {
                     StatsRepository.PREFS_NAME,
                     SettingsRepository.PREFERENCES_NAME,
                     PenanceManager.PREFS_NAME,
-                    com.subhub.app.penance.PayPalCredentialStore.PREFS_NAME,
-                    "subhub_pack_state_v1"
+                    com.subhub.app.penance.PayPalCredentialStore.PREFS_NAME
                 }) {
             android.content.SharedPreferences source =
                     getApplicationContext().getSharedPreferences(name, MODE_PRIVATE);

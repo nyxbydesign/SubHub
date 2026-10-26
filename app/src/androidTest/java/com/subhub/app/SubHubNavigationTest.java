@@ -100,12 +100,15 @@ public final class SubHubNavigationTest {
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_people).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_activity).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertVisibleTabOrder(activity.findViewById(android.R.id.content),
+                        R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_settings);
             });
         }
     }
@@ -117,6 +120,7 @@ public final class SubHubNavigationTest {
                 SubHubNavigation.bind(activity, activity.findViewById(android.R.id.content),
                         SubHubNavigation.Screen.HOME);
                 assertFalse(ControllerPinManager.isDomModeActive());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_activity).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_limits).getVisibility());
@@ -126,6 +130,8 @@ public final class SubHubNavigationTest {
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_stats).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
+                assertVisibleTabOrder(activity.findViewById(android.R.id.content),
+                        R.id.nav_home, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings);
             });
         } finally {
             ControllerPinManager.enterDomMode();
@@ -212,11 +218,133 @@ public final class SubHubNavigationTest {
             assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_people);
             onView(withId(R.id.nav_people)).perform(click());
             assertDestination(com.subhub.app.people.PeopleActivity.class, R.id.nav_people, R.id.nav_home);
+            onView(withId(R.id.nav_activity)).perform(click());
+            assertDestination(com.subhub.app.activity.DomActivityActivity.class, R.id.nav_activity, R.id.nav_people);
             onView(withId(R.id.nav_settings)).perform(click());
-            assertDestination(GlobalSettingsActivity.class, R.id.nav_settings, R.id.nav_people);
+            assertDestination(GlobalSettingsActivity.class, R.id.nav_settings, R.id.nav_activity);
             onView(withId(R.id.nav_home)).perform(click());
             assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_settings);
         }
+    }
+
+    @Test public void activityTabRejectsItsStaleDomClickAfterEnteringSubSpace() {
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            scenario.onActivity(activity -> {
+                View stale = activity.findViewById(R.id.nav_activity);
+                assertEquals(View.VISIBLE, stale.getVisibility());
+                ControllerPinManager.enterSubMode();
+                SubHubNavigation.bind(activity, activity.findViewById(android.R.id.content),
+                        SubHubNavigation.Screen.SETTINGS);
+                assertEquals(View.GONE, stale.getVisibility());
+                stale.performClick();
+                assertVisibleTabOrder(activity.findViewById(android.R.id.content),
+                        R.id.nav_home, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings);
+            });
+            assertEquals(GlobalSettingsActivity.class, resumedActivity(GlobalSettingsActivity.class).getClass());
+        } finally { ControllerPinManager.enterDomMode(); }
+    }
+
+    @Test public void actualActivityDestinationFitsRequestedFontScaleAndViewport() {
+        try (ActivityScenario<com.subhub.app.activity.DomActivityActivity> scenario =
+                     ActivityScenario.launch(com.subhub.app.activity.DomActivityActivity.class)) {
+            assertDestination(com.subhub.app.activity.DomActivityActivity.class, R.id.nav_activity, R.id.nav_people);
+            scenario.onActivity(activity -> {
+                android.os.Bundle arguments = InstrumentationRegistry.getArguments();
+                String expectedFont = arguments.getString("shell_expected_font_scale");
+                String expectedWidth = arguments.getString("shell_expected_width_dp");
+                if (expectedFont != null) assertEquals(Float.parseFloat(expectedFont),
+                        activity.getResources().getConfiguration().fontScale, 0.01f);
+                if (expectedWidth != null) assertEquals(Integer.parseInt(expectedWidth),
+                        activity.getResources().getConfiguration().screenWidthDp);
+                View root = activity.findViewById(android.R.id.content);
+                assertRailFits(root, 4);
+                assertVisibleTabOrder(root, R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_settings);
+                TextView title = activity.findViewById(R.id.primary_header_title);
+                assertEquals(activity.getString(R.string.dom_activity_title), title.getText().toString());
+                assertCompleteText(title);
+                assertTrue(ViewCompat.isAccessibilityHeading(title));
+                View navigation = activity.findViewById(R.id.bottom_navigation);
+                android.widget.ListView list = activity.findViewById(R.id.dom_activity_list);
+                assertTrue("Actual Activity list clears the adaptive rail", list.getPaddingBottom()
+                        >= navigation.getHeight() + activity.getResources().getDimensionPixelSize(R.dimen.page_content_tail_gap));
+            });
+        }
+    }
+
+    @Test public void activityUnreadBadgeUsesBackgroundEventsAndStopsWithItsPage() {
+        com.subhub.app.activity.ActivityRepository original = com.subhub.app.activity.ActivitySources.repository();
+        java.util.concurrent.atomic.AtomicInteger unread = new java.util.concurrent.atomic.AtomicInteger(3);
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean queriedOnMain = new java.util.concurrent.atomic.AtomicBoolean();
+        com.subhub.app.activity.ActivitySources.install(new com.subhub.app.activity.ActivityRepository() {
+            public Page load(String before, int limit) { return new Page(java.util.Collections.emptyList(), null); }
+            public Page locate(String entryKey, int limit) { return load(null, limit); }
+            public java.util.List<com.subhub.app.activity.ActivityEntry> recent(com.subhub.app.people.PersonId person, int limit) {
+                return java.util.Collections.emptyList();
+            }
+            public int unreadCount() {
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) queriedOnMain.set(true);
+                reads.incrementAndGet();
+                return unread.get();
+            }
+            public void markRead(java.util.List<String> keys) { }
+        });
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            awaitUnreadBadge(scenario, 3);
+            int beforeRebind = reads.get();
+            scenario.onActivity(activity -> {
+                for (int tick = 0; tick < 20; tick++) SubHubNavigation.bind(activity,
+                        activity.findViewById(android.R.id.content), SubHubNavigation.Screen.SETTINGS);
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals("Render ticks reuse the observed unread count", beforeRebind, reads.get());
+            unread.set(0);
+            com.subhub.app.activity.ActivitySources.changed();
+            awaitUnreadBadge(scenario, 0);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            int stoppedReads = reads.get();
+            unread.set(5);
+            com.subhub.app.activity.ActivitySources.changed();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals("Stopped pages release the unread observer", stoppedReads, reads.get());
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            awaitUnreadBadge(scenario, 5);
+            scenario.onActivity(activity -> {
+                ControllerPinManager.enterSubMode();
+                SubHubNavigation.bind(activity, activity.findViewById(android.R.id.content),
+                        SubHubNavigation.Screen.SETTINGS);
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_activity_unread).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_activity).getVisibility());
+            });
+            int subReads = reads.get();
+            unread.set(7);
+            com.subhub.app.activity.ActivitySources.changed();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals("Sub space does not query Dom unread counts", subReads, reads.get());
+            assertFalse("Unread repository must never run on main", queriedOnMain.get());
+        } finally {
+            ControllerPinManager.enterDomMode();
+            com.subhub.app.activity.ActivitySources.install(original);
+        }
+    }
+
+    private static void awaitUnreadBadge(ActivityScenario<GlobalSettingsActivity> scenario, int unread) {
+        long deadline = SystemClock.uptimeMillis() + 3_000;
+        java.util.concurrent.atomic.AtomicBoolean ready = new java.util.concurrent.atomic.AtomicBoolean();
+        do {
+            scenario.onActivity(activity -> {
+                View indicator = activity.findViewById(R.id.nav_activity_unread);
+                View tab = activity.findViewById(R.id.nav_activity);
+                String label = activity.getString(R.string.dom_activity_title);
+                String expected = unread > 0 ? label + ", "
+                        + activity.getString(R.string.dom_activity_unread_count, unread) : label;
+                ready.set(indicator.getVisibility() == (unread > 0 ? View.VISIBLE : View.GONE)
+                        && expected.contentEquals(tab.getContentDescription()));
+            });
+            if (ready.get()) return;
+            SystemClock.sleep(20);
+        } while (SystemClock.uptimeMillis() < deadline);
+        throw new AssertionError("Unread indicator did not reach " + unread);
     }
 
     @Test public void railFitsFontScalingAndKeepsTheLastActionAboveNavigation() {
@@ -225,7 +353,7 @@ public final class SubHubNavigationTest {
         try (ActivityScenario<AtmosphereActivity> scenario =
                      ActivityScenario.launch(AtmosphereActivity.class)) {
             scenario.onActivity(activity -> {
-                int[] widths = {320, 360, 411, 600, 840};
+                int[] widths = {244, 320, 360, 411, 600, 840};
                 float[] fontScales = {1f, 1.3f, 2f};
                 for (int width : widths) {
                     for (float fontScale : fontScales) {
@@ -248,13 +376,18 @@ public final class SubHubNavigationTest {
                             int pageHeight = Math.round(720 * themed.getResources()
                                     .getDisplayMetrics().density);
                             measurePage(page, pageWidth, pageHeight);
-                            SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ATMOSPHERE);
+                            SubHubNavigation.bind(activity, page, dom ? SubHubNavigation.Screen.ACTIVITY
+                                    : SubHubNavigation.Screen.ATMOSPHERE);
                             // Apply measured navigation clearance before checking the final action.
                             measurePage(page, pageWidth, pageHeight);
                             measurePage(page, pageWidth, pageHeight);
                             ViewGroup navigation = page.findViewById(R.id.bottom_navigation);
                             assertEquals(fontScale, themed.getResources().getConfiguration().fontScale, 0.001f);
-                            assertRailFits(page, dom ? 3 : 4);
+                            assertRailFits(page, 4);
+                            assertVisibleTabOrder(page, dom
+                                    ? new int[] {R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_settings}
+                                    : new int[] {R.id.nav_home, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings});
+                            if (dom) assertTrue(page.findViewById(R.id.nav_activity).isSelected());
                             ScrollView scroll = (ScrollView) page.getChildAt(0);
                             scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
                             View lastAction = page.findViewById(R.id.button_popup_storm);
@@ -280,7 +413,7 @@ public final class SubHubNavigationTest {
                 if (expectedWidth != null) assertEquals("Actual device viewport", Integer.parseInt(expectedWidth),
                         activity.getResources().getConfiguration().screenWidthDp);
                 ViewGroup root = activity.findViewById(android.R.id.content);
-                assertRailFits(root, 3);
+                assertRailFits(root, 4);
                 TextView title = activity.findViewById(R.id.primary_header_title);
                 assertCompleteText(title);
                 assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
@@ -302,28 +435,73 @@ public final class SubHubNavigationTest {
         }
     }
 
+    @Test public void compactActivityNavigationReservesItsMeasuredListClearance() {
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            scenario.onActivity(activity -> {
+                for (int width : new int[] {244, 320}) {
+                    Configuration configuration = new Configuration(activity.getResources().getConfiguration());
+                    configuration.screenWidthDp = width;
+                    configuration.smallestScreenWidthDp = width;
+                    configuration.fontScale = 2f;
+                    Context themed = new ContextThemeWrapper(activity.createConfigurationContext(configuration), R.style.Theme_SubHub);
+                    ViewGroup page = (ViewGroup) LayoutInflater.from(themed).inflate(R.layout.activity_dom_activity, null, false);
+                    PrimaryHeader.bind(page, 0, R.string.dom_activity_title, 0);
+                    int densityWidth = Math.round(width * themed.getResources().getDisplayMetrics().density);
+                    int densityHeight = Math.round(720 * themed.getResources().getDisplayMetrics().density);
+                    measurePage(page, densityWidth, densityHeight);
+                    SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ACTIVITY);
+                    measurePage(page, densityWidth, densityHeight);
+                    measurePage(page, densityWidth, densityHeight);
+                    assertRailFits(page, 4);
+                    View navigation = page.findViewById(R.id.bottom_navigation);
+                    android.widget.ListView list = page.findViewById(R.id.dom_activity_list);
+                    assertTrue("Activity content must clear every measured navigation row", list.getPaddingBottom()
+                            >= navigation.getHeight() + themed.getResources().getDimensionPixelSize(R.dimen.page_content_tail_gap));
+                    assertTrue(page.findViewById(R.id.nav_activity).isSelected());
+                }
+            });
+        }
+    }
+
     private static void assertRailFits(View root, int expectedTabs) {
         ViewGroup navigation = root.findViewById(R.id.bottom_navigation);
         int target = navigation.getResources().getDimensionPixelSize(R.dimen.control_min_height);
-        int visible = 0, rowTop = -1;
+        int visible = 0, occupiedBottom = 0, singleRowWidth = 0;
+        java.util.Set<Integer> rows = new java.util.HashSet<>();
+        java.util.List<Rect> targets = new java.util.ArrayList<>();
         assertEquals("Navigation spans its viewport", ((View) navigation.getParent()).getWidth(), navigation.getWidth());
-        assertTrue("Navigation must not consume multiple rows of the viewport",
-                navigation.getHeight() <= Math.round(120 * navigation.getResources().getDisplayMetrics().density));
         for (int index = 0; index < navigation.getChildCount(); index++) {
             ViewGroup tab = (ViewGroup) navigation.getChildAt(index);
             if (tab.getVisibility() != View.VISIBLE) continue;
             visible++;
-            if (rowTop < 0) rowTop = tab.getTop();
-            assertEquals("All navigation targets share one row", rowTop, tab.getTop());
+            rows.add(tab.getTop());
+            occupiedBottom = Math.max(occupiedBottom, tab.getBottom());
             assertTrue("Navigation target too narrow", tab.getWidth() >= target);
             assertTrue("Navigation target too short", tab.getHeight() >= target);
             assertTrue("Navigation target exceeds viewport", tab.getRight() <= navigation.getWidth() - navigation.getPaddingRight());
+            assertTrue(tab.getLeft() >= navigation.getPaddingLeft());
+            Rect targetBounds = new Rect(tab.getLeft(), tab.getTop(), tab.getRight(), tab.getBottom());
+            for (Rect other : targets) assertFalse("Navigation targets must not overlap", Rect.intersects(targetBounds, other));
+            targets.add(targetBounds);
             TextView label = (TextView) tab.getChildAt(1);
             assertEquals(View.VISIBLE, label.getVisibility());
             assertCompleteText(label);
+            assertEquals("A complete short navigation label must fit without breaking its word", 1, label.getLineCount());
+            singleRowWidth += Math.max(target, (int) Math.ceil(android.text.Layout.getDesiredWidth(
+                    label.getText(), label.getPaint())) + label.getCompoundPaddingLeft()
+                    + label.getCompoundPaddingRight() + tab.getPaddingLeft() + tab.getPaddingRight());
+            Rect labelBounds = new Rect(0, 0, label.getWidth(), label.getHeight());
+            tab.offsetDescendantRectToMyCoords(label, labelBounds);
+            assertTrue("Label must remain inside its target", labelBounds.left >= tab.getPaddingLeft()
+                    && labelBounds.right <= tab.getWidth() - tab.getPaddingRight());
             assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11,
                     label.getResources().getDisplayMetrics())), label.getTextSize(), 0.01f);
-            assertEquals(label.getText().toString(), tab.getContentDescription().toString());
+            if (tab.getId() == R.id.nav_activity
+                    && tab.findViewById(R.id.nav_activity_unread).getVisibility() == View.VISIBLE) {
+                assertTrue(tab.getContentDescription().toString().contains(label.getText()));
+                assertFalse("Unread description must include more than the label",
+                        label.getText().toString().contentEquals(tab.getContentDescription()));
+            } else assertEquals(label.getText().toString(), tab.getContentDescription().toString());
             assertTrue("Navigation label exceeds its target", label.getBottom() <= tab.getHeight() - tab.getPaddingBottom());
             AccessibilityNodeInfo info = tab.createAccessibilityNodeInfo();
             assertEquals(Button.class.getName(), info.getClassName());
@@ -331,6 +509,23 @@ public final class SubHubNavigationTest {
             info.recycle();
         }
         assertEquals(expectedTabs, visible);
+        int availableWidth = navigation.getWidth() - navigation.getPaddingLeft() - navigation.getPaddingRight();
+        if (singleRowWidth <= availableWidth) assertEquals("Fitting labels retain a single rail", 1, rows.size());
+        else assertEquals("Four labels use balanced fitting rows when one rail is too narrow", 2, rows.size());
+        assertTrue("Navigation must not retain empty row space", navigation.getHeight()
+                <= Math.max(navigation.getMinimumHeight(), occupiedBottom + navigation.getPaddingBottom()) + 1);
+    }
+
+    private static void assertVisibleTabOrder(View root, int... expected) {
+        ViewGroup navigation = root.findViewById(R.id.bottom_navigation);
+        int visible = 0;
+        for (int index = 0; index < navigation.getChildCount(); index++) {
+            View tab = navigation.getChildAt(index);
+            if (tab.getVisibility() != View.VISIBLE) continue;
+            assertTrue("Unexpected extra primary destination", visible < expected.length);
+            assertEquals("Primary destination order", expected[visible++], tab.getId());
+        }
+        assertEquals("Complete primary destination inventory", expected.length, visible);
     }
 
     private static void assertCompleteText(TextView text) {
@@ -366,9 +561,9 @@ public final class SubHubNavigationTest {
         assertTrue(selectedInfo.isSelected());
         assertEquals(Button.class.getName(), selectedInfo.getClassName());
         selectedInfo.recycle();
-        int[] tabs = {R.id.nav_home, R.id.nav_people, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings};
-        int[] icons = {R.id.nav_home_icon, R.id.nav_people_icon, R.id.nav_contract_icon, R.id.nav_stats_icon, R.id.nav_settings_icon};
-        int[] labels = {R.id.nav_home_label, R.id.nav_people_label, R.id.nav_contract_label, R.id.nav_stats_label, R.id.nav_settings_label};
+        int[] tabs = {R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings};
+        int[] icons = {R.id.nav_home_icon, R.id.nav_people_icon, R.id.nav_activity_icon, R.id.nav_contract_icon, R.id.nav_stats_icon, R.id.nav_settings_icon};
+        int[] labels = {R.id.nav_home_label, R.id.nav_people_label, R.id.nav_activity_label, R.id.nav_contract_label, R.id.nav_stats_label, R.id.nav_settings_label};
         for (int index = 0; index < tabs.length; index++) {
             LinearLayout tab = activity.findViewById(tabs[index]);
             if (tab.getVisibility() != View.VISIBLE) continue;

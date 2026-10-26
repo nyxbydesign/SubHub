@@ -31,7 +31,6 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.studio.StudioActivity;
 
 import org.junit.After;
 import org.junit.Before;
@@ -59,6 +58,7 @@ public final class UxFlowRegressionAndroidTest {
             SharedPreferences prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE);
             original.put(prefs, new LinkedHashMap<>(prefs.getAll()));
         }
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,"BOTH").commit();
         ControllerPinManager.enterDomMode();
         new FeatureModuleManager(context).save(true, true, true);
         new AppModeManager(context).setArmed(false);
@@ -207,45 +207,25 @@ public final class UxFlowRegressionAndroidTest {
         }
     }
 
-    @Test public void settingsExposeAppsAndDirectPrivacyAndHelpSections() {
-        try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            page.onActivity(a -> {
-                View apps = a.findViewById(android.R.id.content).findViewWithTag("settings:apps");
-                View privacy = a.findViewById(android.R.id.content).findViewWithTag("settings:privacy");
-                View help = a.findViewById(android.R.id.content).findViewWithTag("settings:help");
-                ViewGroup groups = (ViewGroup) apps.getParent().getParent();
-                assertTrue(groups.indexOfChild((View) apps.getParent()) < groups.indexOfChild((View) privacy.getParent()));
-                assertTrue(groups.indexOfChild((View) privacy.getParent()) < groups.indexOfChild((View) help.getParent()));
-                assertFalse(privacy.isClickable());
-                assertFalse(help.isClickable());
-                assertNull(a.findViewById(R.id.feature_areas_card));
-                assertNull(a.findViewById(R.id.paypal_card));
-                assertNotNull(a.findViewById(R.id.hardcore_card));
-            });
-        }
-    }
 
-    @Test public void studioExposesExplicitBackAction() {
-        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
-                GlobalSettingsActivity.class.getName(), null, false);
-        Activity destination = null;
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            scenario.onActivity(activity -> {
-                View back = activity.findViewById(R.id.button_back);
-                assertEquals(View.VISIBLE, back.getVisibility());
-                assertTrue(back.hasOnClickListeners());
-                back.performClick();
+
+
+    @Test public void settingsExposeInlinePrivacyPermissionsAndHelpWithoutDomHardcore() {
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            page.onActivity(a->{
+                ViewGroup sections=a.findViewById(R.id.settings_sections);
+                View privacy=sections.findViewWithTag("settings:privacy"),permissions=sections.findViewWithTag("settings:permissions"),help=sections.findViewWithTag("settings:help");
+                assertNull(sections.findViewWithTag("settings:apps"));
+                assertNotNull(privacy);assertNotNull(permissions);assertNotNull(help);
+                assertEquals(sections,privacy.getParent());assertEquals(sections,permissions.getParent());assertEquals(sections,help.getParent());
+                assertTrue(sections.indexOfChild(privacy)<sections.indexOfChild(permissions));
+                assertTrue(sections.indexOfChild(permissions)<sections.indexOfChild(help));
+                assertFalse(privacy.isClickable());assertFalse(permissions.isClickable());assertFalse(help.isClickable());
+                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertTrue(a.findViewById(R.id.button_help).isShown());assertTrue(a.findViewById(R.id.button_diagnostics).isShown());
+                assertTrue(a.findViewById(R.id.settings_connections_security).isClickable());
+                assertNull(a.findViewById(R.id.hardcore_card));assertNull(a.findViewById(R.id.switch_hardcore_mode));
             });
-            destination = monitor.waitForActivityWithTimeout(3000);
-            assertNotNull(destination);
-            assertTrue(destination instanceof GlobalSettingsActivity);
-        } finally {
-            if (destination != null) {
-                Activity opened = destination;
-                instrumentation.runOnMainSync(opened::finish);
-            }
-            instrumentation.removeMonitor(monitor);
         }
     }
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="background">#160F1D</color>
+    <color name="background">#120B19</color>
     <color name="primary_action_text">#201329</color>
     <color name="dialog_surface_start">#17121F</color>
     <color name="dialog_surface">#21172C</color>

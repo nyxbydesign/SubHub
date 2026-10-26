@@ -20,6 +20,7 @@ public final class PairingActivity extends RemotePage {
         super.onCreate(state);page(R.string.remote_pairing);
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         boolean asDom=getIntent().getBooleanExtra("asDom",false) && getIntent().getData()==null;
+        if(asDom?!com.subhub.app.security.DeviceRolePreferences.supportsDom(this):!com.subhub.app.security.DeviceRolePreferences.supportsSub(this)){finish();return;}
         if(asDom)PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
         else {
             link=input(body,R.string.remote_invite_input,getIntent().getData()==null?"":getIntent().getData().toString());
@@ -97,7 +98,7 @@ public final class PairingActivity extends RemotePage {
         LinearLayout panel=PersonUi.column(this);int padding=PersonUi.dp(this,20);panel.setPadding(padding,padding,padding,padding);
         LinearLayout person=PersonUi.card(panel);text(person,name,true);text(person,identity.substring(0,8)+"…"+identity.substring(60),false);
         text(person,getString(R.string.remote_fingerprint),true);TextView code=text(person,fingerprint,false);code.setTypeface(android.graphics.Typeface.MONOSPACE);
-        LinearLayout scope=PersonUi.card(panel);text(scope,getString(R.string.remote_shared_controls),true);text(scope,getString(R.string.remote_pairing_scope),false);
+        LinearLayout scope=PersonUi.card(panel);text(scope,getString(R.string.remote_shared_controls),true);text(scope,getString(R.string.remote_pairing_scope),false);text(scope,getString(R.string.remote_activity_pairing_scope),false);
         android.widget.ScrollView scroll=new android.widget.ScrollView(this);scroll.addView(panel);return scroll;
     }
     private void renderLinked(RemoteStore.Peer current){

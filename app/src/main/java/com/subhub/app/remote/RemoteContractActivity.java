@@ -4,13 +4,13 @@ import android.content.*;
 import android.os.Bundle;
 import android.widget.*;
 import com.subhub.app.R;
-import com.subhub.app.pack.*;
+import com.subhub.app.configuration.*;
 import com.subhub.app.people.PersonUi;
 import org.json.*;
 import java.io.*;
 import java.util.*;
 
-/** Portable drafts never instantiate local setting managers for a remote target. */
+/** Profile drafts never instantiate local setting managers for a remote target. */
 public final class RemoteContractActivity extends RemotePage {
     private JSONObject draft;private long desired,applied;private String section="modules",artGroup="censor";
     private final List<Runnable> collect=new ArrayList<>();
@@ -19,7 +19,7 @@ public final class RemoteContractActivity extends RemotePage {
     private int fileAction;
     @Override protected void onCreate(Bundle state){super.onCreate(state);
         String requested=getIntent().getStringExtra("section");if("atmosphere".equals(requested))requested="subliminal";
-        if(SubHubPackSchema.SECTIONS.contains(requested)||"apps".equals(requested)||"duration".equals(requested))section=requested;
+        if(ConfigurationSchema.SECTIONS.contains(requested)||"apps".equals(requested)||"duration".equals(requested))section=requested;
         if(state!=null)section=state.getString("section",section);
         page(sectionTitle(section));if(!selectPeer())return;
         if(state!=null && state.containsKey("draft"))try{draft=new JSONObject(state.getString("draft"));desired=state.getLong("desired");applied=state.getLong("applied");section=state.getString("section",section);artGroup=state.getString("artGroup","censor");fileAction=state.getInt("fileAction");restoreControls=state.getBundle("controls");render();return;}catch(JSONException invalid){notice(R.string.remote_reload);}
@@ -65,10 +65,10 @@ public final class RemoteContractActivity extends RemotePage {
                 JSONObject sections=draft.getJSONObject("contract").getJSONObject("sections"),config=sections.getJSONObject(section);
                 if("censor".equals(section)||"subliminal".equals(section)) {
                     String module="censor".equals(section)?"module_censor_enabled":"module_subliminal_enabled";
-                    for(PackSettingCatalog.Field field:PackSettingCatalog.fields("modules"))if(field.key.equals(module))field(values,sections.getJSONObject("modules"),field);
+                    for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields("modules"))if(field.key.equals(module))field(values,sections.getJSONObject("modules"),field);
                 }
                 Map<Integer,LinearLayout> groups=new LinkedHashMap<>();
-                for(PackSettingCatalog.Field field:PackSettingCatalog.fields(section)){
+                for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)){
                     LinearLayout group=groups.get(field.group);
                     if(group==null){group=PersonUi.card(body);text(group,getString(field.group),true);groups.put(field.group,group);}
                     field(group,config,field);
@@ -86,7 +86,7 @@ public final class RemoteContractActivity extends RemotePage {
                     put(draft.optJSONObject("contract"),"assets",kept);render();
                 }catch(JSONException invalid){notice(R.string.remote_reload);}});
             }
-            PersonUi.action(body,R.string.remote_apply,()->save(true),true);button(body,R.string.remote_save_contract,()->save(false));
+            PersonUi.action(body,R.string.remote_apply,this::apply,true);
             restoreInputs();
         }catch(Exception invalid){notice(R.string.remote_reload);}
     }
@@ -96,19 +96,19 @@ public final class RemoteContractActivity extends RemotePage {
     private void switchAtmosphere(String target){if(gather()){section=target;pageTitle();render();}}
     private void pageTitle(){com.subhub.app.util.PrimaryHeader.bindSecondary(findViewById(android.R.id.content),sectionTitle(section),false);}
     private int sectionTitle(String key){switch(key){case "apps":return R.string.remote_apps;case "duration":return R.string.remote_duration;case "modules":return R.string.pack_group_features;case "censor":return R.string.sub_censor_title;case "limits":return R.string.sub_limits_title;case "wallet":return R.string.sub_wallet_title;case "subliminal":return R.string.subliminal_title;default:return R.string.popup_title;}}
-    private void field(LinearLayout target,JSONObject config,PackSettingCatalog.Field field)throws Exception {
+    private void field(LinearLayout target,JSONObject config,ConfigurationSettingCatalog.Field field)throws Exception {
         Object value=config.get(field.key);
-        if(field.kind==PackSettingCatalog.Kind.BOOLEAN){Switch toggle=new Switch(this);toggle.setText(field.label);toggle.setChecked((Boolean)value);target.addView(toggle);controls.put(field.key,toggle);collect.add(()->put(config,field.key,toggle.isChecked()));return;}
+        if(field.kind==ConfigurationSettingCatalog.Kind.BOOLEAN){Switch toggle=new Switch(this);toggle.setText(field.label);toggle.setChecked((Boolean)value);target.addView(toggle);controls.put(field.key,toggle);collect.add(()->put(config,field.key,toggle.isChecked()));return;}
         text(target,getString(field.label),false);
-        if(field.kind==PackSettingCatalog.Kind.CHOICE){Spinner picker=new Spinner(this);List<String> labels=new ArrayList<>();for(String choice:field.choices)labels.add(getString(PackSettingCatalog.choiceLabel(field,choice)));picker.setAdapter(choices(labels));picker.setSelection(Math.max(0,field.choices.indexOf(String.valueOf(value))));target.addView(picker);controls.put(field.key,picker);collect.add(()->put(config,field.key,field.choices.get(picker.getSelectedItemPosition())));return;}
-        if(field.kind==PackSettingCatalog.Kind.SELECTION && !field.choices.isEmpty()){
+        if(field.kind==ConfigurationSettingCatalog.Kind.CHOICE){Spinner picker=new Spinner(this);List<String> labels=new ArrayList<>();for(String choice:field.choices)labels.add(getString(ConfigurationSettingCatalog.choiceLabel(field,choice)));picker.setAdapter(choices(labels));picker.setSelection(Math.max(0,field.choices.indexOf(String.valueOf(value))));target.addView(picker);controls.put(field.key,picker);collect.add(()->put(config,field.key,field.choices.get(picker.getSelectedItemPosition())));return;}
+        if(field.kind==ConfigurationSettingCatalog.Kind.SELECTION && !field.choices.isEmpty()){
             Set<String> selected=new LinkedHashSet<>();JSONArray items=(JSONArray)value;for(int i=0;i<items.length();i++)selected.add(items.getString(i));
-            for(String choice:field.choices){CheckBox box=new CheckBox(this);box.setText(PackSettingCatalog.choiceLabel(field,choice));box.setChecked(selected.contains(choice));target.addView(box);controls.put(field.key+":"+choice,box);box.setOnCheckedChangeListener((b,checked)->{if(checked)selected.add(choice);else selected.remove(choice);});}
+            for(String choice:field.choices){CheckBox box=new CheckBox(this);box.setText(ConfigurationSettingCatalog.choiceLabel(field,choice));box.setChecked(selected.contains(choice));target.addView(box);controls.put(field.key+":"+choice,box);box.setOnCheckedChangeListener((b,checked)->{if(checked)selected.add(choice);else selected.remove(choice);});}
             collect.add(()->put(config,field.key,new JSONArray(selected)));return;
         }
-        EditText editor=new EditText(this);editor.setSaveEnabled(false);editor.setText(field.kind==PackSettingCatalog.Kind.SELECTION?join((JSONArray)value):field.displayText(value));target.addView(editor);controls.put(field.key,editor);
-        if(field.kind!=PackSettingCatalog.Kind.TEXT && field.kind!=PackSettingCatalog.Kind.COLOR && field.kind!=PackSettingCatalog.Kind.SELECTION)editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
-        collect.add(()->{try{Object parsed=field.kind==PackSettingCatalog.Kind.SELECTION?field.normalize(new JSONArray(Arrays.asList(editor.getText().toString().split("\n")))):field.parseText(editor.getText().toString());put(config,field.key,parsed);}catch(RuntimeException invalid){editor.setError(getString(R.string.remote_invalid_value));throw invalid;}});
+        EditText editor=new EditText(this);editor.setSaveEnabled(false);editor.setText(field.kind==ConfigurationSettingCatalog.Kind.SELECTION?join((JSONArray)value):field.displayText(value));target.addView(editor);controls.put(field.key,editor);
+        if(field.kind!=ConfigurationSettingCatalog.Kind.TEXT && field.kind!=ConfigurationSettingCatalog.Kind.COLOR && field.kind!=ConfigurationSettingCatalog.Kind.SELECTION)editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        collect.add(()->{try{Object parsed=field.kind==ConfigurationSettingCatalog.Kind.SELECTION?field.normalize(new JSONArray(Arrays.asList(editor.getText().toString().split("\n")))):field.parseText(editor.getText().toString());put(config,field.key,parsed);}catch(RuntimeException invalid){editor.setError(getString(R.string.remote_invalid_value));throw invalid;}});
     }
     private void apps(LinearLayout target)throws Exception {
         JSONObject apps=draft.getJSONObject("apps"),budgets=apps.getJSONObject("allowances");Set<String> selected=RemoteConfiguration.selected(draft);
@@ -146,10 +146,9 @@ public final class RemoteContractActivity extends RemotePage {
         collect.add(()->{if(options[choice.getSelectedItemPosition()]!=-2)return;try{long minimum=Long.parseLong(min.getText().toString()),maximum=Long.parseLong(max.getText().toString());if(minimum<30||maximum>43200||maximum<minimum)throw new IllegalArgumentException();put(service,"minimum",Math.multiplyExact(minimum,60_000));put(service,"maximum",Math.multiplyExact(maximum,60_000));}catch(IllegalArgumentException|ArithmeticException invalid){min.setError(getString(R.string.remote_invalid_value));max.setError(getString(R.string.remote_invalid_value));throw invalid;}});
         Switch hidden=new Switch(this);hidden.setText(R.string.remote_hide_duration);hidden.setChecked(service.getBoolean("hidden"));target.addView(hidden);controls.put("service_hidden",hidden);collect.add(()->put(service,"hidden",hidden.isChecked()));
     }
-    private void save(boolean apply){if(!mayEdit()||!gather()){notice(R.string.remote_reload);return;}authorize(()->{try{JSONObject snapshot=new JSONObject(draft.toString());work(()->{
+    private void apply(){if(!mayEdit()||!gather()){notice(R.string.remote_reload);return;}authorize(()->{try{JSONObject snapshot=new JSONObject(draft.toString());work(()->{
         if(!mayEdit())throw new SecurityException();
-        if(apply)feature.store.queueConfiguration(peer.identity,peer.generation,desired,applied,snapshot);
-        else{JSONObject contract=snapshot.getJSONObject("contract");contract.put("id",UUID.randomUUID().toString()).put("updatedAt",System.currentTimeMillis());feature.contracts.save(peer,snapshot);}
+        feature.store.queueConfiguration(peer.identity,peer.generation,desired,applied,snapshot);
         feature.changed();return null;
     },v->{notice(R.string.remote_saved);load();});}catch(JSONException invalid){notice(R.string.remote_reload);}});}
     private void choose(int action,String mime){if(!mayEdit())return;fileAction=action;startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType(mime).addCategory(Intent.CATEGORY_OPENABLE),action);}

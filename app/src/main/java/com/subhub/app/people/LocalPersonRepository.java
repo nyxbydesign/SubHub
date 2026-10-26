@@ -7,8 +7,6 @@ import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
-import com.subhub.app.pack.SubHubPack;
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
@@ -116,13 +114,10 @@ public final class LocalPersonRepository implements PersonRepository {
                 || ScreenCaptureService.isRunning() || ScreenshotAccessibilityService.isRecognitionActive();
         String service = context.getString(paused ? R.string.role_service_paused
                 : active ? R.string.role_service_active : R.string.role_service_inactive);
-        SubHubPackManager packs = new SubHubPackManager(context);
-        String activeId = packs.activePackId();
-        SubHubPack pack = activeId == null ? null : packs.activePackOverview();
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
         if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
         return new PersonSnapshot(id, context.getString(R.string.role_this_device), Build.MODEL,
-                pack == null ? context.getString(R.string.role_local_configuration) : pack.getName(),
+                context.getString(R.string.role_local_configuration),
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
                 capabilities, canonical, allowances, wallet.getCurrency(),
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),

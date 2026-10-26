@@ -33,7 +33,7 @@ public class StatisticsQualityAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
     @Test
-    public void compactPageKeepsUndatedTotalsSeparateAndExpandsHistoryInPlace() throws Exception {
+    public void singlePageShowsTotalsImmediatelyAndPagesUndatedHistoryInPlace() throws Exception {
         assumeTrue(android.os.Build.MODEL.contains("sdk_gphone"));
         DailyStatsStore.awaitWrites();
         DailyStatsStore store = DailyStatsStore.get(context);
@@ -69,6 +69,8 @@ public class StatisticsQualityAndroidTest {
                         assertNotNull(a.findViewById(R.id.stats_lifetime_summary));
                         assertNotNull(a.findViewById(R.id.daily_statistics_panel));
                         assertEquals(3, countSessions(a.findViewById(android.R.id.content)));
+                        assertNull(a.findViewById(R.id.stats_totals_toggle));
+                        assertEquals(View.VISIBLE, a.findViewById(R.id.stats_totals_details).getVisibility());
                         assertTrue(
                                 allText(a.findViewById(R.id.stats_lifetime_summary))
                                         .contains(
@@ -80,7 +82,6 @@ public class StatisticsQualityAndroidTest {
                         capture(a, "stats-compact-empty.png");
                         assertEquals(6, assertMetricsReadable(a.findViewById(R.id.stats_lifetime_summary)));
                     });
-            onView(withId(R.id.stats_totals_toggle)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             onView(withId(R.id.stats_sessions_more)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             stats.onActivity(
                     a -> {

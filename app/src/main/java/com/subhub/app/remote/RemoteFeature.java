@@ -21,6 +21,7 @@ public final class RemoteFeature {
     public final RemoteContracts contracts;
     public final RemoteEndCommands endCommands;
     public final RemoteKeyholder keyholder;
+    public final RemoteActivityRepository activity;
     private final RemoteSecrets secrets;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
@@ -37,26 +38,29 @@ public final class RemoteFeature {
     private volatile PeerTransport endpoint;
     private volatile boolean foreground,recovered;
     private boolean installed;
+    private boolean librariesRetired;
 
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
     RemoteFeature(Context context,RemoteStore store) {
         this.context=context.getApplicationContext();this.store=store;secrets=new RemoteSecrets(this.context);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
-        store.onRevoked((identity,generation)->{keyholder.revoked(identity,generation);secrets.removePending(generation);});
-        store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();});
+        activity=new RemoteActivityRepository(this.context,store,this::changed);
+        store.onActivityReceived(activity::received);
+        store.onRevoked((identity,generation)->{keyholder.revoked(identity,generation);secrets.removePending(generation);activity.revoked(store.peer(identity,generation));});
+        store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
         sessions.allowCoreThreadTimeOut(true);
-        try{writer.recover();writer.prunePrepared();for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){keyholder.revoked(old.identity,old.generation);secrets.removePending(old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
+        try{writer.recover();writer.prunePrepared();if(com.subhub.app.configuration.LegacyPackMigration.isReady(this.context)){store.retireLibraries();librariesRetired=true;}for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){keyholder.revoked(old.identity,old.generation);secrets.removePending(old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
     }
-    public boolean recoveryReady(){return recovered;}
-    public boolean controlsLocal(){return !recovered || store.isRemotelyControlled();}
+    public boolean recoveryReady(){return recovered&&com.subhub.app.configuration.LegacyPackMigration.isReady(context);}
+    public boolean controlsLocal(){return !recoveryReady() || store.isRemotelyControlled();}
 
     public synchronized void installLifecycle(Application app) {
         if(installed)return;installed=true;
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             private int started;
-            @Override public void onActivityStarted(Activity activity){if(++started==1){foreground=true;kick();}}
+            @Override public void onActivityStarted(Activity activity){if(++started==1){foreground=true;RemoteFeature.this.activity.dispatchNotifications();kick();}}
             @Override public void onActivityStopped(Activity activity){if(--started==0){foreground=false;timer.execute(RemoteFeature.this::suspendIfIdle);}}
             @Override public void onActivityCreated(Activity a,Bundle b){} @Override public void onActivityDestroyed(Activity a){}
             @Override public void onActivityResumed(Activity a){} @Override public void onActivityPaused(Activity a){}
@@ -78,7 +82,7 @@ public final class RemoteFeature {
         }
         return null;
     }
-    public CompletableFuture<PairingInvite> createInvite() {return submit(()->{requireKeyholder();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
+    public CompletableFuture<PairingInvite> createInvite() {return submit(()->{if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");requireKeyholder();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
     public CompletableFuture<String> localIdentity(){return submit(()->{requireKeyholder();return transport().localIdentity();});}
     public static final class Enrollment {
         private final RemoteFeature owner;private final PairingInvite invitation;private final long expires;
@@ -87,6 +91,7 @@ public final class RemoteFeature {
         private Enrollment(RemoteFeature owner,PairingInvite invite,String identity){this.owner=owner;invitation=invite;domIdentity=invite.domIdentity;localIdentity=identity;fingerprint=PairingInvite.fingerprint(domIdentity,identity,invite.id);expires=SystemClock.elapsedRealtime()+120_000;}
     }
     private void requireEnrollmentAccess(){
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
         if(controlsLocal())throw new SecurityException("A Dom is already assigned or recovery is unavailable");
         boolean credentials=ControllerPinManager.isConfigured(context)||new com.subhub.app.security.ControllerAuthenticator(context).isPaired();
         if(credentials&&!ControllerPinManager.isSessionUnlocked())throw new SecurityException("Existing keyholder authentication required");
@@ -108,10 +113,12 @@ public final class RemoteFeature {
         store.revoke(current.identity,current.generation);secrets.removePending(current.generation);changed();
     }
     public CompletableFuture<Void> acceptInvite(String link,String name) {return submit(()->{
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
         requireKeyholder();
         pairing(transport()).accept(link,name,System.currentTimeMillis());changed();return null;
     });}
     public CompletableFuture<Void> approve(String invitation,String candidate,String fingerprint) {return submit(()->{
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
         requireKeyholder();pairing(transport()).approve(invitation,candidate,fingerprint,System.currentTimeMillis());changed();return null;
     });}
     public CompletableFuture<String> endSession(RemoteStore.Peer peer,String expected){return submit(()->{requireKeyholder();String id=endCommands.queue(peer,expected,System.currentTimeMillis());changed();return id;});}
@@ -131,8 +138,9 @@ public final class RemoteFeature {
     private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),android.os.Build.MODEL);}
 
     private PeerTransport transport() throws Exception {
-        if(!recovered)throw new IOException("Configuration recovery is pending");
+        if(!recoveryReady())throw new IOException("Configuration recovery is pending");
         synchronized(endpointLock) {
+            if(!librariesRetired){store.retireLibraries();librariesRetired=true;}
             if(endpoint==null) {
                 byte[] seed=secrets.identitySeed();
                 try {
@@ -146,7 +154,7 @@ public final class RemoteFeature {
         }
     }
     private boolean needsBackground() {
-        if(!recovered)return false;
+        if(!recoveryReady())return false;
         for(RemoteStore.Peer peer:store.peers(true))if(peer.state!=RemoteStore.State.REVOKED || !"true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))return true;
         return false;
     }
@@ -210,7 +218,7 @@ public final class RemoteFeature {
         try(PeerTransport.Connection selected=connection) {
             selected.setReadTimeoutMillis(8000);JSONObject first=RemoteProtocol.read(selected.input());
             String type=first.optString("type");
-            if("pair_request".equals(type)){pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;}
+            if("pair_request".equals(type)){if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;}
             String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.peer(selected.authenticatedPeerIdentity(),generation);
             if(peer==null)throw new SecurityException("Unknown peer");
             reservation=key(peer);if(!busy.add(reservation)){reservation=null;return;}
@@ -237,6 +245,7 @@ public final class RemoteFeature {
                 }
             }
             @Override public void prepare(RemoteStore.Peer peer) throws Exception {
+                activity.prepare(peer);
                 endCommands.process(peer,System.currentTimeMillis());
                 if(peer.localRole==RemoteProtocol.Role.SUB) {
                     boolean available=true;try{telemetry.prepare(peer);store.putMetadata(peer.identity,peer.generation,"stats_error","");}
@@ -293,7 +302,7 @@ public final class RemoteFeature {
     }
     void shutdownForTest() throws Exception {
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
-        acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);store.close();
+        acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();store.close();
     }
     private static long remaining(long deadline) throws SocketTimeoutException {long millis=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());if(millis<=0)throw new SocketTimeoutException("Sync window expired");return millis;}
     private static void close(AutoCloseable value){try{value.close();}catch(Exception ignored){}}

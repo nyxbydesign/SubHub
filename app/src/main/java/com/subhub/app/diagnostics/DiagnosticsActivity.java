@@ -30,7 +30,6 @@ import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityDiagnosticsBinding;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.service.ScreenCaptureService;
@@ -204,12 +203,11 @@ public final class DiagnosticsActivity extends AppCompatActivity {
 
         DetectorConfig config = settings.loadDetectorConfig();
         binding.configurationStatus.setText(String.format(Locale.ROOT,
-                "Preset: %s\nRequested model: %s\nInput: %d × %d\nCapture scale: %.0f%%\nInterval: %d ms\nConfidence: %.0f%%\nEnabled detector categories: %d\nConfiguration pack: %s",
+                "Preset: %s\nRequested model: %s\nInput: %d × %d\nCapture scale: %.0f%%\nInterval: %d ms\nConfidence: %.0f%%\nEnabled detector categories: %d",
                 settings.loadDetectionPreset().preferenceValue(), config.getModelFilename(),
                 config.getInferenceResolution(), config.getInferenceResolution(),
                 config.getCaptureScale() * 100f, config.getDetectionIntervalMs(),
-                config.getConfidenceThreshold() * 100f, config.getEnabledCategories().size(),
-                new SubHubPackManager(this).activePackId() == null ? "None" : "Active"));
+                config.getConfidenceThreshold() * 100f, config.getEnabledCategories().size()));
 
         boolean notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)

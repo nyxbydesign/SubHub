@@ -161,7 +161,7 @@ public final class KeyholderFlowAndroidTest {
             assertTrue(legacy.isPaired());
             assertTrue(ControllerPinManager.isDomModeActive());
             onView(withId(R.id.keyholder_remove_authenticator)).perform(scrollTo(), click());
-            onView(withHint(R.string.controller_pin_label)).inRoot(isDialog())
+            onView(withHint(R.string.keyholder_pin_or_code)).inRoot(isDialog())
                     .perform(replaceText("5729"), closeSoftKeyboard());
             onView(withText(R.string.controller_pin_unlock)).inRoot(isDialog()).perform(click());
             assertFalse(legacy.isPaired());

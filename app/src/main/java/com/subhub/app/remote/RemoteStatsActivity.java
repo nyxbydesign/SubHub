@@ -10,9 +10,9 @@ import java.util.*;
 
 public final class RemoteStatsActivity extends RemotePage {
     private final android.os.Handler clock=new android.os.Handler(android.os.Looper.getMainLooper());
-    private android.widget.TextView freshness;
+    private final Map<RemoteProtocol.Stream,android.widget.TextView> freshness = new EnumMap<>(RemoteProtocol.Stream.class);
     private final Runnable age=new Runnable(){public void run(){updateFreshness();clock.postDelayed(this,1000);}};
-    private int offset;private RemoteProtocol.Stream selected=RemoteProtocol.Stream.STATS;
+    private int dayOffset,usageOffset,scrollY;
     private static final Map<String,Integer> LABELS=new LinkedHashMap<>();
     static {
         LABELS.put("photos",R.string.daily_photos);LABELS.put("videos",R.string.daily_videos);
@@ -22,46 +22,64 @@ public final class RemoteStatsActivity extends RemotePage {
         LABELS.put("tamperEvents",R.string.remote_tamper);LABELS.put("tributes",R.string.stats_tributes);LABELS.put("assessedEUR",R.string.stats_tribute_value);LABELS.put("assessedUSD",R.string.stats_tribute_value);LABELS.put("paidEUR",R.string.stats_paid);LABELS.put("paidUSD",R.string.stats_paid);
         LABELS.put("currentSeconds",R.string.stats_service_time);LABELS.put("currentEvents",R.string.stats_activity);LABELS.put("currentCensors",R.string.stats_censors);LABELS.put("currentLimitMillis",R.string.stats_limited_app_time);LABELS.put("currentLimitStops",R.string.stats_limit_stops);LABELS.put("currentWhispers",R.string.stats_whispers);LABELS.put("currentPopups",R.string.stats_popups);LABELS.put("currentTributes",R.string.stats_tributes);LABELS.put("currentAssessedEUR",R.string.stats_tribute_value);LABELS.put("currentAssessedUSD",R.string.stats_tribute_value);
     }
-    @Override protected void onCreate(Bundle state){super.onCreate(state);page(R.string.role_stats);if(state!=null){offset=Math.max(0,state.getInt("offset",0));try{selected=RemoteProtocol.Stream.valueOf(state.getString("stream",RemoteProtocol.Stream.STATS.name()));}catch(IllegalArgumentException invalid){selected=RemoteProtocol.Stream.STATS;}if(!Arrays.asList(RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE,RemoteProtocol.Stream.RUNTIME).contains(selected))selected=RemoteProtocol.Stream.STATS;}if(selectPeer())render();}
-    @Override protected void onSaveInstanceState(Bundle state){state.putInt("offset",offset);state.putString("stream",selected.name());super.onSaveInstanceState(state);}
+    @Override protected void onCreate(Bundle state){super.onCreate(state);page(R.string.role_stats);if(state!=null){dayOffset=Math.max(0,state.getInt("dayOffset"));usageOffset=Math.max(0,state.getInt("usageOffset"));scrollY=Math.max(0,state.getInt("scrollY"));}if(selectPeer())render();}
+    @Override protected void onSaveInstanceState(Bundle state){state.putInt("dayOffset",dayOffset);state.putInt("usageOffset",usageOffset);android.widget.ScrollView scroll=scroll();state.putInt("scrollY",scroll==null?0:scroll.getScrollY());super.onSaveInstanceState(state);}
     @Override protected void onResume(){super.onResume();if(!isFinishing()&&peer!=null){render();clock.post(age);}}
-    @Override protected void onPause(){clock.removeCallbacks(age);super.onPause();}
-    private void updateFreshness(){if(freshness==null||peer==null)return;
+    @Override protected void onPause(){saveScroll();clock.removeCallbacks(age);super.onPause();}
+    private android.widget.ScrollView scroll(){android.view.View view=body;while(view.getParent() instanceof android.view.View){view=(android.view.View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}return null;}
+    private void updateFreshness(){if(peer==null)return;
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
-        long confirmed=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+selected.name(),"0")),elapsed=System.currentTimeMillis()-confirmed;
-        freshness.setVisibility(peer.state!=RemoteStore.State.ACTIVE||confirmed<=0||elapsed<0||elapsed>(selected==RemoteProtocol.Stream.RUNTIME?90_000:1_800_000)?android.view.View.VISIBLE:android.view.View.GONE);
+        for(Map.Entry<RemoteProtocol.Stream,android.widget.TextView> item:freshness.entrySet()){
+            long confirmed=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+item.getKey().name(),"0")),elapsed=System.currentTimeMillis()-confirmed;
+            item.getValue().setVisibility(peer.state!=RemoteStore.State.ACTIVE||confirmed<=0||elapsed<0||elapsed>(item.getKey()==RemoteProtocol.Stream.RUNTIME?90_000:1_800_000)?android.view.View.VISIBLE:android.view.View.GONE);
+        }
+    }
+    private LinearLayout section(int label,RemoteProtocol.Stream stream){
+        LinearLayout card=PersonUi.card(body);card.setTag("remote_stats_"+stream.name());text(card,getString(label),true);
+        text(card,getString(R.string.role_last_synced,observed(stream)),false);
+        android.widget.TextView stale=text(card,getString(R.string.role_stale_data),false);stale.setTag("remote_freshness_"+stream.name());freshness.put(stream,stale);return card;
     }
     private void render(){
-        if(!ControllerPinManager.isDomModeActive()||peer.localRole!=RemoteProtocol.Role.DOM){finish();return;}
-        body.removeAllViews();target();
-        navigation(R.string.role_stats,RemoteProtocol.Stream.STATS);navigation(R.string.remote_daily_history,RemoteProtocol.Stream.DAILY);navigation(R.string.role_app_time,RemoteProtocol.Stream.APP_USAGE);navigation(R.string.remote_runtime,RemoteProtocol.Stream.RUNTIME);
-        text(body,observed(selected),false);
-        freshness=text(body,getString(R.string.role_stale_data),false);updateFreshness();
+        if(!ControllerPinManager.isDomModeActive()||!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)||peer.localRole!=RemoteProtocol.Role.DOM){finish();return;}
+        body.removeAllViews();freshness.clear();target();
+        LinearLayout summary=section(R.string.role_stats,RemoteProtocol.Stream.STATS);
         try {
-            if(selected==RemoteProtocol.Stream.STATS){JSONObject stats=feature.store.mirrored(peer.identity,peer.generation,selected,"summary");if(!RemoteTelemetry.validSummary(stats)){text(body,getString(R.string.remote_unknown),false);return;}
-                boolean current=false;for(Map.Entry<String,Integer> item:LABELS.entrySet()){String key=item.getKey();if(key.startsWith("current")&&!current){current=true;text(body,getString(R.string.remote_current_session),true);}if(stats.has(key))metric(body,key,item.getValue(),stats.getLong(key));}return;}
-            if(selected==RemoteProtocol.Stream.RUNTIME){runtime(feature.store.mirrored(peer.identity,peer.generation,selected,"current"));return;}
-            List<RemoteProtocol.Change> rows=feature.store.mirror(peer.identity,peer.generation,selected);rows.removeIf(row->row.deleted);
-            rows.sort((a,b)->{try{return new JSONObject(b.body).optString("day").compareTo(new JSONObject(a.body).optString("day"));}catch(JSONException invalid){return 0;}});
-            if(rows.isEmpty())text(body,getString(R.string.remote_unknown),false);
-            for(int i=offset;i<Math.min(rows.size(),offset+30);i++) {
-                JSONObject row=new JSONObject(rows.get(i).body);LinearLayout card=PersonUi.card(body);text(card,row.getString("day"),true);
-                text(card,row.isNull("zone")?getString(R.string.remote_unknown_zone):row.getString("zone"),false);
-                if(selected==RemoteProtocol.Stream.DAILY){JSONObject metrics=row.getJSONObject("metrics");for(String key:new TreeSet<>(keys(metrics)))dailyMetric(card,key,metrics.getLong(key));}
-                else if("today".equals(rows.get(i).key)){JSONObject values=row.getJSONObject("millis");for(String key:new TreeSet<>(keys(values)))usage(card,key,values.getLong(key));}
-                else usage(card,row.getString("package"),row.getLong("millis"));
-            }
-            if(offset>0)button(body,R.string.remote_previous,()->{offset=Math.max(0,offset-30);render();});if(offset+30<rows.size())button(body,R.string.remote_next,()->{offset+=30;render();});
-        }catch(JSONException invalid){text(body,getString(R.string.remote_incomplete),false);}
+            JSONObject stats=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.STATS,"summary");
+            if(!RemoteTelemetry.validSummary(stats))text(summary,getString(R.string.remote_unknown),false);
+            else{boolean current=false;for(Map.Entry<String,Integer> item:LABELS.entrySet()){String key=item.getKey();if(key.startsWith("current")&&!current){current=true;text(summary,getString(R.string.remote_current_session),true);}if(stats.has(key))metric(summary,key,item.getValue(),RemoteProtocol.integer(stats,key));}}
+        }catch(JSONException invalid){text(summary,getString(R.string.remote_incomplete),false);}
+        history(RemoteProtocol.Stream.DAILY,R.string.remote_daily_history,dayOffset);
+        history(RemoteProtocol.Stream.APP_USAGE,R.string.role_app_time,usageOffset);
+        LinearLayout runtime=section(R.string.remote_runtime,RemoteProtocol.Stream.RUNTIME);
+        try{runtime(runtime,feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current"));}
+        catch(JSONException invalid){text(runtime,getString(R.string.remote_incomplete),false);}
+        updateFreshness();android.widget.ScrollView scroll=scroll();if(scroll!=null)scroll.post(()->scroll.scrollTo(0,scrollY));
     }
-    private void navigation(int label,RemoteProtocol.Stream stream){button(body,label,()->{selected=stream;offset=0;render();});}
-    private void runtime(JSONObject runtime)throws JSONException {
-        if(!RemoteTelemetry.validRuntime(runtime)){text(body,getString(R.string.remote_unknown),false);return;}
-        text(body,getString(R.string.remote_source_observed,java.text.DateFormat.getDateTimeInstance().format(new Date(runtime.getLong("observedAt")))),false);
+    private void history(RemoteProtocol.Stream stream,int label,int offset){
+        LinearLayout group=section(label,stream);List<RemoteProtocol.Change> rows=feature.store.mirror(peer.identity,peer.generation,stream);rows.removeIf(row->row.deleted);
+        List<JSONObject> parsed=new ArrayList<>();boolean incomplete=false;
+        for(RemoteProtocol.Change row:rows)try{JSONObject value=new JSONObject(row.body);if(RemoteProtocol.integer(value,"schema")!=1)throw new JSONException("Unknown history schema");java.time.LocalDate.parse(value.getString("day"));value.put("_today","today".equals(row.key));parsed.add(value);}catch(JSONException|RuntimeException invalid){incomplete=true;}
+        parsed.sort((a,b)->b.optString("day").compareTo(a.optString("day")));
+        if(incomplete)text(group,getString(R.string.remote_incomplete),false);
+        if(parsed.isEmpty())text(group,getString(R.string.remote_unknown),false);
+        for(int i=offset;i<Math.min(parsed.size(),offset+30);i++)try{
+            JSONObject row=parsed.get(i);LinearLayout card=PersonUi.column(this);group.addView(card);text(card,row.getString("day"),true);
+            text(card,row.isNull("zone")?getString(R.string.remote_unknown_zone):row.getString("zone"),false);
+            if(stream==RemoteProtocol.Stream.DAILY){JSONObject metrics=row.getJSONObject("metrics");for(String key:new TreeSet<>(keys(metrics)))dailyMetric(card,key,RemoteProtocol.integer(metrics,key));}
+            else if(row.getBoolean("_today")){JSONObject values=row.getJSONObject("millis");for(String key:new TreeSet<>(keys(values)))usage(card,key,RemoteProtocol.integer(values,key));}
+            else usage(card,row.getString("package"),RemoteProtocol.integer(row,"millis"));
+        }catch(JSONException invalid){text(group,getString(R.string.remote_incomplete),false);}
+        if(offset>0)button(group,R.string.remote_previous,()->{if(stream==RemoteProtocol.Stream.DAILY)dayOffset=Math.max(0,offset-30);else usageOffset=Math.max(0,offset-30);saveScroll();render();});
+        if(offset+30<parsed.size())button(group,R.string.remote_next,()->{if(stream==RemoteProtocol.Stream.DAILY)dayOffset=offset+30;else usageOffset=offset+30;saveScroll();render();});
+    }
+    private void saveScroll(){android.widget.ScrollView scroll=scroll();scrollY=scroll==null?0:scroll.getScrollY();}
+    private void runtime(LinearLayout target,JSONObject runtime)throws JSONException {
+        if(!RemoteTelemetry.validRuntime(runtime)){text(target,getString(R.string.remote_unknown),false);return;}
+        text(target,getString(R.string.remote_source_observed,java.text.DateFormat.getDateTimeInstance().format(new Date(runtime.getLong("observedAt")))),false);
         String[] keys={"serviceActive","screenCapture","recognitionActive","accessibilityBound","accessibilityEnabled","overlayPermission","notifications","armed","paused"};
         int[] labels={R.string.remote_service_active,R.string.remote_screen_capture,R.string.remote_recognition,R.string.remote_accessibility_bound,R.string.remote_accessibility_enabled,R.string.remote_overlay_permission,R.string.remote_notifications,R.string.remote_armed,R.string.remote_paused};
-        for(int i=0;i<keys.length;i++)PersonUi.row(body,0,getString(labels[i]),getString(runtime.getBoolean(keys[i])?R.string.role_enabled:R.string.role_disabled),null);
-        for(String key:new String[]{"sessionStart","sessionEnd"}){long value=runtime.getLong(key);if(value>0)PersonUi.row(body,0,getString("sessionStart".equals(key)?R.string.remote_session_start:R.string.remote_session_end),java.text.DateFormat.getDateTimeInstance().format(new Date(value)),null);}
+        for(int i=0;i<keys.length;i++)PersonUi.row(target,0,getString(labels[i]),getString(runtime.getBoolean(keys[i])?R.string.role_enabled:R.string.role_disabled),null);
+        for(String key:new String[]{"sessionStart","sessionEnd"}){long value=runtime.getLong(key);if(value>0)PersonUi.row(target,0,getString("sessionStart".equals(key)?R.string.remote_session_start:R.string.remote_session_end),java.text.DateFormat.getDateTimeInstance().format(new Date(value)),null);}
     }
     private void dailyMetric(LinearLayout target,String key,long value){
         if(value<0){text(target,getString(R.string.remote_incomplete),false);return;}

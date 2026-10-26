@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dom_activity_recent">Recent activity</string>
+    <string name="dom_activity_view_all">View all</string>
+    <string name="profile_stats_current_session">Current session</string>
+    <string name="profile_stats_feature_totals">Feature totals</string>
+    <string name="profile_next_session_duration">Next session duration</string>
+    <item type="id" name="profile_stats_allowances" />
+    <item type="id" name="profile_stats_current" />
+</resources>

@@ -5,8 +5,8 @@ import android.content.SharedPreferences;
 import android.util.AtomicFile;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.capture.CustomImageManager;
-import com.subhub.app.pack.PackSettingCatalog;
-import com.subhub.app.pack.SubHubPackSchema;
+import com.subhub.app.configuration.ConfigurationSettingCatalog;
+import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.settings.SettingsRepository;
 import org.json.JSONArray;
@@ -53,6 +53,7 @@ public final class RemoteConfigurationWriter {
 
     /** Returns false only while required content is still arriving. */
     public synchronized boolean apply(RemoteStore.Peer peer,RemoteStore.Command command,RemoteAssets assets,Set<String> selectable) throws Exception {
+        if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is pending");
         if(!command.pending())return true;
         JSONObject body=new JSONObject(command.body),doc=RemoteConfiguration.active(body.getJSONObject("configuration"));
         JSONArray refs=doc.getJSONObject("contract").getJSONArray("assets");
@@ -63,6 +64,7 @@ public final class RemoteConfigurationWriter {
         // Asset I/O happens outside the authority lock, keeping local recovery controls responsive.
         File prepared=prepare(command.id,refs,assets);
         synchronized(store) {
+            if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is pending");
             recover();
             RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
             if(current==null || current.state!=RemoteStore.State.ACTIVE || current.localRole!=RemoteProtocol.Role.SUB)
@@ -145,11 +147,11 @@ public final class RemoteConfigurationWriter {
 
     private Map<String,Map<String,Object>> writes(JSONObject doc,File prepared,Set<String> selectable) throws Exception {
         Map<String,Map<String,Object>> result=new LinkedHashMap<>();JSONObject sections=doc.getJSONObject("contract").getJSONObject("sections");
-        for(String section:SubHubPackSchema.SECTIONS) {
-            Map<String,Object> values=result.computeIfAbsent(SubHubPackSchema.preferenceStore(section),unused->new LinkedHashMap<>());
-            JSONObject raw=sections.getJSONObject(section);PackSettingCatalog.validateRelationships(raw);
-            for(String key:PackSettingCatalog.keys(section)) {
-                PackSettingCatalog.Field field=PackSettingCatalog.field(section,key);Object value=field.normalize(raw.get(key));
+        for(String section:ConfigurationSchema.SECTIONS) {
+            Map<String,Object> values=result.computeIfAbsent(ConfigurationSchema.preferenceStore(section),unused->new LinkedHashMap<>());
+            JSONObject raw=sections.getJSONObject(section);ConfigurationSettingCatalog.validateRelationships(raw);
+            for(String key:ConfigurationSettingCatalog.keys(section)) {
+                ConfigurationSettingCatalog.Field field=ConfigurationSettingCatalog.field(section,key);Object value=field.normalize(raw.get(key));
                 switch(field.kind) {
                     case SELECTION: Set<String> set=new LinkedHashSet<>();JSONArray array=(JSONArray)value;for(int i=0;i<array.length();i++)set.add(array.getString(i));value=set;break;
                     case LONG:value=((Number)value).longValue();break;

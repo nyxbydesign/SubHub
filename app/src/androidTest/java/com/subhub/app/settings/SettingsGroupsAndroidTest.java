@@ -23,6 +23,8 @@ public class SettingsGroupsAndroidTest {
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @Before
     public void fixture() {
+        new SettingsRepository(InstrumentationRegistry.getInstrumentation().getTargetContext()).preferences().edit()
+                .remove(com.subhub.app.security.DeviceRolePreferences.KEY_MODE).commit();
         ControllerPinManager.setPin(
                 InstrumentationRegistry.getInstrumentation().getTargetContext(), "2468");
         ControllerPinManager.enterDomMode();
@@ -33,81 +35,64 @@ public class SettingsGroupsAndroidTest {
         ControllerPinManager.enterSubMode();
     }
 
-    @Test public void settingsListsDestinationsAndPrivacyOpensAsOneFocusedPage() {
+    @Test public void inlineGroupsKeepPrivacyPermissionsAndHelpWithoutHardcore() {
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(a -> {
                 List<String> keys = new ArrayList<>();
                 collect(a.findViewById(android.R.id.content), keys);
-                assertEquals(Arrays.asList("settings:privacy", "settings:help"), keys);
+                assertEquals(Arrays.asList("settings:privacy", "settings:permissions", "settings:help"), keys);
                 assertTrue(a.findViewById(R.id.settings_connections_security).isShown());
                 assertNull(a.findViewById(R.id.settings_connection));
                 assertNull(a.findViewById(R.id.apps_card));
                 assertNull(a.findViewById(R.id.paypal_card));
-                assertFalse(a.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertFalse(a.findViewById(R.id.button_help).isShown());
-                assertFalse(a.findViewById(R.id.hardcore_card).isShown());
-            });
-            open("privacy");
-            scenario.onActivity(a -> {
+                assertNull(a.findViewById(R.id.hardcore_card));
+                assertNull(a.findViewById(R.id.switch_hardcore_mode));
                 assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertTrue(a.findViewById(R.id.hardcore_card).isShown());
+                assertTrue(a.findViewById(R.id.button_help).isShown());
                 assertTrue(a.findViewById(R.id.android_access_card).isShown());
-                assertFalse(a.findViewById(R.id.button_help).isShown());
-                assertFalse(a.findViewById(R.id.settings_connections_security).isShown());
                 int[] privacy = new int[2], permission = new int[2];
                 a.findViewById(R.id.privacy_discreet_toggle).getLocationOnScreen(privacy);
                 a.findViewById(R.id.android_access_card).getLocationOnScreen(permission);
                 assertTrue(permission[1] > privacy[1]);
+                for (String key : keys)
+                    assertFalse(a.findViewById(android.R.id.content).findViewWithTag(key).isClickable());
             });
             scenario.recreate();
             scenario.onActivity(a -> {
                 assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertFalse(a.findViewById(R.id.button_help).isShown());
-            });
-            androidx.test.espresso.Espresso.pressBack();
-            scenario.onActivity(a -> {
-                assertTrue(a.findViewById(R.id.settings_connections_security).isShown());
-                assertFalse(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertTrue(a.findViewById(R.id.button_help).isShown());
+                assertTrue(a.findViewById(R.id.android_access_card).isShown());
             });
         }
     }
 
-    @Test public void helpRestoresItsSelectionAndBackReturnsToDestinations() {
+    @Test public void inlineHelpKeepsBuildUpdatesAndDiagnosticsBesidePrivacy() {
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            open("help");
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_diagnostics)).perform(revealAboveNavigation());
             scenario.onActivity(a -> {
                 assertTrue(a.findViewById(R.id.button_help).isShown());
                 assertTrue(a.findViewById(R.id.button_diagnostics).isShown());
-                android.widget.TextView build = a.findViewById(android.R.id.content).findViewWithTag("settings_build_info");
-                assertNotNull(build);
-                assertTrue(build.isShown());
-                assertTrue(build.getText().toString().contains(com.subhub.app.BuildConfig.VERSION_NAME));
-                assertFalse(a.findViewById(R.id.android_access_card).isShown());
-            });
-            scenario.recreate();
-            scenario.onActivity(a -> assertTrue(a.findViewById(R.id.button_help).isShown()));
-            androidx.test.espresso.Espresso.pressBack();
-            scenario.onActivity(a -> {
-                assertFalse(a.findViewById(R.id.button_help).isShown());
-                assertTrue(a.findViewById(R.id.settings_connections_security).isShown());
+                assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("settings_build_info"));
                 assertNull(a.findViewById(R.id.app_list_content));
             });
+            scenario.recreate();
+            scenario.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.button_help).isShown());
+                assertTrue(a.findViewById(R.id.settings_connections_security).isShown());
+                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+            });
         }
-    }
-
-    private static void open(String key) {
-        onView(withTagValue(org.hamcrest.Matchers.is("settings:" + key))).perform(revealAboveNavigation(), click());
     }
 
     @Test public void subCanOpenAndroidPermissionSettingsWithoutUnlockingDom() {
         ControllerPinManager.enterSubMode();
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            open("privacy");
             scenario.onActivity(a -> {
                 View accessibility = a.findViewById(R.id.button_accessibility_settings);
                 assertTrue(accessibility.isEnabled());
                 assertEquals(1f, accessibility.getAlpha(), .01f);
+                assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
                 assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
             });
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_accessibility_settings))
@@ -125,6 +110,7 @@ public class SettingsGroupsAndroidTest {
             scenario.onActivity(a -> {
                 assertFalse(ControllerPinManager.isDomModeActive());
                 assertEquals(1f, a.findViewById(R.id.button_accessibility_settings).getAlpha(), .01f);
+                assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
                 assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
             });
         }

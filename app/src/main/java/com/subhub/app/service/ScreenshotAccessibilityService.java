@@ -366,6 +366,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private final Map<Integer, BBox> lastPublishedVisualBoxes = new HashMap<>();
     private volatile boolean overlayNeedsSourceFrame;
     private volatile String foregroundPackage = "";
+    private final ForegroundLimitHandoff foregroundLimitHandoff = new ForegroundLimitHandoff();
     private volatile String guardForegroundPackage = "";
     private AppTimerManager timers;
     private PenanceManager penance;
@@ -550,6 +551,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 syncProductParticipation();
             }
             @Override public void activeChanged(boolean active) {
+                if (active && !foregroundLimitHandoff.effectsAllowed()) {
+                    if (productSession != null) productSession.stop();
+                    return;
+                }
                 recognitionActive = active;
                 if (active) DiagnosticsRepository.begin(DIAGNOSTICS_MODE, settings.loadDetectorConfig().getInferenceResolution());
                 else DiagnosticsRepository.stop(DIAGNOSTICS_MODE);
@@ -589,7 +594,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private void syncProductParticipation() {
         AppModeManager mode = new AppModeManager(this);
         PopupStormManager.get().syncServiceParticipation(this,
-                !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage) && mode.shouldShowPopups(foregroundPackage));
+                foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage) && mode.shouldShowPopups(foregroundPackage));
     }
 
     /** Read-only native qualification assertion; field construction does not mean a legacy runtime started. */
@@ -5675,14 +5680,19 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (packageName == null || (!productQualificationRoute && packageName.isEmpty())
                 || packageName.equals(foregroundPackage)) return;
         accountForegroundUsage(now);
+        foregroundLimitHandoff.observed(packageName);
         if (!productQualificationRoute) captureEpoch.invalidate();
         activeApplicationWindowId.set(-1);
+        String activityPreviousPackage = foregroundPackage;
         foregroundPackage = packageName;
         com.subhub.app.appmode.ForegroundAppState.update(packageName);
         foregroundSinceMillis = now;
         if (!productQualificationRoute) resetTextSnapshots();
         AppModeManager mode = new AppModeManager(this);
-        if (!CensorLabCensorSession.isActive() && mode.getIncludedPackages().contains(packageName)) {
+        boolean selectedActivityApp = mode.getIncludedPackages().contains(packageName);
+        if (!productQualificationRoute && !CensorLabCensorSession.isActive())
+            com.subhub.app.remote.RemoteActivityRecorder.foreground(activityPreviousPackage, packageName, selectedActivityApp, now);
+        if (!CensorLabCensorSession.isActive() && selectedActivityApp) {
             int charged = penance.recordInfraction(
                     PenanceInfraction.WATCHED_APP_OPEN, 1, now);
             PenanceChargeNotifier.show(this, penance,
@@ -5793,6 +5803,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private void accountForegroundUsage(long nowMillis) {
+        if (!foregroundLimitHandoff.accountingAllowed()) { foregroundSinceMillis = 0L; return; }
         long started = foregroundSinceMillis;
         foregroundSinceMillis = nowMillis;
         if (timers == null || started <= 0L || nowMillis <= started
@@ -5806,6 +5817,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private boolean enforceForegroundLimit(long nowMillis) {
         if (timers == null || foregroundPackage.isEmpty()
                 || !appTimerRuntimeActive(nowMillis)) {
+            foregroundLimitHandoff.budgetReached(false);
             lastBlockedPackage = "";
             lastBlockedAtMillis = 0L;
             return false;
@@ -5814,10 +5826,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         Set<String> selected = mode.timerScopeForForeground(foregroundPackage);
         AppTimerManager.LimitStatus status = timers.limitStatus(
                 foregroundPackage, selected, nowMillis);
-        if (status == AppTimerManager.LimitStatus.NONE) return false;
+        if (status == AppTimerManager.LimitStatus.NONE) { foregroundLimitHandoff.budgetReached(false); return false; }
 
         String blockedPackage = foregroundPackage;
+        foregroundLimitHandoff.budgetReached(true);
         deactivateRecognition();
+        reevaluateSubliminals();
+        PopupStormManager.get().syncServiceParticipation(this, false);
         boolean repeated = blockedPackage.equals(lastBlockedPackage)
                 && nowMillis - lastBlockedAtMillis < 3_000L;
         lastBlockedPackage = blockedPackage;
@@ -5829,9 +5844,14 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             stats.recordLimitIntervention();
         }
+        if (!productQualificationRoute) com.subhub.app.remote.RemoteActivityRecorder.limit(blockedPackage,
+                status == AppTimerManager.LimitStatus.PER_APP,
+                status == AppTimerManager.LimitStatus.PER_APP ? timers.allowanceMinutes(blockedPackage) : timers.loadSettings().totalMinutes,
+                selected, nowMillis);
         Log.i(TAG, "Daily app limit enforced for " + blockedPackage + " (" + status + ")");
         if (performGlobalAction(GLOBAL_ACTION_HOME)) {
-            foregroundPackage = "";
+            // A Home request is not an observed app exit; stale roots must not create another entry.
+            foregroundLimitHandoff.homeRequested();
             foregroundSinceMillis = 0L;
         }
         return true;
@@ -5847,7 +5867,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private void reevaluateRecognition() {
         if (!running || settings == null) return;
         if (productQualificationRoute) {
-            if (Build.VERSION.SDK_INT >= 34 && productSession != null) productSession.request();
+            if (Build.VERSION.SDK_INT >= 34 && productSession != null) {
+                if (foregroundLimitHandoff.effectsAllowed()) productSession.request(); else productSession.stop();
+            }
             syncProductParticipation();
             return;
         }
@@ -5856,7 +5878,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         boolean settingsPackage = HardcoreSettingsGuard.isSettingsPackage(foregroundPackage);
         AppModeManager appMode = new AppModeManager(this);
         FeatureModuleManager modules = new FeatureModuleManager(this);
-        boolean shouldRun = !settingsPackage && appMode.shouldRecognize(foregroundPackage);
+        boolean shouldRun = foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldRecognize(foregroundPackage);
         Log.i(TAG, "RECOGNITION_DECISION package=" + foregroundPackage
                 + " active=" + recognitionActive
                 + " shouldRun=" + shouldRun
@@ -5869,12 +5891,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (shouldRun && !recognitionActive) activateRecognition();
         else if (!shouldRun && recognitionActive) deactivateRecognition();
         PopupStormManager.get().syncServiceParticipation(this,
-                !settingsPackage && appMode.shouldShowPopups(foregroundPackage));
+                foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldShowPopups(foregroundPackage));
     }
 
     private void reevaluateSubliminals() {
         if (!running || subliminalOverlay == null) return;
-        boolean shouldRun = !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage)
+        boolean shouldRun = foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage)
                 && new AppModeManager(this).shouldShowSubliminal(foregroundPackage);
         subliminalOverlay.setEligible(shouldRun);
     }

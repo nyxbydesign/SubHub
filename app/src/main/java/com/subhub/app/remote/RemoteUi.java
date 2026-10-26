@@ -8,7 +8,9 @@ import com.subhub.app.security.ControllerPinManager;
 
 public final class RemoteUi implements ConnectionUi {
     public static void install(Application app) {
+        ControllerPinManager.initialize(app);
         RemoteFeature feature=RemoteFeature.get(app);RemotePersonRepository repository=new RemotePersonRepository(app,feature);
+        com.subhub.app.activity.ActivitySources.install(feature.activity);feature.activity.install();
         People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);People.installKeyholder(new com.subhub.app.security.KeyholderProvider(){
             public boolean withLocalAuthority(java.util.function.BooleanSupplier action){return feature.recoveryReady()&&feature.keyholder.withLocalAuthority(action);}
             public State state(){return feature.recoveryReady()?feature.keyholder.state():State.UNAVAILABLE;}
@@ -26,8 +28,10 @@ public final class RemoteUi implements ConnectionUi {
         }
         open(activity,id,RemoteConnectionActivity.class);
     }
-    public void openContracts(Activity activity,PersonId id){open(activity,id,RemoteLibraryActivity.class);}
     public void openStats(Activity activity,PersonId id){open(activity,id,RemoteStatsActivity.class);}
+    @Override public void bindSessionDuration(Activity activity,android.widget.LinearLayout parent,PersonSnapshot person){
+        if(!person.id.isLocal())new RemoteDurationControls(activity,parent,person).bind();
+    }
     public void editSection(Activity activity,PersonId id,String section){activity.startActivity(new Intent(activity,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section",section));}
     public void endSession(Activity activity,PersonId id,String expected) {
         if(!id.isLocal())activity.startActivity(new Intent(activity,RemoteEndActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("expectedSession",expected));

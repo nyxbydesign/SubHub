@@ -115,14 +115,14 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void back() {
         if (step > 0) {
-            step--;
+            step = domOnly() && step == 4 ? 0 : step - 1;
             render();
         } else finishSetup();
     }
 
     private void render() {
         if (isFinishing() || isDestroyed()) return;
-        if (!localSetupAllowed() && step > 0 && step < 4) step = 4;
+        if ((!localSetupAllowed() || domOnly()) && step > 0 && step < 4) step = 4;
         saveDraft();
         walletRules = null;
         appSelection = null;
@@ -132,13 +132,15 @@ public final class OnboardingActivity extends PreferencePage {
         PrimaryHeader.bindSecondary(findViewById(android.R.id.content), R.string.tour_title, false);
         PrimaryHeader.backButton(findViewById(android.R.id.content))
                 .setOnClickListener(v -> back());
+        int count = domOnly() ? 3 : STEPS;
+        int current = domOnly() ? step == 0 ? 0 : step - 3 : step;
         ((TextView) findViewById(R.id.tour_progress))
-                .setText(getString(R.string.tour_progress, step + 1, STEPS));
+                .setText(getString(R.string.tour_progress, current + 1, count));
         LinearLayout progress = findViewById(R.id.tour_steps);
-        for (int i = 0; i < STEPS; i++) {
+        for (int i = 0; i < count; i++) {
             View segment = new View(this);
             segment.setBackgroundResource(
-                    i <= step ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
+                    i <= current ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(5), 1);
             p.setMargins(dp(3), 0, dp(3), 0);
             progress.addView(segment, p);
@@ -173,7 +175,11 @@ public final class OnboardingActivity extends PreferencePage {
                     captureWalletDraft();
                     if (step == STEPS - 1) finishSetup();
                     else {
-                        step++;
+                        if (domOnly() && step == 4 && !ControllerPinManager.isConfigured(this)) {
+                            Toast.makeText(this, R.string.device_role_pin_setup_required, Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        step = domOnly() && step == 0 ? 4 : step + 1;
                         render();
                     }
                 });
@@ -181,14 +187,19 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void welcome() {
-        text(body, getString(R.string.tour_intro), 16, true);
-        SetupFeaturePreviewView features = new SetupFeaturePreviewView(this);
-        features.setTag("setup-feature-overview");
-        LinearLayout.LayoutParams featureParams = new LinearLayout.LayoutParams(-1, -2);
-        featureParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        body.addView(features, featureParams);
-        explain(body, R.drawable.ic_tab_settings, R.string.tour_dom_title, R.string.tour_dom_help);
-        explain(body, R.drawable.ic_tab_home, R.string.tour_sub_title, R.string.tour_sub_help);
+        body.addView(new DeviceRoleView(this, () -> {
+            if (domOnly()) { appearanceChanged = false; walletDraft = null; }
+            render();
+        }), new LinearLayout.LayoutParams(-1, -2));
+        if (!domOnly()) {
+            SetupFeaturePreviewView features = new SetupFeaturePreviewView(this);
+            features.setTag("setup-feature-overview");
+            body.addView(features, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    private boolean domOnly() {
+        return DeviceRolePreferences.get(this) == DeviceRolePreferences.Mode.DOM_ONLY;
     }
 
     private com.subhub.app.settings.AppSelectionPanel appSelection;
@@ -267,14 +278,14 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void permissions() {
-        boolean runtime = censor || limits;
+        boolean runtime = !domOnly() && (censor || limits);
         if (runtime)
             permission(
                     R.string.tour_accessibility_title,
                     R.string.tour_accessibility_help,
                     new AppModeManager(this).isAccessibilityEnabled(),
                     () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        if (censor)
+        if (!domOnly() && censor)
             permission(
                     R.string.tour_overlay_title,
                     R.string.tour_overlay_help,
@@ -284,7 +295,7 @@ public final class OnboardingActivity extends PreferencePage {
                                     new Intent(
                                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                             Uri.parse("package:" + getPackageName()))));
-        if (Build.VERSION.SDK_INT >= 33 && (runtime || wallet))
+        if (Build.VERSION.SDK_INT >= 33 && (domOnly() || runtime || wallet))
             permission(
                     R.string.tour_notifications_title,
                     R.string.tour_notifications_help,
@@ -294,7 +305,8 @@ public final class OnboardingActivity extends PreferencePage {
         if (runtime)
             button(body, getString(R.string.permission_setup_open), () -> startActivity(
                     new Intent(this, com.subhub.app.help.PermissionSetupActivity.class)));
-        if (!runtime && !wallet) text(body, getString(R.string.tour_no_permissions), 15, true);
+        if (Build.VERSION.SDK_INT < 33 && domOnly() || !domOnly() && !runtime && !wallet)
+            text(body, getString(R.string.tour_no_permissions), 15, true);
     }
 
     private void permission(int name, int reason, boolean ready, Runnable open) {
@@ -362,12 +374,19 @@ public final class OnboardingActivity extends PreferencePage {
 
     private boolean localSetupAllowed() {
         try {
-            return com.subhub.app.people.People.keyholder().state() == KeyholderProvider.State.NONE
+            return DeviceRolePreferences.supportsSub(this)
+                    && com.subhub.app.people.People.keyholder().state() == KeyholderProvider.State.NONE
                     && com.subhub.app.people.People.isLocalConfigurationAllowed();
         } catch (RuntimeException unavailable) { return false; }
     }
 
     private void finishSetup() {
+        if (domOnly() && !ControllerPinManager.isConfigured(this)) {
+            step = 4;
+            render();
+            Toast.makeText(this, R.string.device_role_pin_setup_required, Toast.LENGTH_LONG).show();
+            return;
+        }
         if (!replay) {
 
             if (appearanceChanged && localSetupAllowed()) {

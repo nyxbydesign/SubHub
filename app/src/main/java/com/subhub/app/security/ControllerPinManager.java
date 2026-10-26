@@ -20,10 +20,14 @@ public final class ControllerPinManager {
     private static final int ITERATIONS = 150_000;
     private static final int KEY_BITS = 256;
     private static volatile boolean domModeActive;
+    private static volatile Context application;
 
     private ControllerPinManager() {}
 
+    public static void initialize(Context context) { Context app=context.getApplicationContext();if(app!=null)application=app; }
+
     public static boolean isConfigured(Context context) {
+        initialize(context);
         SharedPreferences preferences = preferences(context);
         return preferences.contains(KEY_SALT) && preferences.contains(KEY_HASH);
     }
@@ -94,7 +98,10 @@ public final class ControllerPinManager {
 
     /** Local authentication is recovery-only when a paired peer owns configuration. */
     public static boolean canEditConfiguration() {
-        return isDomModeActive() && com.subhub.app.people.People.isLocalConfigurationAllowed();
+        Context context=application;
+        return context!=null && DeviceRolePreferences.supportsSub(context)
+                && com.subhub.app.configuration.LegacyPackMigration.isReady(context)
+                && isDomModeActive() && com.subhub.app.people.People.isLocalConfigurationAllowed();
     }
 
     public static void lockNow() {

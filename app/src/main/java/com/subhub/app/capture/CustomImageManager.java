@@ -227,7 +227,7 @@ public final class CustomImageManager {
     }
 
     /** Private image files eligible for explicit embedding in a portable SubHub pack. */
-    public List<File> enabledFilesForPackExport() {
+    public List<File> enabledConfigurationFiles() {
         List<File> result = new ArrayList<>();
         File packDirectory = activePackDirectory();
         File[] packFiles = packDirectory == null ? null : packDirectory.listFiles();

@@ -44,16 +44,19 @@ public final class ControllerEditMode {
     }
 
     public static void renderButton(Activity activity, TextView button) {
-        boolean editing = ControllerPinManager.isDomModeActive();
-        button.setText(editing
-                ? R.string.role_dom : R.string.role_sub);
+        boolean unlocked = ControllerPinManager.isDomModeActive();
+        DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(activity);
+        boolean both = mode == DeviceRolePreferences.Mode.BOTH;
+        boolean domWorkspace = DeviceRolePreferences.isDomWorkspace(activity);
+        button.setText(both ? unlocked ? R.string.role_dom : R.string.role_sub
+                : unlocked ? R.string.device_role_lock : R.string.device_role_unlock);
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0);
-        button.setContentDescription(activity.getString(editing
-                ? R.string.role_enter_sub : R.string.role_enter_dom));
+        button.setContentDescription(activity.getString(both ? unlocked ? R.string.role_enter_sub : R.string.role_enter_dom
+                : unlocked ? R.string.device_role_lock : R.string.device_role_unlock));
         androidx.appcompat.widget.TooltipCompat.setTooltipText(button, button.getContentDescription());
-        button.setSelected(editing);
+        button.setSelected(unlocked);
         TextView badge = activity.findViewById(R.id.header_role_badge);
-        if (badge != null) badge.setText(editing ? R.string.role_dom : R.string.role_sub);
+        if (badge != null) badge.setText(domWorkspace ? R.string.role_dom : R.string.role_sub);
     }
 
     public boolean isEditing() {
@@ -93,7 +96,7 @@ public final class ControllerEditMode {
                 || activity instanceof CommitmentActivity && CommitmentManager.isActive(activity);
     }
 
-    /** Leaves all configuration surfaces and returns to the single Sub dashboard. */
+    /** Locks controller access and returns to the configured device workspace. */
     public static void enterSubMode(Activity activity) {
         ControllerPinManager.enterSubMode();
         if (activity instanceof MainActivity) return;

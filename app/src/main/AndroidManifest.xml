@@ -95,14 +95,11 @@
             android:name=".capture.ExportActivity"
             android:exported="false" />
 
-        <activity
-            android:name=".studio.StudioActivity"
-            android:exported="false" />
-
-        <activity
+<activity
             android:name=".diagnostics.DiagnosticsActivity"
             android:exported="false" />
 
+        <activity android:name=".activity.DomActivityActivity" android:exported="false" />
         <activity android:name=".stats.StatsActivity" android:exported="false" />
         <activity android:name=".people.PeopleActivity" android:exported="false" />
         <activity android:name=".people.PersonActivity" android:exported="false" />
@@ -219,7 +216,7 @@
         </receiver>
 
         <provider
-            android:name="com.subhub.app.util.SubHubFileProvider"
+            android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.updates"
             android:exported="false"
             android:grantUriPermissions="true">
@@ -234,7 +231,6 @@
             </intent-filter>
         </activity>
         <activity android:name=".remote.RemoteConnectionActivity" android:exported="false" />
-        <activity android:name=".remote.RemoteLibraryActivity" android:exported="false" />
         <activity android:name=".remote.RemoteContractActivity" android:exported="false" />
         <activity android:name=".remote.RemoteEndActivity" android:exported="false" />
         <activity android:name=".remote.RemoteStatsActivity" android:exported="false" />

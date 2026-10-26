@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dom_activity_title">Activity</string>
+    <string name="dom_activity_channel">Sub activity</string>
+    <string name="dom_activity_new_activity">New Sub activity</string>
+    <string name="dom_activity_app_opened">Opened %1$s</string>
+    <string name="dom_activity_tribute_triggered">Tribute triggered</string>
+    <string name="dom_activity_app_limit">%1$s reached its limit</string>
+    <string name="dom_activity_shared_limit">Shared app limit reached</string>
+    <string name="dom_activity_tribute_detail">%1$s · %2$s</string>
+    <string name="dom_activity_minutes">%1$d min daily limit</string>
+    <string name="dom_activity_reason_app">Selected app opened</string>
+    <string name="dom_activity_reason_dwell">Censored content viewed</string>
+    <string name="dom_activity_reason_tap">Censored content tapped</string>
+    <string name="dom_activity_reason_tamper">Tamper attempt</string>
+    <string name="dom_activity_reason_pause">Paid pause</string>
+    <string name="dom_activity_reason_detection">Censored content detected</string>
+    <string name="dom_activity_reason_rule">Tribute rule</string>
+    <string name="dom_activity_entry_unavailable">This activity is no longer available</string>
+    <string name="dom_activity_empty">No activity yet</string>
+    <string name="dom_activity_unavailable">Activity unavailable</string>
+    <string name="dom_activity_older">Older activity</string>
+    <string name="dom_activity_latest">Latest</string>
+    <string name="dom_activity_enable_notifications">Enable notifications</string>
+    <string name="dom_activity_unread">Unread</string>
+    <string name="dom_activity_unread_count">%1$d unread</string>
+    <string name="dom_activity_pending_notification">New activity</string>
+    <item type="id" name="dom_activity_list" />
+    <item type="id" name="dom_activity_status" />
+    <item type="id" name="dom_activity_notification_action" />
+    <item type="id" name="dom_activity_latest_action" />
+    <item type="id" name="dom_activity_older_action" />
+</resources>

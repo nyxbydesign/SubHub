@@ -121,7 +121,7 @@ public final class PublicFormIdentityAndroidTest {
     @Test public void publicEditorsShareInputAndSwitchStylesInBothControlStates() throws Exception {
         for (String name : new String[]{"appmode.AppModeActivity", "settings.GlobalSettingsActivity",
                 "settings.SettingsActivity", "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
-                "capture.export.ExportAppearanceActivity", "studio.StudioActivity", "privacy.PrivacyActivity"}) {
+                "capture.export.ExportAppearanceActivity", "privacy.PrivacyActivity"}) {
             Class<? extends android.app.Activity> type = Class.forName("com.subhub.app." + name).asSubclass(android.app.Activity.class);
             try (ActivityScenario<? extends android.app.Activity> page = ActivityScenario.launch(type)) {
                 settle();
@@ -151,26 +151,8 @@ public final class PublicFormIdentityAndroidTest {
         }
     }
 
-    @Test public void everyPackSectionAndColorDialogUsesSharedFormControls() {
-        try (ActivityScenario<com.subhub.app.studio.StudioActivity> page = ActivityScenario.launch(com.subhub.app.studio.StudioActivity.class)) {
-            for (String section : new String[]{"modules", "censor", "wallet", "limits", "subliminal", "popup"}) {
-                page.onActivity(a -> openPackEditor(a, section));
-                settle();
-                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.isRoot())
-                        .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check((view, missing) -> {
-                            if (missing != null) throw missing;
-                            expandPackGroups(view);
-                        });
-                settle();
-                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.isRoot())
-                        .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check((view, missing) -> {
-                            if (missing != null) throw missing;
-                            android.app.Activity a = activity(view.getContext());
-                            assertFormControls(a, view); assertRows(view); captureScrollContents(a, view, "pack-" + section);
-                        });
-                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button2))
-                        .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(androidx.test.espresso.action.ViewActions.click());
-            }
+    @Test public void colorDialogUsesSharedFormControls() {
+        try (ActivityScenario<com.subhub.app.settings.SettingsActivity> page = ActivityScenario.launch(com.subhub.app.settings.SettingsActivity.class)) {
             page.onActivity(a -> com.subhub.app.util.ColorPickerDialog.show(a, "Color", android.graphics.Color.RED, ignored -> {}));
             settle();
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.isRoot())
@@ -182,32 +164,12 @@ public final class PublicFormIdentityAndroidTest {
         }
     }
 
-    private static void openPackEditor(androidx.appcompat.app.AppCompatActivity a, String section) {
-        try {
-            java.lang.reflect.Method show = Class.forName("com.subhub.app.studio.PackSectionEditor")
-                    .getDeclaredMethod("show", androidx.appcompat.app.AppCompatActivity.class,
-                            String.class, String.class, org.json.JSONObject.class, java.util.function.Consumer.class);
-            show.setAccessible(true);
-            show.invoke(null, a, section, section, com.subhub.app.pack.PackSettingCatalog.defaults(section),
-                    (java.util.function.Consumer<org.json.JSONObject>) ignored -> {});
-        } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
-    }
-
     private static android.app.Activity activity(Context context) {
         while (context instanceof android.content.ContextWrapper) {
             if (context instanceof android.app.Activity) return (android.app.Activity) context;
             context = ((android.content.ContextWrapper) context).getBaseContext();
         }
         throw new AssertionError("Missing dialog activity");
-    }
-
-    private static void expandPackGroups(View view) {
-        if (view.getTag() instanceof String && ((String) view.getTag()).startsWith("pack_group:")) {
-            ViewGroup parent = (ViewGroup) view.getParent();
-            int index = parent.indexOfChild(view);
-            if (index + 1 < parent.getChildCount() && parent.getChildAt(index + 1).getVisibility() == View.GONE) view.performClick();
-        }
-        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) expandPackGroups(((ViewGroup) view).getChildAt(i));
     }
 
     private static void assertFormControls(android.app.Activity a, View view) {

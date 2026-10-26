@@ -11,7 +11,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.util.LocaleHelper;
 import com.subhub.app.update.UpdateScheduler;
 import com.subhub.app.update.UpdateStateStore;
@@ -67,8 +66,8 @@ public final class SubHubApp extends Application {
             @Override public void onActivityDestroyed(@NonNull Activity activity) { opened.remove(activity); }
         });
         LocaleHelper.applySaved(this);
+        com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(this);
         com.subhub.app.remote.RemoteUi.install(this);
-        new SubHubPackManager(this);
         new UpdateStateStore(this).cleanupInstalled(BuildConfig.VERSION_CODE);
         UpdateScheduler.synchronize(this);
         HardcoreReadinessNotificationManager.refresh(this);

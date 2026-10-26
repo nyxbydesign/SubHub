@@ -1,72 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="pack_editor_tribute_amount">Amount</string>
     <string name="achievement_notice_single">%1$s unlocked</string>
     <string name="achievement_notice_view">View</string>
     <plurals name="achievement_notice_count"><item quantity="one">%1$d achievement unlocked</item><item quantity="other">%1$d achievements unlocked</item></plurals>
-    <string name="pack_editor_step_details">1 · Details</string>
-    <string name="pack_editor_step_features">2 · Features</string>
-    <string name="pack_editor_step_images">3 · Images</string>
-    <string name="pack_editor_step_review">4 · Review</string>
-    <string name="pack_editor_back">Previous</string>
-    <string name="pack_editor_next">Next</string>
-    <string name="pack_editor_add_cover">Choose cover image</string>
-    <string name="pack_editor_assets_summary">Censor: %1$d · Popup Storm: %2$d · Cover: %3$d</string>
-    <string name="pack_editor_cover">Cover image</string>
-    <string name="pack_editor_remove_image">Remove image</string>
-    <string name="pack_editor_image_failed">Some images could not be added. Use PNG, JPEG or WebP files under 25 MiB; each feature accepts up to 64 images.</string>
-    <string name="pack_editor_image_label">%1$s · %2$d</string>
-    <string name="pack_editor_duplicate_title">Duplicate without merchant details?</string>
-    <string name="pack_editor_duplicate_body">The copy has a new identity. Its encrypted merchant attachment is removed; attach and encrypt it again if needed. The original is unchanged.</string>
-    <string name="pack_editor_wait_encryption">Wait for merchant encryption to finish.</string>
-    <string name="pack_editor_loading">Loading packs…</string>
-    <string name="pack_editor_restore_title">Restore previous settings?</string>
-    <string name="pack_editor_restore_body">This restores the settings from before this pack was applied. It does not enter or leave service. Saved packs remain in the library.</string>
-    <string name="pack_editor_share_unavailable">No app is available to share this pack.</string>
-    <plurals name="pack_editor_image_count"><item quantity="one">%1$d image</item><item quantity="other">%1$d images</item></plurals>
-    <string name="pack_editor_saving">Saving draft…</string>
-    <string name="pack_editor_saved">Draft saved · live settings unchanged</string>
-    <string name="pack_editor_save_failed">Draft not saved. Check available storage before leaving.</string>
-    <string name="pack_editor_include_section">Include %1$s</string>
-    <string name="pack_editor_attach_paypal">Add encrypted merchant details</string>
-    <string name="pack_editor_remove_paypal">Remove encrypted merchant details</string>
-    <string name="pack_editor_remove_paypal_body">This removes the encrypted merchant attachment from this draft only. Shared copies and live account settings are unchanged.</string>
-    <string name="pack_editor_private">Private pack</string>
-    <string name="pack_editor_by_author">By %1$s</string>
-    <string name="pack_editor_paypal_attached">Encrypted merchant details · passphrase required · no payer authorization</string>
-    <plurals name="pack_editor_section_count"><item quantity="one">%1$d feature section</item><item quantity="other">%1$d feature sections</item></plurals>
-    <string name="pack_editor_expanded">Expanded</string>
-    <string name="pack_editor_collapsed">Collapsed</string>
-    <string name="pack_editor_minmax">The maximum must be at least the minimum.</string>
-    <string name="pack_editor_caps">The daily cap must cover every enabled tribute price, and the weekly cap must cover the daily cap.</string>
-    <string name="pack_editor_message_limit">Use at most 200 messages, with at most 120 characters per message.</string>
-    <string name="pack_apply_controller">Unlock Dom before applying a pack.</string>
-    <string name="pack_apply_empty">Choose at least one section to apply.</string>
-    <string name="pack_apply_recovery">A previous apply is awaiting recovery. Restart the app before trying again.</string>
-    <string name="pack_apply_invalid">The pack contains incompatible setting values. Review its section settings before applying.</string>
-    <string name="pack_apply_payment">Finish pending checkout and turn off automatic payments before changing the merchant. Encrypted merchant details must be unlocked and confirmed.</string>
-    <string name="pack_apply_storage">The pack could not be saved or installed. Check available storage and try again. Recovery information is retained if needed.</string>
-    <string name="pack_field_app_mode_kind">App coverage</string>
-    <string name="pack_editor_title">Configure %1$s</string>
-    <string name="pack_editor_settings">Configure settings</string>
-    <string name="pack_editor_save">Save section</string>
-    <string name="pack_editor_defaults">Use defaults</string>
-    <string name="pack_editor_current">Copy current settings</string>
-    <string name="pack_editor_reset_title">Replace section settings?</string>
-    <string name="pack_editor_reset_body">This replaces this draft section only. Live settings do not change.</string>
-    <string name="pack_editor_draft_only">Edits affect this draft only. Apply the pack separately to change live settings; Enter Service remains the master control.</string>
-    <string name="pack_editor_wallet_note">Amounts use the recipient’s Wallet currency. Currency, unpaid balances, payer authorization and automatic-payment consent stay local.</string>
-    <string name="pack_editor_popup_note">Including Popup Storm does not transfer photosensitivity acknowledgement or start popups. The recipient must review setup locally.</string>
-    <string name="pack_editor_validation">Check %1$s: %2$s</string>
-    <string name="pack_editor_range">Allowed range: %1$s–%2$s</string>
-    <string name="pack_editor_invalid">Enter a valid value within the displayed range.</string>
-    <string name="pack_editor_one_per_line">One item per line</string>
-    <string name="pack_editor_color_hint">#RRGGBB or #AARRGGBB</string>
-    <string name="pack_editor_timing_help">Preset timing is used unless Customize timing and appearance is selected.</string>
-    <string name="pack_editor_image_coverage_help">Whole-person coverage needs a compatible body-capable model on the recipient’s device.</string>
-    <string name="pack_editor_choose">Choose</string>
-    <plurals name="pack_editor_setting_count"><item quantity="one">%1$d configurable setting</item><item quantity="other">%1$d configurable settings</item></plurals>
-    <plurals name="pack_editor_selection_count"><item quantity="one">%1$d selected</item><item quantity="other">%1$d selected</item></plurals>
     <string name="pack_group_features">Features</string>
     <string name="pack_group_detection">Detection</string>
     <string name="pack_group_text_filter">Text filter</string>
@@ -90,8 +26,6 @@
     <string name="pack_group_popup_denial">Denial effects</string>
     <string name="pack_group_popup_interaction">Interaction</string>
     <string name="pack_field_module_censor_enabled">Censor</string>
-    <string name="pack_field_module_limits_enabled">Limits</string>
-    <string name="pack_field_module_wallet_enabled">Tributes</string>
     <string name="pack_field_module_subliminal_enabled">Subliminal messages</string>
     <string name="pack_field_detection_preset">Detection preset</string>
     <string name="pack_field_confidence_threshold_percent">Detection confidence (%)</string>
@@ -144,7 +78,6 @@
     <string name="pack_field_app_timer_per_app_minutes">Default allowance per app (minutes)</string>
     <string name="pack_field_app_timer_total_enabled">Shared allowance</string>
     <string name="pack_field_app_timer_total_minutes">Shared daily allowance (minutes)</string>
-    <string name="pack_field_enabled">Tribute rules</string>
     <string name="pack_field_rule_new_detection_enabled">New censor</string>
     <string name="pack_field_rule_new_detection_cents">New censor: amount</string>
     <string name="pack_field_rule_censored_dwell_enabled">Time on censored content</string>
@@ -278,6 +211,4 @@
     <string name="pack_choice_popup_storm_detection_mode_off">Off</string>
     <string name="pack_choice_popup_storm_detection_mode_cover">Cover</string>
     <string name="pack_choice_popup_storm_detection_mode_avoid">Avoid</string>
-    <string name="pack_choice_app_mode_kind_always">All apps</string>
-    <string name="pack_choice_app_mode_kind_selected">Assigned apps only</string>
 </resources>

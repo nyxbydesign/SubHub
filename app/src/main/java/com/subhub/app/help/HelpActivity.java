@@ -112,7 +112,7 @@ public final class HelpActivity extends AppCompatActivity {
                 {R.string.help_rework_hardcore_title, R.string.help_rework_hardcore_body},
                 {R.string.help_rework_rituals_title, R.string.help_rework_rituals_body},
                 {R.string.help_rework_gallery_title, R.string.help_rework_gallery_body},
-                {R.string.help_rework_packs_title, R.string.help_rework_packs_body},
+                {R.string.help_rework_profiles_title, R.string.help_rework_profiles_body},
                 {R.string.help_rework_troubleshoot_title, R.string.help_rework_troubleshoot_body},
                 {R.string.help_rework_privacy_title, R.string.help_rework_privacy_body}
         };

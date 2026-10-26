@@ -6,7 +6,6 @@
     <string name="home_composition_connected">Connected</string>
     <string name="home_composition_devices">Devices</string>
     <string name="home_composition_view_all">View all</string>
-    <string name="home_composition_quick_controls">Quick controls</string>
     <string name="home_composition_show_all">Show all (%1$d)</string>
     <string name="home_composition_show_less">Show fewer</string>
     <color name="home_composition_current">#8BDBAB</color>

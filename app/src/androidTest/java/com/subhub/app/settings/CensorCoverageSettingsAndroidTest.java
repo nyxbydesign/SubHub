@@ -8,7 +8,7 @@ import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.subhub.app.detection.CensorCoverage;
-import com.subhub.app.pack.SubHubPackSchema;
+import com.subhub.app.configuration.ConfigurationSchema;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
@@ -39,7 +39,7 @@ public final class CensorCoverageSettingsAndroidTest {
         }
     }
 
-    @Test public void defaultRoundTripInvalidValueAndPortableKey() {
+    @Test public void defaultRoundTripInvalidValueAndConfigurationKey() {
         Context context = ApplicationProvider.getApplicationContext();
         SettingsRepository settings = new SettingsRepository(context);
         String key = SettingsRepository.KEY_CENSOR_COVERAGE;
@@ -52,7 +52,7 @@ public final class CensorCoverageSettingsAndroidTest {
             assertEquals(CensorCoverage.WHOLE_PERSON, settings.loadDetectorConfig().getCensorCoverage());
             settings.preferences().edit().putString(key, "unknown").commit();
             assertEquals(CensorCoverage.DETECTED_AREAS, settings.loadDetectorConfig().getCensorCoverage());
-            assertTrue(SubHubPackSchema.keysFor(SubHubPackSchema.CENSOR).contains(key));
+            assertTrue(ConfigurationSchema.keysFor(ConfigurationSchema.CENSOR).contains(key));
             settings.preferences().edit().putBoolean(key, true).commit();
             assertEquals(CensorCoverage.DETECTED_AREAS, settings.loadDetectorConfig().getCensorCoverage());
         } finally {

@@ -15,6 +15,7 @@ public final class RemoteEndCommands {
     public RemoteEndCommands(Context context,RemoteStore store){this.context=context.getApplicationContext();this.store=store;}
     public String queue(RemoteStore.Peer peer,String expected,long now)throws Exception {
         synchronized(store) {
+            if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
             requireRole(peer,RemoteProtocol.Role.DOM);token(expected);
             JSONObject runtime=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");
             long confirmed=Long.parseLong(store.metadata(peer.identity,peer.generation,"confirmed_RUNTIME","0"));

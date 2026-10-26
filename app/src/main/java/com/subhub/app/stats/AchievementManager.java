@@ -8,7 +8,6 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.text.TextSmutConfig;
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceInfraction;
@@ -203,8 +202,6 @@ public final class AchievementManager {
                         && config.getEnabledCategories().containsAll(TextSmutConfig.DEFAULT_CATEGORIES)
                         ? config.getEnabledCategories().size() : 0;
             }
-            case "pack_curator":
-                return new SubHubPackManager(context).activePackId() == null ? 0 : 1;
             case "wallet_keeper":
                 return new PenanceManager(context).isEnabled() ? 1 : 0;
             case "tribute_rulesmith": {
@@ -254,7 +251,7 @@ public final class AchievementManager {
             case "ntr_200": return 200;
             case "app_mode_guardian": case "limits_setter": case "limits_dual_guard":
             case "pact_sealed": case "pact_long_haul": case "hardcore_guardian":
-            case "text_filter_enabled": case "pack_curator": case "wallet_keeper":
+            case "text_filter_enabled": case "wallet_keeper":
             case "paypal_vault": case "paid_pause": return 1;
             case "app_assignment_curator": return 3;
             case "text_filter_catalog": return 3;
@@ -327,7 +324,6 @@ public final class AchievementManager {
                 a("color_picker", R.string.achievement_color_picker, R.string.achievement_desc_color_picker, "◉", "custom", R.drawable.achievement_badge_color_picker, false),
                 a("first_custom_phrase", R.string.achievement_first_custom_phrase, R.string.achievement_desc_first_custom_phrase, "✎", "custom", R.drawable.achievement_badge_first_custom_phrase, false),
                 a("phrase_library", R.string.achievement_phrase_library, R.string.achievement_desc_phrase_library, "▤", "custom", R.drawable.achievement_badge_phrase_library, false),
-                a("pack_curator", R.string.achievement_pack_curator, R.string.achievement_desc_pack_curator, "▤", "custom", R.drawable.achievement_badge_pack_curator, false),
                 a("export_first", R.string.achievement_export_first, R.string.achievement_desc_export_first, "⇩", "export", R.drawable.achievement_badge_export_first, false),
                 a("export_artist", R.string.achievement_export_artist, R.string.achievement_desc_export_artist, "⇩", "export", R.drawable.achievement_badge_export_artist, false),
                 a("subliminal_1", R.string.achievement_subliminal_1, R.string.achievement_desc_subliminal_1, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1, false),

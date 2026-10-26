@@ -24,8 +24,6 @@ import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.onboarding.OnboardingState;
-import com.subhub.app.pack.SubHubPack;
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.people.PersonActivity;
 import com.subhub.app.people.PersonId;
@@ -34,7 +32,6 @@ import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.stats.AchievementsActivity;
-import com.subhub.app.studio.StudioActivity;
 
 import org.junit.*;
 
@@ -44,12 +41,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/** Disposable emulator fixtures; no live media, credentials or pack catalog. */
+/** Disposable emulator fixtures; no live media or credentials. */
 public final class RitualsToolsAndroidTest {
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private Context app;
-    private SubHubPackManager packs;
-    private String fixture;
     private final Map<SharedPreferences, Map<String, ?>> original = new LinkedHashMap<>();
 
     @Before
@@ -64,11 +59,6 @@ public final class RitualsToolsAndroidTest {
         OnboardingState.complete(app);
         ControllerPinManager.setPin(app, "2468");
         ControllerPinManager.enterDomMode();
-        packs = new SubHubPackManager(app);
-        SubHubPack pack = packs.createBlank();
-        pack.setMetadata("Focus", "Sample", "", "1.0.0");
-        packs.addToLibrary(pack);
-        fixture = pack.getId();
         Set<String> selected = Set.of("com.android.chrome", "com.android.settings");
         for (String name : selected) app.getPackageManager().getApplicationInfo(name, 0);
         AppModeManager assignments = new AppModeManager(app);
@@ -84,66 +74,15 @@ public final class RitualsToolsAndroidTest {
 
     @After
     public void cleanup() {
-        if (fixture != null) {
-            packs.deleteLibrary(fixture);
-            packs.deleteDraft(fixture);
-        }
         for (Map.Entry<SharedPreferences, Map<String, ?>> saved : original.entrySet())
             SharedPreferenceTestRestore.restore(saved.getKey(), saved.getValue());
         ControllerPinManager.enterSubMode();
     }
 
-    @Test
-    public void savedContractsOpenFromTheirPersonAndStudioReturnsToContract() throws Exception {
-        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(
-                new Intent(app, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
-            awaitTag(scenario, "person_tab:contracts");
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
-                    org.hamcrest.Matchers.is("person_tab:contracts"))).perform(
-                    com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
-            awaitTag(scenario, "person_saved_contracts");
-            scenario.onActivity(a -> capture(a, "person-contract-library.png"));
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
-                    org.hamcrest.Matchers.is("person_saved_contracts"))).perform(
-                    com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
-            StudioActivity studio = resumed(StudioActivity.class);
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                assertEquals(PersonId.LOCAL, PersonRoutes.requireId(studio.getIntent()));
-                assertTrue(studio.findViewById(R.id.nav_people).isSelected());
-                assertFalse(studio.getIntent().getBooleanExtra(StudioActivity.EXTRA_FROM_RITUALS, false));
-                studio.findViewById(R.id.button_back).performClick();
-            });
-            awaitTag(scenario, "person_saved_contracts");
-            scenario.onActivity(a -> {
-                assertEquals(app.getString(R.string.role_contract), ((TextView) a.findViewById(R.id.primary_header_title)).getText().toString());
-                assertNull(a.findViewById(R.id.person_session_action));
-                assertTrue(a.findViewById(R.id.nav_people).isSelected());
-                capture(a, "person-contract-library-return.png");
-            });
-        }
-    }
+
 
     @Test
-    public void importShortcutUsesTheExistingPickerAndSubCanReadAchievements() throws Exception {
-        Intents.init();
-        try {
-            Intents.intending(
-                            androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(
-                                    Intent.ACTION_OPEN_DOCUMENT))
-                    .respondWith(
-                            new android.app.Instrumentation.ActivityResult(
-                                    Activity.RESULT_CANCELED, null));
-            try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(new Intent(app, StudioActivity.class)
-                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
-                    .putExtra(StudioActivity.EXTRA_IMPORT_PACK, true))) {
-                idle();
-                Intents.intended(
-                        androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(
-                                Intent.ACTION_OPEN_DOCUMENT));
-            }
-        } finally {
-            Intents.release();
-        }
+    public void subCanReadAchievementsFromStatistics() throws Exception {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<StatsActivity> scenario = ActivityScenario.launch(StatsActivity.class)) {
             awaitView(scenario, R.id.stats_achievements);
