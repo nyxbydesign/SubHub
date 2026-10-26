@@ -85,6 +85,11 @@ public final class ControllerPinManager {
         return isDomModeActive();
     }
 
+    /** Local authentication is recovery-only when a paired peer owns configuration. */
+    public static boolean canEditConfiguration() {
+        return isDomModeActive() && com.subhub.app.people.People.isLocalConfigurationAllowed();
+    }
+
     public static void lockNow() {
         enterSubMode();
     }

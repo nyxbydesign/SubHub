@@ -5,12 +5,12 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:minHeight="@dimen/primary_header_height"
-    android:background="@drawable/bg_header_card"
+    android:background="@android:color/transparent"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="12dp"
+    android:paddingStart="0dp"
     android:paddingTop="@dimen/ui_gap_control"
-    android:paddingEnd="12dp"
+    android:paddingEnd="0dp"
     android:paddingBottom="@dimen/ui_gap_control">
 
     <TextView
@@ -37,18 +37,25 @@
         app:tint="@color/text_primary" />
 
     <LinearLayout
+        android:id="@+id/primary_header_copy"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="11dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
+        <TextView android:id="@+id/header_role_badge"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp" android:background="@drawable/bg_role_badge"
+            android:textColor="@color/accent_text" android:textSize="11sp"
+            android:textStyle="bold" android:text="@string/role_sub" />
+
         <TextView
             android:id="@+id/primary_header_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:includeFontPadding="false"
-            android:letterSpacing="0.06"
+            android:letterSpacing="0.0"
             android:textColor="@color/text_primary"
             android:textSize="@dimen/ui_text_title"
             android:textStyle="bold" />

@@ -38,7 +38,7 @@ public final class AuthenticatorActivity extends PreferencePage {
         page(R.string.authenticator_title);
         ControllerAuthenticator authenticator = new ControllerAuthenticator(this);
         methodBodies.clear(); methodArrows.clear(); methodHeaders.clear();
-        LinearLayout pinCard = method("pin", R.string.keyholder_pin_heading, R.string.keyholder_pin_subtitle, R.id.keyholder_pin_header);
+        LinearLayout pinCard = method("pin", R.string.role_pin, R.string.keyholder_pin_subtitle, R.id.keyholder_pin_header);
         button(pinCard, getString(ControllerPinManager.isConfigured(this) ? R.string.keyholder_pin_change : R.string.controller_pin_set),
                 () -> ControllerPinGate.changePin(this, this::render)).setId(R.id.keyholder_pin_change_button);
         if (ControllerPinManager.isConfigured(this)) button(pinCard, getString(R.string.keyholder_remove_pin), () ->
@@ -46,29 +46,15 @@ public final class AuthenticatorActivity extends PreferencePage {
                     if (ControllerPinManager.removePin(this)) render();
                     else notice(getString(R.string.authenticator_unavailable));
                 }, false)).setId(R.id.keyholder_remove_pin);
-        LinearLayout pinSteps = card(pinCard);
-        step(pinSteps, "1", R.string.keyholder_pin_step_one, R.string.keyholder_pin_step_one_help);
-        step(pinSteps, "2", R.string.keyholder_pin_step_two, R.string.keyholder_pin_step_two_help);
-        step(pinSteps, "3", R.string.keyholder_pin_step_three, R.string.keyholder_pin_step_three_help);
-        LinearLayout section = method("remote", R.string.keyholder_remote_title, R.string.keyholder_remote_subtitle, R.id.keyholder_remote_header);
+        LinearLayout section = method("remote", R.string.role_authenticator, R.string.keyholder_remote_subtitle, R.id.keyholder_remote_header);
         TextView status = text(section, getString(authenticator.isPaired() ? R.string.authenticator_paired : R.string.authenticator_unpaired), 18, false);
         status.setTypeface(null, android.graphics.Typeface.BOLD);
-        Button pair = button(section, getString(authenticator.isPaired() ? R.string.authenticator_replace : R.string.authenticator_pair), () ->
+        Button pair = button(section, getString(authenticator.isPaired() ? R.string.role_replace_authenticator : R.string.role_pair_authenticator), () ->
                 ControllerPinGate.require(this, this::beginPairing, false));
         pair.setId(R.id.keyholder_pair_button); pair.setBackgroundResource(R.drawable.bg_primary_button);
         pair.setTextColor(getColor(R.color.text_primary));
-        LinearLayout steps = card(section);
-        step(steps, "1", R.string.keyholder_step_one, R.string.keyholder_step_one_help);
-        step(steps, "2", R.string.keyholder_step_two, R.string.keyholder_step_two_help);
-        step(steps, "3", R.string.keyholder_step_three, R.string.keyholder_step_three_help);
         updateMethods();
-        LinearLayout lock = card(page);
-        TextView lockTitle = text(lock, getString(R.string.keyholder_your_lock), 16, false); lockTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        lockTitle.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_ux_lock, 0, 0, 0); lockTitle.setCompoundDrawablePadding(dp(8));
-        boolean active = com.subhub.app.commitment.CommitmentManager.isActive(this);
-        text(lock, active ? com.subhub.app.commitment.CommitmentManager.countdownLabel(this) : getString(R.string.keyholder_no_lock), 14, true);
-        button(lock, getString(active ? R.string.keyholder_view_lock : R.string.keyholder_choose_lock), () -> startActivity(new android.content.Intent(this,
-                active ? com.subhub.app.commitment.CommitmentActivity.class : com.subhub.app.MainActivity.class).setAction(android.content.Intent.ACTION_MAIN)));
+        pairedDevices();
         if (authenticator.isPaired()) button(section, getString(R.string.authenticator_remove), () ->
                 ControllerPinGate.require(this, () -> {
                             if (new ControllerAuthenticator(this).remove()) render();
@@ -76,7 +62,7 @@ public final class AuthenticatorActivity extends PreferencePage {
                         }, false)).setId(R.id.keyholder_remove_authenticator);
     }
     private LinearLayout method(String key, int title, int subtitle, int id) {
-        LinearLayout outer = card(page); outer.setBackgroundResource(R.drawable.bg_sub_hero);
+        LinearLayout outer = card(page);
         LinearLayout header = new LinearLayout(this); header.setId(id); header.setGravity(android.view.Gravity.CENTER_VERTICAL);
         header.setMinimumHeight(dp(64)); header.setPadding(0, dp(6), 0, dp(6)); outer.addView(header);
         ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.ic_keyholder); icon.setBackgroundResource(R.drawable.bg_header_icon);
@@ -85,6 +71,10 @@ public final class AuthenticatorActivity extends PreferencePage {
         LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams copy = new LinearLayout.LayoutParams(0, -2, 1); copy.leftMargin = dp(12); header.addView(labels, copy);
         TextView heading = text(labels, getString(title), 17, false); heading.setTypeface(null, android.graphics.Typeface.BOLD);
+        if ("remote".equals(key)) text(labels, getString(new ControllerAuthenticator(this).isPaired()
+                ? R.string.authenticator_paired : R.string.authenticator_unpaired), 13, true);
+        else text(labels, getString(ControllerPinManager.isConfigured(this)
+                ? R.string.keyholder_status_pin : R.string.keyholder_status_none), 13, true);
         TextView arrow = new TextView(this); com.subhub.app.util.UiIdentity.textSize(arrow, R.dimen.ui_icon_text); arrow.setTextColor(getColor(R.color.accent_hot)); arrow.setGravity(android.view.Gravity.CENTER);
         header.addView(arrow, new LinearLayout.LayoutParams(dp(36), dp(48)));
         arrow.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -103,6 +93,36 @@ public final class AuthenticatorActivity extends PreferencePage {
             androidx.core.view.ViewCompat.setStateDescription(methodHeaders.get(key), getString(expanded ? R.string.keyholder_expanded : R.string.keyholder_collapsed));
         }
     }
+
+    private void pairedDevices() {
+        LinearLayout devices = card(page);
+        com.subhub.app.people.PersonUi.text(devices, getString(R.string.role_paired_devices), true);
+        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(getApplicationContext());
+        com.subhub.app.util.AsyncUiScope.forPage(this).load("paired-devices", () -> {
+            java.util.List<com.subhub.app.people.PersonSnapshot> values = new java.util.ArrayList<>();
+            for (com.subhub.app.people.PersonId id : repository.people()) {
+                if (!id.isLocal()) values.add(repository.load(id));
+            }
+            return values;
+        }, people -> {
+            if (pendingSecret != null || !ControllerPinManager.isDomModeActive()) return;
+            if (people.isEmpty()) text(devices, getString(R.string.role_no_paired_devices), 14, true);
+            for (com.subhub.app.people.PersonSnapshot person : people) {
+                com.subhub.app.people.PersonUi.row(devices, R.drawable.ic_nav_people, person.name,
+                        com.subhub.app.people.PersonUi.connection(this, person),
+                        com.subhub.app.people.People.connectionUi() == null ? null : () -> {
+                            com.subhub.app.people.ConnectionUi ui = com.subhub.app.people.People.connectionUi();
+                            if (ui != null && ControllerPinManager.isDomModeActive()) ui.openConnection(this, person.id);
+                        });
+            }
+        }, failure -> text(devices, getString(R.string.role_connection_error), 14, true));
+        if (com.subhub.app.people.People.connectionUi() != null) {
+            button(devices, getString(R.string.role_pair_device), () -> {
+                com.subhub.app.people.ConnectionUi ui = com.subhub.app.people.People.connectionUi();
+                if (ui != null) ControllerPinGate.require(this, () -> ui.openPairing(this), false);
+            });
+        }
+    }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("keyholder_method", expandedMethod); super.onSaveInstanceState(state); }
     @Override protected void onResume() {
         super.onResume();
@@ -114,6 +134,7 @@ public final class AuthenticatorActivity extends PreferencePage {
     }
     private void beginPairing() {
         clearPending(); pendingSecret = Totp.newSecret();
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         page(R.string.keyholder_handover_title);
         com.subhub.app.util.PrimaryHeader.backButton(page).setOnClickListener(v -> { clearPending(); render(); });
         LinearLayout setup = (LinearLayout) getLayoutInflater().inflate(R.layout.view_authenticator_setup, page, false);
@@ -177,6 +198,10 @@ public final class AuthenticatorActivity extends PreferencePage {
         TextView label = text(copy, getString(title), 15, false); label.setTypeface(null, android.graphics.Typeface.BOLD);
         text(copy, getString(description), 13, true);
     }
-    private void clearPending() { pendingSecret = null; if (qr != null) { qr.recycle(); qr = null; } }
+    private void clearPending() {
+        pendingSecret = null;
+        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        if (qr != null) { qr.recycle(); qr = null; }
+    }
     @Override protected void onDestroy() { clearPending(); worker.shutdownNow(); super.onDestroy(); }
 }

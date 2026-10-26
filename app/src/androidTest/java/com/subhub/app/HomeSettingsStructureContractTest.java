@@ -58,15 +58,11 @@ public final class HomeSettingsStructureContractTest {
                 .commit();
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
-                assertEquals("3 Censors active",
-                        ((TextView) activity.findViewById(R.id.sub_censor_voice))
-                                .getText().toString());
-                for (int id : new int[] {R.id.primary_header_subtitle,
-                        R.id.sub_censor_summary, R.id.sub_limits_detail,
-                        R.id.sub_wallet_summary, R.id.sub_atmosphere_summary}) {
-                    assertEquals(View.GONE, activity.findViewById(id).getVisibility());
-                }
-                assertTrue(activity.findViewById(R.id.sub_censor_card).isClickable());
+                com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(activity)
+                        .load(com.subhub.app.people.PersonId.LOCAL);
+                assertEquals("3 active filters", person.sections.get(0).summary);
+                assertFalse(activity.findViewById(R.id.sub_dashboard).isShown());
+                assertEquals(View.GONE, activity.findViewById(R.id.primary_header_subtitle).getVisibility());
             });
         } finally {
             SharedPreferences.Editor restore = preferences.edit();

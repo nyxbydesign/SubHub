@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/bg_main">
+    <ScrollView android:layout_width="match_parent" android:layout_height="match_parent"
+        android:clipToPadding="false" android:fillViewport="true">
+        <LinearLayout android:id="@+id/role_page_content"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:paddingStart="@dimen/page_margin"
+            android:paddingEnd="@dimen/page_margin" android:paddingTop="@dimen/primary_header_top"
+            android:paddingBottom="@dimen/bottom_nav_clearance">
+            <include layout="@layout/view_primary_header" />
+            <LinearLayout android:id="@+id/role_page_body"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:paddingTop="20dp" />
+        </LinearLayout>
+    </ScrollView>
+    <include layout="@layout/view_bottom_pill_nav" />
+</FrameLayout>
