@@ -29,6 +29,7 @@ import java.time.*;
 
 @RunWith(AndroidJUnit4.class)
 public class StatisticsQualityAndroidTest {
+    @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
     @Test
@@ -114,21 +115,57 @@ public class StatisticsQualityAndroidTest {
     }
 
     @Test
-    public void arrangementBelongsToServiceAndActivityFollowsTheCompleteWidget() {
+    public void subOverviewKeepsServiceBeforeContractAndStatisticsSummary() {
         ControllerPinManager.enterSubMode();
+        android.content.SharedPreferences settings = new com.subhub.app.settings.SettingsRepository(context).preferences();
+        java.util.Map<String, ?> before = settings.getAll();
+        java.util.Set<String> apps = java.util.Set.of("com.android.chrome", "com.android.settings");
+        for (String app : apps) {
+            try { context.getPackageManager().getApplicationInfo(app, 0); }
+            catch (android.content.pm.PackageManager.NameNotFoundException missing) {
+                throw new AssertionError("Capture fixture app missing: " + app, missing);
+            }
+        }
+        com.subhub.app.appmode.AppModeManager assigned = new com.subhub.app.appmode.AppModeManager(context);
+        assigned.setAllAppsEnabled(false);
+        assigned.saveIncludedPackages(apps);
+        com.subhub.app.appmode.AppTimerManager timers = new com.subhub.app.appmode.AppTimerManager(context);
+        timers.saveSettings(true, 30, true, 60);
+        timers.saveAllowances(apps, java.util.Map.of("com.android.chrome", 15, "com.android.settings", 40));
+        assertEquals(apps, assigned.getIncludedPackages());
+        assertEquals(15, timers.allowanceMinutes("com.android.chrome"));
+        assertEquals(40, timers.allowanceMinutes("com.android.settings"));
         try (ActivityScenario<MainActivity> home =
                 ActivityScenario.launch(
                         new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN))) {
+            long until = android.os.SystemClock.uptimeMillis() + 5000;
+            java.util.concurrent.atomic.AtomicBoolean rendered = new java.util.concurrent.atomic.AtomicBoolean();
+            while (!rendered.get() && android.os.SystemClock.uptimeMillis() < until) {
+                home.onActivity(activity -> rendered.set(allText(activity.findViewById(R.id.home_sub_summary))
+                        .contains(activity.getString(R.string.role_stats))));
+                if (!rendered.get()) android.os.SystemClock.sleep(25);
+            }
+            assertTrue("Sub overview did not render", rendered.get());
             home.onActivity(
                     a -> {
                         LinearLayout service = a.findViewById(R.id.home_service_widget),
                                 content = a.findViewById(R.id.page_content);
-                        assertEquals(service, a.findViewById(R.id.sub_dashboard).getParent());
+                        assertTrue(service.isShown());
                         assertEquals(
                                 content.indexOfChild(service) + 1,
-                                content.indexOfChild(a.findViewById(R.id.daily_statistics_panel)));
-                        capture(a, "home-service-arrangement.png");
+                                content.indexOfChild(a.findViewById(R.id.home_sub_summary)));
+                        assertEquals(service, a.findViewById(R.id.protection_status_row).getParent());
+                        assertEquals(service, a.findViewById(R.id.sub_wallet_pay).getParent());
+                        assertEquals(service, a.findViewById(R.id.sub_wallet_pause).getParent());
+                        assertTrue(allText(a.findViewById(R.id.home_sub_summary)).contains(a.getString(R.string.role_stats)));
+                        assertTrue(allText(a.findViewById(R.id.home_sub_summary)).contains(a.getString(R.string.role_active_contract)));
+                        assertFalse(a.findViewById(R.id.sub_dashboard).isShown());
+                        assertTrue(a.findViewById(R.id.nav_stats).isShown());
+                        capture(a, "home-service-contract-summary.png");
                     });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        } finally {
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(settings, before);
         }
     }
 

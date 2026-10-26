@@ -131,6 +131,7 @@ public final class PersonUi {
         switch (person.connection) {
             case LOCAL: return context.getString(R.string.role_local_data);
             case PENDING: return context.getString(R.string.role_connection_pending);
+            case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
             case OFFLINE: return context.getString(R.string.role_connection_offline);
             case REVOKED: return context.getString(R.string.role_connection_revoked);

@@ -21,6 +21,7 @@ public final class RoleHomePresenter {
     private final View service, oldDashboard;
     private long lastRefresh;
     private boolean displayedDom;
+    private boolean sessionPage;
 
     public RoleHomePresenter(AppCompatActivity activity, AsyncUiScope data) {
         this.activity = activity; this.data = data;
@@ -41,22 +42,26 @@ public final class RoleHomePresenter {
         ((LinearLayout) service).addView(child, new LinearLayout.LayoutParams(-1, -2));
     }
 
+    public void setSessionPage(boolean sessionPage) { this.sessionPage = sessionPage; }
+
     public void refresh(boolean force) {
         boolean dom = ControllerPinManager.isDomModeActive();
-        domBody.setVisibility(dom ? View.VISIBLE : View.GONE);
-        subBody.setVisibility(dom ? View.GONE : View.VISIBLE);
-        service.setVisibility(dom ? View.GONE : View.VISIBLE);
+        domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
+        subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
+        service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
         oldDashboard.setVisibility(View.GONE);
+        if (sessionPage) return;
         long now = android.os.SystemClock.elapsedRealtime();
         if (!force && dom == displayedDom && now - lastRefresh < 5_000L) return;
         displayedDom = dom; lastRefresh = now;
         PersonRepository repository = People.repository(activity.getApplicationContext());
+        java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
             if (dom) {
                 for (PersonId id : repository.people()) values.add(repository.load(id));
             } else values.add(repository.load(PersonId.LOCAL));
-            return values;
+            return PersonDisplayOrder.sorted(values, locale);
         }, values -> {
             if (dom != ControllerPinManager.isDomModeActive()) return;
             if (dom) renderDom(values);
@@ -76,22 +81,21 @@ public final class RoleHomePresenter {
         PersonUi.text(summary, activity.getString(R.string.role_people), true);
         long active = values.stream().filter(value -> value.serviceActive
                 && value.sync.runtime == PersonSnapshot.Freshness.CURRENT).count();
+        boolean runtimeKnown = values.stream().allMatch(value -> value.sync.runtime == PersonSnapshot.Freshness.CURRENT);
         PersonUi.text(summary, activity.getString(R.string.role_person_count, values.size())
-                + " · " + activity.getString(R.string.role_service_count, active), false);
+                + (runtimeKnown ? " · " + activity.getString(R.string.role_service_count, active) : ""), false);
         PersonUi.action(summary, R.string.role_view_people,
                 () -> activity.startActivity(new Intent(activity, PeopleActivity.class)), true);
         for (PersonSnapshot person : values) {
-            LinearLayout card = PersonUi.card(domBody);
-            PersonUi.row(card, R.drawable.ic_nav_people, person.name,
-                    PersonUi.connection(activity, person), () -> PersonRoutes.open(activity, person.id));
-            PersonUi.row(card, R.drawable.ic_nav_contract, person.contractName,
-                    person.sync.runtime == PersonSnapshot.Freshness.CURRENT ? person.serviceLabel
-                            : activity.getString(R.string.role_unknown_data),
+            LinearLayout card = ProfileViews.person(domBody, person,
                     () -> PersonRoutes.open(activity, person.id));
+            PersonUi.text(card, person.sync.runtime == PersonSnapshot.Freshness.CURRENT ? person.serviceLabel
+                    : activity.getString(R.string.role_unknown_data), false);
             if (person.freshness != PersonSnapshot.Freshness.CURRENT) PersonUi.text(card,
                     activity.getString(person.freshness == PersonSnapshot.Freshness.STALE
                             ? R.string.role_stale_data : R.string.role_unknown_data), false);
-            PersonUi.text(card, StatsSnapshot.formatDuration(person.protectedSeconds)
+            if (person.sync.stats != PersonSnapshot.Freshness.UNKNOWN) PersonUi.text(card,
+                    StatsSnapshot.formatDuration(person.protectedSeconds)
                     + " · " + person.activityEvents + " " + activity.getString(R.string.role_stat_activity), false);
         }
     }
