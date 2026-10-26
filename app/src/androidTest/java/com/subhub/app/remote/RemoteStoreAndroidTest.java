@@ -142,6 +142,32 @@ public class RemoteStoreAndroidTest {
         assertEquals(1,sub.nextBatch(DOM,generation,RemoteProtocol.Stream.STATS).changes.size());
     }
 
+    @Test public void versionOneUpgradePreservesPairingOutboxAndAcknowledgement() throws Exception {
+        String name="remote-legacy-"+UUID.randomUUID()+".db";databases.add(name);
+        try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(name,0,null)) {
+            db.execSQL("CREATE TABLE peers(peer TEXT NOT NULL,generation TEXT NOT NULL,name TEXT NOT NULL,local_role TEXT NOT NULL,state TEXT NOT NULL,last_sync INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(peer,generation))");
+            db.execSQL("CREATE UNIQUE INDEX active_remote_identity ON peers(peer) WHERE state IN ('PENDING','ACTIVE')");
+            db.execSQL("CREATE UNIQUE INDEX one_dom_per_sub ON peers(local_role) WHERE local_role='SUB' AND state IN ('PENDING','ACTIVE')");
+            db.execSQL("CREATE TABLE invites(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL,expires INTEGER NOT NULL,candidate TEXT,approved INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0)");
+            for(String table:new String[]{"local_objects","outbox","remote_objects"}) {
+                db.execSQL("CREATE TABLE "+table+"(peer TEXT NOT NULL,generation TEXT NOT NULL,stream TEXT NOT NULL,item TEXT NOT NULL,seq INTEGER NOT NULL,body TEXT NOT NULL,deleted INTEGER NOT NULL,observed INTEGER NOT NULL,PRIMARY KEY(peer,generation,stream,item))");
+            }
+            db.execSQL("CREATE TABLE outgoing(peer TEXT NOT NULL,generation TEXT NOT NULL,stream TEXT NOT NULL,next_seq INTEGER NOT NULL DEFAULT 0,acked INTEGER NOT NULL DEFAULT 0,offered INTEGER NOT NULL DEFAULT 0,digest TEXT,PRIMARY KEY(peer,generation,stream))");
+            db.execSQL("CREATE TABLE incoming(peer TEXT NOT NULL,generation TEXT NOT NULL,stream TEXT NOT NULL,through_seq INTEGER NOT NULL,PRIMARY KEY(peer,generation,stream))");
+            db.execSQL("CREATE TABLE commands(peer TEXT NOT NULL,generation TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(peer,generation,id))");
+            db.execSQL("INSERT INTO peers VALUES(?,'legacy','Dom','SUB','ACTIVE',123)",new Object[]{DOM});
+            db.execSQL("INSERT INTO outgoing VALUES(?,'legacy','STATS',2,1,1,NULL)",new Object[]{DOM});
+            db.execSQL("INSERT INTO outbox VALUES(?,'legacy','STATS','summary',2,'{\"count\":7}',0,1000)",new Object[]{DOM});
+            db.execSQL("INSERT INTO local_objects SELECT * FROM outbox");db.setVersion(1);
+        }
+        RemoteStore upgraded=new RemoteStore(context,name);stores.add(upgraded);
+        assertTrue(upgraded.isRemotelyControlled());assertEquals("",upgraded.peer(DOM,"legacy").route);
+        assertEquals(123,upgraded.peer(DOM,"legacy").lastSyncedAt);
+        RemoteProtocol.Batch pending=upgraded.nextBatch(DOM,"legacy",RemoteProtocol.Stream.STATS);
+        assertEquals(1,pending.after);assertEquals(2,pending.through);assertEquals(7,new JSONObject(pending.changes.get(0).body).getInt("count"));
+        assertEquals("missing",upgraded.metadata(DOM,"legacy","applied_revision","missing"));
+    }
+
     private String pair(RemoteStore dom,RemoteStore sub,String subIdentity) {
         PairingInvite invite = PairingInvite.create(DOM,"ticket",1000);
         dom.saveInvite(invite); dom.bindInvite(invite.id,subIdentity,invite.tokenHash(),1001);

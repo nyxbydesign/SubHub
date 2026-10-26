@@ -103,6 +103,13 @@ public class RemoteProtocolTest {
         assertThrows(IOException.class, () -> RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray())));
     }
 
+    @Test public void untrustedDeviceNamesCannotInjectConfirmationLinesOrBidiControls() {
+        assertEquals("Alex",RemoteProtocol.deviceName(" Alex "));
+        assertEquals("هاتف",RemoteProtocol.deviceName("هاتف"));
+        assertThrows(IllegalArgumentException.class, () -> RemoteProtocol.deviceName("Device\nApproved"));
+        assertThrows(IllegalArgumentException.class, () -> RemoteProtocol.deviceName("Device\u202e1234"));
+    }
+
     private static RemoteProtocol.Batch batch(String body) {
         return new RemoteProtocol.Batch("generation", RemoteProtocol.Stream.STATS,0,1,
                 Collections.singletonList(new RemoteProtocol.Change(1,"summary",body,false,1000)));

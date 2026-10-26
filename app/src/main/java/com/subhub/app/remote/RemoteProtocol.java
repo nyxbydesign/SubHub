@@ -32,7 +32,7 @@ public final class RemoteProtocol {
 
     public enum Role { DOM, SUB }
     public enum Stream {
-        STATS(Role.SUB), DAILY(Role.SUB), APP_USAGE(Role.SUB), APP_CATALOG(Role.SUB),
+        STATS(Role.SUB), DAILY(Role.SUB), APP_USAGE(Role.SUB), APP_CATALOG(Role.SUB), BASELINE(Role.SUB),
         RUNTIME(Role.SUB), CONTRACTS(Role.DOM), CONFIGURATION(Role.DOM), COMMAND_RESULT(Role.SUB);
         public final Role writer;
         Stream(Role writer) { this.writer = writer; }
@@ -52,6 +52,16 @@ public final class RemoteProtocol {
             throw new IllegalArgumentException("Invalid protocol identifier");
         }
         return value;
+    }
+
+    public static String deviceName(String value) {
+        if(value==null || value.trim().isEmpty() || value.length()>80) throw new IllegalArgumentException("Invalid device name");
+        for(int i=0;i<value.length();i++) {
+            char character=value.charAt(i);
+            if(Character.isISOControl(character) || character>=0x202a && character<=0x202e
+                    || character>=0x2066 && character<=0x2069) throw new IllegalArgumentException("Invalid device name");
+        }
+        return value.trim();
     }
 
     public static final class Change {

@@ -75,6 +75,28 @@ public class RemoteTransportAndroidTest {
         } finally { executor.shutdownNow(); }
     }
 
+    @Test public void frameDeadlineIsNotExtendedByDrippingBytes() throws Exception {
+        ExecutorService executor=Executors.newFixedThreadPool(2);
+        try(PeerTransport a=IrohPeerTransport.open(context,seed(),new String[0],10_000);
+            PeerTransport b=IrohPeerTransport.open(context,seed(),new String[0],10_000)) {
+            Future<PeerTransport.Connection> accepting=executor.submit(() -> a.accept(10_000));
+            try(PeerTransport.Connection client=b.connect(a.localIdentity(),a.inviteRoute(),10_000);
+                PeerTransport.Connection server=accepting.get(10,TimeUnit.SECONDS)) {
+                java.io.ByteArrayOutputStream encoded=new java.io.ByteArrayOutputStream();
+                RemoteProtocol.write(encoded,new JSONObject().put("version",1).put("value","slow"));
+                Future<?> writer=executor.submit(() -> {
+                    try {
+                        for(byte value:encoded.toByteArray()) {client.output().write(value);client.output().flush();Thread.sleep(100);}
+                    } catch(Exception closed) { /* The receiver closes at its absolute frame deadline. */ }
+                });
+                server.setReadTimeoutMillis(400);long start=android.os.SystemClock.elapsedRealtime();
+                assertThrows(SocketTimeoutException.class, () -> RemoteProtocol.read(server.input()));
+                assertTrue(android.os.SystemClock.elapsedRealtime()-start<2500);
+                writer.get(5,TimeUnit.SECONDS);
+            }
+        } finally {executor.shutdownNow();}
+    }
+
     private void roundTrip(boolean requireRelay) throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         String[] relays = requireRelay ? null : new String[0];

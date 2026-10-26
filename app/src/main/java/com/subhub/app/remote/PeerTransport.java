@@ -16,6 +16,7 @@ public interface PeerTransport extends AutoCloseable {
         String authenticatedPeerIdentity();
         InputStream input() throws IOException;
         OutputStream output() throws IOException;
+        /** Starts an absolute frame deadline, including every partial read and write. */
         void setReadTimeoutMillis(long timeoutMillis);
         boolean isDirect();
         @Override void close() throws IOException;
