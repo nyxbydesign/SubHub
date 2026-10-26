@@ -23,7 +23,7 @@ import org.junit.Test;
 public class HomeAssignmentsAndroidTest {
     @org.junit.Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
 
-    @Test public void canonicalDetailsOmitAppNamesAndContractShowsAssignmentsWithoutChangingThem() {
+    @Test public void canonicalDetailsAndContractShowAllowancesWithoutChangingAssignments() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Map<SharedPreferences, Map<String, ?>> before = new LinkedHashMap<>();
         for (String name : new String[] {SettingsRepository.PREFERENCES_NAME, "subhub_onboarding", "subhub_privacy"}) {
@@ -54,8 +54,13 @@ public class HomeAssignmentsAndroidTest {
             for (String section : new String[] {"censor", "limits", "wallet", "atmosphere"}) {
                 String details = descriptions.forSection(section);
                 assertFalse(details.contains(context.getString(R.string.arrangement_apps)));
-                assertFalse(details.contains("Chrome"));
-                assertFalse(details.contains("Settings"));
+                if ("limits".equals(section)) {
+                    assertTrue(details.contains("Chrome · 15 min"));
+                    assertTrue(details.contains("Settings · 40 min"));
+                } else {
+                    assertFalse(details.contains("Chrome"));
+                    assertFalse(details.contains("Settings"));
+                }
                 assertFalse(details.isEmpty());
             }
             long until = android.os.SystemClock.uptimeMillis() + 5000;

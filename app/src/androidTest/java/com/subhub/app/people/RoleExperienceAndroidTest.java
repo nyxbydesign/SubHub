@@ -192,11 +192,13 @@ public final class RoleExperienceAndroidTest {
     public void subCannotEnterStudioOrEditByReopeningAnOldPersonPage() {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
+            await(() -> scenario.getState() == Lifecycle.State.DESTROYED);
             assertEquals(Lifecycle.State.DESTROYED, scenario.getState());
         }
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             resumed(MainActivity.class);
+            await(() -> scenario.getState() == Lifecycle.State.DESTROYED);
             assertEquals(Lifecycle.State.DESTROYED, scenario.getState());
             assertFalse(ControllerPinManager.canEditConfiguration());
         }
@@ -606,6 +608,38 @@ public final class RoleExperienceAndroidTest {
                 Collections.emptyList(), Collections.emptyList(), "EUR", 0, 0, 0, 0, active,
                 new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.CURRENT,
                         runtime, "1", "1"), identity);
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void unknownRemoteAllowanceShowsItsLimitWithoutZeroUsageOrProgress() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) {
+                return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", "Unknown",
+                        PersonSnapshot.Connection.PAIRED, PersonSnapshot.Freshness.CURRENT, 0,
+                        EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT), Collections.emptyList(),
+                        List.of(new PersonSnapshot.Allowance("com.android.chrome", "Chrome", -1, 35)),
+                        "EUR", 0, 0, 0, 0, false,
+                        new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
+                                PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "1", "1"));
+            }
+        });
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> bodyContains(profile, context.getString(R.string.role_allowance_unknown, 35)));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_allowance_usage, 0, 35)));
+            onMain(() -> assertNoUsageProgress(profile.findViewById(R.id.role_page_body)));
+            capture(profile, "remote-allowance-unknown");
+        }
+    }
+
+    private static void assertNoUsageProgress(View view) {
+        assertFalse(view instanceof android.widget.ProgressBar);
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            assertNoUsageProgress(((ViewGroup) view).getChildAt(i));
     }
 
     private void assertHeaderTextClearsControls(Activity activity) {

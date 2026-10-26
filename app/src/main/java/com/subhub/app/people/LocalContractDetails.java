@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
@@ -104,8 +105,22 @@ public final class LocalContractDetails extends ContextWrapper {
                                 ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                                 : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_limits_individual,
-                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)));
+                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
+                        + "\n" + appAllowances(timers)));
         return lines;
+    }
+
+    private String appAllowances(AppTimerManager timers) {
+        List<String> apps = new ArrayList<>();
+        android.content.pm.PackageManager packages = getPackageManager();
+        for (String name : new AppModeManager(this).getIncludedPackages()) {
+            String label = name;
+            try { label = packages.getApplicationLabel(packages.getApplicationInfo(name, 0)).toString(); }
+            catch (android.content.pm.PackageManager.NameNotFoundException absent) { /* Keep saved assignments. */ }
+            apps.add(getString(R.string.arrangement_app_allowance, label, timers.allowanceMinutes(name)));
+        }
+        Collections.sort(apps, String.CASE_INSENSITIVE_ORDER);
+        return apps.isEmpty() ? getString(R.string.arrangement_no_apps) : String.join("\n", apps);
     }
 
     private List<ArrangementDetail> walletArrangementDetails() {
@@ -179,6 +194,18 @@ public final class LocalContractDetails extends ContextWrapper {
         PopupStormSettings popup = PopupStormSettings.load(this);
         SubliminalSettings whispers = new SubliminalSettingsRepository(this).load();
         List<ArrangementDetail> lines = new ArrayList<>();
+        com.subhub.app.pack.SubHubPackManager packs = new com.subhub.app.pack.SubHubPackManager(this);
+        com.subhub.app.pack.SubHubPack pack = packs.activePackOverview();
+        lines.add(detailLine(R.string.arrangement_active_pack, pack == null
+                ? getString(packs.activePackId() == null ? R.string.arrangement_none_selected : R.string.studio_active)
+                : getString(R.string.arrangement_pack_version, pack.getName(), pack.getPackVersion())));
+        boolean pin = com.subhub.app.security.ControllerPinManager.isConfigured(this);
+        boolean auth = new com.subhub.app.security.ControllerAuthenticator(this).isPaired();
+        lines.add(detailLine(R.string.keyholder_home_title, getString(pin && auth
+                ? R.string.keyholder_status_both : pin ? R.string.keyholder_status_pin
+                : auth ? R.string.keyholder_status_auth : R.string.keyholder_status_none)));
+        if (com.subhub.app.commitment.CommitmentManager.isActive(this)) lines.add(detailLine(
+                R.string.keyholder_your_lock, com.subhub.app.commitment.CommitmentManager.countdownLabel(this)));
         lines.add(
                 detailLine(
                         R.string.atmosphere_whispers_title,

@@ -120,8 +120,7 @@ public final class PersonActivity extends RolePage {
             return;
         }
         LinearLayout active = PersonUi.card(body);
-        PersonUi.text(active, getString(R.string.role_active_contract), false);
-        PersonUi.text(active, person.contractName, true);
+        ContractHeader.add(active, person, getString(R.string.role_active_contract), data);
         if (person.sync.hasPendingConfiguration()) PersonUi.text(active,
                 getString(R.string.role_changes_pending), false);
         freshness(active, person.sync.contract);
