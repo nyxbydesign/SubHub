@@ -105,7 +105,7 @@ public final class WalletConnectionController implements AutoCloseable {
     }
 
     private boolean editingAllowed() {
-        return binding != null && ControllerPinManager.isSessionUnlocked();
+        return binding != null && ControllerPinManager.canEditConfiguration();
     }
 
     private String getString(int id, Object... arguments) {

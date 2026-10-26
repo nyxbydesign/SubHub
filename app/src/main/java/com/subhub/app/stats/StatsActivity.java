@@ -33,7 +33,7 @@ public final class StatsActivity extends PreferencePage {
             long[] expanded = state.getLongArray("stats_expanded_sessions");
             if (expanded != null) for (long start : expanded) expandedSessions.add(start);
         }
-        page(R.string.statistics_title);
+        page(R.string.role_stats);
         LinearLayout summary = card(page);
         summary.setId(R.id.stats_lifetime_summary);
         heading(summary, R.string.stats_all_time);
@@ -63,11 +63,20 @@ public final class StatsActivity extends PreferencePage {
         sessionList = card(page);
         bindTotals();
         bindSessions();
+        com.subhub.app.util.SubHubNavigation.attachToPage(this, page,
+                com.subhub.app.util.SubHubNavigation.Screen.STATS);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        com.subhub.app.util.SubHubNavigation.bind(this, findViewById(android.R.id.content),
+                com.subhub.app.util.SubHubNavigation.Screen.STATS);
+        com.subhub.app.security.ControllerEditMode.renderButton(this,
+                com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+        com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content)).setVisibility(
+                com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                        ? android.view.View.VISIBLE : android.view.View.GONE);
         if (firstResume) {
             firstResume = false;
             return;

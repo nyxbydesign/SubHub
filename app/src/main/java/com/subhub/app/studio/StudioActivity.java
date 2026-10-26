@@ -97,6 +97,11 @@ public final class StudioActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            finish();
+            return;
+        }
         binding = ActivityStudioBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         retained = new ViewModelProvider(this).get(StudioState.class);
@@ -178,6 +183,10 @@ public final class StudioActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (!com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)) {
+            finish();
+            return;
+        }
         if (binding != null) {
             SubHubNavigation.bind(this, binding.getRoot(),
                     getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
@@ -220,9 +229,9 @@ public final class StudioActivity extends AppCompatActivity {
     }
 
     private void applySpaceVisibility() {
-        // Creating/editing a draft never changes live configuration; only Apply requires Dom.
-        binding.tabDrafts.setVisibility(View.VISIBLE);
-        binding.tabCreate.setVisibility(View.VISIBLE);
+        boolean allowed = com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL);
+        binding.tabDrafts.setVisibility(allowed ? View.VISIBLE : View.GONE);
+        binding.tabCreate.setVisibility(allowed ? View.VISIBLE : View.GONE);
         updateSectionSummaries();
     }
 
@@ -509,10 +518,12 @@ public final class StudioActivity extends AppCompatActivity {
 
     private void flushDraftSave() {
         editorHandler.removeCallbacks(pendingSave);
-        if (draft == null || actionBusy || storage.isShutdown()) return;
+        if (draft == null || actionBusy || storage.isShutdown()
+                || !com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)) return;
         SubHubPack snapshot = draft.snapshot();
         long revision = saveRevision;
         storage.execute(() -> {
+            if (!com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)) return;
             boolean saved = true;
             try { manager.saveDraft(snapshot); }
             catch (IOException error) { saved = false; }
@@ -526,13 +537,18 @@ public final class StudioActivity extends AppCompatActivity {
     }
 
     private <T> void storageAction(Callable<T> operation, Consumer<T> completed) {
+        if (!com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)) return;
         if (actionBusy || storage.isShutdown()) return;
         flushDraftSave();
         actionBusy = true;
         updateActionState();
         storage.execute(() -> {
             T value;
-            try { value = operation.call(); }
+            try {
+                if (!com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL))
+                    throw new IllegalStateException("Configuration access ended");
+                value = operation.call();
+            }
             catch (Exception error) {
                 editorHandler.post(() -> {
                     if (isDestroyed()) return;
@@ -783,7 +799,7 @@ public final class StudioActivity extends AppCompatActivity {
     }
 
     private void importPack(Uri uri) {
-        if (uri == null) return;
+        if (uri == null || !com.subhub.app.people.PersonRoutes.canEditLocal(this, com.subhub.app.people.PersonId.LOCAL)) return;
         storageAction(() -> manager.importPack(uri), pack -> {
             toast(getString(pack.getId().equals(manager.activePackId())
                     ? R.string.studio_active_update_imported : R.string.studio_imported,

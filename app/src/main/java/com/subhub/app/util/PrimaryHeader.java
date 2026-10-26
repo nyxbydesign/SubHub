@@ -26,6 +26,9 @@ public final class PrimaryHeader {
         icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         ViewCompat.setAccessibilityHeading(title, true);
         title.setText(titleRes);
+        TextView role = root.findViewById(R.id.header_role_badge);
+        if (role != null) role.setText(com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                ? R.string.role_dom : R.string.role_sub);
         subtitle.setText(subtitleRes == 0 ? "" : root.getResources().getString(subtitleRes));
         subtitle.setVisibility(subtitleRes == 0 ? View.GONE : View.VISIBLE);
         fitHeader(root, icon, title, iconRes != 0);
@@ -59,7 +62,7 @@ public final class PrimaryHeader {
                 : Math.max(back.getMinWidth(), (int) Math.ceil(
                         back.getPaint().measureText(back.getText().toString())));
         ViewGroup.MarginLayoutParams bodyParams =
-                (ViewGroup.MarginLayoutParams) ((View) title.getParent()).getLayoutParams();
+                (ViewGroup.MarginLayoutParams) root.findViewById(R.id.primary_header_copy).getLayoutParams();
         int iconWidth = root.getResources().getDimensionPixelSize(R.dimen.primary_header_icon_size);
         int textWidth = headerWidth - header.getPaddingLeft() - header.getPaddingRight()
                 - backWidth - iconWidth - Math.round(19 * density) - controlWidth;
@@ -72,7 +75,7 @@ public final class PrimaryHeader {
                 && title.getPaint().measureText(title.getText().toString()) <= textWidth;
         icon.setVisibility(showIcon ? View.VISIBLE : View.GONE);
         bodyParams.setMarginStart(showIcon || backWidth > 0 ? Math.round(11 * density) : 0);
-        View body = (View) title.getParent();
+        View body = root.findViewById(R.id.primary_header_copy);
         body.setLayoutParams(bodyParams);
         if (stacked && body.getParent() == header) {
             // Keep the title and explanation together; move the control to its own row

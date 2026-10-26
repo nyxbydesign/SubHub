@@ -113,7 +113,9 @@ public final class SubHubPackManager {
 
     /** Creates a new arrangement tied to this installation's private, random creator identity. */
     public SubHubPack createBlank() {
-        return SubHubPack.blank(deviceIdentifier());
+        SubHubPack pack = SubHubPack.blank(deviceIdentifier());
+        pack.setMetadata(context.getString(com.subhub.app.R.string.studio_name_hint), "", "", "1.0.0");
+        return pack;
     }
 
     public JSONObject captureSection(String section) {

@@ -59,6 +59,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Proves enabled product tabs plus the always-visible Settings tab navigate correctly. */
 @RunWith(AndroidJUnit4.class)
 public final class SubHubNavigationTest {
+    @org.junit.Rule public final UiAutomationStateRule automationState = new UiAutomationStateRule();
+    @Before public void prepareRole() {
+        ControllerPinManager.enterDomMode();
+        com.subhub.app.people.People.installRemoteAuthority(() -> false);
+        com.subhub.app.onboarding.OnboardingState.complete(ApplicationProvider.getApplicationContext());
+    }
+
     @Test public void achievementNoticeDoesNotCoverTheFloatingNavigation() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
@@ -87,27 +94,21 @@ public final class SubHubNavigationTest {
         ControllerPinManager.enterDomMode();
     }
 
-    @Test public void disabledAreasRemainReachableWhileSettingsRemainsAvailable() {
-        android.content.Context context = ApplicationProvider.getApplicationContext();
-        FeatureModuleManager modules = new FeatureModuleManager(context);
-        modules.save(false, true, false);
-        try (ActivityScenario<GlobalSettingsActivity> scenario =
-                     ActivityScenario.launch(GlobalSettingsActivity.class)) {
+    @Test public void disabledAreasRemainReachableThroughPeopleWhileSettingsRemainsAvailable() {
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_censor).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_people).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_limits).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_limits).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
             });
-        } finally {
-            modules.save(true, true, true);
         }
     }
 
-    @Test public void subSpaceKeepsHomeAndSettings() {
+    @Test public void subSpaceKeepsOverviewContractStatsAndSettings() {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
                 ControllerPinManager.enterSubMode();
@@ -118,8 +119,10 @@ public final class SubHubNavigationTest {
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_censor).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.VISIBLE,
+                assertEquals(View.GONE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_stats).getVisibility());
                 assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
             });
         } finally {
@@ -164,8 +167,10 @@ public final class SubHubNavigationTest {
                         activity.findViewById(R.id.nav_limits).getVisibility());
                 assertEquals(View.GONE,
                         activity.findViewById(R.id.nav_money).getVisibility());
-                assertEquals(View.VISIBLE,
+                assertEquals(View.GONE,
                         activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_stats).getVisibility());
                 assertEquals(View.VISIBLE,
                         activity.findViewById(R.id.nav_settings).getVisibility());
                 assertNotNull(activity.findViewById(R.id.nav_settings).getBackground());
@@ -193,44 +198,18 @@ public final class SubHubNavigationTest {
 
     @Test public void primaryPillNavigatesAndUpdatesSelection() {
         android.content.Context context = ApplicationProvider.getApplicationContext();
-        context
-                .getSharedPreferences("betablocker_achievements", 0)
-                .edit().clear().commit();
-        context.getSharedPreferences(StatsRepository.PREFS_NAME, 0)
-                .edit().clear().commit();
-        FeatureModuleManager modules = new FeatureModuleManager(context);
-        // Keep MainActivity's first-open permission coordinator idle while this test exercises
-        // navigation. The feature tabs are restored immediately after that startup pass.
-        modules.save(false, false, false, false);
         new AppModeManager(context).setArmed(false);
-        context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
-                .edit().putBoolean(HardcoreModeManager.KEY_REQUESTED, false).commit();
-        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
-        SystemClock.sleep(500L);
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        modules.save(true, true, true);
-        scenario.onActivity(activity -> SubHubNavigation.bind(activity,
-                activity.findViewById(android.R.id.content), SubHubNavigation.Screen.HOME));
-        assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_censor);
-
-        onView(withId(R.id.nav_censor)).perform(click());
-        assertDestination(SettingsActivity.class, R.id.nav_censor, R.id.nav_home);
-
-        onView(withId(R.id.nav_limits)).perform(click());
-        assertDestination(AppModeActivity.class, R.id.nav_limits, R.id.nav_censor);
-
-        onView(withId(R.id.nav_money)).perform(click());
-        assertDestination(PenanceActivity.class, R.id.nav_money, R.id.nav_limits);
-
-        onView(withId(R.id.nav_atmosphere)).perform(click());
-        assertDestination(AtmosphereActivity.class, R.id.nav_atmosphere, R.id.nav_money);
-
-        onView(withId(R.id.nav_settings)).perform(click());
-        assertDestination(GlobalSettingsActivity.class, R.id.nav_settings, R.id.nav_atmosphere);
-
-        onView(withId(R.id.nav_home)).perform(click());
-        assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_settings);
-        scenario.onActivity(Activity::finishAndRemoveTask);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(new android.content.Intent(context, MainActivity.class)
+                .setAction(android.content.Intent.ACTION_MAIN)
+                .putExtra(MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true))) {
+            assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_people);
+            onView(withId(R.id.nav_people)).perform(click());
+            assertDestination(com.subhub.app.people.PeopleActivity.class, R.id.nav_people, R.id.nav_home);
+            onView(withId(R.id.nav_settings)).perform(click());
+            assertDestination(GlobalSettingsActivity.class, R.id.nav_settings, R.id.nav_people);
+            onView(withId(R.id.nav_home)).perform(click());
+            assertDestination(MainActivity.class, R.id.nav_home, R.id.nav_settings);
+        }
     }
 
     @Test public void pillFitsFontScalingAndKeepsTheLastActionAboveNavigation() {
@@ -269,6 +248,7 @@ public final class SubHubNavigationTest {
                                 .getDimensionPixelSize(R.dimen.control_min_height);
                         for (int index = 0; index < navigation.getChildCount(); index++) {
                             ViewGroup tab = (ViewGroup) navigation.getChildAt(index);
+                            if (tab.getVisibility() != View.VISIBLE) continue;
                             assertTrue("Navigation target too narrow", tab.getWidth() >= target);
                             assertTrue("Navigation target too short", tab.getHeight() >= target);
                             TextView label = (TextView) tab.getChildAt(1);
@@ -316,14 +296,12 @@ public final class SubHubNavigationTest {
         assertTrue(selectedInfo.isSelected());
         assertEquals(Button.class.getName(), selectedInfo.getClassName());
         selectedInfo.recycle();
-        int[] tabs = {R.id.nav_home, R.id.nav_censor, R.id.nav_limits,
-                R.id.nav_money, R.id.nav_atmosphere, R.id.nav_settings};
-        int[] icons = {R.id.nav_home_icon, R.id.nav_censor_icon, R.id.nav_limits_icon,
-                R.id.nav_money_icon, R.id.nav_atmosphere_icon, R.id.nav_settings_icon};
-        int[] labels = {R.id.nav_home_label, R.id.nav_censor_label, R.id.nav_limits_label,
-                R.id.nav_money_label, R.id.nav_atmosphere_label, R.id.nav_settings_label};
+        int[] tabs = {R.id.nav_home, R.id.nav_people, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings};
+        int[] icons = {R.id.nav_home_icon, R.id.nav_people_icon, R.id.nav_contract_icon, R.id.nav_stats_icon, R.id.nav_settings_icon};
+        int[] labels = {R.id.nav_home_label, R.id.nav_people_label, R.id.nav_contract_label, R.id.nav_stats_label, R.id.nav_settings_label};
         for (int index = 0; index < tabs.length; index++) {
             LinearLayout tab = activity.findViewById(tabs[index]);
+            if (tab.getVisibility() != View.VISIBLE) continue;
             ImageView icon = activity.findViewById(icons[index]);
             TextView label = activity.findViewById(labels[index]);
             assertEquals(View.VISIBLE, tab.getVisibility());

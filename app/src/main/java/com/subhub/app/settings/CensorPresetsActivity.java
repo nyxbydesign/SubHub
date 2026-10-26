@@ -78,7 +78,8 @@ public final class CensorPresetsActivity extends PreferencePage {
             state.putInt("preset_scroll", ((android.widget.ScrollView) page.getParent()).getScrollY());
     }
 
-    private boolean editing() { return ControllerPinManager.isSessionUnlocked(); }
+    private boolean editing() { return ControllerPinManager.canEditConfiguration()
+            && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()); }
 
     private void addGrid(List<CensorLook> looks, boolean saved) {
         SelectionGrid grid = new SelectionGrid(this, null);

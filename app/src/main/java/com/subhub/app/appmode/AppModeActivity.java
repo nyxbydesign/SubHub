@@ -155,6 +155,10 @@ public final class AppModeActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (manager == null) return;
+        if (!editingAllowed() || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            ControllerEditMode.enterSubMode(this);
+            return;
+        }
         failedPackages = null;
         if (!dirtyTimers || !editingAllowed()) restoreTimerValues();
         renderPerAppAllowances();
@@ -193,7 +197,8 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private boolean editingAllowed() {
-        return ControllerPinManager.isDomModeActive();
+        return ControllerPinManager.canEditConfiguration()
+                && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent());
     }
 
     private boolean rejectUnassignedLimit() {

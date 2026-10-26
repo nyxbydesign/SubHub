@@ -129,14 +129,14 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestPreview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!ControllerPinManager.canEditConfiguration()) return;
         if (!preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
             com.subhub.app.util.ThemedDialogs.builder(this)
                     .setTitle(R.string.popup_photosensitivity_title)
                     .setMessage(R.string.popup_photosensitivity_body)
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.popup_acknowledge, (dialog, which) -> {
-                        if (!ControllerPinManager.isSessionUnlocked()) return;
+                        if (!ControllerPinManager.canEditConfiguration()) return;
                         preferences.edit().putBoolean(PopupStormSettings.K_ACK, true).apply();
                         requestOverlayOrPreview();
                     }).show();
@@ -146,7 +146,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestOverlayOrPreview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!ControllerPinManager.canEditConfiguration()) return;
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
             overlayPermission.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -155,7 +155,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void preview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!ControllerPinManager.canEditConfiguration()) return;
         PopupStormSettings current = PopupStormSettings.load(this);
         if (!current.isAcknowledged() || !Settings.canDrawOverlays(this)) {
             requestPreview();
@@ -183,7 +183,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void applyPreset(int step) {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!ControllerPinManager.canEditConfiguration()) return;
         IntensityPresets.values()[step].apply(this);
         renderPreset();
         rebuildSettings();
@@ -250,7 +250,7 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     private void applyEditState() {
         if (binding == null) return;
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = ControllerPinManager.canEditConfiguration();
         renderEnabled();
         binding.buttonPreview.setEnabled(editing);
         binding.buttonAddFolder.setEnabled(editing);
@@ -347,7 +347,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     private void addToggle(LinearLayout parent, int title, String key, boolean defaultValue) {
         SwitchMaterial toggle = new com.subhub.app.util.StateToggle(this);
         toggle.setText(title);
-        toggle.setEnabled(ControllerPinManager.isSessionUnlocked());
+        toggle.setEnabled(ControllerPinManager.canEditConfiguration());
         toggle.setChecked(preferences.getBoolean(key, defaultValue));
         toggle.setOnCheckedChangeListener((button, checked) -> {
             preferences.edit().putBoolean(key, checked).apply();
@@ -365,7 +365,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         slider.setMinimumHeight(dp(48));
         slider.setMax(maximum - minimum);
         slider.setProgress(stored - minimum);
-        slider.setEnabled(ControllerPinManager.isSessionUnlocked());
+        slider.setEnabled(ControllerPinManager.canEditConfiguration());
         slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int actual = minimum + progress;
@@ -387,7 +387,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         slider.setMinimumHeight(dp(48));
         slider.setMax(steps);
         slider.setProgress(Math.round((stored - minimum) / step));
-        slider.setEnabled(ControllerPinManager.isSessionUnlocked());
+        slider.setEnabled(ControllerPinManager.canEditConfiguration());
         slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 float actual = minimum + progress * step;
@@ -413,7 +413,7 @@ public final class PopupStormActivity extends AppCompatActivity {
             option.setId(View.generateViewId());
             option.setTag(values[index]);
             option.setText(labels[index]);
-            option.setEnabled(ControllerPinManager.isSessionUnlocked());
+            option.setEnabled(ControllerPinManager.canEditConfiguration());
             option.setSelected(values[index].equals(selected));
             option.setMinHeight(dp(48));
             option.setMinimumHeight(dp(48));
@@ -422,7 +422,7 @@ public final class PopupStormActivity extends AppCompatActivity {
             params.setMargins(dp(2), dp(2), dp(2), dp(2));
             group.addView(option, params);
             option.setOnClickListener(view -> {
-                if (!ControllerPinManager.isSessionUnlocked()) return;
+                if (!ControllerPinManager.canEditConfiguration()) return;
                 for (int child = 0; child < group.getChildCount(); child++) {
                     group.getChildAt(child).setSelected(group.getChildAt(child) == view);
                 }
@@ -444,7 +444,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         input.setMaxLines(1);
         input.setText(preferences.getString(key, defaultValue));
         com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
-        input.setEnabled(ControllerPinManager.isSessionUnlocked());
+        input.setEnabled(ControllerPinManager.canEditConfiguration());
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         View.OnFocusChangeListener save = (view, focused) -> {
             if (!focused) saveText(input, key, defaultValue);
@@ -514,7 +514,7 @@ public final class PopupStormActivity extends AppCompatActivity {
                 remove.setAllCaps(false);
                 remove.setBackgroundResource(R.drawable.bg_outline_button);
                 remove.setTextColor(getColor(R.color.accent));
-                remove.setEnabled(ControllerPinManager.isSessionUnlocked());
+                remove.setEnabled(ControllerPinManager.canEditConfiguration());
                 remove.setOnClickListener(view -> removeFolder(value));
                 remove.setMinHeight(dp(48));
                 remove.setMinimumHeight(dp(48));

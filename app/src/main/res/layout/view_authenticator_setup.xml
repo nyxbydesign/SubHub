@@ -1,6 +1,6 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="wrap_content"
-    android:orientation="vertical" android:background="@drawable/bg_sub_hero"
+    android:orientation="vertical" android:background="@drawable/bg_card"
     android:padding="20dp">
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -9,16 +9,16 @@
             android:background="@drawable/bg_header_icon" android:text="1" android:gravity="center"
             android:textColor="@color/accent_hot" android:textStyle="bold" android:importantForAccessibility="no" />
         <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:layout_marginStart="12dp" android:text="@string/keyholder_scan_title"
+            android:layout_marginStart="12dp" android:text="@string/role_scan_authenticator"
             android:textSize="@dimen/ui_text_section" android:textStyle="bold" android:textColor="@color/text_primary" />
     </LinearLayout>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/ui_gap_group" android:layout_marginBottom="@dimen/ui_gap_section"
-        android:text="@string/authenticator_setup_help" android:textColor="@color/text_secondary"
+        android:text="@string/role_authenticator_code" android:textColor="@color/text_secondary"
         android:textSize="@dimen/ui_text_body" android:lineSpacingExtra="3dp" />
 
     <ImageView android:id="@+id/authenticator_pairing_qr"
-        android:layout_width="224dp" android:layout_height="224dp" android:layout_gravity="center_horizontal"
+        android:layout_width="match_parent" android:layout_height="224dp" android:layout_gravity="center_horizontal"
         android:background="@drawable/bg_authenticator_qr" android:padding="8dp"
         android:scaleType="fitCenter" android:contentDescription="@string/authenticator_qr" />
     <TextView android:id="@+id/authenticator_manual_toggle"

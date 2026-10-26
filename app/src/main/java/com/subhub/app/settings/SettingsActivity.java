@@ -69,7 +69,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (ControllerPinManager.isSessionUnlocked()) {
+        if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
             ControllerEditMode.enterSubMode(this);
         } else {
@@ -259,7 +259,7 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.smutSensitivityGroup.setOnCheckedChangeListener((group, checkedId) -> saveAll());
         binding.presetGroup.setOnCheckedChangeListener((group, checkedId) -> {
             if (bindingValues) return;
-            if (!ControllerPinManager.isDomModeActive()) {
+            if (!ControllerPinManager.canEditConfiguration()) {
                 bindValues();
                 applyLockState();
                 return;
@@ -344,7 +344,7 @@ public final class SettingsActivity extends AppCompatActivity {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
             @Override public void afterTextChanged(android.text.Editable value) {
-                if (!bindingValues && ControllerPinManager.isSessionUnlocked()) saveCustomPhrases();
+                if (!bindingValues && ControllerPinManager.canEditConfiguration()) saveCustomPhrases();
             }
         });
         binding.paletteColorOne.setOnClickListener(view -> pickEffectColor(1));
@@ -365,7 +365,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void applyLockState() {
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = ControllerPinManager.canEditConfiguration();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         setEnabledRecursive(binding.styleGroup,
                 editing);
@@ -425,7 +425,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void syncBorderControlState() {
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = ControllerPinManager.canEditConfiguration();
         boolean active = binding.switchBorder.isChecked();
         binding.borderPreview.setAlpha(active ? 1f : .55f);
         binding.borderColor.setEnabled(active && editing);
@@ -488,7 +488,7 @@ public final class SettingsActivity extends AppCompatActivity {
 
     private void showColorDialog(String title, int current, IntConsumer accepted) {
         com.subhub.app.util.ColorPickerDialog.show(this, title, current, color -> {
-            if (ControllerPinManager.isSessionUnlocked()) accepted.accept(color);
+            if (ControllerPinManager.canEditConfiguration()) accepted.accept(color);
         });
     }
 
@@ -564,8 +564,9 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void saveAll() {
-        if (bindingValues) return;
-        if (ControllerPinManager.isSessionUnlocked()) {
+        if (bindingValues || !ControllerPinManager.canEditConfiguration()
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) return;
+        if (ControllerPinManager.canEditConfiguration()) {
             repository.preferences().edit().putString(SettingsRepository.KEY_CENSOR_COVERAGE,
                     binding.radioCoveragePerson.isChecked() ? "whole_person" : "detected_areas").apply();
         }
@@ -765,6 +766,11 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (!ControllerPinManager.canEditConfiguration()
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            ControllerEditMode.enterSubMode(this);
+            return;
+        }
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
         if (binding != null) {
             bindValues();

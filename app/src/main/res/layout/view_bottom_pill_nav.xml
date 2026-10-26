@@ -8,7 +8,7 @@
     android:layout_marginBottom="@dimen/bottom_nav_bottom_margin"
     android:layout_gravity="bottom"
     android:background="@drawable/bg_bottom_pill"
-    android:elevation="12dp"
+    android:elevation="0dp"
     android:columnCount="6"
     android:orientation="horizontal"
     android:padding="6dp">
@@ -26,6 +26,19 @@
             android:id="@+id/nav_home_label"
             style="@style/Widget.SubHub.BottomTabLabel"
             android:text="@string/nav_home" />
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/nav_people" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_people" android:visibility="gone">
+        <ImageView android:id="@+id/nav_people_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_people" />
+        <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_people" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_contract" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_contract" android:visibility="gone">
+        <ImageView android:id="@+id/nav_contract_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_contract" />
+        <TextView android:id="@+id/nav_contract_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_contract" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_stats" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_stats" android:visibility="gone">
+        <ImageView android:id="@+id/nav_stats_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_stats" />
+        <TextView android:id="@+id/nav_stats_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_stats" />
     </LinearLayout>
 
     <LinearLayout

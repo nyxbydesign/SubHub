@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="background">#08060C</color>
+    <color name="background">#160F1D</color>
+    <color name="primary_action_text">#201329</color>
     <color name="dialog_surface_start">#17121F</color>
     <color name="dialog_surface">#21172C</color>
     <color name="dialog_surface_end">#281B34</color>
@@ -9,8 +10,8 @@
     <color name="surface_high">#EC241832</color>
     <!-- Near-black surfaces keep contrast high while the violet tint stays quiet. -->
     <color name="surface_deep">#EA0D0B12</color>
-    <color name="surface_card">#FC131019</color>
-    <color name="surface_card_raised">#EE1D1927</color>
+    <color name="surface_card">#251D2D</color>
+    <color name="surface_card_raised">#302538</color>
     <color name="surface_pressed">#2A1734</color>
     <color name="surface_disabled">#17131D</color>
     <!-- Enabled controls share quiet plum surfaces rather than the bright accent pink. -->
@@ -20,7 +21,7 @@
     <color name="control_checked_text">#EEE5F4</color>
     <color name="control_pressed_surface">#493452</color>
     <color name="control_focus">#B098C4</color>
-    <color name="outline_subtle">#3A3045</color>
+    <color name="outline_subtle">#44374E</color>
     <color name="outline_default">#5A3D68</color>
     <color name="outline_selected">#B96DDB</color>
     <color name="outline_focus">#C986E7</color>
@@ -30,16 +31,16 @@
     <color name="accent_mid">#AE68CF</color>
     <color name="accent_hot">#C17AE1</color>
     <!-- Text needs more contrast than decorative strokes on plum surfaces. -->
-    <color name="accent_text">#C17AE1</color>
+    <color name="accent_text">#CFACEF</color>
     <color name="accent_dark">#54296D</color>
     <color name="accent_dim">#669860BE</color>
     <color name="accent_hot_dim">#667B478F</color>
-    <color name="nav_pill">#EB0D0A12</color>
+    <color name="nav_pill">#211929</color>
     <color name="nav_active">#E82E2140</color>
     <color name="nav_active_pressed">#40254F</color>
     <color name="nav_stroke">#4A2E58</color>
     <color name="glass_highlight">#38F8EFFF</color>
     <color name="text_primary">#F8F1FC</color>
-    <color name="text_secondary">#C9BCD3</color>
-    <color name="text_muted">#8F809B</color>
+    <color name="text_secondary">#C9BFCE</color>
+    <color name="text_muted">#B0A0BC</color>
 </resources>
