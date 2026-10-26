@@ -39,6 +39,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private final Map<String, com.subhub.app.util.ExpandableSectionView> sections =
             new LinkedHashMap<>();
     private LinearLayout categoryMenu, privacyControls;
+    private View keyholderAction;
     private String selectedGroup = "";
 
     private HardcoreModeManager hardcore;
@@ -61,7 +62,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         hardcore = new HardcoreModeManager(this);
         appMode = new AppModeManager(this);
         binding.appListCard.setCountOnlyForOverride(true);
-        binding.appListCard.bind(this, ControllerPinManager::isDomModeActive, this::renderSelectedCount);
+        binding.appListCard.bind(this, ControllerPinManager::canEditConfiguration, this::renderSelectedCount);
         hardcoreActivation =
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
@@ -144,6 +145,11 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         categoryMenu = new LinearLayout(this);
         categoryMenu.setOrientation(LinearLayout.VERTICAL);
         container.addView(categoryMenu, new LinearLayout.LayoutParams(-1, -2));
+        keyholderAction = settingsAction(getString(R.string.role_keyholder), () -> {
+            if (ControllerPinManager.isDomModeActive()) startActivity(new Intent(this,
+                    com.subhub.app.security.AuthenticatorActivity.class));
+        });
+        categoryMenu.addView(keyholderAction);
         addGroup(SettingsSection.APPS, binding.appsCard);
         privacyControls = new LinearLayout(this);
         privacyControls.setOrientation(LinearLayout.VERTICAL);
@@ -329,7 +335,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
 
     private void applyEditState() {
         if (binding == null) return;
-        editingUnlocked = ControllerPinManager.isSessionUnlocked();
+        editingUnlocked = ControllerPinManager.canEditConfiguration();
         applySpaceVisibility();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         binding.switchHardcoreMode.setEnabled(true);
@@ -343,18 +349,21 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private void applySpaceVisibility() {
-        boolean domSpace = ControllerPinManager.isDomModeActive();
+        boolean domSpace = ControllerPinManager.canEditConfiguration();
         int domVisibility = domSpace ? View.VISIBLE : View.GONE;
         binding.settingsGroupProtection.setVisibility(domVisibility);
-        binding.hardcoreCard.setVisibility(View.VISIBLE);
+        binding.hardcoreCard.setVisibility(domVisibility);
         binding.settingsGroupCoverage.setVisibility(domVisibility);
         binding.appsCard.setVisibility(domVisibility);
         binding.androidAccessCard.setVisibility(View.VISIBLE);
         binding.appListCard.setVisibility(domVisibility);
+        sections.get("apps").setVisibility(domVisibility);
+        privacyControls.setVisibility(ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         binding.buttonHelp.setVisibility(View.VISIBLE);
         binding.buttonDiagnostics.setVisibility(View.VISIBLE);
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
+        keyholderAction.setVisibility(ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         displayGroup();
     }
 
@@ -367,7 +376,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private void changeHardcoreMode(boolean enabled) {
-        if (!ControllerPinManager.isDomModeActive()) {
+        if (!ControllerPinManager.canEditConfiguration()) {
             ControllerPinGate.notifyLocked(this);
             refreshHardcoreState();
             return;
@@ -381,7 +390,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     .setPositiveButton(
                             R.string.hardcore_consent_enable,
                             (dialog, which) -> {
-                                if (!ControllerPinManager.isDomModeActive()) {
+                                if (!ControllerPinManager.canEditConfiguration()) {
                                     ControllerPinGate.notifyLocked(this); refreshHardcoreState(); return;
                                 }
                                 hardcore.beginActivation();
@@ -403,7 +412,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     .setPositiveButton(
                             R.string.hardcore_release,
                             (dialog, which) -> {
-                                if (!ControllerPinManager.isDomModeActive()) {
+                                if (!ControllerPinManager.canEditConfiguration()) {
                                     ControllerPinGate.notifyLocked(this); refreshHardcoreState(); return;
                                 }
                                 hardcore.disable();

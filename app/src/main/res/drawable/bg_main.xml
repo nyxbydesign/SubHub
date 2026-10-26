@@ -1,11 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <bitmap android:src="@drawable/subhub_background" android:gravity="fill" />
-    </item>
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="#4809050D" />
-        </shape>
-    </item>
-</layer-list>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/background" />
+</shape>

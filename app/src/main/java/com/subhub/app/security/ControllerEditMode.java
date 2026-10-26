@@ -25,7 +25,9 @@ public final class ControllerEditMode {
         this.button = button;
         this.listener = listener;
         boolean activePactSurface = supportsSubSurface();
-        if (!ControllerPinManager.isDomModeActive() && !(activity instanceof MainActivity)
+        if ((!ControllerPinManager.isDomModeActive()
+                || !com.subhub.app.people.People.isLocalConfigurationAllowed()
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(activity.getIntent())) && !(activity instanceof MainActivity)
                 && !activePactSurface) {
             button.setVisibility(View.GONE);
             listener.onEditStateChanged(false);
@@ -44,16 +46,19 @@ public final class ControllerEditMode {
     public static void renderButton(Activity activity, TextView button) {
         boolean editing = ControllerPinManager.isDomModeActive();
         button.setText(editing
-                ? R.string.controller_edit_unlocked : R.string.controller_edit_locked);
+                ? R.string.role_sub : R.string.role_dom);
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0);
         button.setContentDescription(activity.getString(editing
-                ? R.string.controller_edit_unlocked_description
-                : R.string.controller_edit_locked_description));
+                ? R.string.role_enter_sub : R.string.role_enter_dom));
         button.setSelected(editing);
+        TextView badge = activity.findViewById(R.id.header_role_badge);
+        if (badge != null) badge.setText(editing ? R.string.role_dom : R.string.role_sub);
     }
 
     public boolean isEditing() {
-        return ControllerPinManager.isDomModeActive();
+        return ControllerPinManager.isDomModeActive()
+                && com.subhub.app.people.People.isLocalConfigurationAllowed()
+                && com.subhub.app.people.PersonRoutes.isLocalTarget(activity.getIntent());
     }
 
     public void refresh() {

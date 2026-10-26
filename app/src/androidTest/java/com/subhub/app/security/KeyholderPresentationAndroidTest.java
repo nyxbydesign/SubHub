@@ -19,6 +19,7 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class KeyholderPresentationAndroidTest {
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automationState = new com.subhub.app.UiAutomationStateRule();
     @Test public void androidScreenshotContainsTheKeyholderHeader() {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<AuthenticatorActivity> scenario=ActivityScenario.launch(AuthenticatorActivity.class)) {
@@ -102,6 +103,7 @@ public class KeyholderPresentationAndroidTest {
             onView(withId(R.id.keyholder_pair_button)).perform(scrollTo(), click());
             scenario.onActivity(activity -> {
                 android.widget.ImageView qr = activity.findViewById(R.id.authenticator_pairing_qr);
+                assertNotEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
                 assertNotNull(qr.getDrawable());
                 assertFalse(activity.findViewById(R.id.authenticator_manual_key).isShown());
                 assertFalse(activity.findViewById(R.id.authenticator_confirm_button).isEnabled());
