@@ -78,11 +78,13 @@ public class StatisticsQualityAndroidTest {
                                                                         .load()
                                                                         .getTotalBlocks())));
                         capture(a, "stats-compact-empty.png");
+                        assertEquals(6, assertMetricsReadable(a.findViewById(R.id.stats_lifetime_summary)));
                     });
-            onView(withId(R.id.stats_totals_toggle)).perform(scrollTo(), click());
-            onView(withId(R.id.stats_sessions_more)).perform(scrollTo(), click());
+            onView(withId(R.id.stats_totals_toggle)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            onView(withId(R.id.stats_sessions_more)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             stats.onActivity(
                     a -> {
+                        capture(a, "stats-expanded-after-action.png");
                         assertEquals(6, countSessions(a.findViewById(android.R.id.content)));
                         assertEquals(
                                 View.VISIBLE,
@@ -167,6 +169,24 @@ public class StatisticsQualityAndroidTest {
         } finally {
             com.subhub.app.settings.SharedPreferenceTestRestore.restore(settings, before);
         }
+    }
+
+    private static int assertMetricsReadable(View view) {
+        int count = 0;
+        if ("stats:metric-value".equals(view.getTag()) || "stats:metric-label".equals(view.getTag())) {
+            android.widget.TextView text = (android.widget.TextView) view;
+            assertNotNull(text.getLayout());
+            assertEquals("Metric must remain on one readable line: " + text.getText(), 1,
+                    text.getLayout().getLineCount());
+            assertTrue(text.getLayout().getLineMax(0) <= text.getWidth()
+                    - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight() + 1);
+            count++;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) count += assertMetricsReadable(group.getChildAt(i));
+        }
+        return count;
     }
 
     private static int countSessions(View view) {

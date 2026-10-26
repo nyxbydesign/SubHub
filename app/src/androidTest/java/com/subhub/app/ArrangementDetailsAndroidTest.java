@@ -66,7 +66,7 @@ public class ArrangementDetailsAndroidTest {
         ControllerPinManager.enterSubMode();
     }
 
-    @Test public void allFourContractSectionsRemainWithFiveOrZeroTributesAndReadableDetails() {
+    @Test public void allContractSectionsRemainWithFiveOrZeroTributesAndReadableDetails() {
         try (ActivityScenario<com.subhub.app.people.ContractActivity> page =
                 ActivityScenario.launch(com.subhub.app.people.ContractActivity.class)) {
             awaitContract(page);
@@ -83,20 +83,23 @@ public class ArrangementDetailsAndroidTest {
         String visible = text(content);
         com.subhub.app.people.PersonSnapshot snapshot = new com.subhub.app.people.LocalPersonRepository(activity)
                 .load(com.subhub.app.people.PersonId.LOCAL);
-        assertEquals(4, snapshot.sections.size());
+        assertEquals(5, snapshot.sections.size());
+        java.util.Map<String, com.subhub.app.people.PersonSnapshot.Section> sections = new java.util.LinkedHashMap<>();
+        for (com.subhub.app.people.PersonSnapshot.Section value : snapshot.sections) sections.put(value.key, value);
+        assertEquals(new java.util.LinkedHashSet<>(java.util.Arrays.asList("apps", "censor", "limits", "wallet", "atmosphere")), sections.keySet());
         for (com.subhub.app.people.PersonSnapshot.Section section : snapshot.sections) {
             assertTrue(visible.contains(section.title));
             assertTrue(visible.contains(section.summary));
             assertTrue(visible.contains(section.details));
             assertFalse(section.summary.contains(activity.getString(R.string.role_service_active)));
         }
-        assertEquals(activity.getString(R.string.role_disabled), snapshot.sections.get(0).summary);
+        assertEquals(activity.getString(R.string.role_disabled), sections.get("censor").summary);
         assertEquals(activity.getResources().getQuantityString(R.plurals.sub_limits_selected, 3, 3),
-                snapshot.sections.get(1).summary);
+                sections.get("limits").summary);
         assertEquals(expectedRules == 0 ? activity.getString(R.string.role_disabled)
-                : activity.getString(R.string.role_wallet_rule_count, expectedRules), snapshot.sections.get(2).summary);
+                : activity.getString(R.string.role_wallet_rule_count, expectedRules), sections.get("wallet").summary);
         assertEquals(activity.getResources().getQuantityString(R.plurals.atmosphere_effects_active, 0, 0),
-                snapshot.sections.get(3).summary);
+                sections.get("atmosphere").summary);
         View navigation = activity.findViewById(R.id.nav_contract);
         assertTrue(navigation.isShown());
         assertTrue(navigation.getHeight() >= Math.round(48 * activity.getResources().getDisplayMetrics().density));

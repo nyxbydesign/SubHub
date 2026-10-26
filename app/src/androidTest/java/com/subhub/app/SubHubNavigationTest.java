@@ -136,7 +136,9 @@ public final class SubHubNavigationTest {
                      ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(activity -> {
                 assertNull(activity.findViewById(R.id.feature_areas_card));
-                assertEquals(View.GONE, activity.findViewById(R.id.apps_card).getVisibility());
+                assertNull(activity.findViewById(R.id.apps_card));
+                assertNull(activity.findViewById(R.id.app_list_card));
+                assertNull(activity.findViewById(android.R.id.content).findViewWithTag("settings:apps"));
                 assertNull(activity.findViewById(R.id.paypal_card));
                 assertNull(activity.findViewById(R.id.button_packs));
                 assertEquals(View.VISIBLE,

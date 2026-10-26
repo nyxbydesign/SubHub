@@ -145,6 +145,7 @@ public final class PersonUi {
     public static int icon(String section) {
         switch (section) {
             case "censor": return R.drawable.ic_nav_censor;
+            case "apps":
             case "limits": return R.drawable.ic_nav_limits;
             case "wallet": return R.drawable.ic_nav_money;
             default: return R.drawable.ic_atmosphere;

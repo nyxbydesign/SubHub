@@ -84,13 +84,16 @@ public final class HomeDetailConfigurationAndroidTest {
             assertTrue(new AppModeManager(context).getIncludedPackages().isEmpty());
         }
     }
-    @Test public void ritualsShowsActivePackAndConfiguredMethodsWithoutSecrets() throws Exception {
+    @Test public void activeContractHeaderAndSecurityShowTheirOwnDetailsWithoutSecrets() throws Exception {
         ControllerPinManager.enterDomMode();
+        new com.subhub.app.settings.FeatureModuleManager(context).setSubliminalEnabled(true);
+        prefs.edit().putBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, true).commit();
         SubHubPack pack = packs.createBlank(); id = pack.getId();
         pack.setMetadata("Native Rituals pack", "Synthetic holder", "", "2.3.0");
         pack.putAsset("assets/cover/rituals.png", coverArtwork());
         pack.setSection(SubHubPackSchema.CENSOR, PackSettingCatalog.defaults(SubHubPackSchema.CENSOR));
         packs.addToLibrary(pack); assertTrue(packs.activate(pack, Set.of(SubHubPackSchema.CENSOR)));
+        assertEquals("2.3.0", packs.activePackOverview().getPackVersion());
         auth.edit().putString("encrypted_secret", "SYNTHETIC_SECRET_DO_NOT_SHOW").commit();
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<ContractActivity> scenario = launch()) {
@@ -98,11 +101,13 @@ public final class HomeDetailConfigurationAndroidTest {
             onView(withTagValue(is("contract_cover:local"))).perform(revealAboveNavigation());
             awaitCommittedFrame();
             assertCover(true);
+            assertHeaderVersion(true);
             inspect("home-rituals-config.png", text -> {
-                assertTrue(text.contains("Native Rituals pack · v2.3.0"));
-                assertTrue(text.contains(context.getString(R.string.keyholder_status_both)));
+                assertTrue(text.contains("Native Rituals pack"));
+                assertFalse(text.contains(context.getString(R.string.keyholder_status_both)));
                 assertFalse(text.contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
             });
+            assertEffectDetails();
             assertAllowances();
             ControllerPinManager.enterDomMode();
             pack.removeAsset("assets/cover/rituals.png"); packs.addToLibrary(pack);
@@ -110,14 +115,65 @@ public final class HomeDetailConfigurationAndroidTest {
             scenario.recreate();
             awaitContract(scenario, false);
             assertCover(false);
-            inspect(null, text -> assertTrue(text.contains("Native Rituals pack · v2.3.0")));
+            assertHeaderVersion(true);
+            inspect(null, text -> assertTrue(text.contains("Native Rituals pack")));
+            assertEffectDetails();
             ControllerPinManager.enterDomMode(); assertTrue(packs.deactivate());
             ControllerPinManager.enterSubMode();
             scenario.recreate();
             awaitContract(scenario, false);
             assertCover(false);
-            inspect(null, text -> assertTrue(text.contains(context.getString(R.string.arrangement_none_selected))));
+            assertHeaderVersion(false);
+            assertNull(packs.activePackId());
+            inspect(null, text -> {
+                assertTrue(text.contains(context.getString(R.string.role_local_configuration)));
+                assertFalse(text.contains("Native Rituals pack"));
+            });
+            assertEffectDetails();
         }
+        try (ActivityScenario<com.subhub.app.security.AuthenticatorActivity> security =
+                ActivityScenario.launch(com.subhub.app.security.AuthenticatorActivity.class)) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            security.onActivity(this::assertSecurityDetails);
+            security.recreate();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            security.onActivity(this::assertSecurityDetails);
+        }
+    }
+
+    private void assertEffectDetails() {
+        onView(withId(R.id.role_page_body)).check((body, missing) -> {
+            if (missing != null) throw missing;
+            ViewGroup cards = (ViewGroup) body;
+            String effects = null;
+            for (int index = 0; index < cards.getChildCount(); index++) {
+                View card = cards.getChildAt(index);
+                if (containsExact(card, context.getString(R.string.atmosphere_title))) effects = text(card);
+            }
+            assertNotNull("Contract contains its effect settings", effects);
+            assertTrue(effects.contains(context.getString(R.string.arrangement_detail_line,
+                    context.getString(R.string.atmosphere_whispers_title),
+                    context.getString(R.string.arrangement_atmosphere_enabled, ""))));
+            assertTrue(effects.contains(context.getString(R.string.arrangement_detail_line,
+                    context.getString(R.string.popup_title), context.getString(R.string.atmosphere_state_on))));
+            assertFalse(effects.contains("Native Rituals pack"));
+            assertFalse(effects.contains("2.3.0"));
+            assertFalse(effects.contains(context.getString(R.string.keyholder_home_title)));
+            assertFalse(effects.contains(context.getString(R.string.keyholder_your_lock)));
+        });
+    }
+
+    private void assertSecurityDetails(com.subhub.app.security.AuthenticatorActivity activity) {
+        View content = activity.findViewById(android.R.id.content);
+        String copy = text(content);
+        assertTrue(copy.contains(context.getString(R.string.role_security)));
+        assertTrue(copy.contains(context.getString(R.string.keyholder_status_pin)));
+        assertTrue(copy.contains(context.getString(R.string.authenticator_paired)));
+        assertFalse(copy.contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
+        assertNull(activity.findViewById(R.id.keyholder_pair_device));
+        assertNull(activity.findViewById(R.id.keyholder_pin_change_button));
+        assertNull(activity.findViewById(R.id.keyholder_pair_button));
+        checkTextFits(content);
     }
     private ActivityScenario<ContractActivity> launch() {
         return ActivityScenario.launch(ContractActivity.class);
@@ -159,6 +215,9 @@ public final class HomeDetailConfigurationAndroidTest {
             assertFalse(text(body).contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
             checkTextFits(body);
             assertFalse(hasConfigurationInput(body));
+            assertNull(body.findViewById(R.id.person_session_action));
+            assertNull(body.findViewWithTag("person_apps"));
+            assertNull(body.findViewWithTag("person_duration"));
             View navigation = body.getRootView().findViewById(R.id.nav_contract);
             assertTrue(navigation.isShown());
             assertTrue(navigation.isSelected());
@@ -211,6 +270,14 @@ public final class HomeDetailConfigurationAndroidTest {
             Rect navigation = new Rect();
             assertTrue(cover.getRootView().findViewById(R.id.bottom_navigation).getGlobalVisibleRect(navigation));
             assertTrue("Cover clears the floating navigation", artwork.bottom <= navigation.top);
+        });
+    }
+    private void assertHeaderVersion(boolean visible) {
+        onView(withTagValue(is("contract_version:local"))).check((view, missing) -> {
+            if (missing != null) throw missing;
+            assertEquals(visible ? View.VISIBLE : View.GONE, view.getVisibility());
+            assertEquals(visible ? context.getString(R.string.person_contract_version, "2.3.0") : "",
+                    ((TextView) view).getText().toString());
         });
     }
     private Bitmap renderedContractScreenshot(String file) {
@@ -314,5 +381,12 @@ public final class HomeDetailConfigurationAndroidTest {
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
             result.append(text(((ViewGroup) view).getChildAt(i)));
         return result.toString();
+    }
+
+    private static boolean containsExact(View view, String value) {
+        if (view instanceof TextView && value.contentEquals(((TextView) view).getText())) return true;
+        if (view instanceof ViewGroup) for (int index = 0; index < ((ViewGroup) view).getChildCount(); index++)
+            if (containsExact(((ViewGroup) view).getChildAt(index), value)) return true;
+        return false;
     }
 }

@@ -77,9 +77,9 @@ public final class HelpAndLocaleTest {
             assertEquals("Leave Service", localized.getString(R.string.stop_protection));
             assertEquals(localized.getString(R.string.start_protection),
                     localized.getString(R.string.shortcut_start_protection));
-            assertTrue(localized.getString(R.string.help_body_started).contains("Enter Service"));
+            assertTrue(localized.getString(R.string.help_body_started).contains(localized.getString(R.string.role_start_session)));
             assertTrue(localized.getString(R.string.help_body_service_timers)
-                    .contains("Leave Service"));
+                    .contains(localized.getString(R.string.role_end_session)));
             assertTrue(localized.getString(R.string.help_body_app_assignment)
                     .contains("Subliminal"));
         }

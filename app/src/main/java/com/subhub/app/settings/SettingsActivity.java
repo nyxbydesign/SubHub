@@ -46,7 +46,7 @@ public final class SettingsActivity extends AppCompatActivity {
         binding = ActivitySettingsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_censor,
-                R.string.censor_header_title, 0);
+                R.string.censor_header_title, R.string.role_this_device);
         binding.getRoot().setFocusableInTouchMode(true);
         binding.getRoot().requestFocus();
         repository = new SettingsRepository(this);
@@ -83,6 +83,12 @@ public final class SettingsActivity extends AppCompatActivity {
         page.addView(binding.censorFilterRules, page.indexOfChild(binding.censorAppearance));
         binding.censorFilterRules.removeView(binding.censorCaptureSection);
         binding.censorFilterRules.addView(binding.censorCaptureSection);
+        com.subhub.app.people.PersonUi.row(page, R.drawable.ic_tab_export,
+                getString(R.string.export_workspace_title), "", () -> {
+                    if (ControllerPinManager.canEditConfiguration()
+                            && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
+                        startActivity(new android.content.Intent(this, com.subhub.app.capture.ExportActivity.class));
+                }).setId(R.id.censor_photo_tools);
     }
 
     private void bindDisclosures() {
