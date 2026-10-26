@@ -63,7 +63,11 @@ public final class SubHubPackArchive {
 
     private static JSONObject readJsonEntry(java.util.zip.ZipFile zip, String name, long limit)
             throws Exception {
-        ZipEntry entry = zip.getEntry(name);
+        return readJsonEntry(zip,zip.getEntry(name),limit);
+    }
+
+    private static JSONObject readJsonEntry(java.util.zip.ZipFile zip, ZipEntry entry, long limit)
+            throws Exception {
         if (entry == null || entry.isDirectory()) throw new IOException("Missing pack metadata");
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (InputStream input = zip.getInputStream(entry)) {
@@ -76,6 +80,126 @@ public final class SubHubPackArchive {
         final SubHubPack pack;
         final int assetCount;
         Overview(SubHubPack pack, int assetCount) { this.pack = pack; this.assetCount = assetCount; }
+    }
+
+    public static final class Asset {
+        public final String hash;
+        public final long length;
+        private Asset(String hash,long length) {this.hash=hash;this.length=length;}
+    }
+
+    /** A verified archive retains its descriptor so artwork can be copied without whole-file buffers. */
+    public static final class Verified implements AutoCloseable {
+        public final SubHubPack pack;
+        public final Map<String,Asset> assets;
+        private final java.util.zip.ZipFile zip;
+        private final Map<String,ZipEntry> entries;
+        private Verified(SubHubPack pack,Map<String,Asset> assets,java.util.zip.ZipFile zip,Map<String,ZipEntry> entries) {
+            this.pack=pack;this.assets=Collections.unmodifiableMap(assets);this.zip=zip;this.entries=entries;
+        }
+        public InputStream openAsset(String path) throws IOException {
+            if(!assets.containsKey(path))throw new IOException("Unknown contract asset");
+            return zip.getInputStream(entries.get(path));
+        }
+        @Override public void close() throws IOException {zip.close();}
+    }
+
+    public static Verified openVerified(java.io.File file) throws IOException {
+        if(file.length()>PackInputLimiter.MAX_ARCHIVE_BYTES)throw new IOException("Pack archive is too large");
+        java.util.zip.ZipFile zip=new java.util.zip.ZipFile(file,StandardCharsets.UTF_8);
+        try {
+            Map<String,ZipEntry> entries=new LinkedHashMap<>();
+            java.util.Enumeration<? extends ZipEntry> inventory=zip.entries();
+            while(inventory.hasMoreElements()) {
+                ZipEntry entry=inventory.nextElement();if(entry.isDirectory())continue;
+                String name=normalize(entry.getName());
+                if(entries.size()>=PackInputLimiter.MAX_ENTRIES || !isSafeEntryPath(name) || entries.put(name,entry)!=null) {
+                    throw new IOException("Unsafe or duplicate contract entry");
+                }
+            }
+            JSONObject manifest=readJsonEntry(zip,entries.get("manifest.json"),MAX_MANIFEST_BYTES);
+            long total=entries.get("manifest.json").getSize();
+            Map<String,JSONObject> sections=new LinkedHashMap<>();
+            Set<String> expected=new LinkedHashSet<>();expected.add("manifest.json");
+            for(String section:jsonStrings(manifest.optJSONArray("includedSections"))) {
+                if(!SubHubPackSchema.SECTIONS.contains(section))throw new IOException("Unknown pack section");
+                String path="sections/"+section+".json";expected.add(path);
+                sections.put(section,readJsonEntry(zip,entries.get(path),MAX_SECTION_BYTES));total+=entries.get(path).getSize();
+            }
+            JSONObject hashes=manifest.optJSONObject("assetHashes");if(hashes==null)hashes=new JSONObject();
+            Map<String,Asset> assets=new LinkedHashMap<>();
+            java.util.Iterator<String> names=hashes.keys();
+            while(names.hasNext()) {
+                String name=names.next();ZipEntry entry=entries.get(name);expected.add(name);
+                if(!isSafeAssetPath(name) || entry==null)throw new IOException("Incomplete contract assets");
+                MessageDigest hash=MessageDigest.getInstance("SHA-256");long length=0;
+                try(InputStream input=zip.getInputStream(entry)) {
+                    byte[] buffer=new byte[8192];int count;
+                    while((count=input.read(buffer))!=-1) {
+                        length+=count;total+=count;
+                        if(length>MAX_ASSET_BYTES || total>MAX_TOTAL_BYTES)throw new IOException("Contract asset size limit exceeded");
+                        hash.update(buffer,0,count);
+                    }
+                }
+                String digest=hex(hash.digest());
+                if(!constantEquals(hashes.getString(name),digest))throw new IOException("Contract asset checksum mismatch");
+                assets.put(name,new Asset(digest,length));
+            }
+            if(!expected.equals(entries.keySet()) || total>MAX_TOTAL_BYTES)throw new IOException("Unexpected contract entries");
+            JSONObject without=PackVerifier.deepCopy(manifest);without.put("integrity","");
+            if(!constantEquals(manifest.getString("integrity"),integrity(without,sections)))throw new IOException("Contract integrity mismatch");
+            return new Verified(SubHubPack.fromManifest(manifest,sections,Collections.emptyMap()),assets,zip,entries);
+        } catch(Exception error) {
+            zip.close();if(error instanceof IOException)throw (IOException)error;
+            throw new IOException("Invalid contract archive",error);
+        }
+    }
+
+    public static void writeStreaming(SubHubPack metadata,Map<String,java.io.File> assets,OutputStream output) throws IOException {
+        try {
+            Map<String,String> hashes=new LinkedHashMap<>();long total=0;
+            if(assets.size()+metadata.getIncludedSections().size()+1>PackInputLimiter.MAX_ENTRIES)throw new IOException("Too many contract entries");
+            for(Map.Entry<String,java.io.File> asset:assets.entrySet()) {
+                long length=asset.getValue().length();
+                if(!isSafeAssetPath(asset.getKey()) || length>MAX_ASSET_BYTES || length<0)throw new IOException("Invalid contract asset");
+                total+=length;if(total>MAX_TOTAL_BYTES)throw new IOException("Contract size limit exceeded");
+                MessageDigest hash=MessageDigest.getInstance("SHA-256");
+                try(InputStream input=new java.io.FileInputStream(asset.getValue())) {
+                    byte[] buffer=new byte[8192];int count;long actual=0;
+                    while((count=input.read(buffer))!=-1) {
+                        actual+=count;if(actual>length)throw new IOException("Contract asset changed");
+                        hash.update(buffer,0,count);
+                    }
+                    if(actual!=length)throw new IOException("Contract asset changed");
+                }
+                hashes.put(asset.getKey(),hex(hash.digest()));
+            }
+            JSONObject manifest=new JSONObject(metadata.manifestWithoutIntegrity(hashes).toString());
+            Map<String,JSONObject> sections=new LinkedHashMap<>();
+            for(String section:metadata.getIncludedSections())sections.put(section,new JSONObject(SubHubPackSchema.sanitizeSection(section,metadata.getSection(section)).toString()));
+            manifest.put("integrity",integrity(manifest,sections));
+            byte[] manifestBytes=manifest.toString(2).getBytes(StandardCharsets.UTF_8);
+            if(manifestBytes.length>MAX_MANIFEST_BYTES)throw new IOException("Contract manifest too large");total+=manifestBytes.length;
+            try(ZipOutputStream zip=new ZipOutputStream(output,StandardCharsets.UTF_8)) {
+                put(zip,"manifest.json",manifestBytes);
+                for(Map.Entry<String,JSONObject> section:sections.entrySet()) {
+                    byte[] bytes=section.getValue().toString(2).getBytes(StandardCharsets.UTF_8);total+=bytes.length;
+                    if(bytes.length>MAX_SECTION_BYTES || total>MAX_TOTAL_BYTES)throw new IOException("Contract metadata size limit exceeded");
+                    put(zip,"sections/"+section.getKey()+".json",bytes);
+                }
+                for(Map.Entry<String,java.io.File> asset:assets.entrySet()) {
+                    ZipEntry entry=new ZipEntry(asset.getKey());entry.setTime(0);zip.putNextEntry(entry);
+                    MessageDigest hash=MessageDigest.getInstance("SHA-256");long copied=0;
+                    try(InputStream input=new java.io.FileInputStream(asset.getValue())) {
+                        byte[] buffer=new byte[8192];int count;
+                        while((count=input.read(buffer))!=-1) {copied+=count;if(copied>MAX_ASSET_BYTES)throw new IOException("Contract asset changed");zip.write(buffer,0,count);hash.update(buffer,0,count);}
+                    }
+                    if(!hashes.get(asset.getKey()).equals(hex(hash.digest())))throw new IOException("Contract asset changed during export");
+                    zip.closeEntry();
+                }
+            }
+        } catch(IOException error) {throw error;}
+        catch(Exception error) {throw new IOException("Could not export contract",error);}
     }
 
     public static void write(SubHubPack pack, OutputStream output) throws IOException {
@@ -236,6 +360,10 @@ public final class SubHubPackArchive {
 
     private static String sha256(byte[] bytes) throws Exception {
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+        return hex(digest);
+    }
+
+    private static String hex(byte[] digest) {
         StringBuilder result = new StringBuilder(digest.length * 2);
         for (byte value : digest) result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
         return result.toString();

@@ -328,6 +328,148 @@ public final class RemoteStore extends SQLiteOpenHelper {
         getWritableDatabase().execSQL("UPDATE peers SET last_sync=? WHERE peer=? AND generation=?",new Object[]{now,identity,generation});
     }
 
+    public synchronized JSONObject outgoingHeads(String identity,String generation) throws JSONException {
+        Peer peer=active(getReadableDatabase(),identity,generation);JSONObject result=new JSONObject();
+        for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
+            if(stream.writer!=peer.localRole)continue;long head=0;
+            try(Cursor c=getReadableDatabase().rawQuery("SELECT next_seq FROM outgoing WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,generation,stream))) {
+                if(c.moveToFirst())head=c.getLong(0);
+            }
+            result.put(stream.name(),"true".equals(metadata(identity,generation,"unavailable_"+stream.name(),""))?-1:head);
+        }
+        return result;
+    }
+
+    synchronized void confirmHeads(String identity,String generation,JSONObject heads) throws JSONException {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Peer peer=active(db,identity,generation);int expected=0;
+            for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
+                if(stream.writer!=peer.remoteRole())continue;expected++;
+                long head=RemoteProtocol.integer(heads,stream.name()),received=0;
+                if(head==-1){putMetadata(identity,generation,"confirmed_"+stream.name(),"0");continue;}
+                try(Cursor c=db.rawQuery("SELECT through_seq FROM incoming WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,generation,stream))) {
+                    if(c.moveToFirst())received=c.getLong(0);
+                }
+                if(head<received || head<0)throw new SecurityException("Regressing source checkpoint");
+                if(head==received)putMetadata(identity,generation,"confirmed_"+stream.name(),Long.toString(System.currentTimeMillis()));
+            }
+            if(heads.length()!=expected)throw new JSONException("Unsupported source streams");
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+
+    public synchronized List<RemoteProtocol.Change> published(String identity,String generation,RemoteProtocol.Stream stream) {
+        List<RemoteProtocol.Change> result=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,item,body,deleted,observed FROM local_objects WHERE peer=? AND generation=? AND stream=? ORDER BY seq",streamArgs(identity,generation,stream))) {
+            while(c.moveToNext())result.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)!=0,c.getLong(4)));
+        }
+        return result;
+    }
+
+    public enum CommandState { QUEUED,SENT,APPLYING,APPLIED,REJECTED,CONFLICT }
+    public static final class Command {
+        public final String id,body;
+        public final long revision;
+        public final CommandState state;
+        Command(String id,long revision,CommandState state,String body){this.id=id;this.revision=revision;this.state=state;this.body=body;}
+        public boolean pending(){return state==CommandState.QUEUED || state==CommandState.SENT || state==CommandState.APPLYING;}
+    }
+
+    public synchronized Command latestCommand(String identity,String generation) {
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT id,revision,status,body FROM commands WHERE peer=? AND generation=? ORDER BY revision DESC LIMIT 1",new String[]{identity,generation})) {
+            return c.moveToFirst()?readCommand(c):null;
+        }
+    }
+    synchronized Command command(String identity,String generation,String id) {
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT id,revision,status,body FROM commands WHERE peer=? AND generation=? AND id=?",new String[]{identity,generation,id})) {
+            return c.moveToFirst()?readCommand(c):null;
+        }
+    }
+
+    public synchronized Command queueConfiguration(String identity,String generation,long expectedDesired,long expectedApplied,JSONObject configuration) throws JSONException {
+        JSONObject doc=RemoteConfiguration.active(configuration);SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Peer peer=active(db,identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Only the paired Dom controls configuration");
+            long previous=Long.parseLong(metadata(identity,generation,"desired_revision","0"));
+            if(previous!=expectedDesired || previous==Long.MAX_VALUE || expectedApplied<0)throw new IllegalStateException("Configuration changed; reload before saving");
+            Command pending=latestCommand(identity,generation);if(pending!=null && pending.pending())throw new IllegalStateException("A configuration change is pending");
+            String id=java.util.UUID.randomUUID().toString();long revision=previous+1;
+            JSONObject body=new JSONObject().put("id",id).put("revision",revision).put("base",expectedApplied).put("configuration",doc);
+            insertCommand(db,identity,generation,id,revision,CommandState.QUEUED,RemoteProtocol.canonical(body));
+            putMetadata(identity,generation,"desired_revision",Long.toString(revision));
+            publish(identity,generation,RemoteProtocol.Stream.CONFIGURATION,"desired",body,false,System.currentTimeMillis());
+            db.setTransactionSuccessful();return command(identity,generation,id);
+        } finally {db.endTransaction();}
+    }
+
+    synchronized Command stageCommand(String identity,String generation,JSONObject body) throws JSONException {
+        Peer peer=active(getWritableDatabase(),identity,generation);if(peer.localRole!=RemoteProtocol.Role.SUB)throw new SecurityException("Not a managed device");
+        RemoteConfiguration.keys(body,"id","revision","base","configuration");String id=RemoteProtocol.identifier(body.getString("id"));
+        long revision=RemoteProtocol.integer(body,"revision"),base=RemoteProtocol.integer(body,"base");
+        if(base<0 || revision<=base)throw new IllegalArgumentException("Invalid configuration revision");
+        body.getJSONObject("configuration");String encoded=RemoteProtocol.canonical(body);
+        Command old=command(identity,generation,id);
+        if(old!=null) {if(!old.body.equals(encoded))throw new SecurityException("Command identity reused");return old;}
+        insertCommand(getWritableDatabase(),identity,generation,id,revision,CommandState.QUEUED,encoded);
+        return command(identity,generation,id);
+    }
+
+    synchronized void markApplying(String identity,String generation,String id) {
+        active(getWritableDatabase(),identity,generation);
+        getWritableDatabase().execSQL("UPDATE commands SET status='APPLYING' WHERE peer=? AND generation=? AND id=? AND status='QUEUED'",new Object[]{identity,generation,id});
+    }
+
+    synchronized void commandResult(String identity,String generation,Command command,CommandState state,JSONObject applied,String reason) throws JSONException {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Peer peer=active(db,identity,generation);if(peer.localRole!=RemoteProtocol.Role.SUB)throw new SecurityException("Not a managed device");
+            if(state!=CommandState.APPLIED && state!=CommandState.CONFLICT && state!=CommandState.REJECTED)throw new IllegalArgumentException("Not a terminal command result");
+            Command current=command(identity,generation,command.id);
+            if(current==null || !current.body.equals(command.body))throw new SecurityException("Unknown configuration command");
+            if(!current.pending()) {
+                if(current.state!=state)throw new SecurityException("Configuration result changed");
+                db.setTransactionSuccessful();return;
+            }
+            if(state==CommandState.APPLIED) {
+                putMetadata(identity,generation,"applied_revision",Long.toString(command.revision));
+                putMetadata(identity,generation,"applied_configuration",RemoteProtocol.canonical(RemoteConfiguration.active(applied)));
+            }
+            db.execSQL("UPDATE commands SET status=? WHERE peer=? AND generation=? AND id=?",new Object[]{state.name(),identity,generation,command.id});
+            JSONObject result=new JSONObject().put("schema",1).put("id",command.id).put("revision",command.revision).put("state",state.name())
+                    .put("appliedRevision",Long.parseLong(metadata(identity,generation,"applied_revision","0"))).put("reason",reason);
+            publish(identity,generation,RemoteProtocol.Stream.COMMAND_RESULT,command.id,result,false,System.currentTimeMillis());
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+
+    synchronized void markSent(String identity,RemoteProtocol.Batch batch) throws JSONException {
+        if(batch.stream!=RemoteProtocol.Stream.CONFIGURATION)return;
+        for(RemoteProtocol.Change row:batch.changes) {
+            String id=new JSONObject(row.body).optString("id","");
+            getWritableDatabase().execSQL("UPDATE commands SET status='SENT' WHERE peer=? AND generation=? AND id=? AND status='QUEUED'",new Object[]{identity,batch.generation,id});
+        }
+    }
+
+    synchronized void acceptResult(String identity,String generation,JSONObject result) throws JSONException {
+        Peer peer=active(getWritableDatabase(),identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Unexpected command result");
+        if(RemoteProtocol.integer(result,"schema")!=1)throw new IllegalArgumentException("Unsupported command result");
+        Command old=command(identity,generation,result.getString("id"));if(old==null)return;
+        CommandState state=CommandState.valueOf(result.getString("state"));long applied=RemoteProtocol.integer(result,"appliedRevision");
+        if(RemoteProtocol.integer(result,"revision")!=old.revision || applied<0 || state==CommandState.APPLIED && applied!=old.revision
+                || state!=CommandState.APPLIED && state!=CommandState.REJECTED && state!=CommandState.CONFLICT)throw new SecurityException("Invalid command result");
+        if(!old.pending() && old.state!=state)throw new SecurityException("Configuration result changed");
+        getWritableDatabase().execSQL("UPDATE commands SET status=? WHERE peer=? AND generation=? AND id=?",new Object[]{state.name(),identity,generation,old.id});
+        long previous=Long.parseLong(metadata(identity,generation,"applied_revision","0"));
+        if(applied>=previous)putMetadata(identity,generation,"applied_revision",Long.toString(applied));
+        putMetadata(identity,generation,"last_command_reason",result.optString("reason",""));
+    }
+
+    private static Command readCommand(Cursor c){return new Command(c.getString(0),c.getLong(1),CommandState.valueOf(c.getString(2)),c.getString(3));}
+    private static void insertCommand(SQLiteDatabase db,String peer,String generation,String id,long revision,CommandState state,String body) {
+        db.execSQL("INSERT INTO commands(peer,generation,id,revision,status,body) VALUES(?,?,?,?,?,?)",new Object[]{peer,generation,id,revision,state.name(),body});
+    }
+
     private static void putPending(SQLiteDatabase db,String identity,String generation,String name,RemoteProtocol.Role role) {
         RemoteProtocol.peerId(identity); RemoteProtocol.identifier(generation);
         name=RemoteProtocol.deviceName(name);

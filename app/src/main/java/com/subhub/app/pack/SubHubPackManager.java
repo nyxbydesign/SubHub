@@ -183,6 +183,13 @@ public final class SubHubPackManager {
     public List<Record> listDrafts() { return list(drafts, true); }
     public List<Record> listLibrary() { return list(library, false); }
 
+    public synchronized File libraryArchive(String id) {
+        if(id==null || !UUID.fromString(id).toString().equals(id))throw new IllegalArgumentException("Invalid contract identity");
+        File file=fileFor(library,id);
+        if(!file.isFile())throw new IllegalArgumentException("Contract unavailable");
+        return file;
+    }
+
     public SubHubPack findDraft(String id) { return read(fileFor(drafts, id)); }
     public SubHubPack findLibrary(String id) { return read(fileFor(library, id)); }
 

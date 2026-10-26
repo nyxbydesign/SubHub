@@ -10,8 +10,8 @@ import java.text.Collator;
 import java.util.*;
 
 /** Application-only app discovery; never builds rows or retains a settings page. */
-final class InstalledAppCatalog {
-    static Set<String> packageNames(Context app) {
+public final class InstalledAppCatalog {
+    public static Set<String> packageNames(Context app) {
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         Set<String> names = new LinkedHashSet<>();
         for (ResolveInfo info : app.getPackageManager().queryIntentActivities(launcher, PackageManager.MATCH_ALL))
@@ -19,7 +19,7 @@ final class InstalledAppCatalog {
                 names.add(info.activityInfo.packageName);
         return names;
     }
-    static List<Entry> load(Context app) throws InterruptedException {
+    public static List<Entry> load(Context app) throws InterruptedException {
         PackageManager packages = app.getPackageManager();
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         @SuppressWarnings("deprecation")
@@ -49,8 +49,8 @@ final class InstalledAppCatalog {
         return Collections.unmodifiableList(entries);
     }
 
-    static final class Entry {
-        final String label, packageName;
+    public static final class Entry {
+        public final String label, packageName;
         final Drawable icon;
 
         Entry(String label, String packageName, Drawable icon) {

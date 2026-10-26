@@ -81,9 +81,16 @@ public final class AppTimerManager {
     private final SharedPreferences settingsPreferences;
     private final SharedPreferences usagePreferences;
     private final StatsRepository stats;
+    private final Context context;
+    private final com.subhub.app.stats.DailyAppUsageStore suppliedHistory;
 
     public AppTimerManager(Context context) {
+        this(context,null);
+    }
+    AppTimerManager(Context context,com.subhub.app.stats.DailyAppUsageStore history) {
         Context application = context.getApplicationContext();
+        this.context = application;
+        suppliedHistory=history;
         settingsPreferences = application.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
         usagePreferences = application.getSharedPreferences(
@@ -186,6 +193,8 @@ public final class AppTimerManager {
                 .putLong(KEY_TOTAL_USED, totalUsed)
                 .apply();
         stats.recordLimitedAppUsage(elapsedMillis);
+        queueHistory(packageName,appUsed);
+        queueHistory("",totalUsed);
     }
 
     public synchronized UsageSnapshot snapshot(String packageName, long nowMillis) {
@@ -244,8 +253,53 @@ public final class AppTimerManager {
 
     private void ensureCurrentDay(long nowMillis) {
         String today = dayKey(nowMillis);
-        if (today.equals(usagePreferences.getString(KEY_DAY, ""))) return;
-        usagePreferences.edit().clear().putString(KEY_DAY, today).commit();
+        String previous=usagePreferences.getString(KEY_DAY, "");
+        if(today.equals(previous)) {
+            if(!usagePreferences.contains("history_epoch"))usagePreferences.edit()
+                    .putString("history_epoch",java.util.UUID.randomUUID().toString())
+                    .putString("history_zone","").commit();
+            return;
+        }
+        if(!previous.isEmpty()) {
+            String epoch=usagePreferences.getString("history_epoch","");
+            if(epoch.isEmpty()) {
+                epoch=java.util.UUID.randomUUID().toString();
+                if(!usagePreferences.edit().putString("history_epoch",epoch).putString("history_zone","").commit())return;
+            }
+            java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
+            String zone=usagePreferences.getString("history_zone",java.time.ZoneId.systemDefault().getId());
+            for(Map.Entry<String,?> item:usagePreferences.getAll().entrySet()) {
+                String name=item.getKey();if(!(item.getValue() instanceof Long))continue;
+                if(name.startsWith(PACKAGE_PREFIX) || name.equals(KEY_TOTAL_USED))rows.add(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                        epoch,previous,zone,name.equals(KEY_TOTAL_USED)?"":name.substring(PACKAGE_PREFIX.length()),Math.max(0,(Long)item.getValue())));
+            }
+            history().checkpoint(rows);
+        }
+        usagePreferences.edit().clear().putString(KEY_DAY,today).putString("history_epoch",java.util.UUID.randomUUID().toString())
+                .putString("history_zone",java.time.ZoneId.systemDefault().getId()).commit();
+    }
+
+    private void queueHistory(String packageName,long millis) {
+        history().queue(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                usagePreferences.getString("history_epoch",""),usagePreferences.getString(KEY_DAY,""),
+                usagePreferences.getString("history_zone",java.time.ZoneId.systemDefault().getId()),packageName,millis));
+    }
+
+    /** Reconciles a durable current-day source after process restart, without waiting for more usage. */
+    public synchronized void checkpointHistory(long nowMillis) {
+        ensureCurrentDay(nowMillis);
+        java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
+        String epoch=usagePreferences.getString("history_epoch",""),day=usagePreferences.getString(KEY_DAY,""),zone=usagePreferences.getString("history_zone","");
+        for(Map.Entry<String,?> item:usagePreferences.getAll().entrySet()) {
+            String name=item.getKey();if(!(item.getValue() instanceof Long))continue;
+            if(name.startsWith(PACKAGE_PREFIX) || name.equals(KEY_TOTAL_USED))rows.add(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                    epoch,day,zone,name.equals(KEY_TOTAL_USED)?"":name.substring(PACKAGE_PREFIX.length()),Math.max(0,(Long)item.getValue())));
+        }
+        history().checkpoint(rows);
+    }
+
+    private com.subhub.app.stats.DailyAppUsageStore history() {
+        return suppliedHistory==null?com.subhub.app.stats.DailyAppUsageStore.get(context):suppliedHistory;
     }
 
     private static boolean isSelected(String packageName, Set<String> selectedPackages) {
