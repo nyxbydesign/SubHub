@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="person_session_action" type="id" />
+    <item name="people_add_sub" type="id" />
+    <item name="keyholder_pair_device" type="id" />
+    <item name="settings_connections_security" type="id" />
+    <string name="role_profile">Profile</string>
+    <string name="role_add_sub">Add Sub</string>
+    <string name="role_pair_with_dom">Pair with Dom</string>
+    <string name="role_pairing_unavailable">Pairing is unavailable. Try again.</string>
+    <string name="role_connections_security">Connections &amp; security</string>
+    <string name="role_connections">Connections</string>
+    <string name="role_security">Security</string>
+    <string name="role_manage_security">Manage security</string>
+    <string name="role_your_subs">Subs</string>
+    <string name="role_your_dom">Dom</string>
+    <string name="role_no_subs">No Subs paired</string>
     <string name="role_dom">Dom</string>
     <string name="role_sub">Sub</string>
     <string name="role_enter_dom">Enter Dom mode</string>
@@ -26,6 +41,10 @@
     <string name="role_service_count">%1$d in service</string>
     <string name="role_view_people">View people</string>
     <string name="role_service_duration">Service duration</string>
+    <string name="role_session">Session</string>
+    <string name="role_manage_session">Manage session</string>
+    <string name="role_start_session">Start session</string>
+    <string name="role_end_session">End session</string>
     <string name="role_no_app_limits">No daily app limits configured</string>
     <string name="role_app_time">App time</string>
     <string name="role_allowance_usage">%1$d / %2$d min</string>
@@ -51,6 +70,7 @@
     <string name="role_atmosphere_details">Whispers: %1$s\nPopup Storm: %2$s</string>
     <string name="role_connection_unpaired">Not paired</string>
     <string name="role_connection_pending">Pairing pending</string>
+    <string name="role_connection_paired">Paired</string>
     <string name="role_connection_connected">Connected</string>
     <string name="role_connection_offline">Paired · Offline</string>
     <string name="role_connection_revoked">Pairing revoked</string>

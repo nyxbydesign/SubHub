@@ -18,6 +18,14 @@ public final class PersonRoutes {
         context.startActivity(new Intent(context, PersonActivity.class).putExtra(EXTRA_PERSON_ID, id.value()));
     }
 
+    public static void openLocalSession(Context context, PersonId id) {
+        if (id == null || !id.isLocal()) return;
+        context.startActivity(new Intent(context, com.subhub.app.MainActivity.class)
+                .setAction(Intent.ACTION_MAIN)
+                .putExtra(EXTRA_PERSON_ID, id.value())
+                .putExtra(com.subhub.app.MainActivity.EXTRA_LOCAL_SESSION, true));
+    }
+
     public static PersonId requireId(Intent intent) {
         return new PersonId(intent.getStringExtra(EXTRA_PERSON_ID));
     }

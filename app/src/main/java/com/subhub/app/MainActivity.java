@@ -33,14 +33,12 @@ import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceSnapshot;
-import com.subhub.app.penance.TamperTributeReporter;
 import com.subhub.app.permissions.HomePermissionPolicy;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.HardcoreReadinessNotificationManager;
-import com.subhub.app.security.ProtectionStopPolicy;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.settings.CaptureMethod;
@@ -64,6 +62,7 @@ import java.util.List;
 public final class MainActivity extends AppCompatActivity {
     public static final String EXTRA_SUPPRESS_PERMISSION_READINESS =
             "com.subhub.app.extra.SUPPRESS_PERMISSION_READINESS";
+    public static final String EXTRA_LOCAL_SESSION = "com.subhub.app.extra.LOCAL_SESSION";
     private ActivityMainBinding binding;
     private TextView editLockButton;
     private int durationDisplay = -1;
@@ -75,6 +74,7 @@ public final class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String> notificationPermission;
     private boolean startFlowAwaitingOverlay;
     private boolean startFlowAwaitingNotification;
+    private boolean localSessionPage;
     private final EnumSet<HomePermissionPolicy.Requirement> attemptedPermissions =
             EnumSet.noneOf(HomePermissionPolicy.Requirement.class);
     private com.subhub.app.util.AsyncUiScope uiData;
@@ -100,6 +100,11 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            finish();
+            return;
+        }
+        localSessionPage = getIntent().getBooleanExtra(EXTRA_LOCAL_SESSION, false);
         if (com.subhub.app.onboarding.OnboardingState.shouldStart(this)) {
             startActivity(
                     new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)
@@ -111,6 +116,7 @@ public final class MainActivity extends AppCompatActivity {
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         roleHome = new com.subhub.app.people.RoleHomePresenter(this, uiData);
+        roleHome.setSessionPage(localSessionPage);
         binding.commitmentStartPanel.setEditable(false);
         PrimaryHeader.bind(binding.getRoot(), 0, R.string.role_overview, 0);
         editLockButton = findViewById(R.id.button_edit_lock);
@@ -200,7 +206,14 @@ public final class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (!com.subhub.app.people.PersonRoutes.isLocalTarget(intent)) {
+            finish();
+            return;
+        }
+        localSessionPage = intent.getBooleanExtra(EXTRA_LOCAL_SESSION, false);
+        if (roleHome != null) roleHome.setSessionPage(localSessionPage);
         handleShortcutIntent(intent);
+        renderEditState();
     }
 
     private void handleShortcutIntent(Intent intent) {
@@ -214,14 +227,12 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void toggleProtection(View view) {
-        if (new PaidPauseManager(this).isActive()) {
-            showStatus(R.string.paid_pause_active_protection);
-            return;
-        }
         FeatureModuleManager featureModules = new FeatureModuleManager(this);
         AppModeManager appMode = new AppModeManager(this);
         boolean stopping =
-                ScreenCaptureService.isRunning()
+                CommitmentManager.isActive(this)
+                        || new PaidPauseManager(this).isActive()
+                        || ScreenCaptureService.isRunning()
                         || appMode.isArmed()
                         || ScreenshotAccessibilityService.isRecognitionActive();
         if (!stopping && !featureModules.hasRuntimeFeature()) {
@@ -229,32 +240,6 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         if (stopping) {
-            ProtectionStopPolicy.Decision stopDecision = ProtectionStopPolicy.decision(this);
-            if (stopDecision == ProtectionStopPolicy.Decision.TIMER_LOCKED) {
-                TamperTributeReporter.record(this);
-                showStatus(R.string.commitment_stop_requires_dom);
-                return;
-            }
-            if (stopDecision == ProtectionStopPolicy.Decision.REQUIRE_CONTROLLER) {
-                ControllerPinGate.require(this, () -> toggleProtection(view), false);
-                return;
-            }
-            if (CommitmentManager.isActive(this) && ControllerPinManager.isDomModeActive()) {
-                CommitmentManager.emergencyRelease(this);
-                updateProtectionButton(false);
-                renderCommitmentState();
-                return;
-            }
-        }
-        if (ScreenCaptureService.isRunning()) {
-            startService(ScreenCaptureService.stopIntent(this));
-            updateProtectionButton(false);
-            return;
-        }
-        if (appMode.isArmed() || ScreenshotAccessibilityService.isRecognitionActive()) {
-            appMode.setArmed(false);
-            ResumeNotificationManager.cancel(this);
-            updateProtectionButton(false);
             return;
         }
         if (!binding.commitmentStartPanel.validateSelection()) return;
@@ -325,6 +310,8 @@ public final class MainActivity extends AppCompatActivity {
             }
         }
         renderCommitmentState();
+        if (localSessionPage && ControllerPinManager.isDomModeActive()
+                && com.subhub.app.people.LocalSessionControls.isActive(this)) finish();
     }
 
     private void renderCommitmentState() {
@@ -382,19 +369,13 @@ public final class MainActivity extends AppCompatActivity {
     private void updateProtectionButton(boolean running) {
         binding.buttonProtection.setAlpha(1f);
         androidx.core.view.ViewCompat.setStateDescription(binding.buttonProtection, null);
-        PaidPauseManager paidPause = new PaidPauseManager(this);
-        if (paidPause.isActive()) {
-            binding.buttonProtection.setEnabled(false);
-            binding.buttonProtection.setText(R.string.paid_pause_button);
-            return;
-        }
-        boolean appModeRunning =
-                new AppModeManager(this).isArmed()
+        boolean sessionActive = running || CommitmentManager.isActive(this)
+                        || new PaidPauseManager(this).isActive()
+                        || new AppModeManager(this).isArmed()
                         || ScreenshotAccessibilityService.isRecognitionActive();
         binding.buttonProtection.setEnabled(true);
-        binding.buttonProtection.setText(
-                running || appModeRunning ? R.string.stop_protection : R.string.start_protection);
-        if (running || appModeRunning) ControllerPinGate.markLocked(binding.buttonProtection);
+        binding.buttonProtection.setVisibility(sessionActive ? View.GONE : View.VISIBLE);
+        binding.buttonProtection.setText(R.string.role_start_session);
     }
 
     @Override
@@ -556,6 +537,10 @@ public final class MainActivity extends AppCompatActivity {
     private void renderEditState() {
         if (binding == null) return;
         ControllerEditMode.renderButton(this, editLockButton);
+        PrimaryHeader.backButton(binding.getRoot()).setVisibility(localSessionPage ? View.VISIBLE : View.GONE);
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        PrimaryHeader.bind(binding.getRoot(), 0,
+                localSessionPage ? R.string.role_session : R.string.role_overview, 0);
         binding.subDashboard.setVisibility(View.GONE);
         // Both spaces use the floating bottom navigation. Keep the final home
         // content fully reachable above it instead of letting Sub Space cards
@@ -566,7 +551,8 @@ public final class MainActivity extends AppCompatActivity {
                 binding.pageContent.getPaddingTop(),
                 binding.pageContent.getPaddingEnd(),
                 bottom);
-        SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.HOME);
+        SubHubNavigation.bind(this, binding.getRoot(), localSessionPage && ControllerPinManager.isDomModeActive()
+                ? SubHubNavigation.Screen.PEOPLE : SubHubNavigation.Screen.HOME);
         renderSubDashboard();
         renderCommitmentState();
         updateProtectionButton(ScreenCaptureService.isRunning());

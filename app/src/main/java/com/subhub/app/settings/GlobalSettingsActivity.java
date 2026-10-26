@@ -145,10 +145,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         categoryMenu = new LinearLayout(this);
         categoryMenu.setOrientation(LinearLayout.VERTICAL);
         container.addView(categoryMenu, new LinearLayout.LayoutParams(-1, -2));
-        keyholderAction = settingsAction(getString(R.string.role_keyholder), () -> {
-            if (ControllerPinManager.isDomModeActive()) startActivity(new Intent(this,
-                    com.subhub.app.security.AuthenticatorActivity.class));
-        });
+        keyholderAction = settingsAction(getString(R.string.role_connections_security), () ->
+                startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)));
+        keyholderAction.setId(R.id.settings_connections_security);
         categoryMenu.addView(keyholderAction);
         addGroup(SettingsSection.APPS, binding.appsCard);
         privacyControls = new LinearLayout(this);
@@ -363,7 +362,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonDiagnostics.setVisibility(View.VISIBLE);
         binding.settingsGroupServices.setVisibility(View.VISIBLE);
         binding.appSettingsCard.setVisibility(View.VISIBLE);
-        keyholderAction.setVisibility(ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
+        keyholderAction.setVisibility(View.VISIBLE);
         displayGroup();
     }
 
