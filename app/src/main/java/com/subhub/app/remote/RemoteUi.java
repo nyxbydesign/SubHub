@@ -21,7 +21,7 @@ public final class RemoteUi implements ConnectionUi {
         }
         open(activity,id,RemoteConnectionActivity.class);
     }
-    public void openContracts(Activity activity,PersonId id){open(activity,id,RemoteContractActivity.class);}
+    public void openContracts(Activity activity,PersonId id){open(activity,id,RemoteLibraryActivity.class);}
     public void openStats(Activity activity,PersonId id){open(activity,id,RemoteStatsActivity.class);}
     public void editSection(Activity activity,PersonId id,String section){activity.startActivity(new Intent(activity,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section",section));}
     public void endSession(Activity activity,PersonId id,String expected) {

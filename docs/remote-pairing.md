@@ -15,7 +15,7 @@ An invitation expires and is limited to one relationship. Pairing by itself pres
 
 The Dom can view the Sub's last synchronized statistics, daily activity, configured app allowances, installed-app choices, current contract, and runtime state. Observation times and missing or stale data matter: an old observation does not establish that the other phone is currently connected or that its service is running.
 
-Open the person's Contract to edit feature settings, included apps and allowances, duration, and supported artwork. Saving retains a contract for that relationship. Applying sends a versioned configuration to the Sub; pending or delivered does not mean applied. Concurrent edits can produce a conflict that requires reloading the current configuration. Portable contracts can be imported or exported without copying local Android permission grants.
+Open the person's Contract to edit feature settings, included apps and allowances, duration, and supported artwork. Saving retains a contract for that relationship. Applying sends a versioned configuration to the Sub; pending or delivered does not mean applied. Concurrent edits can produce a conflict that requires reloading the current configuration. Use Saved contracts to import, export, delete, or apply a saved contract. These files do not copy local Android permission grants.
 
 Artwork transfers as bounded, verified file content. PINs, authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. Wallet settings can be part of a contract, but pairing does not transfer payment authentication or initiate payments.
 

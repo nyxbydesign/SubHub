@@ -84,7 +84,7 @@ public class RemoteFlowAndroidTest {
         ContentValues values=new ContentValues();String name="subhub-flow-"+directory.getName()+".png";values.put(MediaStore.Images.Media.DISPLAY_NAME,name);values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/");
         image=context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);assertNotNull(image);
         try(OutputStream output=context.getContentResolver().openOutputStream(image)){Bitmap bitmap=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);bitmap.eraseColor(0xffd19bff);assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,output));bitmap.recycle();}
-        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()))) {
+        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section","censor"))) {
             awaitEditor(editor);write("dom-state","editor-open");name(editor,"Shared contract");
             tap(editor,context.getString(R.string.remote_add_censor_image));
             BySelector imageTile=By.descStartsWith(name+", ");
@@ -102,7 +102,7 @@ public class RemoteFlowAndroidTest {
         }
         new AppModeManager(context).setArmed(false);await(()->"ready-offline".equals(read("sub-state")),90_000);write("dom-state","ready-offline");
         await(()->"yes".equals(read("offline-confirmed")),60_000);
-        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()))) {
+        try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section","censor"))) {
             awaitEditor(editor);name(editor,"Queued offline");tap(editor,context.getString(R.string.remote_apply));
         }
         await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.revision==2&&command.pending();},10_000);Thread.sleep(1500);
