@@ -66,17 +66,20 @@ public final class RemoteContracts {
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
         JSONArray refs=new JSONArray();RemoteAssets blobs=assets(peer);int index=0;
         for(File image:new CustomImageManager(context).enabledFilesForPackExport()) {
+            if(image.length()>RemoteAssets.MAX_ASSET_BYTES)throw new IOException("Artwork exceeds the transfer limit");
             String hash=RemoteAssets.digest(image);try(InputStream input=new FileInputStream(image)){ingest(blobs,hash,image.length(),input);}
             refs.put(reference("assets/censor/image-"+(index++)+".png",hash,image.length()));
         }
-        String popup=main.getString(PopupStormSettings.K_PACK_DIR,"");
-        if(!popup.isEmpty()) {
-            File directory=new File(popup);File[] files=directory.listFiles(File::isFile);
-            if(files==null)throw new IOException("Popup artwork is unavailable");Arrays.sort(files);index=0;
-            for(File file:files) {
-                String hash=RemoteAssets.digest(file);try(InputStream input=new FileInputStream(file)){ingest(blobs,hash,file.length(),input);}
-                refs.put(reference("assets/popup/image-"+(index++)+".png",hash,file.length()));
-            }
+        index=0;
+        for(String source:com.subhub.app.popup.PopupContractAssets.selected(context,512-refs.length())) {
+            File temporary=File.createTempFile("peer-artwork-",".part",context.getCacheDir());
+            try {
+                try(InputStream input=com.subhub.app.popup.PopupContractAssets.open(context,source);OutputStream output=new FileOutputStream(temporary)) {
+                    byte[] buffer=new byte[8192];long length=0;int count;while((count=input.read(buffer))!=-1){length+=count;if(length>RemoteAssets.MAX_ASSET_BYTES)throw new IOException("Artwork exceeds the transfer limit");output.write(buffer,0,count);}
+                }
+                String hash=RemoteAssets.digest(temporary);try(InputStream input=new FileInputStream(temporary)){ingest(blobs,hash,temporary.length(),input);}
+                refs.put(reference("assets/popup/image-"+(index++)+".png",hash,temporary.length()));
+            } finally{temporary.delete();}
         }
         AppModeManager apps=new AppModeManager(context);Set<String> selected=apps.getSelectedPackages();JSONObject allowances=new JSONObject();
         for(Map.Entry<String,Integer> allowance:new AppTimerManager(context).loadAllowances(selected).entrySet())allowances.put(allowance.getKey(),allowance.getValue());
@@ -84,7 +87,45 @@ public final class RemoteContracts {
         SharedPreferences duration=context.getSharedPreferences(RemoteConfiguration.DURATION_PREFS,0);
         JSONObject service=new JSONObject().put("duration",duration.getLong("duration",-1)).put("minimum",duration.getLong("minimum",3_600_000))
                 .put("maximum",duration.getLong("maximum",86_400_000)).put("hidden",duration.getBoolean("hidden",false));
+        JSONObject remembered=localApplied();
+        if(remembered!=null) {
+            JSONObject metadata=remembered.getJSONObject("contract");pack.setMetadata(metadata.getString("name"),metadata.getString("author"),metadata.getString("description"),metadata.getString("version"));
+        }
         return RemoteConfiguration.active(RemoteConfiguration.fromPortable(pack,refs,appDoc,service));
+    }
+
+    /** Retained settings remain the active contract after unpairing until a local edit replaces them. */
+    public JSONObject localApplied() throws Exception {
+        SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
+        String encoded=main.getString("remote_active_configuration","");if(encoded.isEmpty())return null;
+        JSONObject doc=RemoteConfiguration.active(new JSONObject(encoded));SubHubPackManager manager=new SubHubPackManager(context);
+        JSONObject sections=doc.getJSONObject("contract").getJSONObject("sections");
+        for(String section:SubHubPackSchema.SECTIONS)if(!sameSection(section,manager.captureSection(section),sections.getJSONObject(section)))return null;
+        JSONObject apps=doc.getJSONObject("apps");
+        if(apps.getBoolean("all")!=main.getBoolean(AppModeManager.KEY_ALL_APPS,false) || !RemoteConfiguration.selected(doc).equals(main.getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES,Collections.emptySet())))return null;
+        JSONObject budgets=apps.getJSONObject("allowances");Iterator<String> names=budgets.keys();while(names.hasNext()){String name=names.next();if(budgets.getInt(name)!=main.getInt("app_timer_allowance_minutes:"+name,30))return null;}
+        JSONObject duration=doc.getJSONObject("service");SharedPreferences saved=context.getSharedPreferences(RemoteConfiguration.DURATION_PREFS,0);
+        for(String key:new String[]{"duration","minimum","maximum"})if(duration.getLong(key)!=saved.getLong(key,Long.MIN_VALUE))return null;
+        if(duration.getBoolean("hidden")!=saved.getBoolean("hidden",false))return null;
+        String command=RemoteProtocol.identifier(main.getString("remote_active_command",""));
+        File directory=new File(context.getNoBackupFilesDir(),"remote-configuration/assets/"+command);
+        JSONArray assets=doc.getJSONObject("contract").getJSONArray("assets");boolean censor=false,popup=false;
+        for(int i=0;i<assets.length();i++){String path=assets.getJSONObject(i).getString("path");censor|=path.startsWith("assets/censor/");popup|=path.startsWith("assets/popup/");}
+        if(!Objects.equals(main.getString(CustomImageManager.PACK_DIR_KEY,null),censor?new File(directory,"censor").getAbsolutePath():null)
+            || !Objects.equals(main.getString(PopupStormSettings.K_PACK_DIR,null),popup?new File(directory,"popup").getAbsolutePath():null)
+            || !"[]".equals(main.getString(CustomImageManager.PREFS_KEY,"[]")) || !main.getStringSet(PopupStormSettings.K_FOLDERS,Collections.emptySet()).isEmpty())return null;
+        return doc;
+    }
+
+    private static boolean sameSection(String section,JSONObject left,JSONObject right)throws JSONException {
+        for(PackSettingCatalog.Field field:PackSettingCatalog.fields(section)) {
+            Object a=field.normalize(left.get(field.key)),b=field.normalize(right.get(field.key));
+            if(a instanceof JSONArray && b instanceof JSONArray) {
+                Set<String> x=new TreeSet<>(),y=new TreeSet<>();JSONArray aa=(JSONArray)a,bb=(JSONArray)b;
+                for(int i=0;i<aa.length();i++)x.add(aa.getString(i));for(int i=0;i<bb.length();i++)y.add(bb.getString(i));if(!x.equals(y))return false;
+            }else if(!a.equals(b))return false;
+        }
+        return true;
     }
 
     public void process(RemoteStore.Peer peer) throws Exception {

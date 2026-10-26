@@ -282,7 +282,14 @@ public final class RemoteProtocol {
         }
         if (value == null || value == JSONObject.NULL) return "null";
         if (value instanceof String) return JSONObject.quote((String) value);
-        if (value instanceof Boolean || value instanceof Number) return value.toString();
+        if (value instanceof Boolean) return value.toString();
+        if (value instanceof Number) {
+            Number number=(Number)value;
+            if(!Double.isFinite(number.doubleValue()))throw new IllegalArgumentException("Nonfinite JSON number");
+            java.math.BigDecimal decimal=new java.math.BigDecimal(number.toString()).stripTrailingZeros();
+            if(Math.abs((long)decimal.scale())>512 || decimal.precision()>512)throw new IllegalArgumentException("JSON number is too large");
+            return decimal.signum()==0?"0":decimal.toPlainString();
+        }
         throw new IllegalArgumentException("Unsupported JSON value");
     }
 }

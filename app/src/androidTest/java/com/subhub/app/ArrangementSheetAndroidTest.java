@@ -1,9 +1,5 @@
 package com.subhub.app;
 
-import static androidx.test.espresso.Espresso.onView;
-import static androidx.test.espresso.action.ViewActions.click;
-import static androidx.test.espresso.matcher.ViewMatchers.withId;
-import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static org.junit.Assert.*;
 
 import android.graphics.Bitmap;
@@ -22,7 +18,9 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class ArrangementSheetAndroidTest {
-    @Test public void walletReselectReturnsToOverviewAndArtworkCanBeReviewed() {
+    @org.junit.Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+
+    @Test public void walletBackReturnsToOverviewAndArtworkCanBeReviewed() {
         boolean originalDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
         com.subhub.app.security.ControllerPinManager.enterDomMode();
         try (ActivityScenario<com.subhub.app.penance.PenanceActivity> scenario =
@@ -35,9 +33,9 @@ public final class ArrangementSheetAndroidTest {
                     section.setAccessible(true);
                     open.invoke(activity, "rules");
                     assertEquals("rules", section.get(activity));
-                    activity.findViewById(R.id.nav_money).performClick();
+                    activity.findViewById(R.id.button_back).performClick();
                     assertEquals("", section.get(activity));
-                    activity.findViewById(R.id.nav_money).performClick();
+                    activity.showSectionHome();
                     assertEquals("", section.get(activity));
                 } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
                 com.subhub.app.onboarding.SetupFeaturePreviewView artwork =
@@ -51,34 +49,73 @@ public final class ArrangementSheetAndroidTest {
             if (!originalDom) com.subhub.app.security.ControllerPinManager.enterSubMode();
         }
     }
-    @Test public void assignmentsOpenReadableSheetsWithPreviewOnlyForCensor() throws Exception {
-        SettingsRepository settings = new SettingsRepository(ApplicationProvider.getApplicationContext());
+    @Test public void contractDetailsAndSavedCensorPreviewRemainReadableAndReadOnly() throws Exception {
+        android.content.Context context = ApplicationProvider.getApplicationContext();
+        SettingsRepository settings = new SettingsRepository(context);
         java.util.Map<String, ?> before = settings.preferences().getAll();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            for (int card : new int[] {R.id.sub_censor_card, R.id.sub_limits_card,
-                    R.id.sub_wallet_card, R.id.sub_atmosphere_card}) {
-                scenario.onActivity(activity -> activity.findViewById(card).performClick());
-                onView(withId(R.id.arrangement_detail_title)).inRoot(isDialog()).check((title, error) -> {
-                    if (error != null) throw error;
-                    ViewGroup content = (ViewGroup) title.getParent().getParent();
-                    View preview = content.findViewById(R.id.arrangement_detail_preview);
-                    assertEquals(card == R.id.sub_censor_card ? View.VISIBLE : View.GONE,
-                            preview.getVisibility());
-                    if (card == R.id.sub_censor_card) {
-                        assertEquals(settings.loadAppearance().getType().getPreferenceValue(), preview.getTag());
-                        assertEquals(preview.getWidth(), preview.getHeight());
-                    }
-                    assertTrue(content.getWidth() > 0);
-                    checkText(content);
-                    int[] origin = new int[2];
-                    content.getLocationOnScreen(origin);
-                    assertTrue("Sheet remains below the top inset", origin[1] > 0);
-                    save(content, "sheet-" + card);
-                });
-                onView(withId(R.id.arrangement_detail_close)).inRoot(isDialog()).perform(click());
+        java.util.Set<String> apps = java.util.Set.of("com.android.chrome", "com.android.settings");
+        for (String app : apps) context.getPackageManager().getApplicationInfo(app, 0);
+        com.subhub.app.appmode.AppModeManager assigned = new com.subhub.app.appmode.AppModeManager(context);
+        assigned.setAllAppsEnabled(false);
+        assigned.saveIncludedPackages(apps);
+        com.subhub.app.appmode.AppTimerManager timers = new com.subhub.app.appmode.AppTimerManager(context);
+        timers.saveSettings(true, 30, true, 60);
+        timers.saveAllowances(apps, java.util.Map.of("com.android.chrome", 15, "com.android.settings", 40));
+        java.util.Map<String, ?> configured = settings.preferences().getAll();
+        com.subhub.app.security.ControllerPinManager.enterSubMode();
+        try (ActivityScenario<com.subhub.app.people.ContractActivity> scenario =
+                ActivityScenario.launch(com.subhub.app.people.ContractActivity.class)) {
+            long until = android.os.SystemClock.uptimeMillis() + 5000;
+            java.util.concurrent.atomic.AtomicBoolean rendered = new java.util.concurrent.atomic.AtomicBoolean();
+            while (!rendered.get() && android.os.SystemClock.uptimeMillis() < until) {
+                scenario.onActivity(activity -> rendered.set(text(activity.findViewById(R.id.role_page_body))
+                        .contains(activity.getString(R.string.atmosphere_title))));
+                if (!rendered.get()) android.os.SystemClock.sleep(25);
             }
+            assertTrue("Contract did not render", rendered.get());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                ViewGroup content = activity.findViewById(R.id.role_page_body);
+                String copy = text(content);
+                com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(activity)
+                        .load(com.subhub.app.people.PersonId.LOCAL);
+                for (com.subhub.app.people.PersonSnapshot.Section section : person.sections) {
+                    assertTrue(copy.contains(section.title));
+                    assertTrue(copy.contains(section.details));
+                }
+                assertEquals(apps, assigned.getIncludedPackages());
+                assertEquals(15, timers.allowanceMinutes("com.android.chrome"));
+                assertEquals(40, timers.allowanceMinutes("com.android.settings"));
+                assertTrue(content.getWidth() > 0);
+                checkText(content);
+                int[] origin = new int[2];
+                content.getLocationOnScreen(origin);
+                assertTrue("Contract remains below the top inset", origin[1] > 0);
+                save(content, "contract-details");
+                com.subhub.app.settings.CensorPreviewView preview =
+                        new com.subhub.app.settings.CensorPreviewView(activity, null);
+                preview.setSquarePreview(true);
+                preview.setAppearance(settings.loadAppearance());
+                int size = View.MeasureSpec.makeMeasureSpec(content.getWidth(), View.MeasureSpec.EXACTLY);
+                preview.measure(size, size);
+                preview.layout(0, 0, preview.getMeasuredWidth(), preview.getMeasuredHeight());
+                assertEquals(settings.loadAppearance().getType().getPreferenceValue(), preview.getTag());
+                assertEquals(preview.getWidth(), preview.getHeight());
+                save(preview, "saved-censor-preview");
+            });
+            assertEquals("Read-only contract retains saved settings", configured, settings.preferences().getAll());
+        } finally {
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(settings.preferences(), before);
         }
-        assertEquals("Read-only assignment sheets retain saved settings", before, settings.preferences().getAll());
+    }
+
+    private static String text(View view) {
+        String copy = view instanceof TextView ? ((TextView) view).getText().toString() : "";
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) copy += "\n" + text(group.getChildAt(index));
+        }
+        return copy;
     }
 
     private static void checkText(View view) {

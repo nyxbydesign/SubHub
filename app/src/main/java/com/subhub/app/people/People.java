@@ -7,15 +7,21 @@ public final class People {
     private static volatile PersonRepository remote;
     private static volatile java.util.function.BooleanSupplier remoteAuthority = () -> false;
     private static volatile ConnectionUi connectionUi;
+    private static volatile java.util.function.UnaryOperator<PersonSnapshot> localProjection=java.util.function.UnaryOperator.identity();
     private People() {}
 
     public static PersonRepository repository(Context context) {
-        return new PersonDirectory(new LocalPersonRepository(context.getApplicationContext()), remote);
+        LocalPersonRepository local=new LocalPersonRepository(context.getApplicationContext());
+        return new PersonDirectory(new PersonRepository() {
+            @Override public java.util.List<PersonId> people(){return local.people();}
+            @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
+        }, remote);
     }
 
     public static void installRemoteRepository(PersonRepository repository) { remote = repository; }
     public static void installConnectionUi(ConnectionUi ui) { connectionUi = ui; }
     public static ConnectionUi connectionUi() { return connectionUi; }
+    public static void installLocalProjection(java.util.function.UnaryOperator<PersonSnapshot> projection){localProjection=java.util.Objects.requireNonNull(projection);}
 
     /** The pairing owner supplies durable authority; UI mode never grants remote permission. */
     public static void installRemoteAuthority(java.util.function.BooleanSupplier authority) {

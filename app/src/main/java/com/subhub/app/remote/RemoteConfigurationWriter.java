@@ -170,6 +170,9 @@ public final class RemoteConfigurationWriter {
         for(int i=0;i<refs.length();i++){String path=refs.getJSONObject(i).getString("path");censor|=path.startsWith("assets/censor/");popup|=path.startsWith("assets/popup/");}
         main.put(CustomImageManager.PACK_DIR_KEY,censor?new File(prepared,"censor").getAbsolutePath():null);
         main.put(PopupStormSettings.K_PACK_DIR,popup?new File(prepared,"popup").getAbsolutePath():null);
+        // Old user files stay available, but an empty remote image set must not activate them.
+        main.put(CustomImageManager.PREFS_KEY,"[]");main.put(PopupStormSettings.K_FOLDERS,Collections.emptySet());
+        main.put("remote_active_configuration",RemoteProtocol.canonical(doc));main.put("remote_active_command",prepared.getName());
         main.put(CustomImageManager.REVISION_KEY,System.currentTimeMillis());
         Map<String,Object> duration=new LinkedHashMap<>();JSONObject service=doc.getJSONObject("service");
         for(String key:new String[]{"duration","minimum","maximum"})duration.put(key,service.getLong(key));duration.put("hidden",service.getBoolean("hidden"));

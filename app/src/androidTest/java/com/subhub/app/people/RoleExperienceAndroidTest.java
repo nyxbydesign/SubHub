@@ -60,6 +60,7 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public final class RoleExperienceAndroidTest {
+    @org.junit.Rule public final org.junit.rules.TestName testName = new org.junit.rules.TestName();
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
     private final Map<String, Map<String, ?>> original = new LinkedHashMap<>();
@@ -71,7 +72,8 @@ public final class RoleExperienceAndroidTest {
         originalAccessibility = Settings.Secure.getString(context.getContentResolver(), "accessibility_enabled");
         automation();
         for (String name : List.of(SettingsRepository.PREFERENCES_NAME, "subhub_onboarding", "subhub_home",
-                "subhub_service_duration_ui", "subhub_app_timer_usage", "betablocker_stats", "betablocker_achievements")) {
+                "subhub_service_duration_ui", "subhub_app_timer_usage", "subhub_penance",
+                "betablocker_stats", "betablocker_achievements")) {
             original.put(name, new LinkedHashMap<>(context.getSharedPreferences(name, 0).getAll()));
         }
         People.installRemoteRepository(null);
@@ -93,6 +95,7 @@ public final class RoleExperienceAndroidTest {
     }
 
     @After public void restore() throws Exception {
+        com.subhub.app.commitment.CommitmentManager.emergencyRelease(context);
         People.installRemoteRepository(null);
         People.installRemoteAuthority(() -> false);
         People.installConnectionUi(null);
@@ -299,8 +302,335 @@ public final class RoleExperienceAndroidTest {
                 .putExtra(MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true);
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void domReachesAndEndsLocalSessionThroughPersonControls() throws Exception {
+        ControllerPinManager.enterDomMode();
+        assertTrue(com.subhub.app.commitment.CommitmentManager.start(context, 3_600_000L));
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
+            PersonActivity person = resumed(PersonActivity.class);
+            await(() -> hasTag(person, "person_session:local"));
+            onMain(() -> {
+                assertTrue(person.findViewById(R.id.nav_people).isSelected());
+                assertEquals(context.getString(R.string.role_end_session),
+                        ((TextView) person.findViewById(R.id.person_session_action)).getText().toString());
+            });
+            tap(person, R.id.person_session_action);
+            assertFalse(com.subhub.app.commitment.CommitmentManager.isActive(context));
+            assertFalse(new AppModeManager(context).isArmed());
+            await(() -> hasTag(person, "person_session:local"));
+            capture(person, "dom-local-session-ended");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void localProfileSurvivesRecreationAndEndsUntimedProtection() throws Exception {
+        ControllerPinManager.enterDomMode();
+        com.subhub.app.appmode.ProtectionSessionManager.markMediaProjectionStarted(context);
+        new AppModeManager(context).setArmed(true);
+        Intent target = new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(target)) {
+            scenario.recreate();
+            PersonActivity session = resumed(PersonActivity.class);
+            await(() -> hasTag(session, "person_session:local"));
+            tap(session, R.id.person_session_action);
+            assertFalse(new AppModeManager(context).isArmed());
+            assertFalse(com.subhub.app.appmode.ProtectionSessionManager.needsMediaProjectionResume(context));
+            assertFalse(com.subhub.app.commitment.CommitmentManager.isActive(context));
+            await(() -> hasTag(session, "person_session:local"));
+            onMain(() -> assertEquals(context.getString(R.string.role_start_session),
+                    ((TextView) session.findViewById(R.id.person_session_action)).getText().toString()));
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void subHasNoEndSessionControlAndCannotInvokeTheLocalAction() throws Exception {
+        ControllerPinManager.enterDomMode();
+        assertTrue(com.subhub.app.commitment.CommitmentManager.start(context, 3_600_000L));
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            MainActivity session = resumed(MainActivity.class);
+            await(() -> session.findViewById(R.id.button_protection).getVisibility() == View.GONE);
+            onMain(() -> {
+                assertFalse(session.findViewById(R.id.button_protection).isShown());
+                session.findViewById(R.id.button_protection).performClick();
+            });
+            assertFalse(LocalSessionControls.end(context, PersonId.LOCAL));
+            assertTrue(com.subhub.app.commitment.CommitmentManager.isActive(context));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            capture(session, "sub-active-session-read-only");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void domCanEndPaidPauseWithoutItsExpiryRearmingTheSession() throws Exception {
+        ControllerPinManager.enterDomMode();
+        new com.subhub.app.penance.PenanceManager(context).configure(true, 100, 500, 2000, 0);
+        com.subhub.app.penance.PaidPauseManager pause = new com.subhub.app.penance.PaidPauseManager(context);
+        pause.configure(true, 500, 15);
+        assertTrue(com.subhub.app.commitment.CommitmentManager.start(context, 3_600_000L));
+        assertTrue(pause.activate());
+        assertTrue(pause.isActive());
+        Intent target = new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(target)) {
+            PersonActivity session = resumed(PersonActivity.class);
+            await(() -> hasTag(session, "person_session:local"));
+            onMain(() -> assertTrue(session.findViewById(R.id.person_session_action).isEnabled()));
+            tap(session, R.id.person_session_action);
+            assertFalse(com.subhub.app.commitment.CommitmentManager.isActive(context));
+            assertFalse(context.getSharedPreferences("subhub_penance", 0).contains("paid_pause_active_until"));
+            new com.subhub.app.penance.PaidPauseManager(context).finish();
+            assertFalse(new AppModeManager(context).isArmed());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void remoteSessionIntentCannotOperateOnThisDevice() {
+        ControllerPinManager.enterDomMode();
+        Map<String, ?> before = new LinkedHashMap<>(new SettingsRepository(context).preferences().getAll());
+        Intent target = home().putExtra(MainActivity.EXTRA_LOCAL_SESSION, true)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, "peer:synthetic-alex");
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(target)) {
+            assertEquals(Lifecycle.State.DESTROYED, scenario.getState());
+        }
+        assertEquals(before, new SettingsRepository(context).preferences().getAll());
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void peopleSupportsSeveralSubsAndAddsAnotherFromItsPrimaryAction() throws Exception {
+        PersonId alex = new PersonId("peer:synthetic-alex"), sam = new PersonId("peer:synthetic-sam");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(sam, alex); }
+            public PersonSnapshot load(PersonId id) { return remote(id); }
+        });
+        AtomicReference<Boolean> asDom = new AtomicReference<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { fail("Pairing must carry the selected role"); }
+            public void openPairing(Activity activity, boolean dom) { asDom.set(dom); }
+            public void openConnection(Activity activity, PersonId id) { }
+        });
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            PeopleActivity people = resumed(PeopleActivity.class);
+            await(() -> hasTag(people, "person:" + alex.value()) && hasTag(people, "person:" + sam.value()));
+            assertTrue(hasTag(people, "person:local"));
+            onMain(() -> {
+                View root = people.getWindow().getDecorView();
+                assertTrue(root.findViewWithTag("person:local").getTop()
+                        < root.findViewWithTag("person:" + alex.value()).getTop());
+                assertTrue(root.findViewWithTag("person:" + alex.value()).getTop()
+                        < root.findViewWithTag("person:" + sam.value()).getTop());
+                assertFits(root);
+            });
+            tap(people, R.id.people_add_sub);
+            assertEquals(Boolean.TRUE, asDom.get());
+            capture(people, "people-multiple-subs");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void subConnectionEntryOffersPairingWithoutExposingSecurityEdits() throws Exception {
+        AtomicReference<Boolean> asDom = new AtomicReference<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { fail("Pairing must carry the selected role"); }
+            public void openPairing(Activity activity, boolean dom) { asDom.set(dom); }
+            public void openConnection(Activity activity, PersonId id) { }
+        });
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            GlobalSettingsActivity settings = resumed(GlobalSettingsActivity.class);
+            tap(settings, R.id.settings_connections_security);
+            com.subhub.app.security.AuthenticatorActivity connection =
+                    resumed(com.subhub.app.security.AuthenticatorActivity.class);
+            onMain(() -> {
+                assertNull(connection.findViewById(R.id.keyholder_pin_change_button));
+                assertNull(connection.findViewById(R.id.keyholder_pair_button));
+                assertNull(connection.findViewById(R.id.authenticator_pairing_qr));
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertHeaderTextClearsControls(connection);
+            });
+            // This secondary page has no floating navigation to scroll around.
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.keyholder_pair_device))
+                    .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
+            assertEquals(Boolean.FALSE, asDom.get());
+            capture(connection, "sub-connection-security");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void remoteProfileDispatchesItsOwnContractAndStatsActions() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { return remote(id); }
+        });
+        List<String> actions = new java.util.concurrent.CopyOnWriteArrayList<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { assertEquals(peer, id); }
+            public void openContracts(Activity activity, PersonId id) { assertEquals(peer, id); actions.add("contracts"); }
+            public void editSection(Activity activity, PersonId id, String section) { assertEquals(peer, id); actions.add(section); }
+            public void openStats(Activity activity, PersonId id) { assertEquals(peer, id); actions.add("stats"); }
+        });
+        ControllerPinManager.enterDomMode();
+        Map<String, ?> before = new LinkedHashMap<>(new SettingsRepository(context).preferences().getAll());
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> bodyContains(profile, "Synthetic Alex"));
+            assertFalse(hasTag(profile, "person_session:local"));
+            tapTag(profile, "person_section:censor");
+            tapTag(profile, "person_saved_contracts");
+            tapTag(profile, "person_tab:stats");
+            await(() -> bodyContains(profile, context.getString(R.string.role_view_stats)));
+            tapTag(profile, "person_full_stats");
+            assertEquals(List.of("censor", "contracts", "stats"), actions);
+        }
+        assertEquals(before, new SettingsRepository(context).preferences().getAll());
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void unknownRemoteStatisticsAreNotShownAsZeroUsage() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) {
+                return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", "Current state unknown",
+                        PersonSnapshot.Connection.OFFLINE, PersonSnapshot.Freshness.UNKNOWN, 0,
+                        EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.VIEW_STATS),
+                        Collections.emptyList(), Collections.emptyList(), "EUR", 0, 0, 0, 0, false,
+                        new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
+                                PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "revision-1", "revision-1"));
+            }
+        });
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> bodyContains(profile, "Synthetic Alex"));
+            tapTag(profile, "person_tab:stats");
+            await(() -> bodyContains(profile, context.getString(R.string.role_unknown_data)));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_stat_service_time)));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_stat_sessions)));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_stat_tribute)));
+            assertFalse(bodyContains(profile, context.getString(R.string.role_app_time)));
+            capture(profile, "remote-statistics-unknown");
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void remoteEndDispatchesTheDisplayedSessionWithoutEndingLocalService() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        PersonSnapshot snapshot = remoteSession(peer, PersonSnapshot.Freshness.CURRENT, true, true, "session-generation-1");
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { assertEquals(peer, id); return snapshot; }
+        });
+        List<String> commands = new java.util.concurrent.CopyOnWriteArrayList<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { }
+            public void endSession(Activity activity, PersonId id, String expectedSessionIdentity) {
+                assertEquals(peer, id);
+                commands.add(expectedSessionIdentity);
+            }
+        });
+        ControllerPinManager.enterDomMode();
+        assertTrue(com.subhub.app.commitment.CommitmentManager.start(context, 3_600_000L));
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> hasTag(profile, "person_session:" + peer.value()));
+            onMain(() -> assertFits(profile.getWindow().getDecorView()));
+            assertTrue(bodyContains(profile, context.getString(R.string.role_connection_paired)));
+            tap(profile, R.id.person_session_action);
+            assertEquals(List.of("session-generation-1"), commands);
+            assertTrue(com.subhub.app.commitment.CommitmentManager.isActive(context));
+            AtomicReference<View> stale = new AtomicReference<>();
+            onMain(() -> stale.set(profile.findViewById(R.id.person_session_action)));
+            ControllerPinManager.enterSubMode();
+            onMain(() -> stale.get().performClick());
+            assertEquals(List.of("session-generation-1"), commands);
+            assertTrue(com.subhub.app.commitment.CommitmentManager.isActive(context));
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void remoteEndRequiresFreshActiveRuntimeCapabilityIdentityAndProvider() throws Exception {
+        PersonId peer = new PersonId("peer:synthetic-alex");
+        AtomicReference<PersonSnapshot> snapshot = new AtomicReference<>();
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { return snapshot.get(); }
+        });
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { }
+            public void endSession(Activity activity, PersonId id, String expectedSessionIdentity) {
+                fail("An ineligible snapshot must not expose End session");
+            }
+        });
+        ControllerPinManager.enterDomMode();
+        for (PersonSnapshot value : List.of(
+                remoteSession(peer, PersonSnapshot.Freshness.UNKNOWN, true, true, "generation"),
+                remoteSession(peer, PersonSnapshot.Freshness.STALE, true, true, "generation"),
+                remoteSession(peer, PersonSnapshot.Freshness.CURRENT, false, true, "generation"),
+                remoteSession(peer, PersonSnapshot.Freshness.CURRENT, true, false, "generation"),
+                remoteSession(peer, PersonSnapshot.Freshness.CURRENT, true, true, ""))) {
+            snapshot.set(value);
+            try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+                PersonActivity profile = resumed(PersonActivity.class);
+                await(() -> bodyContains(profile, "Synthetic Alex"));
+                onMain(() -> assertNull(profile.findViewById(R.id.person_session_action)));
+            }
+        }
+        snapshot.set(remoteSession(peer, PersonSnapshot.Freshness.CURRENT, true, true, "generation"));
+        People.installConnectionUi(null);
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> bodyContains(profile, "Synthetic Alex"));
+            onMain(() -> assertNull(profile.findViewById(R.id.person_session_action)));
+        }
+    }
+
+    private PersonSnapshot remoteSession(PersonId id, PersonSnapshot.Freshness runtime,
+            boolean endCapability, boolean active, String identity) {
+        EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT);
+        if (endCapability) capabilities.add(PersonSnapshot.Capability.END_SESSION);
+        return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", active ? "Service active" : "Service inactive",
+                PersonSnapshot.Connection.PAIRED, PersonSnapshot.Freshness.CURRENT, 0, capabilities,
+                Collections.emptyList(), Collections.emptyList(), "EUR", 0, 0, 0, 0, active,
+                new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.CURRENT,
+                        runtime, "1", "1"), identity);
+    }
+
+    private void assertHeaderTextClearsControls(Activity activity) {
+        TextView title = activity.findViewById(R.id.primary_header_title);
+        int[] origin = new int[2];
+        title.getLocationOnScreen(origin);
+        android.text.Layout layout = title.getLayout();
+        assertNotNull(layout);
+        for (int id : new int[] {R.id.button_back, R.id.button_edit_lock}) {
+            Rect control = new Rect();
+            View view = activity.findViewById(id);
+            if (view == null || !view.getGlobalVisibleRect(control)) continue;
+            for (int line = 0; line < layout.getLineCount(); line++) {
+                RectF text = new RectF(origin[0] + title.getCompoundPaddingLeft() + layout.getLineLeft(line),
+                        origin[1] + title.getCompoundPaddingTop() + layout.getLineTop(line),
+                        origin[0] + title.getCompoundPaddingLeft() + layout.getLineMax(line),
+                        origin[1] + title.getCompoundPaddingTop() + layout.getLineBottom(line));
+                assertFalse("Header text overlaps a control", RectF.intersects(text, new RectF(control)));
+            }
+        }
+    }
+
+
     private PersonSnapshot remote(PersonId id) {
-        return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", "Service active",
+        return new PersonSnapshot(id, id.value().contains("sam") ? "Synthetic Sam" : "Synthetic Alex", "Pixel 8", "Evening contract", "Service active",
                 PersonSnapshot.Connection.OFFLINE, PersonSnapshot.Freshness.STALE, 1_700_000_000_000L,
                 EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.EDIT_CONTRACT,
                         PersonSnapshot.Capability.VIEW_STATS),
@@ -312,6 +642,17 @@ public final class RoleExperienceAndroidTest {
 
     private UiAutomation automation() {
         return instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_USE_ACCESSIBILITY);
+    }
+
+    private void tapTag(Activity activity, String tag) throws Exception {
+        AtomicReference<Integer> id = new AtomicReference<>();
+        onMain(() -> {
+            View target = activity.getWindow().getDecorView().findViewWithTag(tag);
+            assertNotNull("Missing control: " + tag, target);
+            if (target.getId() == View.NO_ID) target.setId(View.generateViewId());
+            id.set(target.getId());
+        });
+        tap(activity, id.get());
     }
 
     private void tap(Activity activity, int id) throws Exception {
@@ -336,7 +677,15 @@ public final class RoleExperienceAndroidTest {
             }
         });
         instrumentation.waitForIdleSync();
-        capture(activity, "tap-" + (++tapSequence) + "-" + activity.getResources().getResourceEntryName(id));
+        String resource = null;
+        String witness = "generated-" + Integer.toHexString(id);
+        try {
+            resource = activity.getResources().getResourceName(id);
+            witness = activity.getResources().getResourceEntryName(id);
+        } catch (android.content.res.Resources.NotFoundException generatedId) {
+            // Runtime-generated IDs identify Views without a packaged resource entry.
+        }
+        capture(activity, "tap-" + (++tapSequence) + "-" + witness);
         onMain(() -> {
             Rect rect = new Rect();
             assertTrue(activity.findViewById(id).getGlobalVisibleRect(rect));
@@ -351,12 +700,17 @@ public final class RoleExperienceAndroidTest {
         Rect rect = bounds.get();
         String run = InstrumentationRegistry.getArguments().getString("evidence_run", "candidate-1");
         org.json.JSONObject point = new org.json.JSONObject();
-        point.put("resource", activity.getResources().getResourceName(id));
+        point.put("resource", resource == null ? org.json.JSONObject.NULL : resource);
+        point.put("viewId", id);
+        AtomicReference<Object> tag = new AtomicReference<>();
+        onMain(() -> tag.set(activity.findViewById(id).getTag()));
+        if (tag.get() instanceof String) point.put("tag", tag.get());
         point.put("bounds", new org.json.JSONArray(new int[] {rect.left, rect.top, rect.right, rect.bottom}));
         point.put("x", rect.exactCenterX()); point.put("y", rect.exactCenterY());
         point.put("source", "SOURCE_TOUCHSCREEN");
+        point.put("test", testName.getMethodName());
         try (FileOutputStream output = new FileOutputStream(new File(context.getFilesDir(),
-                "ui-v3/" + run + "/tap-" + tapSequence + "-point.json"))) {
+                "ui-v3/" + run + "/" + witnessPrefix() + "-tap-" + tapSequence + "-point.json"))) {
             output.write(point.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         long time = SystemClock.uptimeMillis();
@@ -370,6 +724,7 @@ public final class RoleExperienceAndroidTest {
     }
 
     private void capture(Activity activity, String name) throws Exception {
+        name = witnessPrefix() + "-" + name;
         if (Build.VERSION.SDK_INT < 29) throw new AssertionError("Frame commit needs API 29");
         await(() -> {
             AtomicReference<Boolean> ready = new AtomicReference<>(false);
@@ -404,6 +759,8 @@ public final class RoleExperienceAndroidTest {
             assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally { pixels.recycle(); }
     }
+
+    private String witnessPrefix() { return Integer.toHexString(testName.getMethodName().hashCode()); }
 
     private <T extends Activity> T resumed(Class<T> type) {
         AtomicReference<T> result = new AtomicReference<>();

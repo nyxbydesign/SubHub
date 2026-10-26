@@ -6,4 +6,9 @@ import android.app.Activity;
 public interface ConnectionUi {
     void openPairing(Activity activity);
     void openConnection(Activity activity, PersonId personId);
+    default void openPairing(Activity activity, boolean asDom) { openPairing(activity); }
+    default void openContracts(Activity activity, PersonId personId) {}
+    default void openStats(Activity activity, PersonId personId) {}
+    default void editSection(Activity activity, PersonId personId, String section) {}
+    default void endSession(Activity activity, PersonId personId, String expectedSessionIdentity) {}
 }

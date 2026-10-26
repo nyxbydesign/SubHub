@@ -67,6 +67,7 @@ public final class SubHubApp extends Application {
             @Override public void onActivityDestroyed(@NonNull Activity activity) { opened.remove(activity); }
         });
         LocaleHelper.applySaved(this);
+        com.subhub.app.remote.RemoteUi.install(this);
         new SubHubPackManager(this);
         new UpdateStateStore(this).cleanupInstalled(BuildConfig.VERSION_CODE);
         UpdateScheduler.synchronize(this);

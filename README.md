@@ -42,6 +42,8 @@ SubHub brings the rules, active session, and progress into one Android app. Choo
 
 <p align="center"><img src="docs/brand/subhub-divider.svg" width="100%" alt="" /></p>
 
+For pairing, shared contracts, sync timing, and recovery, see [Pairing two devices](docs/remote-pairing.md).
+
 ## Features
 
 ### Censor

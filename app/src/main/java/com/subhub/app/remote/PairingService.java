@@ -84,6 +84,7 @@ public final class PairingService {
                 throw new SecurityException("Pairing completion mismatch");
             }
             store.activate(peer.identity,peer.generation);secrets.removePending(peer.generation);
+            try{write(connection,new JSONObject().put("version",1).put("type","pair_ready_ack").put("generation",peer.generation));}catch(IOException alreadyCommitted){/* Retrying cannot revoke a completed pairing. */}
             return true;
         } catch(JSONException invalid) { throw new IOException("Invalid pairing message"); }
     }
@@ -115,6 +116,7 @@ public final class PairingService {
             store.setRoute(candidate,id,request.getString("route"));
             write(connection,new JSONObject().put("version",1).put("type","pair_ready").put("generation",id));
             secrets.removePending(id);
+            try{JSONObject receipt=read(connection);if(!"pair_ready_ack".equals(receipt.optString("type")) || !id.equals(receipt.optString("generation")))throw new SecurityException("Pairing receipt mismatch");}catch(IOException closedAfterReady){/* Ready may have been received before the final connection close. */}
             return true;
         } catch(JSONException | IllegalArgumentException invalid) { throw new IOException("Invalid pairing message"); }
     }

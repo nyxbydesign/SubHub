@@ -224,6 +224,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_file_paths" />
         </provider>
+        <activity android:name=".remote.PairingActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="subhubapp" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".remote.RemoteConnectionActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteContractActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteEndActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteStatsActivity" android:exported="false" />
     </application>
 
 </manifest>

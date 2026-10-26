@@ -31,8 +31,15 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class HomeSettingsStructureContractTest {
+    @org.junit.Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+
+    private static android.content.Intent homeIntent() {
+        return new android.content.Intent(ApplicationProvider.getApplicationContext(), MainActivity.class)
+                .setAction(android.content.Intent.ACTION_MAIN);
+    }
+
     @Test public void helpAndDiagnosticsAreAbsentFromHome() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(homeIntent())) {
             scenario.onActivity(activity -> {
                 assertNull(activity.findViewById(R.id.button_help));
                 assertNull(activity.findViewById(R.id.button_diagnostics));
@@ -56,7 +63,7 @@ public final class HomeSettingsStructureContractTest {
                 .putStringSet(SettingsRepository.KEY_TEXT_SMUT_CATEGORIES,
                         new LinkedHashSet<>(Arrays.asList(TextSmutConfig.CATEGORY_EXPLICIT)))
                 .commit();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(homeIntent())) {
             scenario.onActivity(activity -> {
                 com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(activity)
                         .load(com.subhub.app.people.PersonId.LOCAL);
@@ -81,6 +88,7 @@ public final class HomeSettingsStructureContractTest {
     @Test public void filterArrangementUsesCanonicalDomLabels() {
         Context context = ApplicationProvider.getApplicationContext();
         SettingsRepository repository = new SettingsRepository(context);
+        Map<String, ?> original = repository.preferences().getAll();
         repository.preferences().edit()
                 .putString(SettingsRepository.KEY_CENSOR_TYPE, "box")
                 .putBoolean(SettingsRepository.KEY_SHOW_BORDER, true)
@@ -104,26 +112,26 @@ public final class HomeSettingsStructureContractTest {
                                 TextSmutConfig.CATEGORY_SOLICITATION)))
                 .commit();
 
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity(activity -> {
-                String details = activity.censorArrangementDetails();
-                assertTrue(details.contains("Blackout · Classic Border"));
-                assertTrue(details.contains("High · Maximum Coverage"));
-                assertTrue(details.contains(
-                        "Vagina, Dick & Balls, Tits, Ass, Male Chest, Abs / Tummy"));
-                assertTrue(details.contains(
-                        "Context · Sexual Words, Kink / Fetish Talk, Sexual Invitations"));
-                assertTrue(details.contains("Beta / Cuck, Denial, Findom, Plain"));
-                assertFalse(details.contains("Buttocks"));
-                assertFalse(details.contains("Anus"));
-                assertFalse(details.contains(", Anal,"));
-                assertFalse(details.contains("BLACKOUT"));
-                assertFalse(details.contains("ULTRA · MAXIMUM COVERAGE"));
-                assertFalse(details.contains("Balanced"));
-                assertFalse(details.contains("Explicit language"));
-                assertFalse(details.contains("Humiliation"));
-                assertFalse(details.contains("Short"));
-            });
+        try {
+            String details = new com.subhub.app.people.LocalContractDetails(context).forSection("censor");
+            assertTrue(details.contains("Blackout · Classic Border"));
+            assertTrue(details.contains("High · Maximum Coverage"));
+            assertTrue(details.contains(
+                    "Vagina, Dick & Balls, Tits, Ass, Male Chest, Abs / Tummy"));
+            assertTrue(details.contains(
+                    "Context · Sexual Words, Kink / Fetish Talk, Sexual Invitations"));
+            assertTrue(details.contains("Beta / Cuck, Denial, Findom, Plain"));
+            assertFalse(details.contains("Buttocks"));
+            assertFalse(details.contains("Anus"));
+            assertFalse(details.contains(", Anal,"));
+            assertFalse(details.contains("BLACKOUT"));
+            assertFalse(details.contains("ULTRA · MAXIMUM COVERAGE"));
+            assertFalse(details.contains("Balanced"));
+            assertFalse(details.contains("Explicit language"));
+            assertFalse(details.contains("Humiliation"));
+            assertFalse(details.contains("Short"));
+        } finally {
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(repository.preferences(), original);
         }
     }
 
