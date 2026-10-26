@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="person_apps_title">Apps</string>
+    <string name="person_duration_title">Session duration</string>
+    <item name="person_apps_panel" type="id" />
+    <item name="person_duration_control" type="id" />
+    <item name="person_editor_target" type="id" />
+    <item name="settings_connection" type="id" />
+    <item name="rituals_packs_card" type="id" />
+    <item name="rituals_pack_count" type="id" />
+    <item name="rituals_pack_name" type="id" />
+    <item name="rituals_import_pack" type="id" />
+    <item name="rituals_pack_library" type="id" />
+    <item name="rituals_gallery_card" type="id" />
+    <item name="rituals_keyholder_card" type="id" />
+    <item name="rituals_keyholder_status" type="id" />
+    <item name="button_keyholder" type="id" />
+    <item name="achievements_home_card" type="id" />
+    <item name="achievements_home_count" type="id" />
+    <item name="achievements_home_badges" type="id" />
+    <item name="achievements_home_next" type="id" />
+    <item name="achievements_home_progress_percent" type="id" />
+    <item name="achievements_home_progress" type="id" />
+    <item name="censor_photo_tools" type="id" />
+    <item name="stats_achievements" type="id" />
+    <string name="person_contract_version">Version %1$s</string>
+</resources>

@@ -53,6 +53,11 @@ public abstract class RolePage extends AppCompatActivity {
         refresh();
     }
 
+    protected final void title(int title) {
+        pageTitle = title;
+        PrimaryHeader.bind(findViewById(android.R.id.content), 0, title, 0);
+    }
+
     protected abstract void refresh();
 
     protected final void loading() {

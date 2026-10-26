@@ -26,7 +26,7 @@ public final class AuthenticatorActivity extends PreferencePage {
         super.onCreate(state);
         if (state != null) expandedMethod = state.getString("keyholder_method", "pin");
         else if ("remote".equals(getIntent().getStringExtra("keyholder_method"))) expandedMethod = "remote";
-        page(R.string.role_connections);
+        page(R.string.role_security);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
                 if (pendingSecret != null) { clearPending(); render(); } else finish();
@@ -35,7 +35,7 @@ public final class AuthenticatorActivity extends PreferencePage {
     }
     private void render() {
         if (isFinishing() || isDestroyed()) return;
-        int title = ControllerPinManager.isDomModeActive() ? R.string.role_connections : R.string.role_connection;
+        int title = R.string.role_security;
         page(title);
         TextView role = com.subhub.app.util.PrimaryHeader.editLockButton(page);
         role.setVisibility(android.view.View.VISIBLE);
@@ -47,8 +47,6 @@ public final class AuthenticatorActivity extends PreferencePage {
         });
         ControllerAuthenticator authenticator = new ControllerAuthenticator(this);
         methodBodies.clear(); methodArrows.clear(); methodHeaders.clear();
-        pairedDevices();
-        com.subhub.app.people.PersonUi.text(page, getString(R.string.role_security), true);
         if (!ControllerPinManager.isDomModeActive()) {
             LinearLayout security = card(page);
             com.subhub.app.people.PersonUi.row(security, R.drawable.ic_keyholder, getString(R.string.role_pin),
@@ -116,52 +114,6 @@ public final class AuthenticatorActivity extends PreferencePage {
         }
     }
 
-    private void pairedDevices() {
-        boolean dom = ControllerPinManager.isDomModeActive();
-        LinearLayout renderedPage = page;
-        LinearLayout devices = card(page);
-        com.subhub.app.people.PersonUi.text(devices, getString(dom ? R.string.role_your_subs : R.string.role_your_dom), true);
-        if (dom || com.subhub.app.people.People.isLocalConfigurationAllowed()) {
-            Button add = button(devices, getString(dom ? R.string.role_add_sub : R.string.role_pair_with_dom), () -> {
-                if (dom != ControllerPinManager.isDomModeActive()) return;
-                com.subhub.app.people.ConnectionUi ui = com.subhub.app.people.People.connectionUi();
-                if (ui != null) ui.openPairing(this, dom);
-                else notice(getString(R.string.role_pairing_unavailable));
-            });
-            add.setId(R.id.keyholder_pair_device);
-        }
-        LinearLayout roster = new LinearLayout(this);
-        roster.setOrientation(LinearLayout.VERTICAL);
-        devices.addView(roster, new LinearLayout.LayoutParams(-1, -2));
-        text(roster, getString(R.string.role_loading), 14, true);
-        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(getApplicationContext());
-        java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
-        com.subhub.app.util.AsyncUiScope.forPage(this).load("paired-devices", () -> {
-            java.util.List<com.subhub.app.people.PersonSnapshot> values = new java.util.ArrayList<>();
-            for (com.subhub.app.people.PersonId id : repository.people()) {
-                if (!id.isLocal()) values.add(repository.load(id));
-            }
-            return com.subhub.app.people.PersonDisplayOrder.sorted(values, locale);
-        }, people -> {
-            if (pendingSecret != null || page != renderedPage || dom != ControllerPinManager.isDomModeActive()) return;
-            roster.removeAllViews();
-            if (people.isEmpty()) text(roster, getString(dom ? R.string.role_no_subs : R.string.role_connection_unpaired), 14, true);
-            for (com.subhub.app.people.PersonSnapshot person : people) {
-                com.subhub.app.people.PersonUi.row(roster, R.drawable.ic_nav_people, person.name,
-                        com.subhub.app.people.PersonUi.connection(this, person),
-                        com.subhub.app.people.People.connectionUi() == null ? null : () -> {
-                            com.subhub.app.people.ConnectionUi ui = com.subhub.app.people.People.connectionUi();
-                            if (dom != ControllerPinManager.isDomModeActive()) return;
-                            if (dom) com.subhub.app.people.PersonRoutes.open(this, person.id);
-                            else if (ui != null) ui.openConnection(this, person.id);
-                        });
-            }
-        }, failure -> {
-            if (page != renderedPage) return;
-            roster.removeAllViews();
-            text(roster, getString(R.string.role_connection_error), 14, true);
-        });
-    }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("keyholder_method", expandedMethod); super.onSaveInstanceState(state); }
     @Override protected void onResume() {
         super.onResume();

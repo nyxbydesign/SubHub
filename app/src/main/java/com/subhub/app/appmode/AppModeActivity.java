@@ -83,7 +83,7 @@ public final class AppModeActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityAppModeBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits, R.string.app_mode_title, 0);
+        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits, R.string.app_mode_title, R.string.role_this_device);
         manager = new AppModeManager(this);
         timers = new AppTimerManager(this);
         appData = AsyncUiScope.forPage(this);
@@ -95,18 +95,11 @@ public final class AppModeActivity extends AppCompatActivity {
                 view ->
                         ControllerPinGate.require(
                                 this,
-                                () ->
-                                        startActivity(
-                                                new Intent(
-                                                                this,
-                                                                com.subhub.app.settings
-                                                                        .GlobalSettingsActivity
-                                                                        .class)
-                                                        .putExtra(
-                                                                com.subhub.app.settings
-                                                                        .GlobalSettingsActivity
-                                                                        .EXTRA_SHOW_INCLUDED_APPS,
-                                                                true)),
+                                () -> {
+                                    if (com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
+                                        com.subhub.app.people.PersonRoutes.editSection(this,
+                                                com.subhub.app.people.PersonId.LOCAL, "apps");
+                                },
                                 false));
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
         AppTimerManager.Settings timerSettings = timers.loadSettings();

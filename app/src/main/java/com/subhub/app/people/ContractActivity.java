@@ -19,8 +19,7 @@ public final class ContractActivity extends RolePage {
         data.load("contract", () -> repository.load(PersonId.LOCAL), person -> {
             body.removeAllViews();
             LinearLayout summary = PersonUi.card(body);
-            PersonUi.text(summary, person.contractName, true);
-            PersonUi.text(summary, getString(R.string.role_configured_by_dom), false);
+            ContractHeader.add(summary, person, getString(R.string.role_configured_by_dom), data);
             PersonUi.row(summary, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
                     ServiceDurationSettings.label(this, !ControllerPinManager.isDomModeActive()), null);
             for (PersonSnapshot.Section section : person.sections) {

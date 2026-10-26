@@ -64,7 +64,7 @@ public final class PageMapScreenshotTest {
         prepareFixture(true);
         captureMain("00-sub-home", true);
         captureInSpace("00b-sub-settings", GlobalSettingsActivity.class, true);
-        captureInSpace("00c-sub-arrangements", StudioActivity.class, true);
+        captureInSpace("00c-sub-contract", com.subhub.app.people.ContractActivity.class, true);
 
         ControllerPinManager.enterDomMode();
         captureMain("01-dom-home", false);
@@ -84,7 +84,7 @@ public final class PageMapScreenshotTest {
                 R.id.censor_text_section, 0);
         captureTarget("05c-settings-phrases-and-tools", SettingsActivity.class,
                 R.id.censor_phrases_section, R.id.button_appearance_details);
-        captureTarget("04b-app-assignments", GlobalSettingsActivity.class,
+        captureTarget("04b-app-assignments", com.subhub.app.people.LocalAppsActivity.class,
                 R.id.app_list, 0);
         capture("07-censor-photos", ExportActivity.class);
         capture("08-help-safety", HelpActivity.class);
@@ -218,8 +218,9 @@ public final class PageMapScreenshotTest {
         File directory = new File(context.getExternalFilesDir(null), "page-map");
         if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
         Intent launch = new Intent(context, activityClass);
-        if (activityClass == GlobalSettingsActivity.class && targetId == R.id.app_list)
-            launch.putExtra(GlobalSettingsActivity.EXTRA_SHOW_INCLUDED_APPS, true);
+        if (activityClass == com.subhub.app.people.LocalAppsActivity.class)
+            launch.putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID,
+                    com.subhub.app.people.PersonId.LOCAL.value());
         try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(launch)) {
             scenario.onActivity(activity -> {
                 if (activityClass == GlobalSettingsActivity.class) {}

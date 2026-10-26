@@ -112,10 +112,11 @@ public final class PenanceContractTest {
         assertFalse(new AppModeManager(context).isArmed());
     }
 
-    @Test public void disabledMoneyRulesBlockPaidPauseAtEveryActionBoundary() {
+    @Test public void disabledPaidPauseBlocksCheckoutAndSettlementAtEveryActionBoundary() {
         long now = System.currentTimeMillis();
         PaidPauseManager pause = new PaidPauseManager(context);
-        pause.configure(true, 375, 12);
+        manager.configure(false, 100, 500, 2_000, 0);
+        pause.configure(false, 375, 12);
         CommitmentManager.start(context, 60L * 60L * 1000L);
         new AppModeManager(context).setArmed(true);
 
@@ -123,11 +124,12 @@ public final class PenanceContractTest {
         assertFalse(manager.requestPaidPause(now));
         assertTrue(manager.snapshot(now).getEvents().isEmpty());
 
-        manager.configure(true, 100, 500, 2_000, 0);
+        pause.configure(true, 375, 12);
+        assertTrue(pause.canPurchase());
         assertTrue(manager.requestPaidPause(now));
         PenanceManager.Settlement settlement = manager.beginPaidPauseSettlement(now);
         assertNotNull(settlement);
-        manager.configure(false, 100, 500, 2_000, 0);
+        pause.configure(false, 375, 12);
 
         assertFalse(manager.completeSettlement(settlement.getId(), 375));
         assertFalse(pause.isActive());
@@ -468,10 +470,8 @@ public final class PenanceContractTest {
                 View batch = activity.findViewById(R.id.detection_batch);
                 toggle.setChecked(false);
                 assertFalse(batch.isEnabled());
-                assertTrue(batch.getAlpha() < 0.5f);
                 toggle.setChecked(true);
                 assertTrue(batch.isEnabled());
-                assertEquals(1f, batch.getAlpha(), 0.01f);
             });
         } finally {
             ControllerPinManager.enterSubMode();

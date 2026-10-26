@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.*;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.view.View;
@@ -37,7 +38,7 @@ public class InputFocusAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final Map<SharedPreferences, Map<String, ?>> before = new LinkedHashMap<>();
     @Before public void prepare() {
-        for (String name : new String[] {SettingsRepository.PREFERENCES_NAME, "subhub_onboarding", "subhub_privacy", "subhub_controller_auth"}) {
+        for (String name : new String[] {SettingsRepository.PREFERENCES_NAME, "subhub_onboarding", "subhub_privacy", "subhub_controller_auth", "subhub_service_duration_ui"}) {
             SharedPreferences prefs = context.getSharedPreferences(name, 0);
             before.put(prefs, prefs.getAll());
         }
@@ -62,6 +63,36 @@ public class InputFocusAndroidTest {
             page.recreate();
             page.onActivity(a -> { search.set(a.findViewById(R.id.help_search)); assertFalse(search.get().hasFocus()); });
             awaitIme(search.get(), false);
+        }
+    }
+
+    @Test public void contractDurationKeyboardRequiresATapAfterLaunchAndRecreation() {
+        ControllerPinManager.enterDomMode();
+        context.getSharedPreferences("subhub_service_duration_ui", 0).edit()
+                .putLong("duration", com.subhub.app.commitment.ServiceDurationView.RANDOM)
+                .putLong("minimum", 3_600_000L).putLong("maximum", 7_200_000L).commit();
+        AtomicReference<View> field = new AtomicReference<>();
+        Intent target = new Intent(context, com.subhub.app.people.ServiceDurationActivity.class)
+                .putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID,
+                        com.subhub.app.people.PersonId.LOCAL.value());
+        try (ActivityScenario<com.subhub.app.people.ServiceDurationActivity> page = ActivityScenario.launch(target)) {
+            page.onActivity(activity -> {
+                field.set(activity.findViewById(R.id.service_duration_min_hours));
+                assertFalse(field.get().hasFocus());
+            });
+            awaitIme(field.get(), false);
+            onView(withId(R.id.service_duration_min_hours)).perform(
+                    androidx.test.espresso.action.ViewActions.scrollTo(), click());
+            awaitIme(field.get(), true);
+            page.recreate();
+            page.onActivity(activity -> {
+                field.set(activity.findViewById(R.id.service_duration_min_hours));
+                assertFalse(field.get().hasFocus());
+            });
+            awaitIme(field.get(), false);
+            onView(withId(R.id.service_duration_min_hours)).perform(
+                    androidx.test.espresso.action.ViewActions.scrollTo(), click());
+            awaitIme(field.get(), true);
         }
     }
 

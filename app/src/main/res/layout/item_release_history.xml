@@ -43,15 +43,13 @@
                 android:textSize="@dimen/ui_text_caption" />
         </LinearLayout>
 
-        <TextView
+        <ImageView
             android:id="@+id/release_chevron"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:gravity="center"
-            android:includeFontPadding="false"
-            android:text="›"
-            android:textColor="@color/accent_text"
-            android:textSize="@dimen/ui_icon_text" />
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center_vertical"
+            android:src="@drawable/ic_wallet_chevron"
+            android:importantForAccessibility="no" />
     </LinearLayout>
 
     <TextView

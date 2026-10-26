@@ -131,6 +131,59 @@ public class RemoteEditorAndroidTest {
             page.onActivity(a->{try{java.lang.reflect.Field group=RemoteContractActivity.class.getDeclaredField("artGroup");group.setAccessible(true);assertEquals("popup",group.get(a));java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("popup",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
         }
     }
+    @Test public void emptyLibraryCanSaveItsFirstCurrentContract()throws Exception {
+        assertTrue(feature.contracts.library(peer).isEmpty());
+        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()) {
+            readyLibrary(page);page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_no_saved_contracts)));assertNotNull(find(a.body,context.getString(R.string.remote_save_current_contract)));});
+            tap(page,R.string.remote_save_current_contract);await(()->feature.contracts.library(peer).size()==1);
+            JSONObject saved=feature.contracts.library(peer).values().iterator().next();assertEquals(feature.contracts.current(peer).getJSONObject("contract").getString("name"),saved.getJSONObject("contract").getString("name"));
+            assertNotEquals(feature.contracts.current(peer).getJSONObject("contract").getString("id"),saved.getJSONObject("contract").getString("id"));
+        }
+    }
+    @Test public void exportAdmissionSerializesRevocationButCopyDoesNotBlockIt()throws Exception {
+        File output=new File(context.getCacheDir(),database+"-admission.sub");java.util.concurrent.CountDownLatch revoked=new java.util.concurrent.CountDownLatch(1);AtomicReference<Throwable> error=new AtomicReference<>();AtomicReference<Thread> revoker=new AtomicReference<>();
+        try {
+            feature.contracts.exportAuthorized(peer,feature.contracts.current(peer),()->{
+                Thread thread=new Thread(()->{try{feature.store.revoke(peer.identity,generation);}catch(Throwable failure){error.set(failure);}finally{revoked.countDown();}});revoker.set(thread);thread.start();
+                long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(3);while(thread.getState()!=Thread.State.BLOCKED&&thread.isAlive()&&System.nanoTime()<deadline)Thread.yield();
+                assertEquals("Revocation crossed the document-open boundary",Thread.State.BLOCKED,thread.getState());
+                return new FileOutputStream(output){@Override public void write(byte[] bytes,int offset,int length)throws IOException {
+                    try{assertTrue("Copy held the peer authority monitor",revoked.await(3,java.util.concurrent.TimeUnit.SECONDS));}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IOException(interrupted);}super.write(bytes,offset,length);
+                }};
+            });
+            assertNull(error.get());assertEquals(RemoteStore.State.REVOKED,feature.store.peer(peer.identity,generation).state);assertTrue(output.length()>0);
+            byte[] before=java.nio.file.Files.readAllBytes(output.toPath());assertThrows(SecurityException.class,()->feature.contracts.exportAuthorized(peer,feature.contracts.current(peer),()->new FileOutputStream(output)));assertArrayEquals(before,java.nio.file.Files.readAllBytes(output.toPath()));
+        }finally{if(revoker.get()!=null)revoker.get().join(3000);output.delete();}
+    }
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
+    public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
+        JSONObject saved=feature.contracts.current(peer);saved.getJSONObject("contract").put("name","Saved contract fixture");feature.contracts.save(peer,saved);
+        for(String section:Arrays.asList("apps","duration","censor"))try(ActivityScenario<RemoteContractActivity> page=open(section)) {
+            ready(page,"name");inspectLayout(page,"contract-"+section);
+        }
+        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()){readyLibrary(page);inspectLayout(page,"library");}
+        try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
+        try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
+    }
+    @androidx.annotation.RequiresApi(29)
+    private <T extends Activity> void inspectLayout(ActivityScenario<T> page,String name)throws Exception {
+        android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();AtomicReference<T> activity=new AtomicReference<>();page.onActivity(activity::set);
+        await(()->{AtomicReference<Boolean> settled=new AtomicReference<>(false);page.onActivity(a->settled.set(a.hasWindowFocus()&&!a.getWindow().getDecorView().isLayoutRequested()));return settled.get();});
+        java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);page.onActivity(a->{View root=a.getWindow().getDecorView();root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);root.invalidate();});assertTrue("No hardware frame commit",frame.await(5,java.util.concurrent.TimeUnit.SECONDS));
+        List<String> failures=new ArrayList<>();page.onActivity(a->inspectText(a.findViewById(android.R.id.content),failures));
+        String configuration=activity.get().getResources().getConfiguration().screenWidthDp+"-"+activity.get().getResources().getConfiguration().fontScale;
+        File directory=new File(context.getFilesDir(),"remote-layout/"+configuration+"-"+database);assertTrue(directory.isDirectory()||directory.mkdirs());UiDevice device=UiDevice.getInstance(instrument);assertTrue(device.takeScreenshot(new File(directory,name+".png")));
+        try(OutputStream out=new FileOutputStream(new File(directory,name+".json"))){out.write(new JSONArray(failures).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}assertTrue(failures.toString(),failures.isEmpty());
+    }
+    private static void inspectText(View root,List<String> failures) {
+        if(!root.isShown())return;
+        if(root instanceof TextView&&root.getHeight()>0){TextView text=(TextView)root;android.text.Layout layout=text.getLayout();if(layout!=null&&text.getText().length()>0){
+            int width=text.getWidth()-text.getCompoundPaddingLeft()-text.getCompoundPaddingRight(),height=text.getHeight()-text.getCompoundPaddingTop()-text.getCompoundPaddingBottom();
+            int drawn=root instanceof EditText?layout.getLineBottom(0)-layout.getLineTop(0):layout.getHeight();if(drawn>height+1)failures.add("Clipped height: "+text.getText());
+            if(!(root instanceof EditText))for(int line=0;line<layout.getLineCount();line++)if(layout.getLineMax(line)>width+1||layout.getEllipsisCount(line)>0){failures.add("Clipped width: "+text.getText());break;}
+        }}
+        if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)inspectText(((ViewGroup)root).getChildAt(i),failures);
+    }
     private static EditText firstEditor(View root){if(root instanceof EditText)return (EditText)root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){EditText found=firstEditor(((ViewGroup)root).getChildAt(i));if(found!=null)return found;}return null;}
     private ActivityScenario<RemoteLibraryActivity> openLibrary(){return ActivityScenario.launch(new Intent(context,RemoteLibraryActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()));}
     private void readyLibrary(ActivityScenario<RemoteLibraryActivity> page)throws Exception {await(()->{AtomicReference<Boolean> ready=new AtomicReference<>(false);page.onActivity(a->ready.set(find(a.body,context.getString(R.string.remote_import))!=null));return ready.get();});}

@@ -122,6 +122,14 @@ public class RemoteConfigurationAndroidTest {
         try(SubHubPackArchive.Verified verified=SubHubPackArchive.openVerified(exported)){assertEquals(1,verified.assets.size());assertEquals(partial.getId(),verified.pack.getId());}
         assertThrows(SecurityException.class,()->remoteSub.save(subPeer,doc));
     }
+    @Test public void applyingSavedContractReplacesOrClearsItsCoverWithoutDuplicatingPaths()throws Exception {
+        RemoteContracts contracts=new RemoteContracts(context,dom,new RemoteConfigurationWriter(context,dom));
+        JSONObject current=configuration(),saved=configuration();
+        current.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/cover/image.png").put("hash",DOM).put("length",1));
+        saved.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/cover/image.png").put("hash",SUB).put("length",1));
+        JSONObject merged=contracts.merge(current,saved);JSONArray refs=merged.getJSONObject("contract").getJSONArray("assets");assertEquals(1,refs.length());assertEquals(SUB,refs.getJSONObject(0).getString("hash"));
+        saved.getJSONObject("contract").put("assets",new JSONArray());merged=contracts.merge(current,saved);assertEquals(0,merged.getJSONObject("contract").getJSONArray("assets").length());
+    }
     @Test public void terminalReceiptCannotRegressAndCommittedJournalKeepsAppliedSettings() throws Exception {
         seed();JSONObject doc=configuration();RemoteStore.Command command=deliver(doc);int[] commits={0};
         RemoteConfigurationWriter crash=new RemoteConfigurationWriter(context,sub,(name,editor)-> {

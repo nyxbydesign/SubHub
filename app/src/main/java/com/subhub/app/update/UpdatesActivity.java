@@ -26,9 +26,11 @@ import com.subhub.app.security.ControllerPinManager;
 
 import java.io.File;
 import java.text.DateFormat;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -87,9 +89,20 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.devUpdates.setOnCheckedChangeListener((button, checked) -> {
             if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
             state.setDevUpdates(checked);
+            UpdateScheduler.synchronize(this, false);
             render();
             checkNow();
         });
+        render();
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        changingAutomatic = true;
+        try {
+            super.onRestoreInstanceState(savedInstanceState);
+        } finally {
+            changingAutomatic = false;
+        }
         render();
     }
 
@@ -144,6 +157,8 @@ public final class UpdatesActivity extends AppCompatActivity {
                         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(new Date(last))));
         boolean dom = ControllerPinManager.isDomModeActive();
+        binding.automaticChecks.setText(state.devUpdates()
+                ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle);
         binding.automaticChecks.setEnabled(dom);
         binding.devUpdates.setEnabled(dom && !checking);
         binding.automaticHelp.setText(dom
@@ -221,8 +236,11 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
         if (history.isEmpty()) return;
         StringBuilder fingerprint = new StringBuilder();
+        fingerprint.append(getResources().getConfiguration().getLocales().toLanguageTags())
+                .append(':').append(ZoneId.systemDefault().getId()).append(';');
         for (ReleaseHistoryItem item : history) {
-            fingerprint.append(item.tag).append(':').append(item.notes.hashCode()).append(';');
+            fingerprint.append(item.tag).append(':').append(item.notes.hashCode())
+                    .append(':').append(item.publishedAt).append(':').append(item.prerelease).append(';');
         }
         String value = fingerprint.toString();
         if (value.equals(historyFingerprint)) return;
@@ -237,19 +255,23 @@ public final class UpdatesActivity extends AppCompatActivity {
             TextView version = row.findViewById(R.id.release_version);
             TextView meta = row.findViewById(R.id.release_meta);
             TextView details = row.findViewById(R.id.release_details);
-            TextView chevron = row.findViewById(R.id.release_chevron);
+            android.widget.ImageView chevron = row.findViewById(R.id.release_chevron);
             version.setText(getString(R.string.update_history_version, item.versionName));
             meta.setText(historyMeta(item, candidate));
             details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
             boolean expanded = expandedHistory.contains(item.tag);
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            chevron.setText(expanded ? "⌄" : "›");
+            chevron.setRotation(expanded ? 90f : 0f);
+            androidx.core.view.ViewCompat.setStateDescription(row,
+                    getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
             row.setContentDescription(getString(R.string.update_history_open, item.versionName));
             row.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
                 details.setVisibility(show ? View.VISIBLE : View.GONE);
-                chevron.setText(show ? "⌄" : "›");
+                chevron.setRotation(show ? 90f : 0f);
+                androidx.core.view.ViewCompat.setStateDescription(row,
+                        getString(show ? R.string.section_expanded : R.string.section_collapsed));
                 if (show) expandedHistory.add(item.tag);
                 else expandedHistory.remove(item.tag);
             });
@@ -264,12 +286,15 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (item.versionName.equals(BuildConfig.VERSION_NAME)) {
             return getString(R.string.update_history_installed);
         }
+        if (item.prerelease) {
+            Locale locale = getResources().getConfiguration().getLocales().get(0);
+            String timestamp = ReleaseTimestampFormatter.preview(item.publishedAt,
+                    locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
+            return timestamp.isEmpty() ? getString(R.string.update_history_preview)
+                    : getString(R.string.update_history_preview_date, timestamp);
+        }
         String date = item.publishedAt.length() >= 10
                 ? item.publishedAt.substring(0, 10) : "";
-        if (item.prerelease && !date.isEmpty()) {
-            return getString(R.string.update_history_preview_date, date);
-        }
-        if (item.prerelease) return getString(R.string.update_history_preview);
         return date.isEmpty() ? getString(R.string.update_history_published) : date;
     }
 

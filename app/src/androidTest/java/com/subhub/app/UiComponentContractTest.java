@@ -25,48 +25,27 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class UiComponentContractTest {
     @Test
-    public void statisticsStaysOnHomeAndAchievementsMoveToRituals() {
+    public void statisticsOwnsAchievementsAndAtmosphereOnlyContainsEffects() {
+        ControllerPinManager.enterSubMode();
         try (ActivityScenario<com.subhub.app.stats.StatsActivity> scenario =
                 ActivityScenario.launch(com.subhub.app.stats.StatsActivity.class)) {
-            scenario.onActivity(
-                    activity -> {
-                        org.junit.Assert.assertNull(
-                                activity.findViewById(R.id.achievements_home_card));
-                        org.junit.Assert.assertNull(
-                                "Achievement counts belong on Achievements, not Stats",
-                                activity.findViewById(R.id.achievement_progress));
-                    });
+            scenario.onActivity(activity -> {
+                assertNotNull(activity.findViewById(R.id.stats_achievements));
+                org.junit.Assert.assertNull(activity.findViewById(R.id.achievements_home_card));
+                org.junit.Assert.assertNull(activity.findViewById(R.id.achievement_progress));
+                assertTrue(activity.findViewById(R.id.nav_stats).isSelected());
+            });
         }
-        ControllerPinManager.enterSubMode();
-        try (ActivityScenario<MainActivity> scenario =
-                ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity(
-                    activity -> {
-                        View lifetime = activity.findViewById(R.id.daily_statistics_panel);
-                        assertNotNull(lifetime);
-                        org.junit.Assert.assertNull(
-                                activity.findViewById(R.id.achievements_home_card));
-                        assertEquals(
-                                View.VISIBLE,
-                                activity.findViewById(R.id.nav_atmosphere).getVisibility());
-                    });
-        }
-        try (ActivityScenario<AtmosphereActivity> scenario =
-                ActivityScenario.launch(AtmosphereActivity.class)) {
-            scenario.onActivity(
-                    activity -> {
-                        View packs = activity.findViewById(R.id.rituals_packs_card);
-                        View achievements = activity.findViewById(R.id.achievements_home_card);
-                        assertNotNull(achievements);
-                        ViewGroup parent = (ViewGroup) packs.getParent();
-                        assertTrue(
-                                parent.indexOfChild(packs) < parent.indexOfChild(achievements));
-                        org.junit.Assert.assertNull(
-                                activity.findViewById(R.id.daily_statistics_panel));
-                        org.junit.Assert.assertNull(activity.findViewById(R.id.switch_whispers));
-                    });
-        } finally {
-            ControllerPinManager.enterDomMode();
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<AtmosphereActivity> scenario = ActivityScenario.launch(AtmosphereActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertTrue(activity.findViewById(R.id.whispers_card).isShown());
+                assertTrue(activity.findViewById(R.id.popup_storm_card).isShown());
+                for (int id : new int[] {R.id.rituals_packs_card, R.id.rituals_gallery_card,
+                        R.id.rituals_keyholder_card, R.id.achievements_home_card})
+                    org.junit.Assert.assertNull(activity.findViewById(id));
+                assertTrue(activity.findViewById(R.id.nav_people).isSelected());
+            });
         }
     }
 

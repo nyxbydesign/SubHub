@@ -115,8 +115,9 @@ public final class PersonUi {
         text(card, parent.getContext().getString(R.string.role_app_time), true);
         for (PersonSnapshot.Allowance value : snapshot.allowances) {
             row(card, R.drawable.ic_nav_limits, value.label,
-                    value.usedMillis < 0 ? parent.getContext().getString(R.string.remote_daily_allowance, value.dailyMinutes) : parent.getContext().getString(R.string.role_allowance_usage,
-                            value.usedMillis / 60_000L, value.dailyMinutes), null);
+                    value.usedMillis < 0 ? parent.getContext().getString(R.string.role_allowance_unknown, value.dailyMinutes)
+                            : parent.getContext().getString(R.string.role_allowance_usage,
+                                    value.usedMillis / 60_000L, value.dailyMinutes), null);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);
@@ -144,6 +145,7 @@ public final class PersonUi {
     public static int icon(String section) {
         switch (section) {
             case "censor": return R.drawable.ic_nav_censor;
+            case "apps":
             case "limits": return R.drawable.ic_nav_limits;
             case "wallet": return R.drawable.ic_nav_money;
             default: return R.drawable.ic_atmosphere;
