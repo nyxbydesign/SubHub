@@ -18,8 +18,10 @@ These repository rules apply to every automated or human-assisted change.
 - `VERSION_CODE` is a positive Android integer and must increase for every released APK.
 - Public CI builds derive their Android code as `VERSION_CODE * 100000 + release workflow run_number`.
   Stable and development releases share that sequence; a later stable build can replace a dev build
-  of the same source version. Local/private candidates retain the unexpanded source code. Keep the
-  same `release.yml` workflow sequence; fail closed before run 100000 or Android code overflow.
+  of the same source version. Manual private replacement-engine candidates use that same sequence
+  for in-place signed updates, without publishing a release or adding a dev suffix. Local builds
+  and other private candidates retain the unexpanded source code. Keep the same `release.yml`
+  workflow sequence; fail closed before run 100000 or Android code overflow.
 - Any stable release-bound change must update both source values in the same commit. Automatic dev
   builds keep the source version and derive a unique name/code from the shared CI sequence.
   The helper performs the safe increment:
@@ -55,12 +57,52 @@ a new hardware-frame commit where supported; UI idle and a fixed sleep alone do 
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
 
+For ImageReader colour-metadata fixtures, supply metadata through the actual producer and assert
+the acquired image's format and dataspace before invoking the code under test. Do not assume
+`setDataSpace()` on an acquired image changes its overridden getter; use a real ImageWriter path
+for explicit source dataspaces. Keep requested reader defaults distinct from received frame metadata.
+
+Resource preparation is effect-specific: solid boxes draw inline and do not create prepared image
+resources. For those fixture baselines, await a current accepted post and drained render queues,
+not an impossible `resourcesMatchCurrent()` condition.
+
+Every fixture registering or reconfiguring `UiAutomation` must save both
+`enabled_accessibility_services` and `accessibility_enabled` before registration. In teardown,
+switch to `FLAG_DONT_USE_ACCESSIBILITY` before restoring both exact values, then assert restoration.
+UI-only automation can enable an inactive remembered service and contaminate the next bound-service
+fixture. Keep rejecting enabled capture intent; use a separately owned fresh-data guest instead of
+clearing an existing guest's settings or app data.
+
+`UiAutomation.executeShellCommand()` executes directly, without shell quote interpretation. For
+validated, nonempty, whitespace-free setting tokens, pass the literal token without added quotes.
+Reject unsupported original values before connecting automation, and verify exact restored values
+both in the fixture and through an independent external read after disconnection.
+
+Recover debug-app internal Censor Lab files with the authorized `run-as com.subhub.app` path.
+Copies in external app storage may not be shell-readable; do not change permissions or repeat
+passed workloads to repair export evidence. Verify the structured payload as well as the command
+status: Android `exec-out` can return diagnostic text with a zero host exit code. Preserve failed
+exports and shutdown observers, and reconcile actual closure separately.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
+Checked widget state can also be restored after `onCreate` and invoke change listeners.
+When preferences are authoritative, fence persistence, scheduling, and network side effects
+during framework view-state restoration, then render from those preferences. Native
+recreation regressions must cover both directions when saved widgets and stored values differ.
 Gate Android instrumentation tests that require newer platform APIs with
 `@SdkSuppress(minSdkVersion = ...)`, not `@RequiresApi`. The latter describes production
 API contracts rather than runtime test eligibility and fails Android lint's `UseSdkSuppress` check.
+Keep debug manifest Activities and Services instantiable at the minimum SDK: guard their entry
+points and annotate API-specific helpers, not the whole component. A component-wide `@RequiresApi`
+also raises its manifest requirement, even when its entry point contains a runtime SDK guard.
+For `CensorEngine` capture adapters, an admitted dispatch must precede the capturer's return. To move
+copying off the main thread, schedule the whole capture invocation on the worker; do not return
+before a queued adapter attempts admission. Keep `tryDispatch()` at actual source consumption.
+Full-display buffer coordinates are not View-local coordinates. Bind small native pixel witnesses
+to measured on-screen View bounds, checking those against an independent native bounds source;
+do not force an inset app View to origin zero or compensate the image with guessed offsets.
 Controlled scheduler fixtures must execute only due, uncancelled tasks in deadline
 order. Capture and display-expiry wakes are independent; insertion order can fire an
 expiry in place of a capture and invalidate an otherwise unrelated adapter test.
@@ -95,6 +137,25 @@ For video/source comparisons, follow [recording clock alignment](docs/censor-lab
 Before using performance traces as evidence, compare raw publication counts with parsed counts.
 Every trace-schema change must include a parser fixture for the changed record. Unknown fields or
 unsupported formats must be exposed as incomplete parsing, never silently reported as zero work.
+
+Select byte and row bounds for each artifact's schema. Expanded raw traces must not pass through
+a smaller maintenance-manifest reader; exercise the actual file reader above the small-manifest
+limit and at the raw-trace refusal boundary. Preserve observer failures and recover completed
+captures offline rather than repeating the producer to obtain a successful receipt.
+
+`SceneEngine.Source.pixelAtMillis == -1` explicitly means unknown. Preserve and test that sentinel;
+never substitute receipt time or a raw API-reported stamp. Validate each clock field's own contract
+instead of applying a blanket nonnegative range to every timestamp.
+
+Reconcile copied drawing members and accepted POST members in both directions using literal
+post serial, endpoint generation and member identity. Bind geometry and evidence source identities
+separately because mixed origins are valid. A matching subset is not complete member coverage;
+missing or truncated copies must remain explicitly incomplete.
+
+Presentation revisions are opaque signed-long equality tokens, not timestamps. Diagnostics must
+preserve their full domain and use explicit record state, not token sign, to distinguish missing data.
+At a live renderer callback, verify actual Surface-use and drawing-lease counts. Reserve whole-owner
+`managedResourcesDrained()` checks for final shutdown; an open resource owner is not drained.
 
 ## Release procedure
 

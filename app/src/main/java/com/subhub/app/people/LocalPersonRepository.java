@@ -45,10 +45,8 @@ public final class LocalPersonRepository implements PersonRepository {
         Set<String> packages = apps.getIncludedPackages();
         Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, System.currentTimeMillis());
         List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
-        List<String> assigned = new ArrayList<>();
         for (String packageName : packages) {
             String label = appLabel(packageName);
-            assigned.add(label);
             if (limits.perAppEnabled) {
                 AppTimerManager.UsageSnapshot used = usage.get(packageName);
                 allowances.add(new PersonSnapshot.Allowance(packageName, label,
@@ -56,7 +54,6 @@ public final class LocalPersonRepository implements PersonRepository {
             }
         }
         allowances.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
-        Collections.sort(assigned, String.CASE_INSENSITIVE_ORDER);
         if (limits.totalEnabled && !packages.isEmpty()) {
             long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
             allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
@@ -74,15 +71,10 @@ public final class LocalPersonRepository implements PersonRepository {
                 context.getString(R.string.role_filter_details, names(imageCategories),
                         text.isEnabled() ? names(text.getEnabledCategories()) : context.getString(R.string.role_disabled),
                         friendly(appearance.getType().name()))));
-        List<String> limitDetails = new ArrayList<>();
-        for (PersonSnapshot.Allowance allowance : allowances) {
-            limitDetails.add(allowance.label + " · " + context.getString(R.string.role_allowance_daily, allowance.dailyMinutes));
-        }
-        if (!assigned.isEmpty()) limitDetails.add(context.getString(R.string.arrangement_apps) + ": " + String.join(", ", assigned));
         sections.add(new PersonSnapshot.Section("limits", context.getString(R.string.sub_limits_title),
                 allowances.isEmpty() ? context.getString(R.string.role_no_app_limits)
                         : context.getResources().getQuantityString(R.plurals.sub_limits_selected, allowances.size(), allowances.size()),
-                String.join("\n", limitDetails)));
+                ""));
 
         PenanceManager wallet = new PenanceManager(context);
         int rules = 0;
@@ -108,7 +100,6 @@ public final class LocalPersonRepository implements PersonRepository {
         List<PersonSnapshot.Section> canonical = new ArrayList<>();
         for (PersonSnapshot.Section section : sections) {
             String detail = descriptions.forSection(section.key);
-            if ("limits".equals(section.key) && !section.details.isEmpty()) detail += "\n\n" + section.details;
             canonical.add(new PersonSnapshot.Section(section.key, section.title, section.summary, detail));
         }
         boolean paused = new PaidPauseManager(context).isActive();
@@ -118,7 +109,7 @@ public final class LocalPersonRepository implements PersonRepository {
                 : active ? R.string.role_service_active : R.string.role_service_inactive);
         SubHubPackManager packs = new SubHubPackManager(context);
         String activeId = packs.activePackId();
-        SubHubPack pack = activeId == null ? null : packs.findLibrary(activeId);
+        SubHubPack pack = activeId == null ? null : packs.activePackOverview();
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
         if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
         return new PersonSnapshot(id, context.getString(R.string.role_this_device), Build.MODEL,
