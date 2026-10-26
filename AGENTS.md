@@ -57,6 +57,10 @@ a new hardware-frame commit where supported; UI idle and a fixed sleep alone do 
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
 
+For native taps on scrolling pages with floating navigation, use
+`NativeUiActions.revealAboveNavigation()` before clicking. Espresso `scrollTo()` alone can
+leave the target beneath the navigation overlay, so the tap reaches a different control.
+
 For ImageReader colour-metadata fixtures, supply metadata through the actual producer and assert
 the acquired image's format and dataspace before invoking the code under test. Do not assume
 `setDataSpace()` on an acquired image changes its overridden getter; use a real ImageWriter path
