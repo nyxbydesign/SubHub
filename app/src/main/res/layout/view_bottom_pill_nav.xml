@@ -35,6 +35,21 @@
         <ImageView android:id="@+id/nav_people_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_people" />
         <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_people" />
     </LinearLayout>
+    <LinearLayout android:id="@+id/nav_activity" style="@style/Widget.SubHub.BottomTab"
+        android:contentDescription="@string/dom_activity_title" android:visibility="gone">
+        <FrameLayout android:layout_width="32dp" android:layout_height="24dp"
+            android:importantForAccessibility="no">
+            <ImageView android:id="@+id/nav_activity_icon" style="@style/Widget.SubHub.BottomTabIcon"
+                android:layout_gravity="center" android:contentDescription="@null"
+                android:src="@drawable/ic_shell_activity" />
+            <View android:id="@+id/nav_activity_unread" android:layout_width="8dp"
+                android:layout_height="8dp" android:layout_gravity="top|end"
+                android:background="@drawable/bg_shell_unread" android:visibility="gone"
+                android:importantForAccessibility="no" />
+        </FrameLayout>
+        <TextView android:id="@+id/nav_activity_label" style="@style/Widget.SubHub.BottomTabLabel"
+            android:text="@string/dom_activity_title" />
+    </LinearLayout>
     <LinearLayout android:id="@+id/nav_contract" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_contract" android:visibility="gone">
         <ImageView android:id="@+id/nav_contract_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_contract" />
         <TextView android:id="@+id/nav_contract_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_contract" />

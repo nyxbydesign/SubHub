@@ -46,7 +46,7 @@ public final class KeyholderSetupView extends LinearLayout {
         boolean pin = ControllerPinManager.isConfigured(activity);
         boolean legacyCode = state == KeyholderProvider.State.NONE
                 && new ControllerAuthenticator(activity).isPaired();
-        String signature = state + ":" + dom + ":" + pin + ":" + legacyCode;
+        String signature = DeviceRolePreferences.get(activity) + ":" + state + ":" + dom + ":" + pin + ":" + legacyCode;
         if (signature.equals(renderedState)) return;
         renderedState = signature;
         removeAllViews();
@@ -77,6 +77,17 @@ public final class KeyholderSetupView extends LinearLayout {
                 if (localAvailable() && new ControllerAuthenticator(activity).remove()) refresh();
             }, false);
         }, false).setId(R.id.keyholder_remove_authenticator);
+
+        if (DeviceRolePreferences.get(activity) == DeviceRolePreferences.Mode.DOM_ONLY) {
+            PersonUi.action(local, R.string.role_add_sub, () -> {
+                if (!localAvailable()) return;
+                ControllerPinGate.unlock(activity, () -> {
+                    ConnectionUi ui = People.connectionUi();
+                    if (ui != null && DeviceRolePreferences.supportsDom(activity)) ui.openPairing(activity, true);
+                }, false);
+            }, false).setId(R.id.keyholder_add_sub);
+            return;
+        }
 
         LinearLayout remote = PersonUi.card(this);
         remote.setId(R.id.keyholder_setup_remote);

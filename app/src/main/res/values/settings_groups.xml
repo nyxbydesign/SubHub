@@ -16,7 +16,7 @@
     <string name="settings_pact_active">Pact active</string>
     <string name="settings_pact_none">No active Pact</string>
     <string name="settings_privacy_summary">Discreet mode %1$s · App lock %2$s</string>
-    <string name="settings_appearance_summary">Studio arrangements, styles and custom assets</string>
+    <string name="settings_appearance_summary">Styles and custom artwork</string>
     <string name="settings_services_ready">PayPal connected</string>
     <string name="settings_services_setup">PayPal not connected</string>
     <string name="settings_build_summary">Build: %1$s | %2$s</string>

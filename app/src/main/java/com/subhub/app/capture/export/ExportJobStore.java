@@ -55,7 +55,7 @@ public final class ExportJobStore extends SQLiteOpenHelper {
         if (!assets.mkdirs()) throw new IOException("Cannot prepare export storage");
         int count = 0;
         try {
-            for (File input : new CustomImageManager(context).enabledFilesForPackExport()) {
+            for (File input : new CustomImageManager(context).enabledConfigurationFiles()) {
                 if (++count > 64) break;
                 try (InputStream from = new FileInputStream(input);
                      OutputStream to = new FileOutputStream(new File(assets, count + ".img"))) {

@@ -22,6 +22,7 @@
     <item name="achievements_home_progress_percent" type="id" />
     <item name="achievements_home_progress" type="id" />
     <item name="censor_photo_tools" type="id" />
+    <item name="button_export" type="id" />
     <item name="stats_achievements" type="id" />
     <string name="person_contract_version">Version %1$s</string>
 </resources>

@@ -5,14 +5,14 @@ import android.content.SharedPreferences;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.capture.CustomImageManager;
-import com.subhub.app.pack.*;
+import com.subhub.app.configuration.*;
 import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.settings.SettingsRepository;
 import org.json.*;
 import java.io.*;
 import java.util.*;
 
-/** Portable contract metadata and content-addressed artwork are scoped to one relationship. */
+/** Profile configuration metadata and content-addressed artwork are scoped to one relationship. */
 public final class RemoteContracts {
     private final Context context;
     private final RemoteStore store;
@@ -36,36 +36,26 @@ public final class RemoteContracts {
         String applied=store.metadata(peer.identity,peer.generation,"applied_configuration","");
         JSONObject current=new JSONObject(applied.isEmpty()?store.metadata(peer.identity,peer.generation,"initial_configuration",""):applied);
         store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",current,false,System.currentTimeMillis());
-        if(!"true".equals(store.metadata(peer.identity,peer.generation,"library_imported",""))) {
-            SubHubPackManager manager=new SubHubPackManager(context);
-            for(SubHubPackManager.Record record:manager.listLibrary()) {
-                try(SubHubPackArchive.Verified archive=SubHubPackArchive.openVerified(manager.libraryArchive(record.pack.getId()))) {
-                    JSONArray refs=new JSONArray();RemoteAssets blobs=assets(peer);
-                    for(Map.Entry<String,SubHubPackArchive.Asset> entry:archive.assets.entrySet()) {
-                        SubHubPackArchive.Asset value=entry.getValue();try(InputStream input=archive.openAsset(entry.getKey())){ingest(blobs,value.hash,value.length,input);}
-                        refs.put(reference(entry.getKey(),value.hash,value.length));
-                    }
-                    JSONObject doc=RemoteConfiguration.fromPortable(archive.pack,refs,current.getJSONObject("apps"),current.getJSONObject("service"));
-                    store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"saved:"+archive.pack.getId(),doc,false,System.currentTimeMillis());
-                } catch(Exception unavailable) {
-                    store.putMetadata(peer.identity,peer.generation,"contract_error","A saved contract could not be shared");
-                }
-            }
-            store.putMetadata(peer.identity,peer.generation,"library_imported","true");
-        }
         process(peer);writer.prunePrepared();
     }
 
-    public JSONObject capture(RemoteStore.Peer peer) throws Exception {
-        SubHubPackManager manager=new SubHubPackManager(context);SubHubPack pack=manager.createBlank();
-        for(String section:SubHubPackSchema.SECTIONS)pack.setSection(section,manager.captureSection(section));
-        String active=manager.activePackId();
-        if(active!=null)for(SubHubPackManager.Record record:manager.listLibrary())if(active.equals(record.pack.getId())) {
-            pack.setMetadata(record.pack.getName(),record.pack.getAuthor(),record.pack.getDescription(),record.pack.getPackVersion());break;
+    public synchronized JSONObject capture(RemoteStore.Peer peer) throws Exception {
+        if(!LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is incomplete");
+        JSONObject sections=new JSONObject();
+        for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSchema.captureSection(context,section));
+        SharedPreferences identity=context.getSharedPreferences("profile_configuration_identity",0);
+        String id=identity.getString("id","");String origin=identity.getString("origin","");
+        if(id.isEmpty()||origin.isEmpty()) {
+            id=UUID.randomUUID().toString();origin=UUID.randomUUID().toString();
+            if(!identity.edit().putString("id",id).putString("origin",origin).commit())throw new IOException("Configuration identity could not be saved");
         }
+        long now=System.currentTimeMillis();
+        long created=identity.getLong("createdAt",0);
+        if(created<=0){created=now;if(!identity.edit().putLong("createdAt",created).commit())throw new IOException("Configuration date could not be saved");}
+        JSONObject metadata=RemoteConfiguration.currentMetadata(id,origin,context.getString(com.subhub.app.R.string.role_local_configuration),created,now);
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
         JSONArray refs=new JSONArray();RemoteAssets blobs=assets(peer);int index=0;
-        for(File image:new CustomImageManager(context).enabledFilesForPackExport()) {
+        for(File image:new CustomImageManager(context).enabledConfigurationFiles()) {
             if(image.length()>RemoteAssets.MAX_ASSET_BYTES)throw new IOException("Artwork exceeds the transfer limit");
             String hash=RemoteAssets.digest(image);try(InputStream input=new FileInputStream(image)){ingest(blobs,hash,image.length(),input);}
             refs.put(reference("assets/censor/image-"+(index++)+".png",hash,image.length()));
@@ -89,18 +79,19 @@ public final class RemoteContracts {
                 .put("maximum",duration.getLong("maximum",86_400_000)).put("hidden",duration.getBoolean("hidden",false));
         JSONObject remembered=localApplied();
         if(remembered!=null) {
-            JSONObject metadata=remembered.getJSONObject("contract");pack.setMetadata(metadata.getString("name"),metadata.getString("author"),metadata.getString("description"),metadata.getString("version"));
+            JSONObject previous=remembered.getJSONObject("contract");
+            for(String key:new String[]{"id","origin","name","author","description","version","minimumAppVersion","createdAt"})metadata.put(key,previous.get(key));
         }
-        return RemoteConfiguration.active(RemoteConfiguration.fromPortable(pack,refs,appDoc,service));
+        return RemoteConfiguration.active(RemoteConfiguration.fromSections(metadata,sections,refs,appDoc,service));
     }
 
     /** Retained settings remain the active contract after unpairing until a local edit replaces them. */
     public JSONObject localApplied() throws Exception {
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
         String encoded=main.getString("remote_active_configuration","");if(encoded.isEmpty())return null;
-        JSONObject doc=RemoteConfiguration.active(new JSONObject(encoded));SubHubPackManager manager=new SubHubPackManager(context);
+        JSONObject doc=RemoteConfiguration.active(new JSONObject(encoded));
         JSONObject sections=doc.getJSONObject("contract").getJSONObject("sections");
-        for(String section:SubHubPackSchema.SECTIONS)if(!sameSection(section,manager.captureSection(section),sections.getJSONObject(section)))return null;
+        for(String section:ConfigurationSchema.SECTIONS)if(!sameSection(section,ConfigurationSchema.captureSection(context,section),sections.getJSONObject(section)))return null;
         JSONObject apps=doc.getJSONObject("apps");
         if(apps.getBoolean("all")!=main.getBoolean(AppModeManager.KEY_ALL_APPS,false) || !RemoteConfiguration.selected(doc).equals(main.getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES,Collections.emptySet())))return null;
         JSONObject budgets=apps.getJSONObject("allowances");Iterator<String> names=budgets.keys();while(names.hasNext()){String name=names.next();if(budgets.getInt(name)!=main.getInt("app_timer_allowance_minutes:"+name,30))return null;}
@@ -118,7 +109,7 @@ public final class RemoteContracts {
     }
 
     private static boolean sameSection(String section,JSONObject left,JSONObject right)throws JSONException {
-        for(PackSettingCatalog.Field field:PackSettingCatalog.fields(section)) {
+        for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)) {
             Object a=field.normalize(left.get(field.key)),b=field.normalize(right.get(field.key));
             if(a instanceof JSONArray && b instanceof JSONArray) {
                 Set<String> x=new TreeSet<>(),y=new TreeSet<>();JSONArray aa=(JSONArray)a,bb=(JSONArray)b;
@@ -146,9 +137,8 @@ public final class RemoteContracts {
     public List<RemoteSession.AssetNeed> missing(RemoteStore.Peer peer) throws Exception {
         List<JSONObject> documents=new ArrayList<>();
         if(peer.localRole==RemoteProtocol.Role.DOM) {
-            for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE))if(!row.deleted)documents.add(new JSONObject(row.body));
+            JSONObject active=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");if(active!=null)documents.add(active);
         } else {
-            for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS))if(!row.deleted)documents.add(new JSONObject(row.body));
             JSONObject desired=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"desired");
             if(desired!=null)documents.add(desired.getJSONObject("configuration"));
         }
@@ -180,69 +170,6 @@ public final class RemoteContracts {
         return baseline==null?null:RemoteConfiguration.active(baseline);
     }
 
-    public Map<String,JSONObject> library(RemoteStore.Peer peer) throws Exception {
-        Map<String,JSONObject> result=new LinkedHashMap<>();
-        List<RemoteProtocol.Change> baseline=peer.localRole==RemoteProtocol.Role.DOM?store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE):store.published(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE);
-        for(RemoteProtocol.Change row:baseline)if(row.key.startsWith("saved:") && !row.deleted)result.put(row.key.substring(6),RemoteConfiguration.validate(new JSONObject(row.body)));
-        List<RemoteProtocol.Change> changes=peer.localRole==RemoteProtocol.Role.DOM?store.published(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS):store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS);
-        for(RemoteProtocol.Change row:changes) {
-            if(row.deleted)result.remove(row.key);else {JSONObject doc=RemoteConfiguration.validate(new JSONObject(row.body));if(!row.key.equals(doc.getJSONObject("contract").getString("id")))throw new SecurityException("Contract identity mismatch");result.put(row.key,doc);}
-        }
-        return result;
-    }
-    public void save(RemoteStore.Peer peer,JSONObject input) throws Exception {
-        JSONObject doc=RemoteConfiguration.validate(input);String id=doc.getJSONObject("contract").getString("id");
-        store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS,id,doc,false,System.currentTimeMillis());
-    }
-    public void delete(RemoteStore.Peer peer,String id) throws Exception {
-        UUID.fromString(id);store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS,id,new JSONObject(),true,System.currentTimeMillis());
-    }
-    public JSONObject merge(JSONObject current,JSONObject saved) throws Exception {
-        JSONObject result=new JSONObject(RemoteProtocol.canonical(RemoteConfiguration.active(current))),choice=RemoteConfiguration.validate(saved).getJSONObject("contract");
-        JSONObject sections=result.getJSONObject("contract").getJSONObject("sections"),incoming=choice.getJSONObject("sections");
-        Iterator<String> names=incoming.keys();while(names.hasNext()){String section=names.next();JSONObject values=sections.getJSONObject(section),replacements=incoming.getJSONObject(section);Iterator<String> keys=replacements.keys();while(keys.hasNext()){String key=keys.next();values.put(key,replacements.get(key));}}
-        JSONArray assets=new JSONArray(),old=result.getJSONObject("contract").getJSONArray("assets"),added=choice.getJSONArray("assets");
-        for(int i=0;i<old.length();i++){String path=old.getJSONObject(i).getString("path");if(!path.startsWith("assets/cover/") && !(incoming.has("censor") && path.startsWith("assets/censor/")) && !(incoming.has("popup") && path.startsWith("assets/popup/")))assets.put(old.getJSONObject(i));}
-        for(int i=0;i<added.length();i++)assets.put(added.getJSONObject(i));
-        JSONObject metadata=new JSONObject(choice.toString()).put("sections",sections).put("assets",assets);result.put("contract",metadata);
-        return RemoteConfiguration.active(result);
-    }
-    public void importArchive(RemoteStore.Peer peer,File file,JSONObject template) throws Exception {
-        try(SubHubPackArchive.Verified archive=SubHubPackArchive.openVerified(file)) {
-            RemoteAssets blobs=assets(peer);JSONArray refs=new JSONArray();
-            for(Map.Entry<String,SubHubPackArchive.Asset> entry:archive.assets.entrySet()) {
-                try(InputStream input=archive.openAsset(entry.getKey())){ingest(blobs,entry.getValue().hash,entry.getValue().length,input);}
-                refs.put(reference(entry.getKey(),entry.getValue().hash,entry.getValue().length));
-            }
-            save(peer,RemoteConfiguration.fromPortable(archive.pack,refs,template.getJSONObject("apps"),template.getJSONObject("service")));
-        }
-    }
-    public void export(RemoteStore.Peer peer,JSONObject input,OutputStream output) throws Exception {
-        JSONObject doc=RemoteConfiguration.validate(input);Map<String,File> files=new LinkedHashMap<>();RemoteAssets blobs=assets(peer);JSONArray refs=doc.getJSONObject("contract").getJSONArray("assets");
-        for(int i=0;i<refs.length();i++){JSONObject ref=refs.getJSONObject(i);files.put(ref.getString("path"),blobs.finish(ref.getString("hash")));}
-        SubHubPackArchive.writeStreaming(RemoteConfiguration.portable(doc),files,output);
-    }
-    @FunctionalInterface public interface ExportDestination { OutputStream open() throws IOException; }
-    public void exportAuthorized(RemoteStore.Peer peer,JSONObject input,ExportDestination destination)throws Exception {
-        synchronized(store){requireExportAuthority(peer);}
-        File prepared=File.createTempFile("peer-export-",".sub",context.getCacheDir());
-        try {
-            try(OutputStream output=new FileOutputStream(prepared)){export(peer,input,output);}
-            OutputStream selected;
-            // Destination opening is the admission point. Preparation and copying never hold this monitor.
-            synchronized(store){requireExportAuthority(peer);selected=destination.open();}
-            if(selected==null)throw new IOException("Export unavailable");
-            try(OutputStream output=selected;InputStream source=new FileInputStream(prepared)) {
-                byte[] buffer=new byte[8192];int count;while((count=source.read(buffer))!=-1)output.write(buffer,0,count);
-            }
-        } finally{prepared.delete();}
-    }
-    private void requireExportAuthority(RemoteStore.Peer selected) {
-        RemoteStore.Peer peer=store.peer(selected.identity,selected.generation);
-        if(peer==null||peer.localRole!=RemoteProtocol.Role.DOM||peer.state!=RemoteStore.State.ACTIVE
-                ||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
-                ||!com.subhub.app.security.ControllerPinManager.hasCredentials(context))throw new SecurityException("Pairing is not authorized");
-    }
     public static void ingest(RemoteAssets blobs,String hash,long length,InputStream input) throws IOException {
         blobs.reserve(hash,length);if(blobs.isComplete(hash)){blobs.finish(hash);return;}
         long offset=blobs.offset(hash),skipped=0;byte[] buffer=new byte[RemoteAssets.CHUNK_BYTES];

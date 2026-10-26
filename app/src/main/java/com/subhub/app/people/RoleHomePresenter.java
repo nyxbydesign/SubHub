@@ -4,8 +4,6 @@ import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.HorizontalScrollView;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -16,11 +14,11 @@ import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderProvider;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.stats.StatsSnapshot;
 import com.subhub.app.util.AsyncUiScope;
-import com.subhub.app.util.SelectionGrid;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,11 +29,13 @@ public final class RoleHomePresenter {
     private final LinearLayout domBody, subBody, relationship;
     private final View service, oldDashboard;
     private final HomeSelection selection;
+    private final FavoriteSubStore favorites;
+    private LinearLayout domPeople;
+    private List<Object> renderedDom;
     private long lastRefresh;
     private boolean displayedDom, sessionPage;
 
     public static final class HomeSelection extends ViewModel {
-        PersonId person;
         boolean allUsage;
         public HomeSelection() {}
     }
@@ -44,6 +44,7 @@ public final class RoleHomePresenter {
         this.activity = activity;
         this.data = data;
         selection = new ViewModelProvider(activity).get(HomeSelection.class);
+        favorites = new FavoriteSubStore(activity);
         domBody = activity.findViewById(R.id.home_dom_overview);
         subBody = activity.findViewById(R.id.home_sub_summary);
         service = activity.findViewById(R.id.home_service_widget);
@@ -69,181 +70,181 @@ public final class RoleHomePresenter {
     public void setSessionPage(boolean value) { sessionPage = value; }
 
     public void refresh(boolean force) {
-        boolean dom = ControllerPinManager.isDomModeActive();
+        boolean dom = domWorkspace();
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
         subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
         service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
         if (dom || sessionPage) relationship.setVisibility(View.GONE);
         oldDashboard.setVisibility(View.GONE);
+        if (dom && !ControllerPinManager.isDomModeActive()) {
+            data.cancel("role-home");
+            domPeople = null;
+            renderedDom = null;
+            if (domBody.findViewWithTag("home_dom_unlock") == null) {
+                domBody.removeAllViews();
+                PersonUi.action(domBody, R.string.home_dom_locked, () ->
+                        com.subhub.app.security.ControllerPinGate.unlock(activity, () -> refresh(true), false), true)
+                        .setTag("home_dom_unlock");
+            }
+            return;
+        }
         if (sessionPage) return;
+        if (dom) ensureDomSections();
         long now = android.os.SystemClock.elapsedRealtime();
         if (!force && dom == displayedDom && now - lastRefresh < 5_000L) return;
         displayedDom = dom;
         lastRefresh = now;
-        PersonRepository repository = People.repository(activity.getApplicationContext());
+        android.content.Context application = activity.getApplicationContext();
+        PersonRepository repository = People.repository(application);
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
             if (dom) {
-                for (PersonId id : repository.people()) values.add(repository.load(id));
+                if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application))
+                    return new HomeData(values, null);
+                for (PersonId id : repository.people()) {
+                    if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application)) break;
+                    values.add(repository.load(id));
+                }
             } else values.add(repository.load(PersonId.LOCAL));
-            return new HomeData(PersonDisplayOrder.sorted(values, locale), dom ? null : assignedDom());
+            return new HomeData(PersonDisplayOrder.sorted(values, locale), dom ? null : assignedDom(application));
         }, loaded -> {
-            if (dom != ControllerPinManager.isDomModeActive() || sessionPage) return;
+            if (dom != domWorkspace() || sessionPage
+                    || dom && !ControllerPinManager.isDomModeActive()) return;
             if (dom) renderDom(loaded.people);
             else if (!loaded.people.isEmpty()) renderSub(loaded.people.get(0), loaded.dom);
         }, failure -> {
-            if (dom != ControllerPinManager.isDomModeActive()) return;
+            if (dom != domWorkspace()
+                    || dom && !ControllerPinManager.isDomModeActive()) return;
             relationship.setVisibility(View.GONE);
-            LinearLayout target = dom ? domBody : subBody;
+            if (dom) renderedDom = null;
+            LinearLayout target = dom ? domPeople : subBody;
             target.removeAllViews();
             PersonUi.text(target, activity.getString(R.string.role_person_unavailable), false);
             PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
         });
     }
 
+    private boolean domWorkspace() {
+        return DeviceRolePreferences.supportsDom(activity) && DeviceRolePreferences.isDomWorkspace(activity);
+    }
+
     private void renderDom(List<PersonSnapshot> people) {
-        domBody.removeAllViews();
-        long active = people.stream().filter(person -> person.serviceActive
-                && person.sync.runtime == PersonSnapshot.Freshness.CURRENT).count();
-        boolean allRuntimeKnown = people.stream().allMatch(person -> person.sync.runtime == PersonSnapshot.Freshness.CURRENT);
-        boolean hasRemote = people.stream().anyMatch(person -> !person.id.isLocal());
-        long connected = people.stream().filter(person -> person.connection == PersonSnapshot.Connection.CONNECTED).count();
-        SelectionGrid totals = new SelectionGrid(activity, null);
-        totals.setTag("home_status_totals");
-        domBody.addView(totals, new LinearLayout.LayoutParams(-1, -2));
-        statistic(totals, Long.toString(active), allRuntimeKnown
-                ? R.string.home_composition_in_session : R.string.home_composition_confirmed_active, R.drawable.ic_nav_limits);
-        statistic(totals, Long.toString(hasRemote ? connected : people.size()), hasRemote
-                ? R.string.home_composition_connected : R.string.home_composition_devices, R.drawable.ic_nav_people);
-        heading(domBody, R.string.role_people, R.string.home_composition_view_all, () -> {
-            if (ControllerPinManager.isDomModeActive()) activity.startActivity(new Intent(activity, PeopleActivity.class));
-        });
-        if (people.isEmpty()) {
-            PersonUi.text(domBody, activity.getString(R.string.role_no_subs), false);
-            return;
-        }
-        PersonSnapshot chosen = people.stream().filter(person -> person.id.equals(selection.person))
-                .findFirst().orElse(people.get(0));
-        selection.person = chosen.id;
-        if (people.size() > 1) {
-            HorizontalScrollView scroll = new HorizontalScrollView(activity);
-            scroll.setHorizontalScrollBarEnabled(false);
-            LinearLayout choices = new LinearLayout(activity);
-            scroll.addView(choices);
-            domBody.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
-            for (PersonSnapshot person : people) {
-                TextView chip = text(person.name, 13, true);
-                chip.setGravity(Gravity.CENTER);
-                chip.setMinHeight(dp(48));
-                chip.setPadding(dp(16), dp(8), dp(16), dp(8));
-                chip.setBackgroundResource(R.drawable.bg_home_composition_choice);
-                chip.setSelected(chosen.id.equals(person.id));
-                chip.setTag("home_person_choice:" + person.id.value());
-                chip.setContentDescription(person.name + ". " + ProfileViews.targetDiscriminator(activity, person)
-                        + ". " + PersonUi.connection(activity, person));
-                LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-2, -2);
-                size.setMarginEnd(dp(8));
-                size.bottomMargin = dp(12);
-                choices.addView(chip, size);
-                clickable(chip, () -> {
-                    if (!ControllerPinManager.isDomModeActive()) return;
-                    selection.person = person.id;
-                    renderDom(people);
-                });
+        List<Object> signature = new ArrayList<>();
+        signature.add(favorites.identity());
+        for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
+                person.id, person.name, person.device, person.connection, person.serviceLabel,
+                person.sync.runtime, person.sync.stats, person.protectedSeconds,
+                person.activityEvents, person.additionOrder);
+        if (domPeople != null && domPeople.getParent() == domBody && signature.equals(renderedDom)) return;
+        renderedDom = signature;
+        ensureDomSections();
+        domPeople.removeAllViews();
+        heading(domPeople, R.string.home_favorite_title, 0, null);
+        PersonSnapshot favorite = favorites.resolve(people);
+        if (favorite == null) PersonUi.action(domPeople, R.string.home_favorite_choose, () -> {
+            if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                activity.startActivity(new Intent(activity, PeopleActivity.class));
+        }, true).setTag("home_choose_favorite");
+        else favoriteOverview(favorite);
+        List<PersonSnapshot> recent = recentAdditions(people, favorite);
+        if (!recent.isEmpty()) {
+            heading(domPeople, R.string.home_recent_additions, 0, null);
+            for (PersonSnapshot person : recent) {
+                LinearLayout recentCard = card(domPeople, R.drawable.bg_home_recent);
+                recentCard.setPadding(dp(12), dp(8), dp(12), dp(8));
+                identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
             }
         }
-        personOverview(chosen);
     }
 
-    private void statistic(SelectionGrid parent, String value, int label, int icon) {
-        LinearLayout tile = PersonUi.column(activity);
-        tile.setBackgroundResource(R.drawable.bg_home_composition_stat);
-        tile.setPadding(dp(14), dp(12), dp(14), dp(12));
-        LinearLayout top = new LinearLayout(activity);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(icon(icon), new LinearLayout.LayoutParams(dp(24), dp(24)));
-        TextView number = text(value, 22, true);
-        number.setTextColor(activity.getColor(R.color.accent_text));
-        LinearLayout.LayoutParams numberSize = new LinearLayout.LayoutParams(0, -2, 1);
-        numberSize.setMarginStart(dp(10));
-        top.addView(number, numberSize);
-        tile.addView(top);
-        tile.addView(text(activity.getString(label), 12, false));
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.setMargins(dp(3), 0, dp(3), dp(8));
-        parent.addView(tile, size);
+    private void ensureDomSections() {
+        if (domPeople != null && domPeople.getParent() == domBody) return;
+        domBody.removeAllViews();
+        domPeople = PersonUi.column(activity);
+        domPeople.setTag("home_people_composition");
+        domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
+        PersonUi.text(domPeople, activity.getString(R.string.role_loading), false);
+        com.subhub.app.activity.ActivityPreview.add(domBody, null, 5, data, "home-activity-preview");
     }
 
-    private void personOverview(PersonSnapshot person) {
-        LinearLayout card = card(domBody, R.drawable.bg_home_composition_person);
-        card.setTag("person:" + person.id.value());
-        LinearLayout identity = new LinearLayout(activity);
-        identity.setGravity(Gravity.CENTER_VERTICAL);
-        identity.setMinimumHeight(dp(64));
-        identity.addView(ProfileViews.avatar(activity, person.name), new LinearLayout.LayoutParams(dp(52), dp(52)));
-        LinearLayout copy = PersonUi.column(activity);
-        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
-        copySize.setMarginStart(dp(12));
-        identity.addView(copy, copySize);
-        copy.addView(text(person.name, 18, true));
-        copy.addView(text(ProfileViews.targetDiscriminator(activity, person), 11, false));
-        TextView connection = text(PersonUi.connection(activity, person), 12, false);
-        if (person.connection == PersonSnapshot.Connection.CONNECTED)
-            connection.setTextColor(activity.getColor(R.color.home_composition_current));
-        copy.addView(connection);
-        TextView open = text("›", 24, false);
-        open.setGravity(Gravity.CENTER);
-        open.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        identity.addView(open, new LinearLayout.LayoutParams(dp(24), -2));
-        card.addView(identity, new LinearLayout.LayoutParams(-1, -2));
-        clickable(identity, () -> openPerson(person));
+    static List<PersonSnapshot> recentAdditions(List<PersonSnapshot> people, PersonSnapshot favorite) {
+        List<PersonSnapshot> ordered = new ArrayList<>();
+        for (PersonSnapshot person : people) {
+            if (person.id.isLocal() || !FavoriteSubStore.eligible(person) || person.additionOrder <= 0) continue;
+            if (favorite != null && FavoriteSubStore.identity(favorite.id).equals(FavoriteSubStore.identity(person.id))) continue;
+            ordered.add(person);
+        }
+        ordered.sort(java.util.Comparator.comparingLong((PersonSnapshot person) -> person.additionOrder).reversed()
+                .thenComparing(person -> FavoriteSubStore.identity(person.id)).thenComparing(person -> person.id.value()));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<PersonSnapshot> result = new ArrayList<>();
+        for (PersonSnapshot person : ordered) {
+            if (seen.add(FavoriteSubStore.identity(person.id))) result.add(person);
+            if (result.size() == 3) break;
+        }
+        return result;
+    }
+
+    private void favoriteOverview(PersonSnapshot person) {
+        LinearLayout card = card(domPeople, R.drawable.bg_home_favorite);
+        card.setTag("home_favorite:" + person.id.value());
+        identityHeader(card, person, true).setTag("home_favorite_identity:" + person.id.value());
         divider(card);
         String session = person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
                 ? activity.getString(R.string.role_unknown_data) : person.serviceLabel;
         if (person.sync.runtime == PersonSnapshot.Freshness.STALE)
             session += " · " + activity.getString(R.string.role_stale_data);
-        PersonUi.row(card, R.drawable.ic_nav_limits, activity.getString(R.string.role_session), session,
-                () -> openPerson(person)).setTag("home_person_session:" + person.id.value());
+        PersonUi.row(card, R.drawable.ic_nav_limits, activity.getString(R.string.role_session), session, null)
+                .setTag("home_favorite_session:" + person.id.value());
         divider(card);
-        PersonUi.row(card, R.drawable.ic_nav_contract, person.contractName,
-                activity.getString(person.sync.contract == PersonSnapshot.Freshness.CURRENT
-                        ? R.string.role_active_contract : person.sync.contract == PersonSnapshot.Freshness.STALE
-                                ? R.string.role_stale_data : R.string.role_contract_unavailable), null);
-        if (person.sync.hasPendingConfiguration()) PersonUi.text(card, activity.getString(R.string.role_changes_pending), false);
-        if (!person.can(PersonSnapshot.Capability.EDIT_CONTRACT)) return;
-        heading(domBody, R.string.home_composition_quick_controls, 0, null);
-        SelectionGrid controls = new SelectionGrid(activity, null);
-        controls.setTag("home_person_controls:" + person.id.value());
-        domBody.addView(controls, new LinearLayout.LayoutParams(-1, -2));
-        for (PersonSnapshot.Section section : person.sections) {
-            if (!List.of("censor", "limits", "wallet", "atmosphere").contains(section.key)) continue;
-            LinearLayout tile = PersonUi.column(activity);
-            tile.setBackgroundResource(R.drawable.bg_home_composition_stat);
-            tile.setPadding(dp(12), dp(12), dp(12), dp(12));
-            tile.setMinimumHeight(dp(88));
-            tile.addView(icon(PersonUi.icon(section.key)), new LinearLayout.LayoutParams(dp(28), dp(28)));
-            tile.addView(text(section.title, 14, true));
-            if (!section.summary.isEmpty()) tile.addView(text(section.summary, 12, false));
-            tile.setTag("home_person_edit:" + person.id.value() + ":" + section.key);
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-            size.setMargins(dp(3), dp(3), dp(3), dp(3));
-            controls.addView(tile, size);
-            clickable(tile, () -> editSection(person, section.key));
+        String stats = person.sync.stats == PersonSnapshot.Freshness.UNKNOWN
+                ? activity.getString(R.string.role_unknown_data)
+                : StatsSnapshot.formatDuration(person.protectedSeconds) + " · " + person.activityEvents
+                        + " " + activity.getString(R.string.role_stat_activity);
+        if (person.sync.stats == PersonSnapshot.Freshness.STALE)
+            stats += " · " + activity.getString(R.string.role_stale_data);
+        PersonUi.row(card, R.drawable.ic_nav_stats, activity.getString(R.string.role_stats), stats, null)
+                .setTag("home_favorite_stats:" + person.id.value());
+    }
+
+    private LinearLayout identityHeader(LinearLayout parent, PersonSnapshot person, boolean favorite) {
+        LinearLayout identity = new LinearLayout(activity);
+        identity.setGravity(Gravity.CENTER_VERTICAL);
+        identity.setMinimumHeight(dp(favorite ? 72 : 64));
+        identity.addView(ProfileViews.avatar(activity, person.name),
+                new LinearLayout.LayoutParams(dp(favorite ? 56 : 36), dp(favorite ? 56 : 36)));
+        LinearLayout copy = PersonUi.column(activity);
+        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
+        copySize.setMarginStart(dp(12));
+        identity.addView(copy, copySize);
+        TextView name = text(person.name, favorite ? 22 : 14, true);
+        name.setTag((favorite ? "home_favorite_name:" : "home_recent_name:") + person.id.value());
+        copy.addView(name);
+        TextView device = text(ProfileViews.targetDiscriminator(activity, person), 12, false);
+        copy.addView(device);
+        TextView connection = text(PersonUi.connection(activity, person), favorite ? 12 : 11, false);
+        if (person.connection == PersonSnapshot.Connection.CONNECTED)
+            connection.setTextColor(activity.getColor(R.color.home_composition_current));
+        copy.addView(connection);
+        if (!favorite) for (TextView label : new TextView[] {name, device, connection}) {
+            label.setSingleLine(true);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
         }
+        TextView open = text("›", 24, false);
+        open.setGravity(Gravity.CENTER);
+        open.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        identity.addView(open, new LinearLayout.LayoutParams(dp(24), -2));
+        identity.setContentDescription(person.name + ". " + ProfileViews.targetDiscriminator(activity, person)
+                + ". " + PersonUi.connection(activity, person));
+        androidx.appcompat.widget.TooltipCompat.setTooltipText(identity, identity.getContentDescription());
+        parent.addView(identity, new LinearLayout.LayoutParams(-1, -2));
+        clickable(identity, () -> openPerson(person));
+        return identity;
     }
 
     private void openPerson(PersonSnapshot person) {
-        if (ControllerPinManager.isDomModeActive()) PersonRoutes.open(activity, person.id);
-    }
-
-    private void editSection(PersonSnapshot person, String key) {
-        if (!ControllerPinManager.isDomModeActive() || !person.can(PersonSnapshot.Capability.EDIT_CONTRACT)) return;
-        if (person.id.isLocal()) PersonRoutes.editSection(activity, person.id, key);
-        else {
-            ConnectionUi ui = People.connectionUi();
-            if (ui != null) ui.editSection(activity, person.id, key);
-        }
+        if (domWorkspace() && ControllerPinManager.isDomModeActive()) PersonRoutes.open(activity, person.id);
     }
 
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
@@ -253,7 +254,7 @@ public final class RoleHomePresenter {
         if (dom != null) {
             LinearLayout linked = card(relationship, R.drawable.bg_home_composition_stat);
             PersonUi.row(linked, R.drawable.ic_nav_people, dom.name, activity.getString(dom.status), () -> {
-                if (ControllerPinManager.isDomModeActive()) return;
+                if (domWorkspace()) return;
                 ConnectionUi ui = People.connectionUi();
                 if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
             }).setTag("home_assigned_dom_connection");
@@ -263,7 +264,7 @@ public final class RoleHomePresenter {
         contract.setTag("home_active_contract");
         ContractHeader.add(contract, person, activity.getString(R.string.role_active_contract), data);
         clickable(contract, () -> {
-            if (!ControllerPinManager.isDomModeActive()) activity.startActivity(new Intent(activity, ContractActivity.class));
+            if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class));
         });
         usage(person, dom);
         LinearLayout stats = card(subBody, R.drawable.bg_home_composition_stat);
@@ -271,7 +272,7 @@ public final class RoleHomePresenter {
                 person.sync.stats == PersonSnapshot.Freshness.UNKNOWN ? activity.getString(R.string.role_unknown_data)
                         : StatsSnapshot.formatDuration(person.protectedSeconds) + " · " + person.activityEvents
                                 + " " + activity.getString(R.string.role_stat_activity), () -> {
-                    if (!ControllerPinManager.isDomModeActive()) activity.startActivity(new Intent(activity, StatsActivity.class));
+                    if (!domWorkspace()) activity.startActivity(new Intent(activity, StatsActivity.class));
                 });
         TextView help = text(activity.getString(R.string.role_help_safety), 13, false);
         help.setTextColor(activity.getColor(R.color.accent_text));
@@ -321,14 +322,14 @@ public final class RoleHomePresenter {
         }
     }
 
-    private AssignedDom assignedDom() {
+    private static AssignedDom assignedDom(android.content.Context context) {
         try {
             KeyholderProvider provider = People.keyholder();
             KeyholderProvider.State state = provider.state();
             String name = provider.assignedDomName();
             if (state == KeyholderProvider.State.NONE || state == KeyholderProvider.State.UNAVAILABLE
                     && (name == null || name.trim().isEmpty())) return null;
-            return new AssignedDom(name == null || name.trim().isEmpty() ? activity.getString(R.string.role_your_dom) : name,
+            return new AssignedDom(name == null || name.trim().isEmpty() ? context.getString(R.string.role_your_dom) : name,
                     state == KeyholderProvider.State.READY ? R.string.role_connection_paired
                             : state == KeyholderProvider.State.PENDING ? R.string.role_connection_pending
                                     : R.string.role_connection_error);
@@ -370,15 +371,6 @@ public final class RoleHomePresenter {
         value.setPadding(0, dp(3), 0, dp(3));
         if (bold) value.setTypeface(null, android.graphics.Typeface.BOLD);
         return value;
-    }
-
-    private ImageView icon(int resource) {
-        ImageView image = new ImageView(activity);
-        image.setImageResource(resource);
-        image.setImageTintList(ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
-        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        return image;
     }
 
     private void divider(LinearLayout parent) {

@@ -40,7 +40,7 @@ public final class RemoteSession {
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
-        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1),deadlineNanos);
+        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1),deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
             requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
@@ -48,7 +48,7 @@ public final class RemoteSession {
         }
         requireType(response,"hello_ack",peer);
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos);
+        exchange(connection,peer,deadlineNanos,activityVersion(response)==1);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -63,9 +63,10 @@ public final class RemoteSession {
         store.setRoute(identity,generation,hello.getString("route"));
         JSONObject ready=message("hello_ack",peer);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
+        boolean activity=activityVersion(hello)==1;if(activity)ready.put("activityVersion",1);
         send(connection,ready,deadlineNanos);
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
-        exchange(connection,peer,deadlineNanos);
+        exchange(connection,peer,deadlineNanos,activity);
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
@@ -86,30 +87,37 @@ public final class RemoteSession {
         try{requireType(read(connection,deadline),type,peer);}catch(IOException closedAfterReply){/* The terminal application state is already committed. */}
     }
 
-    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+    private static long activityVersion(JSONObject frame)throws JSONException {
+        if(!frame.has("activityVersion"))return 0;
+        long version=RemoteProtocol.integer(frame,"activityVersion");
+        if(version<=0)throw new SecurityException("Invalid activity capability");return version;
+    }
+
+    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
-            push(connection,peer,deadline);
-            pull(connection,peer,deadline);
+            push(connection,peer,deadline,activity);
+            pull(connection,peer,deadline,activity);
             send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
-            pull(connection,peer,deadline);
+            pull(connection,peer,deadline,activity);
             hooks.prepare(peer);
-            push(connection,peer,deadline);
+            push(connection,peer,deadline,activity);
             requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());
     }
 
-    private void push(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+    private void push(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity) throws Exception {
         int batches=0;
         // Historical pagination must not delay current state or an application result.
         for(RemoteProtocol.Stream stream:new RemoteProtocol.Stream[]{RemoteProtocol.Stream.CONFIGURATION,
                 RemoteProtocol.Stream.COMMAND_RESULT,RemoteProtocol.Stream.RUNTIME,RemoteProtocol.Stream.BASELINE,
-                RemoteProtocol.Stream.CONTRACTS,RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.APP_CATALOG,
+                RemoteProtocol.Stream.EVENTS,RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.APP_CATALOG,
                 RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE}) {
             if(stream.writer!=peer.localRole) continue;
+            if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
             while(batches<MAX_BATCHES) {
                 checkActive(peer);
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
@@ -120,7 +128,7 @@ public final class RemoteSession {
                 batches++;
             }
         }
-        send(connection,message("state_complete",peer).put("heads",store.outgoingHeads(peer.identity,peer.generation)),deadline);
+        send(connection,message("state_complete",peer).put("heads",store.outgoingHeads(peer.identity,peer.generation,activity)),deadline);
         JSONObject wanted=read(connection,deadline);requireType(wanted,"asset_wants",peer);
         JSONArray rows=wanted.getJSONArray("assets");
         if(rows.length()>MAX_ASSET_REQUESTS) throw new IOException("Too many asset requests");
@@ -151,16 +159,17 @@ public final class RemoteSession {
         requireType(read(connection,deadline),"phase_ack",peer);
     }
 
-    private void pull(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+    private void pull(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity) throws Exception {
         int count=0;
         while(true) {
             checkActive(peer);
             JSONObject frame=read(connection,deadline);
             if("state_complete".equals(frame.optString("type"))) {
-                requireType(frame,"state_complete",peer);store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"));break;
+                requireType(frame,"state_complete",peer);store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"),activity);break;
             }
             if(++count>MAX_BATCHES) throw new IOException("Too many sync batches");
             RemoteProtocol.Batch batch=RemoteProtocol.Batch.parse(frame);
+            if(batch.stream==RemoteProtocol.Stream.EVENTS&&!activity)throw new SecurityException("Activity capability was not negotiated");
             RemoteProtocol.Ack ack=store.receive(peer.identity,batch);
             send(connection,ack.json(),deadline);
             hooks.received(peer,batch.stream);

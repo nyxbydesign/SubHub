@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_duration_reload">Reload</string>
+    <string name="remote_activity_pairing_scope">Activity includes selected app entries, triggered Tributes, and reached limits. Both devices need a compatible app version.</string>
+</resources>

@@ -18,9 +18,12 @@ public final class People {
     private People() {}
 
     public static PersonRepository repository(Context context) {
-        LocalPersonRepository local=new LocalPersonRepository(context.getApplicationContext());
+        Context application=context.getApplicationContext();
+        LocalPersonRepository local=new LocalPersonRepository(application);
         return new PersonDirectory(new PersonRepository() {
-            @Override public java.util.List<PersonId> people(){return local.people();}
+            @Override public java.util.List<PersonId> people(){return
+                    com.subhub.app.security.DeviceRolePreferences.supportsSub(application)
+                            ? local.people() : java.util.Collections.emptyList();}
             @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
         }, remote);
     }

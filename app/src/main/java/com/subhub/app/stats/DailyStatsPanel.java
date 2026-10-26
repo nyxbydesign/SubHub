@@ -8,7 +8,6 @@ import android.widget.*;
 
 import com.subhub.app.R;
 import com.subhub.app.penance.WalletCurrency;
-import com.subhub.app.util.ThemedDialogs;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -191,22 +190,22 @@ public final class DailyStatsPanel extends LinearLayout {
         }
         String[] labels = new String[LABELS.length];
         for (int i = 0; i < labels.length; i++) labels[i] = getContext().getString(LABELS[i]);
-        Button filter =
-                action(
-                        this,
-                        labels[metric] + "  ▾",
-                        () ->
-                                ThemedDialogs.builder(getContext())
-                                        .setTitle(R.string.daily_filter)
-                                        .setSingleChoiceItems(
-                                                labels,
-                                                metric,
-                                                (dialog, which) -> {
-                                                    metric = which;
-                                                    dialog.dismiss();
-                                                    refresh();
-                                                })
-                                        .show());
+        Spinner filter = new Spinner(getContext());
+        ArrayAdapter<String> options = new ArrayAdapter<>(getContext(), R.layout.view_form_spinner_value, labels);
+        options.setDropDownViewResource(R.layout.view_form_spinner_option);
+        filter.setAdapter(options);
+        filter.setSelection(metric);
+        filter.setMinimumHeight(dp(48));
+        filter.setContentDescription(getContext().getString(R.string.daily_filter));
+        addView(filter, new LayoutParams(-1, -2));
+        filter.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (metric == position) return;
+                metric = position;
+                refresh();
+            }
+        });
         filter.setId(R.id.daily_metric_filter);
         long total = 0;
         List<Long> trend = new ArrayList<>();

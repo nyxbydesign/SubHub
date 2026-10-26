@@ -9,7 +9,6 @@ import static org.hamcrest.Matchers.is;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,7 +17,6 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppTimerManager;
-import com.subhub.app.pack.*;
 import com.subhub.app.people.ContractActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.SettingsRepository;
@@ -39,15 +37,13 @@ public final class HomeDetailConfigurationAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private SharedPreferences prefs, auth;
     private Map<String, ?> before, authBefore;
-    private SubHubPackManager packs;
-    private String id;
     @Before public void prepare() throws Exception {
         prefs = new SettingsRepository(context).preferences();
         auth = context.getSharedPreferences("subhub_controller_auth", Context.MODE_PRIVATE);
         before = new java.util.LinkedHashMap<>(prefs.getAll()); authBefore = new java.util.LinkedHashMap<>(auth.getAll());
-        prefs.edit().putBoolean(AppModeManager.KEY_ARMED, false).remove("commitment_ends_at").commit();
-        packs = new SubHubPackManager(context);
-        assertNull("Disposable fixture must have no active personal pack", packs.activePackId());
+        prefs.edit().putBoolean(AppModeManager.KEY_ARMED, false).remove("commitment_ends_at")
+                .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,
+                        com.subhub.app.security.DeviceRolePreferences.Mode.BOTH.name()).commit();
         if (!ControllerPinManager.isConfigured(context)) assertTrue(ControllerPinManager.setPin(context, "2468"));
         String chrome = "com.android.chrome", settings = "com.android.settings";
         context.getPackageManager().getApplicationInfo(chrome, 0);
@@ -63,13 +59,12 @@ public final class HomeDetailConfigurationAndroidTest {
     }
     @After public void restore() {
         ControllerPinManager.enterDomMode();
-        if (id != null) { assertTrue(packs.deactivate()); packs.deleteLibrary(id); }
         SharedPreferenceTestRestore.restore(prefs, before); SharedPreferenceTestRestore.restore(auth, authBefore);
         ControllerPinManager.enterSubMode();
     }
     @Test public void limitsListsDistinctInstalledAppAllowancesAndEmptySelection() throws Exception {
         try (ActivityScenario<ContractActivity> scenario = launch()) {
-            awaitContract(scenario, false);
+            awaitContract(scenario);
             openContractSection("limits");
             inspect("home-limits-allowances.png", text -> {
                 assertTrue(text.contains("Chrome · 35 min"));
@@ -78,7 +73,7 @@ public final class HomeDetailConfigurationAndroidTest {
             assertAllowances();
             new AppModeManager(context).saveIncludedPackages(Set.of());
             scenario.recreate();
-            awaitContract(scenario, false);
+            awaitContract(scenario);
             openContractSection("limits");
             inspect(null, text -> {
                 assertTrue(text.contains(context.getString(R.string.arrangement_no_apps)));
@@ -88,51 +83,24 @@ public final class HomeDetailConfigurationAndroidTest {
             assertTrue(new AppModeManager(context).getIncludedPackages().isEmpty());
         }
     }
-    @Test public void activeContractHeaderAndSecurityShowTheirOwnDetailsWithoutSecrets() throws Exception {
+    @Test public void currentConfigurationAndSecurityShowTheirOwnDetailsWithoutSecrets() throws Exception {
         ControllerPinManager.enterDomMode();
         new com.subhub.app.settings.FeatureModuleManager(context).setSubliminalEnabled(true);
         prefs.edit().putBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, true).commit();
-        SubHubPack pack = packs.createBlank(); id = pack.getId();
-        pack.setMetadata("Native Rituals pack", "Synthetic holder", "", "2.3.0");
-        pack.putAsset("assets/cover/rituals.png", coverArtwork());
-        pack.setSection(SubHubPackSchema.CENSOR, PackSettingCatalog.defaults(SubHubPackSchema.CENSOR));
-        packs.addToLibrary(pack); assertTrue(packs.activate(pack, Set.of(SubHubPackSchema.CENSOR)));
-        assertEquals("2.3.0", packs.activePackOverview().getPackVersion());
         auth.edit().putString("encrypted_secret", "SYNTHETIC_SECRET_DO_NOT_SHOW").commit();
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<ContractActivity> scenario = launch()) {
-            awaitContract(scenario, true);
-            onView(withTagValue(is("contract_cover:local"))).perform(revealAboveNavigation());
-            awaitCommittedFrame();
-            assertCover(true);
-            assertHeaderVersion(true);
-            inspect("home-rituals-config.png", text -> {
-                assertTrue(text.contains("Native Rituals pack"));
+            awaitContract(scenario);
+            inspect("home-current-config.png", text -> {
+                assertTrue(text.contains(context.getString(R.string.role_local_configuration)));
                 assertFalse(text.contains(context.getString(R.string.keyholder_status_both)));
                 assertFalse(text.contains("SYNTHETIC_SECRET_DO_NOT_SHOW"));
             });
             assertEffectDetails();
             assertAllowances();
-            ControllerPinManager.enterDomMode();
-            pack.removeAsset("assets/cover/rituals.png"); packs.addToLibrary(pack);
-            ControllerPinManager.enterSubMode();
             scenario.recreate();
-            awaitContract(scenario, false);
-            assertCover(false);
-            assertHeaderVersion(true);
-            inspect(null, text -> assertTrue(text.contains("Native Rituals pack")));
-            assertEffectDetails();
-            ControllerPinManager.enterDomMode(); assertTrue(packs.deactivate());
-            ControllerPinManager.enterSubMode();
-            scenario.recreate();
-            awaitContract(scenario, false);
-            assertCover(false);
-            assertHeaderVersion(false);
-            assertNull(packs.activePackId());
-            inspect(null, text -> {
-                assertTrue(text.contains(context.getString(R.string.role_local_configuration)));
-                assertFalse(text.contains("Native Rituals pack"));
-            });
+            awaitContract(scenario);
+            inspect(null, text -> assertTrue(text.contains(context.getString(R.string.role_local_configuration))));
             assertEffectDetails();
         }
         try (ActivityScenario<com.subhub.app.security.AuthenticatorActivity> security =
@@ -160,8 +128,6 @@ public final class HomeDetailConfigurationAndroidTest {
                     context.getString(R.string.arrangement_atmosphere_enabled, ""))));
             assertTrue(effects.contains(context.getString(R.string.arrangement_detail_line,
                     context.getString(R.string.popup_title), context.getString(R.string.atmosphere_state_on))));
-            assertFalse(effects.contains("Native Rituals pack"));
-            assertFalse(effects.contains("2.3.0"));
             assertFalse(effects.contains(context.getString(R.string.keyholder_home_title)));
             assertFalse(effects.contains(context.getString(R.string.keyholder_your_lock)));
         });
@@ -204,19 +170,17 @@ public final class HomeDetailConfigurationAndroidTest {
         assertEquals(35, timers.allowanceMinutes("com.android.chrome"));
         assertEquals(75, timers.allowanceMinutes("com.android.settings"));
     }
-    private static void awaitContract(ActivityScenario<ContractActivity> scenario, boolean expectedCover) {
+    private static void awaitContract(ActivityScenario<ContractActivity> scenario) {
         long end = android.os.SystemClock.uptimeMillis() + 10000;
         AtomicBoolean ready = new AtomicBoolean();
         while (android.os.SystemClock.uptimeMillis() < end) {
             scenario.onActivity(activity -> {
                 View body = activity.findViewById(R.id.role_page_body);
-                View cover = body.findViewWithTag("contract_cover:local");
                 AsyncUiScope data = AsyncUiScope.forPage(activity);
-                ready.set(!data.isPending("contract") && !data.isPending("contract-cover")
+                ready.set(!data.isPending("contract")
                         && text(body).contains(activity.getString(R.string.atmosphere_title))
                         && body.isLaidOut() && body.getWidth() > 0 && body.getHeight() > 0
-                        && cover != null && cover.getVisibility() == (expectedCover ? View.VISIBLE : View.GONE)
-                        && (!expectedCover || cover.isLaidOut() && cover.getWidth() > 0 && cover.getHeight() > 0));
+                        && body.findViewWithTag("person_contract_scope") != null);
             });
             if (ready.get()) {
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -225,7 +189,7 @@ public final class HomeDetailConfigurationAndroidTest {
             }
             android.os.SystemClock.sleep(25);
         }
-        fail("Contract details and cover did not finish loading and layout");
+        fail("Contract details did not finish loading and layout");
     }
     private void inspect(String file, java.util.function.Consumer<String> check) {
         awaitCommittedFrame();
@@ -244,76 +208,17 @@ public final class HomeDetailConfigurationAndroidTest {
         });
         if (file != null) {
             Bitmap bitmap = renderedContractScreenshot(file);
-            try {
-                if (file.equals("home-rituals-config.png")) {
-                    java.util.concurrent.atomic.AtomicReference<Rect> coverBounds = new java.util.concurrent.atomic.AtomicReference<>();
-                    onView(withTagValue(is("contract_cover:local"))).check((cover, missing) -> {
-                        if (missing != null) throw missing;
-                        int[] location = new int[2]; cover.getLocationOnScreen(location);
-                        coverBounds.set(new Rect(location[0], location[1], location[0] + cover.getWidth(),
-                                location[1] + cover.getHeight()));
-                    });
-                    Rect bounds = coverBounds.get();
-                    assertTrue("Actual compositor displays the cover's center marker",
-                            sameOpaqueColor(bitmap.getPixel(bounds.centerX(), bounds.centerY()), 0xFF4FD3C8));
-                }
-            } finally { bitmap.recycle(); }
+            bitmap.recycle();
         }
-    }
-    private static byte[] coverArtwork() {
-        Bitmap image = Bitmap.createBitmap(96, 128, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(image); canvas.drawColor(0xFF693DA2);
-        android.graphics.Paint paint = new android.graphics.Paint(); paint.setColor(0xFF4FD3C8);
-        canvas.drawRect(20, 20, 76, 108, paint);
-        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-        assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, bytes)); image.recycle();
-        return bytes.toByteArray();
-    }
-    private static void assertCover(boolean visible) {
-        onView(withTagValue(is("contract_cover:local"))).check((view, missing) -> {
-            if (missing != null) throw missing;
-            android.widget.ImageView cover = (android.widget.ImageView) view;
-            assertEquals(visible ? View.VISIBLE : View.GONE, cover.getVisibility());
-            if (!visible) { assertNull(cover.getDrawable()); return; }
-            assertTrue(cover.getDrawable() instanceof android.graphics.drawable.BitmapDrawable);
-            Bitmap image = ((android.graphics.drawable.BitmapDrawable) cover.getDrawable()).getBitmap();
-            assertTrue(image.getWidth() <= 512 && image.getHeight() <= 512);
-            assertEquals(0xFF4FD3C8, image.getPixel(image.getWidth() / 2, image.getHeight() / 2));
-            Rect text = new Rect(), artwork = new Rect();
-            ViewGroup row = (ViewGroup) cover.getParent();
-            assertTrue(row.getChildAt(0).getGlobalVisibleRect(text));
-            assertTrue(cover.getGlobalVisibleRect(artwork));
-            assertTrue("Cover sits to the right without overlapping the pack name", text.right < artwork.left);
-            int[] position = new int[2]; cover.getLocationOnScreen(position);
-            assertEquals(new Rect(position[0], position[1], position[0] + cover.getWidth(),
-                    position[1] + cover.getHeight()), artwork);
-            Rect navigation = new Rect();
-            assertTrue(cover.getRootView().findViewById(R.id.bottom_navigation).getGlobalVisibleRect(navigation));
-            assertTrue("Cover clears the floating navigation", artwork.bottom <= navigation.top);
-        });
-    }
-    private void assertHeaderVersion(boolean visible) {
-        onView(withTagValue(is("contract_version:local"))).check((view, missing) -> {
-            if (missing != null) throw missing;
-            assertEquals(visible ? View.VISIBLE : View.GONE, view.getVisibility());
-            assertEquals(visible ? context.getString(R.string.person_contract_version, "2.3.0") : "",
-                    ((TextView) view).getText().toString());
-        });
     }
     private Bitmap renderedContractScreenshot(String file) {
         java.util.concurrent.atomic.AtomicReference<Rect> bounds = new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.atomic.AtomicReference<Rect> coverBounds = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicInteger color = new java.util.concurrent.atomic.AtomicInteger();
         onView(withId(R.id.nav_contract_label)).check((label, missing) -> {
             if (missing != null) throw missing;
             int[] point = new int[2]; label.getLocationOnScreen(point);
             bounds.set(new Rect(point[0], point[1], point[0] + label.getWidth(), point[1] + label.getHeight()));
             color.set(((TextView) label).getCurrentTextColor());
-            View cover = label.getRootView().findViewWithTag("contract_cover:local");
-            if (cover.getVisibility() == View.VISIBLE) {
-                cover.getLocationOnScreen(point);
-                coverBounds.set(new Rect(point[0], point[1], point[0] + cover.getWidth(), point[1] + cover.getHeight()));
-            }
         });
         long end = android.os.SystemClock.uptimeMillis() + 5000;
         boolean first = true;
@@ -332,11 +237,7 @@ public final class HomeDetailConfigurationAndroidTest {
                     if (sameOpaqueColor(pixel, expected)) matched++;
                 }
             }
-            Rect artwork = coverBounds.get();
-            boolean coverSettled = artwork == null || artwork.left >= 0 && artwork.top >= 0
-                    && artwork.right <= frame.getWidth() && artwork.bottom <= frame.getHeight()
-                    && sameOpaqueColor(frame.getPixel(artwork.centerX(), artwork.centerY()), 0xFF4FD3C8);
-            if (matched > 40 && coverSettled) {
+            if (matched > 40) {
                 savePixels(frame, file);
                 return frame;
             }
@@ -349,8 +250,7 @@ public final class HomeDetailConfigurationAndroidTest {
             awaitCommittedFrame();
         }
         if (last != null) { savePixels(last, file.replace(".png", "-failed.png")); last.recycle(); }
-        throw new AssertionError("Contract label or cover marker absent from compositor at "
-                + bounds.get() + " / " + coverBounds.get());
+        throw new AssertionError("Contract label absent from compositor at " + bounds.get());
     }
     private void savePixels(Bitmap bitmap, String name) {
         try (FileOutputStream output = new FileOutputStream(new File(context.getExternalFilesDir(null), name))) {

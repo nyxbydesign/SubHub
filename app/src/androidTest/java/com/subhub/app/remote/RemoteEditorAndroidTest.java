@@ -23,9 +23,15 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
 public class RemoteEditorAndroidTest {
+    @Rule public final org.junit.rules.RuleChain fixtures = org.junit.rules.RuleChain
+            .outerRule(new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture())
+            .around(new com.subhub.app.UiAutomationStateRule());
     private Context context;private RemoteFeature feature,previous;private RemoteStore source;private RemoteStore.Peer peer;private String database,generation;private java.lang.reflect.Field singleton;
     @Before public void setup()throws Exception {
         context=InstrumentationRegistry.getInstrumentation().getTargetContext();UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        assertTrue(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).edit()
+                .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,com.subhub.app.security.DeviceRolePreferences.Mode.BOTH.name()).commit());
+        assertTrue(ControllerPinManager.setPin(context,"2468"));
         assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
         database="editor-"+UUID.randomUUID();feature=new RemoteFeature(context,new RemoteStore(context,database+".db"));source=new RemoteStore(context,database+"source.db");
         char[] a=new char[64],b=new char[64];Arrays.fill(a,'a');Arrays.fill(b,'b');String dom=new String(a),sub=new String(b);
@@ -40,27 +46,19 @@ public class RemoteEditorAndroidTest {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
             ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
             ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
-            tap(page,R.string.remote_save_contract);assertTrue(feature.contracts.library(peer).isEmpty());
+            tap(page,R.string.remote_apply);assertNull(feature.store.latestCommand(peer.identity,generation));
         }
     }
-    @Test public void nativeSpinnerChoiceAndSaveUseRemoteDuration()throws Exception {
+    @Test public void nativeSpinnerChoiceAndApplyUseRemoteDuration()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
             ready(page,"service_duration");AtomicReference<View> picker=new AtomicReference<>();page.onActivity(a->picker.set(controls(a).get("service_duration")));tapView(picker.get());
             UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String choice=context.getResources().getStringArray(R.array.remote_duration_choices)[2];
             assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(choice)),5000));device.findObject(androidx.test.uiautomator.By.text(choice)).click();InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             try{await(()->{AtomicReference<Integer> selected=new AtomicReference<>(-1);page.onActivity(a->selected.set(((Spinner)controls(a).get("service_duration")).getSelectedItemPosition()));return selected.get()==2;});}catch(AssertionError failed){diagnose(page,"duration-choice");throw failed;}
-            tap(page,R.string.remote_save_contract);try{await(()->!feature.contracts.library(peer).isEmpty());}catch(AssertionError failed){diagnose(page,"duration-save");throw failed;}JSONObject saved=feature.contracts.library(peer).values().iterator().next();assertEquals(3_600_000,saved.getJSONObject("service").getLong("duration"));
+            tap(page,R.string.remote_apply);try{await(()->feature.store.latestCommand(peer.identity,generation)!=null);}catch(AssertionError failed){diagnose(page,"duration-apply");throw failed;}JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");assertEquals(3_600_000,saved.getJSONObject("service").getLong("duration"));
         }
     }
-    @Test public void revokedPeerCannotTruncateExportAndPendingExportSurvivesRecreation()throws Exception {
-        File output=new File(context.getCacheDir(),database+".sub");try(FileOutputStream stream=new FileOutputStream(output)){stream.write(new byte[]{11,22,33});}
-        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()) {
-            readyLibrary(page);page.onActivity(a->{try{java.lang.reflect.Field export=RemoteLibraryActivity.class.getDeclaredField("exportDoc");export.setAccessible(true);export.set(a,new JSONObject(feature.contracts.current(peer).toString()));}catch(Exception e){throw new AssertionError(e);}});
-            page.recreate();readyLibrary(page);page.onActivity(a->{try{java.lang.reflect.Field export=RemoteLibraryActivity.class.getDeclaredField("exportDoc");export.setAccessible(true);assertNotNull(export.get(a));}catch(Exception e){throw new AssertionError(e);}});
-            feature.store.revoke(peer.identity,peer.generation);page.onActivity(a->a.onActivityResult(2,Activity.RESULT_OK,new Intent().setData(Uri.fromFile(output))));
-            assertArrayEquals(new byte[]{11,22,33},java.nio.file.Files.readAllBytes(output.toPath()));
-        }finally{assertTrue(output.delete());}
-    }
+
     @Test public void atmosphereRouteOpensSubliminalAndRoleLossClosesEditor()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("atmosphere")) {
             ready(page,"name");page.onActivity(a->{try{java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("subliminal",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
@@ -75,44 +73,23 @@ public class RemoteEditorAndroidTest {
         source.publish(source.peers(false).get(0).identity,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25").put("zone",JSONObject.NULL).put("metrics",metrics),false,1);
         String dom=source.peers(false).get(0).identity;feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));feature.store.putMetadata(peer.identity,generation,"confirmed_DAILY",Long.toString(System.currentTimeMillis()));
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            AtomicReference<View> daily=new AtomicReference<>();page.onActivity(a->daily.set(find(a.body,context.getString(R.string.remote_daily_history))));tapView(daily.get());
+            page.onActivity(a->{View daily=a.body.findViewWithTag("remote_stats_DAILY");assertNotNull(daily);assertFalse(daily instanceof Button);});
             await(()->{AtomicReference<Boolean> rendered=new AtomicReference<>(false);page.onActivity(a->rendered.set(find(a.body,"2026-10-25")!=null));return rendered.get();});
             page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_time,1L,1L,1L)));assertNotNull(find(a.body,"1.23 EUR"));assertNotNull(find(a.body,context.getString(R.string.daily_photos)));assertNotNull(find(a.body,context.getString(R.string.daily_videos)));assertNotNull(find(a.body,context.getString(R.string.remote_unknown_zone)));assertNull(find(a.body,context.getString(R.string.remote_incomplete)));});
             File directory=new File(context.getFilesDir(),"remote-editor-evidence");directory.mkdirs();assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(new File(directory,"daily-stats.png")));
         }
     }
-    @Test public void documentPickerExportsAndImportsTheRemoteContract()throws Exception {
-        UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String name="subhub-editor-"+UUID.randomUUID()+".sub";boolean complete=false;
-        JSONObject saved=feature.contracts.current(peer);saved.getJSONObject("contract").put("name","SAF round trip");feature.contracts.save(peer,saved);
-        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()) {
-            readyLibrary(page);tap(page,R.string.remote_export);
-            androidx.test.uiautomator.UiObject2 filename=device.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.clazz(EditText.class)),5000);if(filename==null){File directory=new File(context.getFilesDir(),"remote-editor-failures");directory.mkdirs();device.dumpWindowHierarchy(new File(directory,"export-picker.xml"));device.takeScreenshot(new File(directory,"export-picker.png"));fail("Export picker filename field was not visible");}filename.setText(name);
-            androidx.test.uiautomator.UiObject2 save=device.findObject(androidx.test.uiautomator.By.text(java.util.regex.Pattern.compile("(?i)save")));assertNotNull(save);save.click();
-            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(context.getPackageName()).depth(0)),5000));readyLibrary(page);
-            tap(page,R.string.remote_import);
-            androidx.test.uiautomator.BySelector file=androidx.test.uiautomator.By.text(name);
-            if(!device.wait(androidx.test.uiautomator.Until.hasObject(file),5000)){
-                androidx.test.uiautomator.UiObject2 list=device.findObject(androidx.test.uiautomator.By.desc("List view"));if(list!=null)list.click();
-            }
-            androidx.test.uiautomator.UiObject2 imported=device.wait(androidx.test.uiautomator.Until.findObject(file),5000);if(imported==null){File directory=new File(context.getFilesDir(),"remote-editor-failures");directory.mkdirs();device.dumpWindowHierarchy(new File(directory,"archive-picker.xml"));device.takeScreenshot(new File(directory,"archive-picker.png"));fail("Exported fixture archive not visible in document picker");}imported.click();
-            await(()->!feature.contracts.library(peer).isEmpty());assertEquals("SAF round trip",feature.contracts.library(peer).values().iterator().next().getJSONObject("contract").getString("name"));complete=true;
-        }finally{if(complete)device.executeShellCommand("rm -f /sdcard/Download/"+name);}
-    }
+
     private void diagnose(ActivityScenario<RemoteContractActivity> page,String name)throws Exception {
         File directory=new File(context.getFilesDir(),"remote-editor-failures");directory.mkdirs();UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());device.takeScreenshot(new File(directory,name+".png"));device.dumpWindowHierarchy(new File(directory,name+".xml"));
         AtomicReference<String> values=new AtomicReference<>();page.onActivity(a->{JSONObject data=new JSONObject();try{data.put("mayEdit",a.mayEdit());for(Map.Entry<String,View> entry:controls(a).entrySet()){View v=entry.getValue();if(v instanceof EditText)data.put(entry.getKey(),new JSONObject().put("value",((EditText)v).getText()).put("error",((EditText)v).getError()));else if(v instanceof Spinner)data.put(entry.getKey(),((Spinner)v).getSelectedItemPosition());}values.set(data.toString());}catch(Exception e){throw new AssertionError(e);}});try(OutputStream out=new FileOutputStream(new File(directory,name+".json"))){out.write(values.get().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
     }
-    @Test public void focusedSectionsAndSavedLibraryKeepTheirOwnActions()throws Exception {
+    @Test public void focusedSectionsExposeOnlyTheirOwnDirectProfileActions()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
             ready(page,"apps_all");page.onActivity(a->{assertNull(find(a.body,context.getString(R.string.remote_import)));assertNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(controls(a).get("module_censor_enabled"));});
         }
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
             ready(page,"module_censor_enabled");page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_add_censor_image)));assertNull(find(a.body,context.getString(R.string.remote_add_popup_image)));assertNull(find(a.body,context.getString(R.string.remote_apps)));});
-        }
-        JSONObject saved=feature.contracts.current(peer);saved.getJSONObject("contract").put("name","Saved fixture");feature.contracts.save(peer,saved);
-        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()) {
-            readyLibrary(page);page.onActivity(a->{assertNotNull(find(a.body,"Saved fixture"));assertNotNull(find(a.body,context.getString(R.string.remote_export)));assertNull(firstEditor(a.body));});
-            tap(page,R.string.remote_apply);await(()->feature.store.latestCommand(peer.identity,generation)!=null);assertTrue(feature.store.latestCommand(peer.identity,generation).pending());
         }
     }
     @Test public void removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup()throws Exception {
@@ -121,8 +98,8 @@ public class RemoteEditorAndroidTest {
         JSONObject document=feature.contracts.current(peer);document.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/censor/fixture.png").put("hash",hash).put("length",bytes.length)).put(new JSONObject().put("path","assets/popup/fixture.png").put("hash",hash).put("length",bytes.length));
         String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",document,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);tap(page,R.string.remote_save_contract);await(()->!feature.contracts.library(peer).isEmpty());
-            JSONArray kept=feature.contracts.library(peer).values().iterator().next().getJSONObject("contract").getJSONArray("assets");assertEquals(1,kept.length());assertEquals("assets/popup/fixture.png",kept.getJSONObject(0).getString("path"));
+            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);tap(page,R.string.remote_apply);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            JSONArray kept=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");assertEquals(1,kept.length());assertEquals("assets/popup/fixture.png",kept.getJSONObject(0).getString("path"));
         }
         try(ActivityScenario<RemoteContractActivity> page=open("popup")) {
             ready(page,"name");AtomicReference<RemoteContractActivity> current=new AtomicReference<>();page.onActivity(current::set);tap(page,R.string.remote_add_popup_image);
@@ -131,30 +108,8 @@ public class RemoteEditorAndroidTest {
             page.onActivity(a->{try{java.lang.reflect.Field group=RemoteContractActivity.class.getDeclaredField("artGroup");group.setAccessible(true);assertEquals("popup",group.get(a));java.lang.reflect.Field section=RemoteContractActivity.class.getDeclaredField("section");section.setAccessible(true);assertEquals("popup",section.get(a));}catch(Exception e){throw new AssertionError(e);}});
         }
     }
-    @Test public void emptyLibraryCanSaveItsFirstCurrentContract()throws Exception {
-        assertTrue(feature.contracts.library(peer).isEmpty());
-        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()) {
-            readyLibrary(page);page.onActivity(a->{assertNotNull(find(a.body,context.getString(R.string.remote_no_saved_contracts)));assertNotNull(find(a.body,context.getString(R.string.remote_save_current_contract)));});
-            tap(page,R.string.remote_save_current_contract);await(()->feature.contracts.library(peer).size()==1);
-            JSONObject saved=feature.contracts.library(peer).values().iterator().next();assertEquals(feature.contracts.current(peer).getJSONObject("contract").getString("name"),saved.getJSONObject("contract").getString("name"));
-            assertNotEquals(feature.contracts.current(peer).getJSONObject("contract").getString("id"),saved.getJSONObject("contract").getString("id"));
-        }
-    }
-    @Test public void exportAdmissionSerializesRevocationButCopyDoesNotBlockIt()throws Exception {
-        File output=new File(context.getCacheDir(),database+"-admission.sub");java.util.concurrent.CountDownLatch revoked=new java.util.concurrent.CountDownLatch(1);AtomicReference<Throwable> error=new AtomicReference<>();AtomicReference<Thread> revoker=new AtomicReference<>();
-        try {
-            feature.contracts.exportAuthorized(peer,feature.contracts.current(peer),()->{
-                Thread thread=new Thread(()->{try{feature.store.revoke(peer.identity,generation);}catch(Throwable failure){error.set(failure);}finally{revoked.countDown();}});revoker.set(thread);thread.start();
-                long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(3);while(thread.getState()!=Thread.State.BLOCKED&&thread.isAlive()&&System.nanoTime()<deadline)Thread.yield();
-                assertEquals("Revocation crossed the document-open boundary",Thread.State.BLOCKED,thread.getState());
-                return new FileOutputStream(output){@Override public void write(byte[] bytes,int offset,int length)throws IOException {
-                    try{assertTrue("Copy held the peer authority monitor",revoked.await(3,java.util.concurrent.TimeUnit.SECONDS));}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IOException(interrupted);}super.write(bytes,offset,length);
-                }};
-            });
-            assertNull(error.get());assertEquals(RemoteStore.State.REVOKED,feature.store.peer(peer.identity,generation).state);assertTrue(output.length()>0);
-            byte[] before=java.nio.file.Files.readAllBytes(output.toPath());assertThrows(SecurityException.class,()->feature.contracts.exportAuthorized(peer,feature.contracts.current(peer),()->new FileOutputStream(output)));assertArrayEquals(before,java.nio.file.Files.readAllBytes(output.toPath()));
-        }finally{if(revoker.get()!=null)revoker.get().join(3000);output.delete();}
-    }
+
+
     @Test public void fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
             ready(page,"service_duration");page.onActivity(a->{
@@ -162,7 +117,7 @@ public class RemoteEditorAndroidTest {
                 EditText minimum=(EditText)controls(a).get("service_minimum"),maximum=(EditText)controls(a).get("service_maximum");
                 assertFalse(minimum.isShown());assertFalse(maximum.isShown());minimum.setText("");maximum.setText("invalid");
             });
-            tap(page,R.string.remote_save_contract);await(()->feature.contracts.library(peer).size()==1);
+            tap(page,R.string.remote_apply);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
         }
     }
     @Test public void failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire()throws Exception {
@@ -175,20 +130,20 @@ public class RemoteEditorAndroidTest {
         }
         feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()));
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
-            AtomicReference<View> runtime=new AtomicReference<>();page.onActivity(a->runtime.set(find(a.body,context.getString(R.string.remote_runtime))));tapView(runtime.get());
-            page.recreate();page.onActivity(a->{try{java.lang.reflect.Field selected=RemoteStatsActivity.class.getDeclaredField("selected");selected.setAccessible(true);assertEquals(RemoteProtocol.Stream.RUNTIME,selected.get(a));assertEquals(View.GONE,find(a.body,context.getString(R.string.role_stale_data)).getVisibility());}catch(Exception e){throw new AssertionError(e);}});
+            page.onActivity(a->{assertNotNull(a.body.findViewWithTag("remote_stats_DAILY"));assertNotNull(a.body.findViewWithTag("remote_stats_APP_USAGE"));assertNotNull(a.body.findViewWithTag("remote_stats_RUNTIME"));android.widget.ScrollView scroll=statsScroll(a);scroll.scrollTo(0,200);});
+            page.recreate();
+            await(()->{AtomicReference<Boolean> restored=new AtomicReference<>(false);page.onActivity(a->restored.set(statsScroll(a).getScrollY()>0));return restored.get();});
+            page.onActivity(a->assertEquals(View.GONE,a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()));
             feature.store.putMetadata(peer.identity,generation,"confirmed_RUNTIME",Long.toString(System.currentTimeMillis()-91_000));
-            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(find(a.body,context.getString(R.string.role_stale_data))!=null&&find(a.body,context.getString(R.string.role_stale_data)).getVisibility()==View.VISIBLE));return found.get();});
+            await(()->{AtomicReference<Boolean> found=new AtomicReference<>(false);page.onActivity(a->found.set(a.body.findViewWithTag("remote_freshness_RUNTIME")!=null&&a.body.findViewWithTag("remote_freshness_RUNTIME").getVisibility()==View.VISIBLE));return found.get();});
         }
     }
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
     public void pairedScreensFitCurrentDisplayAndFontConfiguration()throws Exception {
-        JSONObject saved=feature.contracts.current(peer);saved.getJSONObject("contract").put("name","Saved contract fixture");feature.contracts.save(peer,saved);
         for(String section:Arrays.asList("apps","duration","censor"))try(ActivityScenario<RemoteContractActivity> page=open(section)) {
             ready(page,"apps".equals(section)?"apps_all":"duration".equals(section)?"service_duration":"name");inspectLayout(page,"contract-"+section);
         }
-        try(ActivityScenario<RemoteLibraryActivity> page=openLibrary()){readyLibrary(page);inspectLayout(page,"library");}
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"connection");}
         try(ActivityScenario<RemoteStatsActivity> page=ActivityScenario.launch(new Intent(context,RemoteStatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){inspectLayout(page,"stats");}
     }
@@ -212,11 +167,12 @@ public class RemoteEditorAndroidTest {
         if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)inspectText(((ViewGroup)root).getChildAt(i),failures);
     }
     private static EditText firstEditor(View root){if(root instanceof EditText)return (EditText)root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){EditText found=firstEditor(((ViewGroup)root).getChildAt(i));if(found!=null)return found;}return null;}
-    private ActivityScenario<RemoteLibraryActivity> openLibrary(){return ActivityScenario.launch(new Intent(context,RemoteLibraryActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()));}
-    private void readyLibrary(ActivityScenario<RemoteLibraryActivity> page)throws Exception {await(()->{AtomicReference<Boolean> ready=new AtomicReference<>(false);page.onActivity(a->ready.set(find(a.body,context.getString(R.string.remote_import))!=null));return ready.get();});}
+
+
     private ActivityScenario<RemoteContractActivity> open(String section){return ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()).putExtra("section",section));}
     @SuppressWarnings("unchecked") private static Map<String,View> controls(RemoteContractActivity activity){try{java.lang.reflect.Field field=RemoteContractActivity.class.getDeclaredField("controls");field.setAccessible(true);return (Map<String,View>)field.get(activity);}catch(Exception e){throw new AssertionError(e);}}
     private void ready(ActivityScenario<RemoteContractActivity> page,String key)throws Exception {await(()->{AtomicReference<Boolean> value=new AtomicReference<>(false);page.onActivity(a->value.set(controls(a).containsKey(key)));return value.get();});}
+    private static android.widget.ScrollView statsScroll(RemoteStatsActivity activity){View view=activity.body;while(view.getParent() instanceof View){view=(View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}throw new AssertionError("Statistics scroll unavailable");}
     private <T extends Activity> void tap(ActivityScenario<T> page,int label)throws Exception {AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(find(a.findViewById(R.id.role_page_body),context.getString(label))));assertNotNull(view.get());tapView(view.get());}
     private void tapView(View view)throws Exception {android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();AtomicReference<Rect> bounds=new AtomicReference<>();instrument.runOnMainSync(()->view.requestRectangleOnScreen(new Rect(0,0,view.getWidth(),view.getHeight()),true));instrument.waitForIdleSync();instrument.runOnMainSync(()->{Rect r=new Rect();assertTrue(view.getGlobalVisibleRect(r));bounds.set(r);});assertTrue(UiDevice.getInstance(instrument).click(bounds.get().centerX(),bounds.get().centerY()));instrument.waitForIdleSync();}
     private static View find(View root,String text){if(root instanceof TextView&&text.contentEquals(((TextView)root).getText()))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View value=find(((ViewGroup)root).getChildAt(i),text);if(value!=null)return value;}return null;}

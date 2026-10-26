@@ -37,7 +37,6 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.StatsActivity;
-import com.subhub.app.studio.StudioActivity;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
@@ -68,6 +67,7 @@ public final class RoleExperienceAndroidTest {
     private final Map<String, Map<String, ?>> original = new LinkedHashMap<>();
     private String originalServices, originalAccessibility;
     private int tapSequence;
+    private com.subhub.app.activity.ActivityRepository originalActivity;
 
     @Before public void prepare() {
         originalServices = Settings.Secure.getString(context.getContentResolver(), "enabled_accessibility_services");
@@ -75,12 +75,24 @@ public final class RoleExperienceAndroidTest {
         automation();
         for (String name : List.of(SettingsRepository.PREFERENCES_NAME, "subhub_onboarding", "subhub_home",
                 "subhub_service_duration_ui", "subhub_app_timer_usage", "subhub_penance",
-                "betablocker_stats", "betablocker_achievements")) {
+                "betablocker_stats", "betablocker_achievements", FavoriteSubStore.PREFERENCES_NAME)) {
             original.put(name, new LinkedHashMap<>(context.getSharedPreferences(name, 0).getAll()));
         }
+        originalActivity = com.subhub.app.activity.ActivitySources.repository();
+        com.subhub.app.activity.ActivitySources.install(new com.subhub.app.activity.ActivityRepository() {
+            public Page load(String before, int limit) { return new Page(List.of(), null); }
+            public Page locate(String key, int limit) { return new Page(List.of(), null); }
+            public List<com.subhub.app.activity.ActivityEntry> recent(PersonId person, int limit) { return List.of(); }
+            public int unreadCount() { return 0; }
+            public void markRead(List<String> keys) { }
+        });
+        assertTrue(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).edit().clear().commit());
         People.installRemoteRepository(null);
         People.installRemoteAuthority(() -> false);
         People.installConnectionUi(null);
+        assertTrue(new SettingsRepository(context).preferences().edit()
+                .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,
+                        com.subhub.app.security.DeviceRolePreferences.Mode.BOTH.name()).commit());
         OnboardingState.complete(context);
         Set<String> apps = new LinkedHashSet<>(List.of("com.android.chrome", "com.android.vending"));
         for (String app : apps) {
@@ -100,6 +112,7 @@ public final class RoleExperienceAndroidTest {
 
     @After public void restore() throws Exception {
         com.subhub.app.commitment.CommitmentManager.emergencyRelease(context);
+        if (originalActivity != null) com.subhub.app.activity.ActivitySources.install(originalActivity);
         People.installRemoteRepository(null);
         People.installRemoteAuthority(() -> false);
         People.installConnectionUi(null);
@@ -151,9 +164,9 @@ public final class RoleExperienceAndroidTest {
                 assertNull(settings.findViewById(R.id.apps_card));
                 assertNull(settings.findViewById(R.id.settings_connection));
                 assertTrue(settings.findViewById(R.id.settings_connections_security).isShown());
-                assertFalse(settings.findViewById(R.id.hardcore_card).isShown());
-                assertFalse(settings.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertFalse(settings.findViewById(R.id.button_help).isShown());
+                assertTrue(settings.findViewById(R.id.hardcore_card).isShown());
+                assertTrue(settings.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertTrue(settings.findViewById(R.id.button_help).isShown());
                 assertFits(settings.getWindow().getDecorView());
             });
         }
@@ -167,7 +180,7 @@ public final class RoleExperienceAndroidTest {
             MainActivity home = resumed(MainActivity.class);
             capture(home, "dom-overview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_settings);
                 assertFalse(home.findViewById(R.id.home_service_widget).isShown());
                 assertTrue(home.findViewById(R.id.button_edit_lock).isShown());
                 assertFits(home.getWindow().getDecorView());
@@ -184,8 +197,12 @@ public final class RoleExperienceAndroidTest {
                 assertNotNull(person.findViewById(R.id.role_page_body).findViewWithTag("person_tab:contracts"));
                 assertNotNull(person.findViewById(R.id.role_page_body).findViewWithTag("person_tab:stats"));
                 assertNotNull(person.findViewById(R.id.role_page_body).findViewWithTag("person_tab:connection"));
-                assertNull(person.findViewById(R.id.commitment_timer_1h));
+                assertNotNull(person.findViewById(R.id.commitment_timer_1h));
+                assertTrue(person.findViewById(R.id.commitment_timer_1h).isEnabled());
+                assertNotNull(person.findViewById(R.id.role_page_body).findViewWithTag("person_duration:local"));
             });
+            tap(person, R.id.commitment_timer_1h);
+            assertEquals(3_600_000L, context.getSharedPreferences("subhub_service_duration_ui", 0).getLong("duration", 0));
             tapTag(person, "person_tab:contracts");
             await(() -> hasTag(person, "person_duration") && hasTag(person, "person_apps"));
             assertChildHasNoSession(person);
@@ -246,12 +263,8 @@ public final class RoleExperienceAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void subCannotEnterStudioOrEditByReopeningAnOldPersonPage() {
+    public void subCannotEditByReopeningAnOldPersonPage() {
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            await(() -> scenario.getState() == Lifecycle.State.DESTROYED);
-            assertEquals(Lifecycle.State.DESTROYED, scenario.getState());
-        }
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
             resumed(MainActivity.class);
@@ -316,9 +329,6 @@ public final class RoleExperienceAndroidTest {
                 assertNotNull(apps);
                 assertFalse(apps.isClickable());
             });
-        }
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            assertEquals(Lifecycle.State.DESTROYED, scenario.getState());
         }
         assertEditorRejected(LocalAppsActivity.class, PersonId.LOCAL.value());
         assertEditorRejected(ServiceDurationActivity.class, PersonId.LOCAL.value());
@@ -574,7 +584,6 @@ public final class RoleExperienceAndroidTest {
         People.installConnectionUi(new ConnectionUi() {
             public void openPairing(Activity activity) { }
             public void openConnection(Activity activity, PersonId id) { assertEquals(peer, id); }
-            public void openContracts(Activity activity, PersonId id) { assertEquals(peer, id); actions.add("contracts"); }
             public void editSection(Activity activity, PersonId id, String section) { assertEquals(peer, id); actions.add(section); }
             public void openStats(Activity activity, PersonId id) { assertEquals(peer, id); actions.add("stats"); }
         });
@@ -591,20 +600,20 @@ public final class RoleExperienceAndroidTest {
             tapTag(profile, "person_apps");
             tapTag(profile, "person_duration");
             tapTag(profile, "person_section:censor");
-            tapTag(profile, "person_saved_contracts");
+            onMain(() -> assertNull(profile.findViewById(R.id.role_page_body).findViewWithTag("person_saved_contracts")));
             tap(profile, R.id.button_back);
             await(() -> hasTag(profile, "person_tab:stats"));
             tapTag(profile, "person_tab:stats");
-            await(() -> bodyContains(profile, context.getString(R.string.role_view_stats)));
-            assertChildHasNoSession(profile);
-            tapTag(profile, "person_full_stats");
-            assertEquals(List.of("apps", "duration", "censor", "contracts", "stats"), actions);
+            await(() -> actions.contains("stats"));
+            assertTrue(hasTag(profile, "person_tab:stats"));
+            assertFalse(hasTag(profile, "person_full_stats"));
+            assertEquals(List.of("apps", "duration", "censor", "stats"), actions);
         }
         assertEquals(before, new SettingsRepository(context).preferences().getAll());
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void unknownRemoteStatisticsAreNotShownAsZeroUsage() throws Exception {
+    public void unknownRemoteStatisticsOpenDirectlyWithoutInventingLocalZeroUsage() throws Exception {
         PersonId peer = new PersonId("peer:synthetic-alex");
         People.installRemoteRepository(new PersonRepository() {
             public List<PersonId> people() { return List.of(peer); }
@@ -617,19 +626,25 @@ public final class RoleExperienceAndroidTest {
                                 PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "revision-1", "revision-1"));
             }
         });
+        AtomicReference<PersonId> opened = new AtomicReference<>();
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(Activity activity) { }
+            public void openConnection(Activity activity, PersonId id) { }
+            public void openStats(Activity activity, PersonId id) { opened.set(id); }
+        });
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, peer.value()))) {
             PersonActivity profile = resumed(PersonActivity.class);
-            await(() -> bodyContains(profile, "Synthetic Alex"));
+            await(() -> hasTag(profile, "person_tab:stats"));
             tapTag(profile, "person_tab:stats");
-            await(() -> bodyContains(profile, context.getString(R.string.role_unknown_data)));
-            assertChildHasNoSession(profile);
+            assertEquals(peer, opened.get());
+            assertFalse(hasTag(profile, "person_full_stats"));
             assertFalse(bodyContains(profile, context.getString(R.string.role_stat_service_time)));
             assertFalse(bodyContains(profile, context.getString(R.string.role_stat_sessions)));
             assertFalse(bodyContains(profile, context.getString(R.string.role_stat_tribute)));
             assertFalse(bodyContains(profile, context.getString(R.string.role_app_time)));
-            capture(profile, "remote-statistics-unknown");
+            assertTrue(hasTag(profile, "person_tab:contracts"));
         }
     }
 
@@ -747,19 +762,18 @@ public final class RoleExperienceAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void unknownRemoteAllowanceShowsItsLimitWithoutZeroUsageOrProgress() throws Exception {
+    public void unknownRemoteAllowanceKeepsItsLimitWithoutZeroUsageOrProgress() throws Exception {
         PersonId peer = new PersonId("peer:synthetic-alex");
+        PersonSnapshot snapshot = new PersonSnapshot(peer, "Synthetic Alex", "Pixel 8", "Evening contract", "Unknown",
+                PersonSnapshot.Connection.PAIRED, PersonSnapshot.Freshness.CURRENT, 0,
+                EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.VIEW_STATS), Collections.emptyList(),
+                List.of(new PersonSnapshot.Allowance("com.android.chrome", "Chrome", -1, 35)),
+                "EUR", 0, 0, 0, 0, false,
+                new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
+                        PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "1", "1"));
         People.installRemoteRepository(new PersonRepository() {
             public List<PersonId> people() { return List.of(peer); }
-            public PersonSnapshot load(PersonId id) {
-                return new PersonSnapshot(id, "Synthetic Alex", "Pixel 8", "Evening contract", "Unknown",
-                        PersonSnapshot.Connection.PAIRED, PersonSnapshot.Freshness.CURRENT, 0,
-                        EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.VIEW_STATS), Collections.emptyList(),
-                        List.of(new PersonSnapshot.Allowance("com.android.chrome", "Chrome", -1, 35)),
-                        "EUR", 0, 0, 0, 0, false,
-                        new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
-                                PersonSnapshot.Freshness.UNKNOWN, PersonSnapshot.Freshness.UNKNOWN, "1", "1"));
-            }
+            public PersonSnapshot load(PersonId id) { return snapshot; }
         });
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
@@ -769,44 +783,54 @@ public final class RoleExperienceAndroidTest {
             tapTag(profile, "person_tab:contracts");
             await(() -> hasTag(profile, "person_contract_scope"));
             assertFalse(bodyContains(profile, context.getString(R.string.role_app_time)));
-            tap(profile, R.id.button_back);
-            await(() -> hasTag(profile, "person_tab:stats"));
-            tapTag(profile, "person_tab:stats");
-            await(() -> bodyContains(profile, context.getString(R.string.role_allowance_unknown, 35)));
+            onMain(() -> {
+                LinearLayout fixture = PersonUi.column(profile);
+                PersonUi.allowances(fixture, snapshot);
+                assertTrue(containsExact(fixture, context.getString(R.string.role_allowance_unknown, 35)));
+                assertFalse(containsExact(fixture, context.getString(R.string.role_allowance_usage, 0, 35)));
+                assertNoUsageProgress(fixture);
+            });
             assertChildHasNoSession(profile);
-            assertFalse(bodyContains(profile, context.getString(R.string.role_allowance_usage, 0, 35)));
-            onMain(() -> assertNoUsageProgress(profile.findViewById(R.id.role_page_body)));
-            capture(profile, "remote-allowance-unknown");
         }
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void homePersonSelectionSurvivesRecreationAndQuickControlsKeepTheirTarget() throws Exception {
+    public void favoriteSelectionSurvivesRecreationAndOpensItsOwnProfile() throws Exception {
         PersonId alex = new PersonId("peer:synthetic-alex"), sam = new PersonId("peer:synthetic-sam");
         People.installRemoteRepository(new PersonRepository() {
             public List<PersonId> people() { return List.of(alex, sam); }
             public PersonSnapshot load(PersonId id) { return remote(id); }
         });
-        List<String> routes = new java.util.ArrayList<>();
         People.installConnectionUi(new ConnectionUi() {
             public void openPairing(Activity activity) { }
             public void openConnection(Activity activity, PersonId id) { }
-            public void editSection(Activity activity, PersonId id, String section) { routes.add(id.value() + ":" + section); }
+            public void editSection(Activity activity, PersonId id, String section) { fail("Home must not dispatch hidden quick editors"); }
         });
         Map<String, ?> before = new LinkedHashMap<>(new SettingsRepository(context).preferences().getAll());
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity home = resumed(MainActivity.class);
-            await(() -> hasTag(home, "home_person_choice:" + sam.value()));
-            tapTag(home, "home_person_choice:" + sam.value());
-            await(() -> hasTag(home, "home_person_edit:" + sam.value() + ":censor"));
+            await(() -> hasTag(home, "home_choose_favorite"));
+            tap(home, R.id.nav_people);
+            PeopleActivity people = resumed(PeopleActivity.class);
+            await(() -> hasTag(people, "person:" + sam.value()));
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
+                    org.hamcrest.Matchers.is("person:" + sam.value())))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.longClick());
+            await(() -> FavoriteSubStore.identity(sam).equals(new FavoriteSubStore(context).identity()));
+            tap(people, R.id.nav_home);
+            MainActivity selected = resumed(MainActivity.class);
+            await(() -> hasTag(selected, "home_favorite:" + sam.value()));
             scenario.recreate();
             MainActivity recreated = resumed(MainActivity.class);
-            await(() -> hasTag(recreated, "home_person_edit:" + sam.value() + ":censor"));
-            tapTag(recreated, "home_person_edit:" + sam.value() + ":censor");
-            assertEquals(List.of(sam.value() + ":censor"), routes);
-            assertFalse(hasTag(recreated, "home_person_edit:" + alex.value() + ":censor"));
-            capture(recreated, "dom-home-selected-person");
+            await(() -> hasTag(recreated, "home_favorite_identity:" + sam.value()));
+            assertFalse(hasTag(recreated, "home_person_edit:" + sam.value() + ":censor"));
+            assertFalse(hasTag(recreated, "home_person_choice:" + alex.value()));
+            assertFalse(hasTag(recreated, "home_recent_person:" + alex.value()));
+            tapTag(recreated, "home_favorite_identity:" + sam.value());
+            PersonActivity profile = resumed(PersonActivity.class);
+            await(() -> hasTag(profile, "person_target:" + sam.value()));
+            assertEquals(sam, PersonRoutes.requireId(profile.getIntent()));
             assertEquals(before, new SettingsRepository(context).preferences().getAll());
         }
     }
@@ -872,7 +896,7 @@ public final class RoleExperienceAndroidTest {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
-            for (String section : List.of("contracts", "stats", "connection")) {
+            for (String section : List.of("contracts", "connection")) {
                 PersonActivity profile = resumed(PersonActivity.class);
                 await(() -> hasTag(profile, "person_session:local"));
                 tapTag(profile, "person_tab:" + section);
@@ -957,7 +981,6 @@ public final class RoleExperienceAndroidTest {
 
     private boolean childReady(PersonActivity activity, String section) {
         if ("contracts".equals(section)) return hasTag(activity, "person_apps");
-        if ("stats".equals(section)) return hasTag(activity, "person_full_stats");
         return bodyContains(activity, context.getString(R.string.role_device));
     }
 

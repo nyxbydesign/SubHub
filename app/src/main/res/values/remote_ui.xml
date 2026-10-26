@@ -1,6 +1,4 @@
 <resources>
-    <string name="remote_no_saved_contracts">No saved contracts</string>
-    <string name="remote_save_current_contract">Save current contract</string>
     <string name="remote_paired">Paired</string>
     <string name="remote_unknown">Not yet synced</string>
     <string name="remote_active">Active</string>
@@ -23,9 +21,7 @@
     <string name="remote_pending">Waiting for the other device’s approval</string>
     <string name="remote_saved">Saved on this device; sync pending</string>
     <string name="remote_apply">Apply to device</string>
-    <string name="remote_save_contract">Save contract</string>
     <string name="remote_import">Import contract</string>
-    <string name="remote_export">Export contract</string>
     <string name="remote_name">Contract name</string>
     <string name="remote_apps">Apps and allowances</string>
     <string name="remote_duration">Session duration</string>

@@ -46,6 +46,7 @@ public final class PrimaryHeaderContractTest {
 
     @Test public void everyPrimaryDestinationUsesTheSameHeaderGeometry() {
         assertHeader(MainActivity.class, R.string.role_overview);
+        assertHeader(com.subhub.app.activity.DomActivityActivity.class, R.string.dom_activity_title);
         assertHeader(SettingsActivity.class, R.string.censor_header_title);
         assertHeader(AppModeActivity.class, R.string.app_mode_title);
         assertHeader(PenanceActivity.class, R.string.penance_title);

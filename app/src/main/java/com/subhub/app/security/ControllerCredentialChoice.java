@@ -4,58 +4,46 @@ import android.app.Activity;
 import android.text.InputType;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import com.subhub.app.R;
 
-/** Explicit credential selection avoids treating an existing six-digit PIN as a TOTP code. */
+/** One input accepts a local PIN or legacy code; an assigned Dom remains the sole authority. */
 public final class ControllerCredentialChoice {
     private final Activity activity;
     private final EditText input;
     private final KeyholderProvider.State authority;
-    private boolean useAuthenticator;
+    private final KeyholderProvider provider;
     public ControllerCredentialChoice(Activity activity, LinearLayout panel, EditText input) {
         this.activity = activity; this.input = input;
-        authority = currentAuthority();
+        provider = com.subhub.app.people.People.keyholder();authority = currentAuthority();
         if (authority != KeyholderProvider.State.NONE) {
-            useAuthenticator = true;
             input.setHint(R.string.authenticator_code);
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
             return;
         }
-        if (!new ControllerAuthenticator(activity).isPaired()) return;
-        RadioGroup methods = new RadioGroup(activity); methods.setOrientation(LinearLayout.HORIZONTAL);
-        RadioButton pin = new RadioButton(activity); pin.setId(android.view.View.generateViewId()); pin.setText(R.string.authenticator_method_pin);
-        RadioButton code = new RadioButton(activity); code.setId(android.view.View.generateViewId()); code.setText(R.string.authenticator_method_code);
-        pin.setTextColor(activity.getColor(R.color.text_primary)); code.setTextColor(activity.getColor(R.color.text_primary));
-        boolean hasPin = ControllerPinManager.isConfigured(activity);
-        if (hasPin) methods.addView(pin, new LinearLayout.LayoutParams(0, -2, 1));
-        methods.addView(code, new LinearLayout.LayoutParams(0, -2, 1));
-        panel.addView(methods);
-        methods.setOnCheckedChangeListener((group, id) -> {
-            useAuthenticator = id == code.getId(); input.setText(""); input.setError(null);
-            input.setHint(useAuthenticator ? R.string.authenticator_code : R.string.controller_pin_label);
-            input.setInputType(InputType.TYPE_CLASS_NUMBER | (useAuthenticator ? 0 : InputType.TYPE_NUMBER_VARIATION_PASSWORD));
-        });
-        methods.check(hasPin ? pin.getId() : code.getId());
+        if (new ControllerAuthenticator(activity).isPaired())
+            input.setHint(ControllerPinManager.isConfigured(activity) ? R.string.keyholder_pin_or_code : R.string.authenticator_code);
     }
     public boolean verify() {
-        if (!isCurrentAuthority()) {
+        if (!isCurrentAuthority() || authority==KeyholderProvider.State.PENDING || authority==KeyholderProvider.State.UNAVAILABLE) {
             input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));
             return false;
         }
-        if (!useAuthenticator) {
-            boolean valid = ControllerPinManager.verify(activity, input.getText().toString());
-            if (!valid) {
-                com.subhub.app.penance.TamperTributeReporter.record(activity);
-                input.setError(activity.getString(R.string.controller_pin_wrong));
-            }
-            return valid;
+        String value = input.getText().toString();
+        if (authority == KeyholderProvider.State.NONE && ControllerPinManager.verify(activity, value)) return true;
+        if (!isCurrentAuthority()) {
+            input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));return false;
         }
-        ControllerAuthenticator.Result result = new ControllerAuthenticator(activity).verify(input.getText().toString());
+        boolean remote = authority != KeyholderProvider.State.NONE;
+        ControllerAuthenticator authenticator = new ControllerAuthenticator(activity);
+        if (!remote && !authenticator.isPaired()) {
+            com.subhub.app.penance.TamperTributeReporter.record(activity);
+            input.setError(activity.getString(R.string.controller_pin_wrong));return false;
+        }
+        ControllerAuthenticator.Result result;
+        try { result = remote ? provider.verifyCode(value) : authenticator.verify(value); }
+        catch (RuntimeException unavailable) { result = ControllerAuthenticator.Result.UNAVAILABLE; }
         if (result == ControllerAuthenticator.Result.SUCCESS) return true;
         if (result == ControllerAuthenticator.Result.INVALID) com.subhub.app.penance.TamperTributeReporter.record(activity);
-        boolean remote = authority != KeyholderProvider.State.NONE;
         input.setError(activity.getString(result == ControllerAuthenticator.Result.THROTTLED
                 ? remote ? R.string.keyholder_remote_throttled : R.string.authenticator_throttled
                 : result == ControllerAuthenticator.Result.INVALID ? R.string.authenticator_invalid
@@ -63,7 +51,7 @@ public final class ControllerCredentialChoice {
         return false;
     }
 
-    public boolean isCurrentAuthority() { return authority == currentAuthority(); }
+    public boolean isCurrentAuthority() { return provider == com.subhub.app.people.People.keyholder() && authority == currentAuthority(); }
 
     private static KeyholderProvider.State currentAuthority() {
         try { return com.subhub.app.people.People.keyholder().state(); }

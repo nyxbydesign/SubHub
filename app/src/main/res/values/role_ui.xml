@@ -29,7 +29,6 @@
     <string name="role_local_configuration">Current configuration</string>
     <string name="role_local_data">On this device</string>
     <string name="role_active_contract">Active contract</string>
-    <string name="role_saved_contracts">Saved contracts</string>
     <string name="role_edit_contract">Edit contract</string>
     <string name="role_open_contract">View contract</string>
     <string name="role_person_unavailable">This person is unavailable.</string>

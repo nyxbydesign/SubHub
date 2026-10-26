@@ -25,12 +25,12 @@ public final class ConfigurationAuthorityTest {
         assertFalse(ControllerPinManager.canEditConfiguration());
     }
 
-    @Test public void unpairedLocalEditingRequiresDomAndTheLocalIdentity() {
+    @Test public void uninitializedDeviceAuthorityDeniesLocalEditingEvenWithDomAuthentication() {
         People.installRemoteAuthority(() -> false);
         ControllerPinManager.enterSubMode();
         assertFalse(PersonRoutes.canEditLocal(null, PersonId.LOCAL));
         ControllerPinManager.enterDomMode();
-        assertTrue(PersonRoutes.canEditLocal(null, PersonId.LOCAL));
+        assertFalse(PersonRoutes.canEditLocal(null, PersonId.LOCAL));
         assertFalse(PersonRoutes.canEditLocal(null, new PersonId("peer:alex")));
         assertFalse(PersonRoutes.canEditLocal(null, null));
     }

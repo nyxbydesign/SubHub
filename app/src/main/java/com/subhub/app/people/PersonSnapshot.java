@@ -25,6 +25,8 @@ public final class PersonSnapshot {
     public final boolean serviceActive;
     public final SyncState sync;
     public final String sessionIdentity;
+    /** Durable source insertion sequence; zero means unknown. */
+    public final long additionOrder;
 
     public PersonSnapshot(PersonId id, String name, String device, String contractName,
             String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
@@ -51,6 +53,18 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity) {
+        this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt,
+                capabilities, sections, allowances, currency, protectedSeconds, activityEvents,
+                tributeCents, sessions, serviceActive, sync, sessionIdentity, 0);
+    }
+
+    public PersonSnapshot(PersonId id, String name, String device, String contractName,
+            String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
+            Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
+            String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
+            boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder) {
+        if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
+        this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
         this.id = java.util.Objects.requireNonNull(id);
         this.name = java.util.Objects.requireNonNull(name);

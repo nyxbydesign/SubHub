@@ -33,7 +33,7 @@ public final class RemoteProtocol {
     public enum Role { DOM, SUB }
     public enum Stream {
         STATS(Role.SUB), DAILY(Role.SUB), APP_USAGE(Role.SUB), APP_CATALOG(Role.SUB), BASELINE(Role.SUB),
-        RUNTIME(Role.SUB), CONTRACTS(Role.DOM), CONFIGURATION(Role.DOM), COMMAND_RESULT(Role.SUB);
+        RUNTIME(Role.SUB), CONTRACTS(Role.DOM), CONFIGURATION(Role.DOM), COMMAND_RESULT(Role.SUB), EVENTS(Role.SUB);
         public final Role writer;
         Stream(Role writer) { this.writer = writer; }
     }

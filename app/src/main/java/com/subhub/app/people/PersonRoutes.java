@@ -31,7 +31,7 @@ public final class PersonRoutes {
     }
 
     public static boolean canEditLocal(Context context, PersonId id) {
-        return id != null && id.isLocal() && ControllerPinManager.isDomModeActive()
+        return id != null && id.isLocal() && ControllerPinManager.canEditConfiguration()
                 && People.isLocalConfigurationAllowed();
     }
 

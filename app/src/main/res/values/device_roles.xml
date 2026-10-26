@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="device_role_title">Device role</string>
+    <string name="device_role_dom_only">Dom only</string>
+    <string name="device_role_sub_only">Sub only</string>
+    <string name="device_role_both">Both</string>
+    <string name="device_role_unavailable">Device role unavailable.</string>
+    <string name="device_role_managed">Your keyholder manages this device.</string>
+    <string name="device_role_end_session">End the local session and release local protection before choosing Dom only.</string>
+    <string name="device_role_pin_required">Set a local PIN before changing the device role.</string>
+    <string name="device_role_change_unavailable">The device role could not be changed.</string>
+    <string name="device_role_unlock">Unlock</string>
+    <string name="device_role_lock">Lock</string>
+    <string name="device_role_pin_setup_required">Set a PIN to secure Dom access.</string>
+    <string name="device_settings_privacy">Privacy</string>
+    <string name="device_settings_permissions">Permissions</string>
+    <string name="device_settings_help">Help</string>
+    <item name="device_role_status" type="id" />
+    <item name="keyholder_add_sub" type="id" />
+</resources>

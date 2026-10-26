@@ -4,7 +4,7 @@ import static org.junit.Assert.*;
 import android.content.*;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
-import com.subhub.app.pack.*;
+import com.subhub.app.configuration.*;
 import com.subhub.app.settings.SettingsRepository;
 import org.json.*;
 import org.junit.*;
@@ -27,6 +27,7 @@ public class RemoteConfigurationAndroidTest {
             @Override public File getNoBackupFilesDir(){return directory("private");}
             private File directory(String name){File file=new File(root,name);file.mkdirs();return file;}
         };
+        assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context));
         dom=new RemoteStore(context,prefix+"dom.db");sub=new RemoteStore(context,prefix+"sub.db");
         PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;
         dom.saveInvite(invite);dom.bindInvite(generation,SUB,invite.tokenHash(),1001);dom.approveInvite(generation,SUB,"Sub",1001);dom.activate(SUB,generation);
@@ -104,32 +105,8 @@ public class RemoteConfigurationAndroidTest {
         sub.putMetadata(DOM,generation,"unavailable_STATS","true");dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));
         assertEquals("0",dom.metadata(SUB,generation,"confirmed_STATS","missing"));
     }
-    @Test public void partialSavedContractStreamsAcrossDevicesAndPreservesOtherSettings() throws Exception {
-        JSONObject baseline=configuration();baseline.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("module_censor_enabled",true);
-        SubHubPack partial=SubHubPack.blank(UUID.randomUUID().toString());partial.setSection("censor",new JSONObject().put("censor_type","box"));
-        File artwork=new File(root,"saved-art");try(FileOutputStream output=new FileOutputStream(artwork)){output.write(new byte[]{3,2,1});}
-        File archive=new File(root,"saved.sub");try(FileOutputStream output=new FileOutputStream(archive)){SubHubPackArchive.writeStreaming(partial,Map.of("assets/censor/image.png",artwork),output);}
-        RemoteContracts remoteDom=new RemoteContracts(context,dom,writer()),remoteSub=new RemoteContracts(context,sub,writer());
-        RemoteStore.Peer domPeer=dom.peer(SUB,generation),subPeer=sub.peer(DOM,generation);
-        remoteDom.importArchive(domPeer,archive,baseline);
-        RemoteProtocol.Batch saved=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONTRACTS);sub.receive(DOM,saved);
-        List<RemoteSession.AssetNeed> missing=remoteSub.missing(subPeer);assertEquals(1,missing.size());RemoteSession.AssetNeed need=missing.get(0);
-        RemoteAssets sender=remoteDom.assets(domPeer),receiver=remoteSub.assets(subPeer);receiver.append(need.hash,0,sender.chunk(need.hash,0));receiver.finish(need.hash);
-        JSONObject doc=remoteSub.library(subPeer).get(partial.getId()),merged=remoteSub.merge(baseline,doc);
-        assertTrue(merged.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_censor_enabled"));
-        assertEquals("box",merged.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").getString("censor_type"));
-        File exported=new File(root,"exported.sub");try(FileOutputStream output=new FileOutputStream(exported)){remoteSub.export(subPeer,doc,output);}
-        try(SubHubPackArchive.Verified verified=SubHubPackArchive.openVerified(exported)){assertEquals(1,verified.assets.size());assertEquals(partial.getId(),verified.pack.getId());}
-        assertThrows(SecurityException.class,()->remoteSub.save(subPeer,doc));
-    }
-    @Test public void applyingSavedContractReplacesOrClearsItsCoverWithoutDuplicatingPaths()throws Exception {
-        RemoteContracts contracts=new RemoteContracts(context,dom,new RemoteConfigurationWriter(context,dom));
-        JSONObject current=configuration(),saved=configuration();
-        current.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/cover/image.png").put("hash",DOM).put("length",1));
-        saved.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/cover/image.png").put("hash",SUB).put("length",1));
-        JSONObject merged=contracts.merge(current,saved);JSONArray refs=merged.getJSONObject("contract").getJSONArray("assets");assertEquals(1,refs.length());assertEquals(SUB,refs.getJSONObject(0).getString("hash"));
-        saved.getJSONObject("contract").put("assets",new JSONArray());merged=contracts.merge(current,saved);assertEquals(0,merged.getJSONObject("contract").getJSONArray("assets").length());
-    }
+
+
     @Test public void terminalReceiptCannotRegressAndCommittedJournalKeepsAppliedSettings() throws Exception {
         seed();JSONObject doc=configuration();RemoteStore.Command command=deliver(doc);int[] commits={0};
         RemoteConfigurationWriter crash=new RemoteConfigurationWriter(context,sub,(name,editor)-> {
@@ -162,10 +139,11 @@ public class RemoteConfigurationAndroidTest {
         dom.acknowledge(SUB,sub.receive(DOM,batch));dom.markSent(SUB,batch);return sub.stageCommand(DOM,generation,new JSONObject(queued.body));
     }
     static JSONObject configuration() throws Exception {
-        SubHubPack pack=SubHubPack.blank(UUID.randomUUID().toString());pack.setMetadata("Contract","","","1.0.0");
-        for(String section:SubHubPackSchema.SECTIONS)pack.setSection(section,PackSettingCatalog.defaults(section));
-        pack.setSection("modules",pack.getSection("modules").put("module_censor_enabled",false));
-        return RemoteConfiguration.fromPortable(pack,new JSONArray(),new JSONObject().put("all",false).put("packages",new JSONArray()).put("allowances",new JSONObject()),
+        JSONObject sections=new JSONObject();
+        for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSettingCatalog.defaults(section));
+        sections.getJSONObject("modules").put("module_censor_enabled",false);
+        JSONObject metadata=RemoteConfiguration.currentMetadata(UUID.randomUUID().toString(),UUID.randomUUID().toString(),"Contract",1,1);
+        return RemoteConfiguration.fromSections(metadata,sections,new JSONArray(),new JSONObject().put("all",false).put("packages",new JSONArray()).put("allowances",new JSONObject()),
                 new JSONObject().put("duration",-1).put("minimum",3600000).put("maximum",86400000).put("hidden",false));
     }
     private SharedPreferences main(){return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);}

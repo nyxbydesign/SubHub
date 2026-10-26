@@ -15,6 +15,7 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
+    private final Context context;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
         public final String identity, generation, name;
@@ -35,12 +36,15 @@ public final class RemoteStore extends SQLiteOpenHelper {
 
     private java.util.function.BiConsumer<String,String> revoked=(identity,generation)->{};
     private java.util.function.Consumer<Peer> activated=peer->{};
+    private java.util.function.Consumer<Peer> activityReceived=peer->{};
+    synchronized void onActivityReceived(java.util.function.Consumer<Peer> action){activityReceived=java.util.Objects.requireNonNull(action);}
     synchronized void onActivated(java.util.function.Consumer<Peer> action){activated=java.util.Objects.requireNonNull(action);}
     synchronized void onRevoked(java.util.function.BiConsumer<String,String> action){revoked=java.util.Objects.requireNonNull(action);}
 
     public RemoteStore(Context context) { this(context, "remote_sync_v1.db"); }
     public RemoteStore(Context context, String databaseName) {
-        super(context.getApplicationContext(), databaseName, null, 2);
+        super(context.getApplicationContext(), databaseName, null, 3);
+        this.context=context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
     @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
@@ -66,12 +70,16 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 + "revision INTEGER NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL,"
                 + "PRIMARY KEY(peer,generation,id))");
         createMetadata(db);
+        RemoteActivityStore.create(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion != 1 || newVersion != 2) throw new IllegalStateException("Unsupported remote database version");
-        db.execSQL("ALTER TABLE peers ADD COLUMN route TEXT NOT NULL DEFAULT ''");
-        db.execSQL("ALTER TABLE invites ADD COLUMN candidate_name TEXT NOT NULL DEFAULT ''");
-        createMetadata(db);
+        if (oldVersion < 1 || oldVersion > 2 || newVersion != 3) throw new IllegalStateException("Unsupported remote database version");
+        if (oldVersion == 1) {
+            db.execSQL("ALTER TABLE peers ADD COLUMN route TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE invites ADD COLUMN candidate_name TEXT NOT NULL DEFAULT ''");
+            createMetadata(db);
+        }
+        RemoteActivityStore.create(db);
     }
 
     private static void createMetadata(SQLiteDatabase db) {
@@ -99,6 +107,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     synchronized void saveInvite(PairingInvite invite) {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
         ContentValues values = new ContentValues();
         values.put("id", invite.id); values.put("token_hash", invite.tokenHash());
         values.put("expires", invite.expiresAt);
@@ -157,6 +166,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     synchronized void approveInvite(String id, String candidate, String name, long now) {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try (Cursor c = db.rawQuery("SELECT expires,candidate,consumed FROM invites WHERE id=?", new String[]{id})) {
             if (!c.moveToFirst() || now <= 0 || now >= c.getLong(0) || !candidate.equals(c.getString(1))
@@ -168,6 +178,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     synchronized void acceptInvite(PairingInvite invite, String name) {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try {
             if (peer(db, invite.domIdentity, invite.id) != null) throw new SecurityException("Invitation already used");
@@ -182,6 +193,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         Peer peer = peer(db, identity, generation);
         if (peer == null || peer.state == State.REVOKED) throw new SecurityException("Pairing unavailable");
+        if(peer.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
         db.update("peers", values, "peer=? AND generation=? AND state='PENDING'", new String[]{identity,generation});
         activated.accept(peer(db,identity,generation));
     }
@@ -304,9 +316,11 @@ public final class RemoteStore extends SQLiteOpenHelper {
 
     public synchronized RemoteProtocol.Ack receive(String identity, RemoteProtocol.Batch batch) {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        RemoteProtocol.Ack ack;Peer receivedPeer=null;
         try {
             Peer peer = active(db,identity,batch.generation);
             if (peer.remoteRole() != batch.stream.writer) throw new SecurityException("Peer cannot write this stream");
+            if(batch.stream==RemoteProtocol.Stream.EVENTS)RemoteActivityStore.validate(db,peer,batch);
             long current = 0;
             try (Cursor c = db.rawQuery("SELECT through_seq FROM incoming WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,batch.generation,batch.stream))) {
                 if (c.moveToFirst()) current = c.getLong(0);
@@ -314,14 +328,22 @@ public final class RemoteStore extends SQLiteOpenHelper {
             if (batch.after > current) throw new IllegalStateException("Sync checkpoint gap");
             if (batch.through > current) {
                 for (RemoteProtocol.Change change : batch.changes) {
-                    if (change.sequence > current) putObject(db,"remote_objects",identity,batch.generation,batch.stream,change);
+                    if (change.sequence > current) {
+                        boolean retired=batch.stream==RemoteProtocol.Stream.CONTRACTS
+                                ||batch.stream==RemoteProtocol.Stream.BASELINE&&change.key.startsWith("saved:");
+                        RemoteProtocol.Change retained=retired?new RemoteProtocol.Change(change.sequence,change.key,"{}",true,change.observedAt):change;
+                        putObject(db,"remote_objects",identity,batch.generation,batch.stream,retained);
+                        if(batch.stream==RemoteProtocol.Stream.EVENTS){RemoteActivityStore.accept(db,peer,change,System.currentTimeMillis());receivedPeer=peer;}
+                    }
                 }
                 db.execSQL("INSERT OR REPLACE INTO incoming(peer,generation,stream,through_seq) VALUES(?,?,?,?)",
                         new Object[]{identity,batch.generation,batch.stream.name(),batch.through});
             }
-            RemoteProtocol.Ack ack = new RemoteProtocol.Ack(batch);
-            db.setTransactionSuccessful(); return ack;
+            ack = new RemoteProtocol.Ack(batch);
+            db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+        if(receivedPeer!=null)activityReceived.accept(receivedPeer);
+        return ack;
     }
 
     public synchronized List<RemoteProtocol.Change> mirror(String identity, String generation, RemoteProtocol.Stream stream) {
@@ -346,22 +368,38 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     public synchronized JSONObject outgoingHeads(String identity,String generation) throws JSONException {
+        return outgoingHeads(identity,generation,false);
+    }
+
+    /** Peer rows are inserted once and archived in place, so this also orders historical additions. */
+    public synchronized long additionOrder(String identity,String generation) {
+        RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
+        try(Cursor row=getReadableDatabase().rawQuery("SELECT rowid FROM peers WHERE peer=? AND generation=?",new String[]{identity,generation})){
+            return row.moveToFirst()?row.getLong(0):0;
+        }
+    }
+    synchronized JSONObject outgoingHeads(String identity,String generation,boolean activity) throws JSONException {
         Peer peer=active(getReadableDatabase(),identity,generation);JSONObject result=new JSONObject();
         for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
+            if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
             if(stream.writer!=peer.localRole)continue;long head=0;
             try(Cursor c=getReadableDatabase().rawQuery("SELECT next_seq FROM outgoing WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,generation,stream))) {
                 if(c.moveToFirst())head=c.getLong(0);
             }
-            result.put(stream.name(),"true".equals(metadata(identity,generation,"unavailable_"+stream.name(),""))?-1:head);
+            result.put(stream.name(),stream==RemoteProtocol.Stream.CONTRACTS||"true".equals(metadata(identity,generation,"unavailable_"+stream.name(),""))?-1:head);
         }
         return result;
     }
 
     synchronized void confirmHeads(String identity,String generation,JSONObject heads) throws JSONException {
+        confirmHeads(identity,generation,heads,false);
+    }
+    synchronized void confirmHeads(String identity,String generation,JSONObject heads,boolean activity) throws JSONException {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             Peer peer=active(db,identity,generation);int expected=0;
             for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
+                if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
                 if(stream.writer!=peer.remoteRole())continue;expected++;
                 long head=RemoteProtocol.integer(heads,stream.name()),received=0;
                 if(head==-1){putMetadata(identity,generation,"confirmed_"+stream.name(),"0");continue;}
@@ -374,6 +412,30 @@ public final class RemoteStore extends SQLiteOpenHelper {
             if(heads.length()!=expected)throw new JSONException("Unsupported source streams");
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
+    }
+
+    /** Retired library payloads never consume configuration revisions or active artwork. */
+    synchronized void retireLibraries() {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            for(Peer peer:peers(true)) {
+                if(!"true".equals(metadata(peer.identity,peer.generation,"library_retired",""))) {
+                    List<String> saved=new ArrayList<>();
+                    try(Cursor rows=db.rawQuery("SELECT item FROM local_objects WHERE peer=? AND generation=? AND stream='BASELINE' AND item LIKE 'saved:%' AND deleted=0",new String[]{peer.identity,peer.generation})){
+                        while(rows.moveToNext())saved.add(rows.getString(0));
+                    }
+                    db.delete("outbox","peer=? AND generation=? AND stream='BASELINE' AND item LIKE 'saved:%'",new String[]{peer.identity,peer.generation});
+                    if(peer.localRole==RemoteProtocol.Role.SUB&&peer.state==State.ACTIVE)
+                        for(String key:saved)publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,key,new JSONObject(),true,System.currentTimeMillis());
+                    else db.delete("local_objects","peer=? AND generation=? AND stream='BASELINE' AND item LIKE 'saved:%'",new String[]{peer.identity,peer.generation});
+                    putMetadata(peer.identity,peer.generation,"library_retired","true");
+                }
+            }
+            for(String table:new String[]{"outbox","local_objects","remote_objects"})
+                db.delete(table,"stream='CONTRACTS'",null);
+            db.delete("remote_objects","stream='BASELINE' AND item LIKE 'saved:%'",null);
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
     }
 
     public synchronized List<RemoteProtocol.Change> published(String identity,String generation,RemoteProtocol.Stream stream) {
@@ -405,6 +467,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     public synchronized Command queueConfiguration(String identity,String generation,long expectedDesired,long expectedApplied,JSONObject configuration) throws JSONException {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
+        if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new SecurityException("Configuration recovery is incomplete");
         JSONObject doc=RemoteConfiguration.active(configuration);SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             Peer peer=active(db,identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Only the paired Dom controls configuration");

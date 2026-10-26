@@ -110,11 +110,11 @@ public class RemoteSessionAndroidTest {
             while((count=input.read(buffer))!=-1) {offset=dh.assets.append(hash,offset,java.util.Arrays.copyOf(buffer,count));}
         }
         dh.assets.finish(hash);
-        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONTRACTS,"fixture",new JSONObject().put("hash",hash).put("length",length),false,1000);
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"fixture",new JSONObject().put("hash",hash).put("length",length),false,1000);
         exchange(true,false);
         assertFalse(sh.assets.isComplete(hash));
         assertEquals(4L*1024*1024,sh.assets.offset(hash));
-        assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONTRACTS).changes.isEmpty());
+        assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
         exchange(true,false);
         assertTrue(sh.assets.isComplete(hash));assertEquals(hash,RemoteAssets.digest(sh.assets.finish(hash)));
     }
@@ -137,7 +137,28 @@ public class RemoteSessionAndroidTest {
         receive.get(25,TimeUnit.SECONDS);assertEquals(RemoteStore.State.REVOKED,sub.peer(dt.localIdentity(),generation).state);
         assertEquals("true",dom.metadata(st.localIdentity(),generation,"revocation_delivered","false"));
     }
-    private void exchange(boolean domInitiates,boolean dropAck) throws Exception {
+    @Test public void activityFactsSurviveLostReceiptWithoutDuplicateInboxRows() throws Exception {
+        long now=System.currentTimeMillis();com.subhub.app.activity.ActivityEvent event=new com.subhub.app.activity.ActivityEvent("activity_fixture",com.subhub.app.activity.ActivityEvent.Kind.APP_OPENED,now,"com.example.selected",0,"","",0);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS,event.id,RemoteActivityWire.encode(event,"UTC",""),false,now);
+        assertThrows(IOException.class,()->exchange(false,true));
+        assertEquals(0,sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).after);
+        try(android.database.Cursor rows=dom.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_receipts",null)){assertTrue(rows.moveToFirst());assertEquals(1,rows.getInt(0));}
+        exchange(false,false);
+        assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).changes.isEmpty());
+        try(android.database.Cursor rows=dom.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_receipts",null)){assertTrue(rows.moveToFirst());assertEquals(1,rows.getInt(0));}
+    }
+    @Test public void legacyPeerContinuesStatisticsWithoutReceivingOrAcknowledgingEvents() throws Exception {
+        long now=System.currentTimeMillis();com.subhub.app.activity.ActivityEvent event=new com.subhub.app.activity.ActivityEvent("activity_fixture",com.subhub.app.activity.ActivityEvent.Kind.APP_OPENED,now,"com.example.selected",0,"","",0);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS,event.id,RemoteActivityWire.encode(event,"UTC",""),false,now);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",32),false,now);
+        exchange(false,false,false);
+        assertEquals(32,dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary").getInt("count"));
+        assertTrue(dom.mirror(st.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).isEmpty());
+        assertEquals(1,sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).changes.size());
+        assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
+    }
+    private void exchange(boolean domInitiates,boolean dropAck) throws Exception { exchange(domInitiates,dropAck,true); }
+    private void exchange(boolean domInitiates,boolean dropAck,boolean activity) throws Exception {
         PeerTransport source=domInitiates?dt:st,target=domInitiates?st:dt;
         RemoteStore sourceStore=domInitiates?dom:sub,targetStore=domInitiates?sub:dom;
         FixtureHooks sourceHooks=domInitiates?dh:sh,targetHooks=domInitiates?sh:dh;
@@ -145,7 +166,8 @@ public class RemoteSessionAndroidTest {
         Future<Void> serving=server.submit(() -> {
             try(PeerTransport.Connection connection=target.accept(10_000)) {
                 PeerTransport.Connection observed=dropAck?new DropAck(connection):connection;
-                incoming.incoming(observed,RemoteProtocol.read(observed.input()),System.nanoTime()+60_000_000_000L);
+                JSONObject hello=RemoteProtocol.read(observed.input());if(!activity)hello.remove("activityVersion");
+                incoming.incoming(observed,hello,System.nanoTime()+60_000_000_000L);
             }
             return null;
         });
@@ -169,7 +191,7 @@ public class RemoteSessionAndroidTest {
         public void prepare(RemoteStore.Peer peer){prepares++;}
         public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){}
         public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception {
-            JSONObject manifest=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONTRACTS,"fixture");
+            JSONObject manifest=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"fixture");
             if(manifest==null)return Collections.emptyList();
             String hash=manifest.getString("hash");long length=manifest.getLong("length");assets.reserve(hash,length);
             return assets.isComplete(hash)?Collections.emptyList():Collections.singletonList(new RemoteSession.AssetNeed(hash,length,assets.offset(hash)));

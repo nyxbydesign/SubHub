@@ -9,6 +9,12 @@ public final class OnboardingState {
     public static boolean completed(Context context) { return context.getSharedPreferences("subhub_onboarding",0).getBoolean("completed",false); }
     public static boolean inProgress(Context context) { return context.getSharedPreferences("subhub_onboarding",0).getBoolean("in_progress",false); }
     public static void begin(Context context) { context.getSharedPreferences("subhub_onboarding",0).edit().putBoolean("in_progress",true).commit(); }
+    /** Only a device without retained setup or controller access may choose its first role without authentication. */
+    public static boolean isPristine(Context context) {
+        return !completed(context)
+                && !context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getBoolean("has_seen_onboarding", false)
+                && !ControllerPinManager.hasCredentials(context) && !ControllerPinManager.allowsUnkeyedAccess(context);
+    }
     public static boolean shouldStart(Context context) {
         if(completed(context)) return false;
         if(inProgress(context)) return true;

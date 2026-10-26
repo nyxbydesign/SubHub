@@ -162,7 +162,7 @@ public final class ServiceDurationView extends LinearLayout {
     }
 
     private boolean canEdit() {
-        return editing && com.subhub.app.security.ControllerPinManager.isDomModeActive()
+        return editing && com.subhub.app.security.ControllerPinManager.canEditConfiguration()
                 && com.subhub.app.people.People.isLocalConfigurationAllowed();
     }
 

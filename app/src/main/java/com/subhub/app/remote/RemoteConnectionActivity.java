@@ -32,6 +32,7 @@ public final class RemoteConnectionActivity extends RemotePage {
         if(peer.state==RemoteStore.State.ACTIVE){
             android.widget.LinearLayout shared=PersonUi.card(body);text(shared,getString(R.string.remote_shared_controls),true);
             text(shared,getString(R.string.remote_shared_scope),false);
+            text(shared,getString(R.string.remote_activity_pairing_scope),false);
             if(peer.localRole==RemoteProtocol.Role.DOM)button(shared,R.string.remote_keyholder_code,this::showCode);
             PersonUi.action(body,R.string.remote_sync_now,feature::changed,true);
         }

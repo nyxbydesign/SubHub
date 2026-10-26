@@ -12,28 +12,25 @@ import com.subhub.app.util.PreferencePage;
 import java.text.DateFormat;
 import java.util.*;
 
-/** One compact page; detailed totals and additional sessions expand in place. */
+/** Current service, lifetime totals, dated activity and recorded sessions share one page. */
 public final class StatsActivity extends PreferencePage {
     private DailyStatsPanel daily;
-    private LinearLayout totalsDetails, sessionList;
+    private LinearLayout totalsDetails, sessionList, currentSession, allowances;
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
-    private Button totalsToggle;
-    private boolean expandedTotals, firstResume = true;
+    private boolean firstResume = true;
     private int sessionLimit = 3;
-    private final Set<Long> expandedSessions = new HashSet<>();
+    private com.subhub.app.util.AsyncUiScope data;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         if (state != null) {
-            expandedTotals = state.getBoolean("stats_totals_expanded");
             sessionLimit = Math.max(3, Math.min(30, state.getInt("stats_session_limit", 3)));
         }
-        if (state != null) {
-            long[] expanded = state.getLongArray("stats_expanded_sessions");
-            if (expanded != null) for (long start : expanded) expandedSessions.add(start);
-        }
         page(R.string.role_stats);
+        data = com.subhub.app.util.AsyncUiScope.forPage(this);
+        currentSession = card(page);
+        currentSession.setId(R.id.profile_stats_current);
         LinearLayout summary = card(page);
         summary.setId(R.id.stats_lifetime_summary);
         heading(summary, R.string.stats_all_time);
@@ -45,29 +42,24 @@ public final class StatsActivity extends PreferencePage {
         lifetimeTime = metric(numbers, R.string.stats_time);
         lifetimeCensors = metric(numbers, R.string.stats_censors);
         lifetimeSessions = metric(numbers, R.string.stats_sessions);
-        totalsDetails = new LinearLayout(this);
-        totalsDetails.setOrientation(LinearLayout.VERTICAL);
-        totalsDetails.setId(R.id.stats_totals_details);
-        summary.addView(totalsDetails);
-        totalsToggle =
-                button(
-                        summary,
-                        getString(R.string.stats_more_totals),
-                        () -> {
-                            expandedTotals = !expandedTotals;
-                            bindTotals();
-                        });
-        totalsToggle.setId(R.id.stats_totals_toggle);
         daily = new DailyStatsPanel(this, false, state);
         page.addView(daily, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams activityParams =
                 (LinearLayout.LayoutParams) daily.getLayoutParams();
         activityParams.bottomMargin = dp(14);
+        allowances = new LinearLayout(this);
+        allowances.setOrientation(LinearLayout.VERTICAL);
+        allowances.setId(R.id.profile_stats_allowances);
+        page.addView(allowances, new LinearLayout.LayoutParams(-1, -2));
+        sessionList = card(page);
+        sessionList.setTag("stats_session_history");
+        totalsDetails = card(page);
+        totalsDetails.setId(R.id.stats_totals_details);
         button(page, getString(R.string.achievements_title), () -> startActivity(
                 new android.content.Intent(this, AchievementsActivity.class))).setId(R.id.stats_achievements);
-        sessionList = card(page);
         bindTotals();
         bindSessions();
+        bindAllowances();
         com.subhub.app.util.SubHubNavigation.attachToPage(this, page,
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
     }
@@ -77,33 +69,29 @@ public final class StatsActivity extends PreferencePage {
         super.onResume();
         com.subhub.app.util.SubHubNavigation.bind(this, findViewById(android.R.id.content),
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
-        com.subhub.app.security.ControllerEditMode.renderButton(this,
-                com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
-        android.widget.TextView target = com.subhub.app.util.PrimaryHeader.subtitle(findViewById(android.R.id.content));
-        target.setText(R.string.role_this_device);
-        target.setVisibility(com.subhub.app.security.ControllerPinManager.isDomModeActive()
-                ? android.view.View.VISIBLE : android.view.View.GONE);
-        com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content)).setVisibility(
-                com.subhub.app.security.ControllerPinManager.isDomModeActive()
-                        ? android.view.View.VISIBLE : android.view.View.GONE);
+        boolean dom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        android.view.View root = findViewById(android.R.id.content);
+        android.widget.TextView role = com.subhub.app.util.PrimaryHeader.editLockButton(root);
+        role.setVisibility(dom ? android.view.View.GONE : android.view.View.VISIBLE);
+        com.subhub.app.security.ControllerEditMode.renderButton(this, role);
+        com.subhub.app.util.PrimaryHeader.backButton(root).setVisibility(
+                dom ? android.view.View.VISIBLE : android.view.View.GONE);
+        com.subhub.app.util.PrimaryHeader.bind(root, 0, R.string.role_stats,
+                dom ? R.string.role_this_device : 0);
         if (firstResume) {
             firstResume = false;
             return;
         }
         bindTotals();
         bindSessions();
+        bindAllowances();
         daily.refresh();
     }
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
         daily.save(state);
-        state.putBoolean("stats_totals_expanded", expandedTotals);
         state.putInt("stats_session_limit", sessionLimit);
-        long[] expanded = new long[expandedSessions.size()];
-        int index = 0;
-        for (Long start : expandedSessions) expanded[index++] = start;
-        state.putLongArray("stats_expanded_sessions", expanded);
         super.onSaveInstanceState(state);
     }
 
@@ -125,12 +113,9 @@ public final class StatsActivity extends PreferencePage {
         lifetimeTime.setText(duration(stats.getTotalProtectedSeconds()));
         lifetimeCensors.setText(number(stats.getTotalBlocks()));
         lifetimeSessions.setText(number(stats.getSessions()));
-        totalsToggle.setText(
-                expandedTotals ? R.string.stats_fewer_totals : R.string.stats_more_totals);
+        bindCurrent(repository, stats);
         totalsDetails.removeAllViews();
-        totalsDetails.setVisibility(
-                expandedTotals ? android.view.View.VISIBLE : android.view.View.GONE);
-        if (!expandedTotals) return;
+        heading(totalsDetails, R.string.profile_stats_feature_totals);
         row(totalsDetails, R.string.statistics_longest, duration(stats.getLongestSessionSeconds()));
         row(
                 totalsDetails,
@@ -157,6 +142,35 @@ public final class StatsActivity extends PreferencePage {
                     R.string.stats_paid,
                     WalletCurrency.format(currency, wallet.getTotalPaidCents(currency)));
         }
+    }
+
+    private void bindCurrent(StatsRepository repository, StatsSnapshot stats) {
+        currentSession.removeAllViews();
+        boolean active = repository.sessionStamp() != null;
+        currentSession.setVisibility(active ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (!active) return;
+        heading(currentSession, R.string.profile_stats_current_session);
+        row(currentSession, R.string.stats_time, duration(stats.getCurrentSessionSeconds()));
+        row(currentSession, R.string.stats_censors, number(stats.getCurrentSessionBlocks()));
+        row(currentSession, R.string.stats_limited_app_time, duration(stats.getCurrentSessionLimitedAppMillis() / 1000));
+        row(currentSession, R.string.stats_limit_stops, number(stats.getCurrentSessionLimitInterventions()));
+        row(currentSession, R.string.stats_tributes, number(stats.getCurrentSessionTributeEvents()));
+        for (String currency : new String[] {"EUR", "USD"}) {
+            row(currentSession, R.string.stats_assessed,
+                    WalletCurrency.format(currency, repository.tributeCents(currency, true)) + " " + currency);
+        }
+    }
+
+    private void bindAllowances() {
+        android.content.Context app = getApplicationContext();
+        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(app);
+        data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
+            allowances.removeAllViews();
+            com.subhub.app.people.PersonUi.allowances(allowances, person);
+        }, failure -> {
+            allowances.removeAllViews();
+            text(allowances, getString(R.string.role_unknown_data), 13, true);
+        });
     }
 
     private void bindSessions() {
@@ -244,23 +258,6 @@ public final class StatsActivity extends PreferencePage {
                         details,
                         R.string.stats_assessed,
                         WalletCurrency.format("EUR", entry.getTributeCents()));
-            details.setVisibility(
-                    expandedSessions.contains(entry.getStartMillis())
-                            ? android.view.View.VISIBLE
-                            : android.view.View.GONE);
-            record.setMinimumHeight(dp(48));
-            record.setFocusable(true);
-            android.util.TypedValue feedback = new android.util.TypedValue();
-            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, feedback, true);
-            record.setBackgroundResource(feedback.resourceId);
-            record.setOnClickListener(
-                    v -> {
-                        boolean show = details.getVisibility() != android.view.View.VISIBLE;
-                        details.setVisibility(
-                                show ? android.view.View.VISIBLE : android.view.View.GONE);
-                        if (show) expandedSessions.add(entry.getStartMillis());
-                        else expandedSessions.remove(entry.getStartMillis());
-                    });
         }
     }
 

@@ -1,6 +1,7 @@
 package com.subhub.app;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
@@ -110,7 +111,7 @@ public final class VisualIdentityAndroidTest {
                 "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
                 "capture.CustomImagesActivity", "capture.ExportActivity",
                 "capture.export.ExportAppearanceActivity",
-                "studio.StudioActivity", "diagnostics.DiagnosticsActivity",
+                "diagnostics.DiagnosticsActivity",
                 "update.UpdatesActivity", "commitment.CommitmentActivity"}) review(page);
         finishReview("secondary");
     }
@@ -167,12 +168,11 @@ public final class VisualIdentityAndroidTest {
         finishReview("app-unlock");
     }
 
-    @Test public void expandedSettingsAnswersAndPackTabsKeepTheirLayoutRules() throws Exception {
+    @Test public void inlineSettingsAnswersAndFocusedEditorsKeepTheirLayoutRules() throws Exception {
         try (ActivityScenario<com.subhub.app.settings.GlobalSettingsActivity> page =
                 ActivityScenario.launch(com.subhub.app.settings.GlobalSettingsActivity.class)) {
-            page.onActivity(a -> a.findViewById(android.R.id.content).findViewWithTag("settings:apps").performClick());
             settle();
-            page.onActivity(a -> inspect(a, "settings-apps-expanded"));
+            page.onActivity(a -> inspect(a, "settings-inline"));
         }
         try (ActivityScenario<com.subhub.app.settings.SettingsActivity> page =
                 ActivityScenario.launch(com.subhub.app.settings.SettingsActivity.class)) {
@@ -199,23 +199,14 @@ public final class VisualIdentityAndroidTest {
                 page.onActivity(a -> inspect(a, question.getTag().toString()));
             }
         }
-        try (ActivityScenario<com.subhub.app.studio.StudioActivity> page =
-                ActivityScenario.launch(com.subhub.app.studio.StudioActivity.class)) {
-            for (int tab : new int[] {R.id.tab_drafts, R.id.tab_create, R.id.tab_library}) {
-                page.onActivity(a -> a.findViewById(tab).performClick());
-                settle();
-                page.onActivity(a -> inspect(a, "packs-" + a.getResources().getResourceEntryName(tab)));
-            }
-        }
         try (ActivityScenario<com.subhub.app.security.AuthenticatorActivity> page =
                 ActivityScenario.launch(com.subhub.app.security.AuthenticatorActivity.class)) {
-            page.onActivity(a -> a.findViewById(R.id.keyholder_remote_header).performClick());
             settle();
-            page.onActivity(a -> inspect(a, "keyholder-remote-expanded"));
-            page.onActivity(a -> a.findViewById(R.id.keyholder_pair_button).performClick());
-            settle();
-            page.onActivity(a -> inspect(a, "keyholder-pairing"));
-            page.onActivity(a -> a.findViewById(R.id.authenticator_pairing_cancel).performClick());
+            page.onActivity(a -> {
+                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertNull(a.findViewById(R.id.keyholder_pair_button));
+                inspect(a, "keyholder-unified");
+            });
         }
         finishReview("expanded");
     }

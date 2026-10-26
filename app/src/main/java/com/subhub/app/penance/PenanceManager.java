@@ -362,8 +362,9 @@ public final class PenanceManager {
                     ZoneId.systemDefault());
             if (amount <= 0) { acknowledge(acknowledged); return new SourceDetectionResult(written, 0); }
             long mercyEnds = nowMillis + getMercyMinutes() * 60_000L;
-            events.add(new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
-                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency()));
+            PenanceEvent assessed = new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
+                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency());
+            events.add(assessed);
             if (acknowledged == null) {
                 saveEvents(events);
                 new StatsRepository(context).recordTributeEvent(amount,
@@ -376,6 +377,7 @@ public final class PenanceManager {
                 preferences.edit().putLong(KEY_LAST_TAMPER_AT, nowMillis).apply();
             }
             HardcoreAutoPayManager.schedule(context);
+            com.subhub.app.remote.RemoteActivityRecorder.tribute(assessed.getId());
             return new SourceDetectionResult(written, amount);
         }
     }
@@ -750,6 +752,16 @@ public final class PenanceManager {
     long nextAutomaticDueAtMillis(long nowMillis) {
         synchronized (LOCK) {
             return AutoCashoutPolicy.nextEligibleAt(loadEvents(), nowMillis);
+        }
+    }
+
+    /** Waits for pending ledger writes before projecting assessed facts to another device. */
+    public List<PenanceEvent> durableActivityEvents() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Ledger projection must be off main");
+        synchronized (LOCK) {
+            if (!preferences.edit().commit()) throw new IllegalStateException("Ledger persistence unavailable");
+            return java.util.Collections.unmodifiableList(new ArrayList<>(loadEvents()));
         }
     }
 

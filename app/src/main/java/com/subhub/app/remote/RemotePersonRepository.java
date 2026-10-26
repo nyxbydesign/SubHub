@@ -2,7 +2,7 @@ package com.subhub.app.remote;
 
 import android.content.Context;
 import com.subhub.app.R;
-import com.subhub.app.pack.PackSettingCatalog;
+import com.subhub.app.configuration.ConfigurationSettingCatalog;
 import com.subhub.app.people.*;
 import org.json.*;
 import java.util.*;
@@ -40,7 +40,7 @@ public final class RemotePersonRepository implements PersonRepository {
         return new PersonSnapshot(id,peer.name,runtime==null?"":runtime.optString("device",""),configuration==null?context.getString(R.string.remote_unknown):configuration.getJSONObject("contract").getString("name"),
                 service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
-                live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity);
+                live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation));
     }
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");
@@ -68,7 +68,7 @@ public final class RemotePersonRepository implements PersonRepository {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
         for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
             List<String> parts=new ArrayList<>();String[] names="atmosphere".equals(group)?new String[]{"subliminal","popup"}:new String[]{group};
-            for(String section:names)for(PackSettingCatalog.Field field:PackSettingCatalog.fields(section)) {
+            for(String section:names)for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)) {
                 Object value=sections.getJSONObject(section).get(field.key);parts.add(context.getString(field.label)+": "+display(field,value));
             }
             int title="censor".equals(group)?R.string.sub_censor_title:"limits".equals(group)?R.string.sub_limits_title:"wallet".equals(group)?R.string.sub_wallet_title:R.string.atmosphere_title;
@@ -108,10 +108,10 @@ public final class RemotePersonRepository implements PersonRepository {
         return result;
     }
     private static long knownUsage(JSONObject values,String name){try{long value=RemoteProtocol.integer(values,name);return value<0?-1:value;}catch(Exception invalid){return -1;}}
-    private String display(PackSettingCatalog.Field field,Object value) {
+    private String display(ConfigurationSettingCatalog.Field field,Object value) {
         if(value instanceof Boolean)return context.getString((Boolean)value?R.string.role_enabled:R.string.role_disabled);
-        if(value instanceof JSONArray){JSONArray rows=(JSONArray)value;List<String> items=new ArrayList<>();for(int i=0;i<rows.length();i++){String item=rows.optString(i);items.add(field.choices.isEmpty()?item:context.getString(PackSettingCatalog.choiceLabel(field,item)));}return String.join(", ",items);}
-        if(field.kind==PackSettingCatalog.Kind.CHOICE)return context.getString(PackSettingCatalog.choiceLabel(field,String.valueOf(value)));
+        if(value instanceof JSONArray){JSONArray rows=(JSONArray)value;List<String> items=new ArrayList<>();for(int i=0;i<rows.length();i++){String item=rows.optString(i);items.add(field.choices.isEmpty()?item:context.getString(ConfigurationSettingCatalog.choiceLabel(field,item)));}return String.join(", ",items);}
+        if(field.kind==ConfigurationSettingCatalog.Kind.CHOICE)return context.getString(ConfigurationSettingCatalog.choiceLabel(field,String.valueOf(value)));
         return field.displayText(value);
     }
 }

@@ -14,7 +14,7 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
-import com.subhub.app.studio.StudioActivity;
+import com.subhub.app.help.HelpActivity;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -24,7 +24,7 @@ import org.junit.runner.RunWith;
 public final class StateToggleFeedbackAndroidTest {
     @Test public void pressAppearsAtTheTouchImmediatelyAndReleaseFinishesPromptly() {
         AtomicReference<StateToggle> control = new AtomicReference<>();
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
+        try (ActivityScenario<HelpActivity> scenario = ActivityScenario.launch(HelpActivity.class)) {
         scenario.onActivity(activity -> {
             StateToggle toggle = makeToggle();
             activity.setContentView(toggle, new android.view.ViewGroup.LayoutParams(320, 64));

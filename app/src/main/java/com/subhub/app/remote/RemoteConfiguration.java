@@ -1,10 +1,9 @@
 package com.subhub.app.remote;
 
 import com.subhub.app.BuildConfig;
-import com.subhub.app.pack.PackSettingCatalog;
-import com.subhub.app.pack.SubHubPack;
-import com.subhub.app.pack.SubHubPackArchive;
-import com.subhub.app.pack.SubHubPackSchema;
+import com.subhub.app.configuration.ConfigurationSettingCatalog;
+import com.subhub.app.configuration.ConfigurationArtwork;
+import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.update.SemanticVersion;
 
 import org.json.JSONArray;
@@ -19,13 +18,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/** Peer-specific configuration wraps portable settings without credentials or operational commands. */
+/** Peer-specific configuration carries profile settings without credentials or operational commands. */
 public final class RemoteConfiguration {
     public static final int SCHEMA=1;
+    public static final String MINIMUM_APP_VERSION="0.6.5-0";
     public static final String DURATION_PREFS="subhub_service_duration_ui";
     private RemoteConfiguration(){}
 
     public static JSONObject validate(JSONObject input) throws JSONException {
+        return validate(input,BuildConfig.VERSION_NAME);
+    }
+
+    static JSONObject validate(JSONObject input,String installedVersion) throws JSONException {
         keys(input,"schema","contract","apps","service");
         if(RemoteProtocol.integer(input,"schema")!=SCHEMA)throw new IllegalArgumentException("Unsupported configuration schema");
         JSONObject contract=input.getJSONObject("contract");
@@ -34,7 +38,7 @@ public final class RemoteConfiguration {
         text(contract,"name",160,false);text(contract,"author",160,true);text(contract,"description",4000,true);
         text(contract,"version",64,false);text(contract,"minimumAppVersion",64,false);
         SemanticVersion.parse(contract.getString("version"));
-        if(SemanticVersion.parse(BuildConfig.VERSION_NAME).compareTo(SemanticVersion.parse(contract.getString("minimumAppVersion")))<0) {
+        if(SemanticVersion.parse(installedVersion).compareTo(SemanticVersion.parse(contract.getString("minimumAppVersion")))<0) {
             throw new IllegalArgumentException("Contract needs a newer app version");
         }
         if(RemoteProtocol.integer(contract,"createdAt")<=0 || RemoteProtocol.integer(contract,"updatedAt")<=0)throw new IllegalArgumentException("Invalid contract date");
@@ -43,15 +47,15 @@ public final class RemoteConfiguration {
         java.util.Iterator<String> sectionNames=sections.keys();
         while(sectionNames.hasNext()) {
             String section=sectionNames.next();
-            if(!SubHubPackSchema.SECTIONS.contains(section))throw new IllegalArgumentException("Unsupported contract section");
+            if(!ConfigurationSchema.SECTIONS.contains(section))throw new IllegalArgumentException("Unsupported contract section");
             JSONObject values=sections.getJSONObject(section);java.util.Iterator<String> names=values.keys();
             while(names.hasNext()) {
                 String name=names.next();
-                if(SubHubPackSchema.isSecretOrRuntimeKey(name) || PackSettingCatalog.field(section,name)==null) {
+                if(ConfigurationSchema.isSecretOrRuntimeKey(name) || ConfigurationSettingCatalog.field(section,name)==null) {
                     throw new IllegalArgumentException("Unsupported contract setting");
                 }
             }
-            normalized.put(section,SubHubPackSchema.sanitizeSection(section,values));
+            normalized.put(section,ConfigurationSchema.sanitizeSection(section,values));
         }
         JSONArray assets=contract.getJSONArray("assets");
         if(assets.length()>512)throw new IllegalArgumentException("Too many contract assets");
@@ -59,7 +63,7 @@ public final class RemoteConfiguration {
         for(int i=0;i<assets.length();i++) {
             JSONObject asset=assets.getJSONObject(i);keys(asset,"path","hash","length");
             String path=asset.getString("path"),hash=asset.getString("hash");long length=RemoteProtocol.integer(asset,"length");
-            if(path.length()>256 || path.contains("\\") || !SubHubPackArchive.isSafeAssetPath(path) || !paths.add(path)
+            if(path.length()>256 || path.contains("\\") || !ConfigurationArtwork.isSafeAssetPath(path) || !paths.add(path)
                     || !hash.matches("[0-9a-f]{64}") || length<=0 || length>RemoteAssets.MAX_ASSET_BYTES)throw new IllegalArgumentException("Invalid contract asset");
             Long previous=hashes.put(hash,length);
             if(previous!=null && previous!=length)throw new IllegalArgumentException("Conflicting asset size");
@@ -86,32 +90,30 @@ public final class RemoteConfiguration {
         return result;
     }
 
-    public static JSONObject fromPortable(SubHubPack pack,JSONArray assets,JSONObject apps,JSONObject service) throws JSONException {
-        JSONObject sections=new JSONObject();for(String section:pack.getIncludedSections())sections.put(section,pack.getSection(section));
-        JSONObject contract=new JSONObject().put("id",pack.getId()).put("origin",pack.getOriginDeviceId()).put("name",pack.getName())
-                .put("author",pack.getAuthor()).put("description",pack.getDescription()).put("version",pack.getPackVersion())
-                .put("minimumAppVersion",pack.getMinimumSubHubVersion()).put("createdAt",pack.getCreatedAt()).put("updatedAt",pack.getUpdatedAt())
-                .put("sections",sections).put("assets",assets);
+    public static JSONObject currentMetadata(String id,String origin,String name,long created,long updated) throws JSONException {
+        return new JSONObject().put("id",id).put("origin",origin).put("name",name)
+                .put("author","").put("description","").put("version","1.0.0")
+                .put("minimumAppVersion",MINIMUM_APP_VERSION).put("createdAt",created).put("updatedAt",updated);
+    }
+
+    public static JSONObject fromSections(JSONObject metadata,JSONObject sections,JSONArray assets,JSONObject apps,JSONObject service) throws JSONException {
+        JSONObject contract=new JSONObject(metadata.toString()).put("sections",sections).put("assets",assets);
         return validate(new JSONObject().put("schema",SCHEMA).put("contract",contract).put("apps",apps).put("service",service));
     }
 
     public static JSONObject active(JSONObject input) throws JSONException {
-        JSONObject result=validate(input),sections=result.getJSONObject("contract").getJSONObject("sections");
-        Set<String> included=new HashSet<>();sections.keys().forEachRemaining(included::add);
-        if(!included.equals(SubHubPackSchema.SECTIONS))throw new IllegalArgumentException("Incomplete active configuration");
-        for(String section:included) {
-            Set<String> fields=new HashSet<>();sections.getJSONObject(section).keys().forEachRemaining(fields::add);
-            if(!fields.equals(PackSettingCatalog.keys(section)))throw new IllegalArgumentException("Incomplete active settings");
-        }
-        return result;
+        return active(input,BuildConfig.VERSION_NAME);
     }
 
-    public static SubHubPack portable(JSONObject configuration) throws JSONException {
-        JSONObject doc=validate(configuration),contract=doc.getJSONObject("contract"),raw=contract.getJSONObject("sections");
-        Map<String,JSONObject> sections=new LinkedHashMap<>();raw.keys().forEachRemaining(key -> sections.put(key,raw.optJSONObject(key)));
-        return new SubHubPack(contract.getString("id"),contract.getString("origin"),contract.getString("name"),contract.getString("author"),
-                contract.getString("description"),contract.getString("version"),contract.getLong("createdAt"),contract.getLong("updatedAt"),
-                contract.getString("minimumAppVersion"),sections,new JSONObject().put("serviceDurationMillis",doc.getJSONObject("service").getLong("duration")),java.util.Collections.emptyMap());
+    static JSONObject active(JSONObject input,String installedVersion) throws JSONException {
+        JSONObject result=validate(input,installedVersion),sections=result.getJSONObject("contract").getJSONObject("sections");
+        Set<String> included=new HashSet<>();sections.keys().forEachRemaining(included::add);
+        if(!included.equals(ConfigurationSchema.SECTIONS))throw new IllegalArgumentException("Incomplete active configuration");
+        for(String section:included) {
+            Set<String> fields=new HashSet<>();sections.getJSONObject(section).keys().forEachRemaining(fields::add);
+            if(!fields.equals(ConfigurationSettingCatalog.keys(section)))throw new IllegalArgumentException("Incomplete active settings");
+        }
+        return result;
     }
 
     public static Set<String> selected(JSONObject configuration) throws JSONException {

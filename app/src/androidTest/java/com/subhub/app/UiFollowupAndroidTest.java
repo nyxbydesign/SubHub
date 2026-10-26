@@ -54,6 +54,7 @@ public class UiFollowupAndroidTest {
     @Before public void fixture() throws Exception {
         preferences = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
         original = preferences.getAll();
+        preferences.edit().remove(com.subhub.app.security.DeviceRolePreferences.KEY_MODE).commit();
         ControllerPinManager.setPin(context, "2468");
         ControllerPinManager.enterDomMode();
         Set<String> selected = Set.of("com.android.chrome", "com.android.settings");
@@ -83,34 +84,32 @@ public class UiFollowupAndroidTest {
     @Test public void settingsOwnsBuildPrivacyAndSecurityWhileAppsHasOnePersonEditor() {
         try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             page.onActivity(a -> {
-                com.subhub.app.util.ExpandableSectionView help = section(a, "help");
-                assertEquals("Help & About", ((TextView) help.findViewById(R.id.section_title)).getText().toString());
-                assertEquals("Build: " + BuildConfig.VERSION_NAME + " | " + BuildConfig.BUILD_DATE,
-                        help.summary().getText().toString());
-                assertFalse(help.summary().isShown());
-                com.subhub.app.util.ExpandableSectionView privacy = section(a, "privacy");
-                assertEquals("Privacy & Permissions", ((TextView) privacy.findViewById(R.id.section_title)).getText().toString());
-                assertFalse(privacy.summary().getText().toString().contains("access settings"));
+                View privacy = a.findViewById(android.R.id.content).findViewWithTag("settings:privacy");
+                View permissions = a.findViewById(android.R.id.content).findViewWithTag("settings:permissions");
+                View help = a.findViewById(android.R.id.content).findViewWithTag("settings:help");
+                assertNotNull(privacy); assertNotNull(permissions); assertNotNull(help);
+                assertFalse(privacy.isClickable()); assertFalse(permissions.isClickable()); assertFalse(help.isClickable());
                 assertNull(a.findViewById(R.id.feature_areas_card));
-                assertFalse(a.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertFalse(a.findViewById(R.id.button_help).isShown());
-                assertTrue(privacy.header().isClickable());
-                assertTrue(help.header().isClickable());
+                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertTrue(a.findViewById(R.id.button_help).isShown());
+                assertNull(a.findViewById(R.id.hardcore_card));
+                assertNull(a.findViewById(R.id.switch_hardcore_mode));
                 assertNull(a.findViewById(R.id.button_packs));
                 assertNull(a.findViewById(R.id.apps_card));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("settings:apps"));
                 assertNull(a.findViewById(R.id.settings_connection));
                 assertEquals(context.getString(R.string.keyholder_home_title),
                         ((TextView) a.findViewById(R.id.settings_connections_security)).getText().toString());
+                assertEquals(context.getString(R.string.settings_build_summary, BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE),
+                        ((TextView) a.findViewById(android.R.id.content).findViewWithTag("settings_build_info")).getText().toString());
                 capture(a, "settings-overview");
             });
-            onView(withTagValue(org.hamcrest.Matchers.is("settings:help"))).perform(revealAboveNavigation(), click());
             page.recreate();
+            onView(withId(R.id.button_diagnostics)).perform(revealAboveNavigation());
             page.onActivity(a -> {
                 assertTrue(a.findViewById(R.id.button_help).isShown());
+                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
                 assertNull(a.findViewById(R.id.app_list_content));
-                android.widget.ScrollView scroll = (android.widget.ScrollView) a.findViewById(R.id.settings_sections).getParent();
-                scroll.scrollTo(0, Integer.MAX_VALUE);
                 capture(a, "settings-help");
             });
         }
@@ -246,10 +245,6 @@ public class UiFollowupAndroidTest {
         }
     }
 
-    private static com.subhub.app.util.ExpandableSectionView section(Activity a, String key) {
-        View header = a.findViewById(android.R.id.content).findViewWithTag("settings:" + key);
-        return (com.subhub.app.util.ExpandableSectionView) header.getParent();
-    }
 
     private static void awaitPicker(ActivityScenario<LocalAppsActivity> page) {
         long end = android.os.SystemClock.uptimeMillis() + 5000;

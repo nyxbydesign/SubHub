@@ -1,0 +1,10 @@
+<resources>
+    <string name="home_favorite_title">Favorite Sub</string>
+    <string name="home_favorite_choose">Choose a favorite</string>
+    <string name="home_favorite_marked">★ Favorite</string>
+    <string name="home_favorite_set">Set as favorite</string>
+    <string name="home_favorite_remove">Remove favorite</string>
+    <string name="home_favorite_gesture">Long-press a Sub to set or remove your favorite.</string>
+    <string name="home_recent_additions">Recent additions</string>
+    <string name="home_dom_locked">Unlock Dom</string>
+</resources>

@@ -2,6 +2,8 @@
 
 SubHub pairs a Dom device with a Sub device using Iroh. App data stays on the devices. Connections are encrypted between the paired identities; a relay can carry encrypted traffic when a direct connection is unavailable. Pairing does not require a central account or a message-storage service. Relay availability and each phone's network and battery restrictions still affect connectivity.
 
+Choose Dom only, Sub only, or Both for each device. Dom only provides the management workspace without setting up local protection. Device usage is separate from unlocking controller access. Existing installations keep Both until changed; an assigned Dom or active local protection can prevent a capability change.
+
 ## Pair
 
 1. On the Dom phone, set up local control with a PIN under Settings → Keyholder and enter Dom mode.
@@ -21,11 +23,19 @@ An invitation expires and is limited to one relationship. Pairing by itself pres
 
 The Dom can view the Sub's last synchronized statistics, daily activity, configured app allowances, installed-app choices, current contract, and runtime state. Observation times and missing or stale data matter: an old observation does not establish that the other phone is currently connected or that its service is running.
 
-Open the person's Contract to edit feature settings, included apps and allowances, duration, and supported artwork. Saving retains a contract for that relationship. Applying sends a versioned configuration to the Sub; pending or delivered does not mean applied. Concurrent edits can produce a conflict that requires reloading the current configuration. Use Saved contracts to import, export, delete, or apply a saved contract. These files do not copy local Android permission grants.
+Open the person's profile to adjust session duration directly, or its Contract to edit feature settings, included apps and allowances, and supported artwork. Apply sends a versioned configuration to that Sub; pending or delivered does not mean applied. Concurrent edits can produce a conflict that requires reloading the current configuration.
 
-Artwork transfers as bounded, verified file content. Existing PINs and manual authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. The separate relationship authenticator credential is shared only with the approved Dom, stored encrypted, and excluded from contract files and ordinary synchronization records. Wallet settings can be part of a contract, but pairing does not transfer payment authentication or initiate payments.
+Artwork transfers as bounded, verified file content. Existing PINs and manual authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. The separate relationship authenticator credential is shared only with the approved Dom, stored encrypted, and excluded from ordinary synchronization records. Wallet settings can be configured remotely, but pairing does not transfer payment authentication or initiate payments.
 
 End session targets the specific active session last observed on that Sub. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued request cannot end a later session. Remote Start and Pause are unavailable.
+
+## Activity
+
+The Dom's Activity tab shows selected-app entries, triggered Tributes, and reached app or shared limits. A Tribute event includes its assessed amount and rule. App entries and limits require the Sub's Accessibility service and the corresponding settings. Both devices must support Activity; older peers continue compatible statistics and configuration synchronization without sending Activity events.
+
+Events retain their source time and local receipt time. Interrupted synchronization can delay arrival; replayed receipts preserve read state and do not create another notification. Android notification permission and channel settings control alerts. OS notifications use generic text; unlock the Activity feed to view details. Only entries visible on screen become read.
+
+Profiles show recent events for the selected person. This device's history stays local unless a new event was recorded for its currently approved Dom. Pairing with another Dom does not send earlier local history. Unpairing stops accepting events and cancels that relationship's notifications.
 
 ## Offline and background behavior
 
@@ -37,4 +47,4 @@ Keep both apps open for initial pairing and large transfers. With an active rela
 
 Unpairing revokes the local relationship immediately and queues a revocation notice for the other device. The other phone can learn about it only when a connection becomes possible. The Sub retains its last applied configuration and returns to local configuration control; unpairing does not reset settings or end a running session. The revoked relationship’s authenticator credential stops working locally and is removed. Previous local credentials become available again; a Sub that never configured local control can set it up afterward.
 
-Uninstalling or clearing app data loses the installation's identity, pairing records, and pending changes. Reinstalling requires a new invitation and approval; a matching device name does not restore trust. Identity secrets use Android Keystore protection and are excluded from app backup. If protected identity storage becomes unreadable, synchronization fails rather than silently replacing the identity. The phone cannot receive a revocation notice or verify a relationship code whose wrapping key is lost. Clearing its app data establishes a new identity and requires pairing again, but also loses its local configuration, history, and pending changes. Keep a portable contract on the Dom before resetting a device when possible.
+Uninstalling or clearing app data loses the installation's identity, pairing records, and pending changes. Reinstalling requires a new invitation and approval; a matching device name does not restore trust. Identity secrets use Android Keystore protection and are excluded from app backup. If protected identity storage becomes unreadable, synchronization fails rather than silently replacing the identity. The phone cannot receive a revocation notice or verify a relationship code whose wrapping key is lost. Clearing its app data establishes a new identity and requires pairing again, but also loses its local configuration, history, and pending changes.

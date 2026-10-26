@@ -48,20 +48,6 @@ The capture suite covers 42 screenshots: 34 distinct page/state captures below a
   <a href="page-map/16-popup-storm.png"><img src="page-map/16-popup-storm.png" alt="popup storm" width="30%" /></a>
 </p>
 
-## Pack Maker
-
-<p>
-  <a href="page-map/00c-sub-arrangements.png"><img src="page-map/00c-sub-arrangements.png" alt="sub arrangements" width="30%" /></a>
-  <a href="page-map/17-studio-library.png"><img src="page-map/17-studio-library.png" alt="studio library" width="30%" /></a>
-  <a href="page-map/17b-studio-drafts.png"><img src="page-map/17b-studio-drafts.png" alt="studio drafts" width="30%" /></a>
-  <a href="page-map/17c-studio-create.png"><img src="page-map/17c-studio-create.png" alt="studio create" width="30%" /></a>
-  <a href="page-map/22-wizard-details.png"><img src="page-map/22-wizard-details.png" alt="wizard details" width="30%" /></a>
-  <a href="page-map/23-wizard-features.png"><img src="page-map/23-wizard-features.png" alt="wizard features" width="30%" /></a>
-  <a href="page-map/24-wizard-images.png"><img src="page-map/24-wizard-images.png" alt="wizard images" width="30%" /></a>
-  <a href="page-map/25-wizard-review.png"><img src="page-map/25-wizard-review.png" alt="wizard review" width="30%" /></a>
-  <a href="page-map/26-pack-section-editor.png"><img src="page-map/26-pack-section-editor.png" alt="pack section editor" width="30%" /></a>
-</p>
-
 ## Progress & support
 
 <p>

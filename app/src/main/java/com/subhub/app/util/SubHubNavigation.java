@@ -31,7 +31,7 @@ import java.util.List;
 /** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
-    public enum Screen { HOME, PEOPLE, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public enum Screen { HOME, PEOPLE, ACTIVITY, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -70,7 +70,8 @@ public final class SubHubNavigation {
 
     public static void bind(Activity activity, View root, Screen active) {
         View navigation = root.findViewById(R.id.bottom_navigation);
-        boolean domMode = ControllerPinManager.isDomModeActive();
+        boolean domMode = com.subhub.app.security.DeviceRolePreferences.supportsDom(activity)
+                && com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(activity);
         setVisible(navigation, true);
         setVisible(root.findViewById(R.id.nav_home), true);
         setVisible(root.findViewById(R.id.nav_censor), false);
@@ -78,10 +79,12 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_money), false);
         setVisible(root.findViewById(R.id.nav_atmosphere), false);
         setVisible(root.findViewById(R.id.nav_people), domMode);
+        setVisible(root.findViewById(R.id.nav_activity), domMode);
         setVisible(root.findViewById(R.id.nav_contract), !domMode);
         setVisible(root.findViewById(R.id.nav_stats), !domMode);
         setVisible(root.findViewById(R.id.nav_settings), true);
         Screen selected = active;
+        if (active == Screen.ACTIVITY && !domMode) selected = Screen.HOME;
         if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
                 || active == Screen.ATMOSPHERE || domMode && (active == Screen.STATS || active == Screen.CONTRACT)) {
             selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
@@ -93,6 +96,9 @@ public final class SubHubNavigation {
         bindTab(activity, root.findViewById(R.id.nav_people),
                 root.findViewById(R.id.nav_people_icon), root.findViewById(R.id.nav_people_label),
                 selected, Screen.PEOPLE, com.subhub.app.people.PeopleActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_activity),
+                root.findViewById(R.id.nav_activity_icon), root.findViewById(R.id.nav_activity_label),
+                selected, Screen.ACTIVITY, com.subhub.app.activity.DomActivityActivity.class);
         bindTab(activity, root.findViewById(R.id.nav_contract),
                 root.findViewById(R.id.nav_contract_icon), root.findViewById(R.id.nav_contract_label),
                 selected, Screen.CONTRACT, com.subhub.app.people.ContractActivity.class);
@@ -103,6 +109,113 @@ public final class SubHubNavigation {
                 root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
                 selected, Screen.SETTINGS, GlobalSettingsActivity.class);
         bindNavigationLayout(navigation);
+        bindActivityUnread(activity, root, domMode && ControllerPinManager.isDomModeActive());
+    }
+
+    private static void bindActivityUnread(Activity activity, View root, boolean domMode) {
+        View tab = root.findViewById(R.id.nav_activity);
+        if (tab == null || !(activity instanceof androidx.lifecycle.LifecycleOwner)) return;
+        ActivityUnread binding = (ActivityUnread) tab.getTag(R.id.nav_activity);
+        if (binding == null) {
+            binding = new ActivityUnread((androidx.lifecycle.LifecycleOwner) activity, tab);
+            tab.setTag(R.id.nav_activity, binding);
+        }
+        binding.bind(domMode);
+    }
+
+    /** Event-driven reads belong to the attached page, never the Home refresh timer. */
+    private static final class ActivityUnread implements androidx.lifecycle.DefaultLifecycleObserver,
+            View.OnAttachStateChangeListener {
+        private final androidx.lifecycle.LifecycleOwner owner;
+        private final View tab;
+        private final AsyncUiScope data;
+        private final String job;
+        private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        private AutoCloseable observation;
+        private boolean dom, started, dirty, closed;
+        private long unread = -1;
+
+        ActivityUnread(androidx.lifecycle.LifecycleOwner owner, View tab) {
+            this.owner = owner;
+            this.tab = tab;
+            data = AsyncUiScope.forPage(owner);
+            job = "navigation-activity-unread:" + System.identityHashCode(tab);
+            tab.addOnAttachStateChangeListener(this);
+            owner.getLifecycle().addObserver(this);
+        }
+
+        void bind(boolean domMode) {
+            dom = domMode;
+            render();
+            if (dom) start(); else stop();
+        }
+
+        private void start() {
+            if (closed || started || !allowed() || !tab.isAttachedToWindow()
+                    || !owner.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return;
+            started = true;
+            observation = com.subhub.app.activity.ActivitySources.observe(() -> main.post(this::reload));
+            reload();
+        }
+
+        private void stop() {
+            started = false;
+            dirty = false;
+            data.cancel(job);
+            if (observation != null) {
+                try { observation.close(); } catch (Exception ignored) { }
+                observation = null;
+            }
+        }
+
+        private void reload() {
+            if (!started || closed || !allowed()) return;
+            if (data.isPending(job)) { dirty = true; return; }
+            dirty = false;
+            android.content.Context application = tab.getContext().getApplicationContext();
+            data.load(job, () -> {
+                if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(application)
+                        || !ControllerPinManager.isDomModeActive()) return 0;
+                return com.subhub.app.activity.ActivitySources.repository().unreadCount();
+            }, count -> {
+                if (!started || closed) return;
+                unread = Math.max(0, count.longValue());
+                render();
+                if (dirty) reload();
+            }, failure -> {
+                unread = -1;
+                render();
+                if (dirty) reload();
+            });
+        }
+
+        private void render() {
+            boolean show = allowed() && unread > 0;
+            View indicator = tab.findViewById(R.id.nav_activity_unread);
+            indicator.setVisibility(show ? View.VISIBLE : View.GONE);
+            String label = tab.getResources().getString(R.string.dom_activity_title);
+            CharSequence description = show ? label + ", "
+                    + tab.getResources().getString(R.string.dom_activity_unread_count, unread) : label;
+            tab.setContentDescription(description);
+            androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, description);
+        }
+
+        private boolean allowed() {
+            return dom && ControllerPinManager.isDomModeActive()
+                    && com.subhub.app.security.DeviceRolePreferences.supportsDom(tab.getContext());
+        }
+
+        @Override public void onStart(androidx.lifecycle.LifecycleOwner owner) { render(); start(); }
+        @Override public void onStop(androidx.lifecycle.LifecycleOwner owner) { stop(); }
+        @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
+            closed = true;
+            stop();
+            main.removeCallbacksAndMessages(null);
+            tab.removeOnAttachStateChangeListener(this);
+            owner.getLifecycle().removeObserver(this);
+        }
+        @Override public void onViewAttachedToWindow(View view) { start(); }
+        @Override public void onViewDetachedFromWindow(View view) { stop(); }
     }
 
     private static void bindNavigationLayout(View navigation) {
@@ -132,10 +245,32 @@ public final class SubHubNavigation {
         int minimumTarget = navigation.getResources()
                 .getDimensionPixelSize(R.dimen.control_min_height);
         int horizontalPadding = navigation.getPaddingLeft() + navigation.getPaddingRight();
-        // A single rail preserves the viewport at large text sizes. Labels retain the
-        // system font scale and wrap inside their own target instead of adding tab rows.
+        int contentWidth = Math.max(0, pageWidth - horizontalPadding);
+        int[] naturalWidths = new int[visibleTabs.size()];
+        for (int index = 0; index < visibleTabs.size(); index++) {
+            ViewGroup tab = (ViewGroup) visibleTabs.get(index);
+            TextView label = (TextView) tab.getChildAt(1);
+            naturalWidths[index] = Math.max(minimumTarget, (int) Math.ceil(android.text.Layout.getDesiredWidth(
+                    label.getText(), label.getPaint())) + label.getCompoundPaddingLeft()
+                    + label.getCompoundPaddingRight() + tab.getPaddingLeft() + tab.getPaddingRight());
+        }
+        // Keep one rail while the actual scaled labels fit. Additional balanced rows
+        // preserve complete words and touch targets when the viewport cannot contain it.
         int columns = visibleTabs.size();
+        int[] columnWidths = null;
+        int naturalWidth = 0;
+        for (int candidateRows = 1; candidateRows <= visibleTabs.size(); candidateRows++) {
+            columns = (visibleTabs.size() + candidateRows - 1) / candidateRows;
+            columnWidths = new int[columns];
+            for (int index = 0; index < naturalWidths.length; index++)
+                columnWidths[index % columns] = Math.max(columnWidths[index % columns], naturalWidths[index]);
+            naturalWidth = 0;
+            for (int width : columnWidths) naturalWidth += width;
+            if (naturalWidth <= contentWidth || columns == 1) break;
+        }
+        int rows = (visibleTabs.size() + columns - 1) / columns;
         if (tabs.getColumnCount() < columns) tabs.setColumnCount(columns);
+        if (tabs.getRowCount() < rows) tabs.setRowCount(rows);
         ViewGroup.MarginLayoutParams params =
                 (ViewGroup.MarginLayoutParams) navigation.getLayoutParams();
         if (params.leftMargin != 0 || params.rightMargin != 0 || params.bottomMargin != 0) {
@@ -144,16 +279,19 @@ public final class SubHubNavigation {
             params.bottomMargin = 0;
             navigation.setLayoutParams(params);
         }
-        int contentWidth = Math.max(minimumTarget * columns, pageWidth - horizontalPadding);
+        int extra = contentWidth - naturalWidth;
+        for (int column = 0; column < columns; column++) columnWidths[column] = extra >= 0
+                ? columnWidths[column] + extra / columns + (column < extra % columns ? 1 : 0)
+                : contentWidth / columns;
         int visibleIndex = 0;
         for (int index = 0; index < tabs.getChildCount(); index++) {
             View tab = tabs.getChildAt(index);
             boolean visible = tab.getVisibility() == View.VISIBLE;
             int column = visible ? visibleIndex % columns : 0;
-            int width = visible ? contentWidth / columns
-                    + (column < contentWidth % columns ? 1 : 0) : 0;
+            int row = visible ? visibleIndex / columns : 0;
+            int width = visible ? columnWidths[column] : 0;
             GridLayout.LayoutParams tabParams = (GridLayout.LayoutParams) tab.getLayoutParams();
-            GridLayout.Spec rowSpec = GridLayout.spec(0, GridLayout.FILL);
+            GridLayout.Spec rowSpec = GridLayout.spec(row, GridLayout.FILL);
             GridLayout.Spec columnSpec = GridLayout.spec(column, GridLayout.FILL);
             if (tabParams.width != width || !tabParams.rowSpec.equals(rowSpec)
                     || !tabParams.columnSpec.equals(columnSpec)) {
@@ -165,7 +303,7 @@ public final class SubHubNavigation {
             if (visible) visibleIndex++;
         }
         if (tabs.getColumnCount() != columns) tabs.setColumnCount(columns);
-        if (tabs.getRowCount() != 1) tabs.setRowCount(1);
+        if (tabs.getRowCount() != rows) tabs.setRowCount(rows);
 
         // Reserve the measured rail, including labels enlarged by the system font setting.
         // Padding belongs to the scroll content so the final control can scroll above it.
@@ -188,6 +326,10 @@ public final class SubHubNavigation {
                         content.getPaddingEnd(), clearance);
             }
         }
+        View activityList = page.findViewById(R.id.dom_activity_list);
+        if (activityList instanceof android.widget.ListView && activityList.getPaddingBottom() != clearance)
+            activityList.setPaddingRelative(activityList.getPaddingStart(), activityList.getPaddingTop(),
+                    activityList.getPaddingEnd(), clearance);
     }
 
     private static void setVisible(View view, boolean visible) {
@@ -219,6 +361,8 @@ public final class SubHubNavigation {
             androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, label.getText());
         }
         tab.setOnClickListener(view -> {
+            if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomModeActive()
+                    || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
             if (selected && target.isInstance(activity)) return;
             if (selected && activity instanceof PenanceActivity) {
                 ((PenanceActivity) activity).showSectionHome();
