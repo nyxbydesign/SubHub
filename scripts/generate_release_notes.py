@@ -104,14 +104,16 @@ def equivalent_source_base(tag: str) -> str | None:
 
 def read_commits(tag: str, base_tag: str | None = None) -> list[Commit]:
     revision = f"{base_tag}..{tag}" if base_tag else tag
-    raw = run_git(["log", "--no-merges", "--reverse", "--format=%H%x00%s%x00%b%x00", revision])
+    raw = run_git(["log", "--reverse", "--format=%H%x00%s%x00%b%x00", revision])
     raw = raw.rstrip("\r\n")
     if raw.endswith("\0"):
         raw = raw[:-1]
     fields = raw.split("\0")
     if len(fields) % 3:
         raise ValueError("Unexpected git log record shape")
-    return [Commit(*fields[index:index + 3]) for index in range(0, len(fields), 3)]
+    # git log inserts a record newline after the final NUL in each formatted commit.
+    return [Commit(fields[index].lstrip("\r\n"), fields[index + 1], fields[index + 2])
+            for index in range(0, len(fields), 3)]
 
 
 def development_base(before: str) -> str:

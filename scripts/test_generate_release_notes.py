@@ -3,6 +3,7 @@ import sys
 import json
 import subprocess
 import unittest
+import tempfile
 from pathlib import Path
 
 
@@ -45,6 +46,42 @@ class ReleaseNotesTest(unittest.TestCase):
             MODULE.run_git = original
         self.assertEqual(1, len(commits))
         self.assertEqual("", commits[0].body)
+
+    def test_real_history_includes_implementation_in_merge_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*arguments, data=None):
+                # Git object headers require literal LF bytes on Windows as well.
+                return subprocess.run(["git", *arguments], cwd=directory,
+                                      input=None if data is None else data.encode("utf-8"),
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      check=True).stdout.decode("utf-8")
+            git("init", "--quiet")
+            tree = git("mktree", data="").strip()
+
+            def commit(subject, parents=()):
+                # Raw synthetic objects keep this history fixture independent of signing configuration.
+                raw = "tree " + tree + "\n" + "".join("parent " + parent + "\n" for parent in parents)
+                raw += "author Fixture <fixture@example.invalid> 1000000000 +0000\n"
+                raw += "committer Fixture <fixture@example.invalid> 1000000000 +0000\n\n"
+                raw += subject + "\n\nA change introduced in this commit.\n"
+                return git("hash-object", "-w", "-t", "commit", "--stdin", data=raw).strip()
+
+            base = commit("[chore] Baseline")
+            left = commit("[fix] Fix a branch detail", (base,))
+            right = commit("[docs] Describe the interface", (base,))
+            merged = commit("[feat] Add paired device screens", (left, right))
+            untyped = commit("Merge implementation", (left, right))
+            original = MODULE.run_git
+            MODULE.run_git = lambda arguments: git(*arguments)
+            try:
+                commits = MODULE.read_commits(merged, base)
+                self.assertEqual({left, right, merged}, {value.hash for value in commits})
+                notes = MODULE.changelog_markdown("0.6.5-dev.1", MODULE.entries(commits))
+                self.assertIn("**Add paired device screens**", notes)
+                with self.assertRaisesRegex(ValueError, "supported \\[type\\] prefix"):
+                    MODULE.entries(MODULE.read_commits(untyped, base))
+            finally:
+                MODULE.run_git = original
 
     def test_omits_release_bump_noise_but_keeps_other_maintenance(self):
         values = MODULE.entries([
