@@ -194,18 +194,6 @@ public final class LocalContractDetails extends ContextWrapper {
         PopupStormSettings popup = PopupStormSettings.load(this);
         SubliminalSettings whispers = new SubliminalSettingsRepository(this).load();
         List<ArrangementDetail> lines = new ArrayList<>();
-        com.subhub.app.pack.SubHubPackManager packs = new com.subhub.app.pack.SubHubPackManager(this);
-        com.subhub.app.pack.SubHubPack pack = packs.activePackOverview();
-        lines.add(detailLine(R.string.arrangement_active_pack, pack == null
-                ? getString(packs.activePackId() == null ? R.string.arrangement_none_selected : R.string.studio_active)
-                : getString(R.string.arrangement_pack_version, pack.getName(), pack.getPackVersion())));
-        boolean pin = com.subhub.app.security.ControllerPinManager.isConfigured(this);
-        boolean auth = new com.subhub.app.security.ControllerAuthenticator(this).isPaired();
-        lines.add(detailLine(R.string.keyholder_home_title, getString(pin && auth
-                ? R.string.keyholder_status_both : pin ? R.string.keyholder_status_pin
-                : auth ? R.string.keyholder_status_auth : R.string.keyholder_status_none)));
-        if (com.subhub.app.commitment.CommitmentManager.isActive(this)) lines.add(detailLine(
-                R.string.keyholder_your_lock, com.subhub.app.commitment.CommitmentManager.countdownLabel(this)));
         lines.add(
                 detailLine(
                         R.string.atmosphere_whispers_title,

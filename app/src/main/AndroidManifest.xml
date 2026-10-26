@@ -106,6 +106,8 @@
         <activity android:name=".people.PeopleActivity" android:exported="false" />
         <activity android:name=".people.PersonActivity" android:exported="false" />
         <activity android:name=".people.ContractActivity" android:exported="false" />
+        <activity android:name=".people.LocalAppsActivity" android:exported="false" />
+        <activity android:name=".people.ServiceDurationActivity" android:exported="false" />
         <activity android:name=".stats.AchievementsActivity" android:exported="false" />
         <activity android:name=".popup.PopupStormActivity" android:exported="false" />
         <activity android:name=".help.HelpActivity" android:exported="false" />

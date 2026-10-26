@@ -107,9 +107,14 @@ public final class StudioActivity extends AppCompatActivity {
         retained = new ViewModelProvider(this).get(StudioState.class);
         storage = retained.storage;
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.studio_title, false);
+        if (getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID)) {
+            PrimaryHeader.subtitle(binding.getRoot()).setText(R.string.role_this_device);
+            PrimaryHeader.subtitle(binding.getRoot()).setVisibility(View.VISIBLE);
+        }
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.VISIBLE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> {
-                            if (!getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false))
+                            if (!getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
+                                    && !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
                                 startActivity(new Intent(this, com.subhub.app.settings.GlobalSettingsActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
             finish();
@@ -119,7 +124,8 @@ public final class StudioActivity extends AppCompatActivity {
         SubHubNavigation.bind(this, binding.getRoot(),
                 getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
                         ? SubHubNavigation.Screen.ATMOSPHERE
-                        : SubHubNavigation.Screen.SETTINGS);
+                        : getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID)
+                                ? SubHubNavigation.Screen.PEOPLE : SubHubNavigation.Screen.SETTINGS);
         setupTabs();
         setupEditor();
         binding.buttonImport.setOnClickListener(view -> importPicker.launch(
@@ -191,7 +197,8 @@ public final class StudioActivity extends AppCompatActivity {
             SubHubNavigation.bind(this, binding.getRoot(),
                     getIntent().getBooleanExtra(EXTRA_FROM_RITUALS, false)
                             ? SubHubNavigation.Screen.ATMOSPHERE
-                            : SubHubNavigation.Screen.SETTINGS);
+                            : getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID)
+                                ? SubHubNavigation.Screen.PEOPLE : SubHubNavigation.Screen.SETTINGS);
             applySpaceVisibility();
         }
     }

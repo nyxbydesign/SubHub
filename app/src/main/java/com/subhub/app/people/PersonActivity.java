@@ -5,9 +5,7 @@ import android.os.Bundle;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.subhub.app.R;
-import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.penance.WalletCurrency;
-import com.subhub.app.security.AuthenticatorActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.stats.StatsSnapshot;
@@ -17,15 +15,18 @@ import com.subhub.app.util.SubHubNavigation;
 /** A selected person's contract, statistics and connection are always identity-bound. */
 public final class PersonActivity extends RolePage {
     private PersonId personId;
-    private String section = "contracts";
+    private String section = "profile";
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
-        if (state != null) section = state.getString("person_section", "contracts");
+        if (state != null) section = state.getString("person_section", "profile");
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
-        secondaryBack(this::finish);
+        secondaryBack(this::backToProfile);
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { backToProfile(); }
+        });
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
@@ -35,6 +36,7 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void refresh() {
         if (personId == null) return;
+        data.cancel("contract-cover");
         loading();
         PersonId requested = personId;
         PersonRepository repository = People.repository(getApplicationContext());
@@ -46,32 +48,33 @@ public final class PersonActivity extends RolePage {
 
     private void render(PersonSnapshot person) {
         body.removeAllViews();
-        ProfileViews.identity(body, person);
-        session(person);
-        LinearLayout tabs = new LinearLayout(this);
-        tabs.setOrientation(getResources().getConfiguration().fontScale >= 1.3f
-                || getResources().getConfiguration().screenWidthDp < 360
-                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-        body.addView(tabs, new LinearLayout.LayoutParams(-1, -2));
-        tab(tabs, "contracts", R.string.role_contracts);
-        tab(tabs, "stats", R.string.role_stats);
-        tab(tabs, "connection", R.string.role_connection);
-        if ("stats".equals(section)) stats(person);
-        else if ("connection".equals(section)) connection(person);
-        else contracts(person);
+        if ("profile".equals(section)) {
+            title(R.string.role_profile);
+            ProfileViews.identity(body, person);
+            session(person);
+            LinearLayout destinations = PersonUi.card(body);
+            destination(destinations, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
+            destination(destinations, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+            destination(destinations, "connection", R.drawable.ic_nav_people, R.string.role_connection);
+        } else {
+            title("stats".equals(section) ? R.string.role_stats
+                    : "connection".equals(section) ? R.string.role_connection : R.string.role_contract);
+            PersonUi.text(body, person.name, true);
+            if ("stats".equals(section)) stats(person);
+            else if ("connection".equals(section)) connection(person);
+            else contracts(person);
+        }
     }
 
-    private void tab(LinearLayout parent, String key, int label) {
-        TextView value = PersonUi.action(parent, label, () -> { section = key; refresh(); }, section.equals(key));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                parent.getOrientation() == LinearLayout.HORIZONTAL ? 0 : -1, -2,
-                parent.getOrientation() == LinearLayout.HORIZONTAL ? 1 : 0);
-        params.setMargins(PersonUi.dp(this, 3), 0, PersonUi.dp(this, 3), PersonUi.dp(this, 8));
-        value.setLayoutParams(params);
-        value.setTag("person_tab:" + key);
-        value.setSelected(section.equals(key));
-        androidx.core.view.ViewCompat.setStateDescription(value,
-                section.equals(key) ? getString(R.string.role_enabled) : null);
+    private void destination(LinearLayout parent, String key, int icon, int label) {
+        PersonUi.row(parent, icon, getString(label), "", () -> {
+            section = key; refresh();
+        }).setTag("person_tab:" + key);
+    }
+
+    private void backToProfile() {
+        if ("profile".equals(section)) finish();
+        else { section = "profile"; refresh(); }
     }
 
     private void session(PersonSnapshot person) {
@@ -134,17 +137,21 @@ public final class PersonActivity extends RolePage {
                         else if (ControllerPinManager.isDomModeActive() && People.connectionUi() != null)
                             People.connectionUi().editSection(this, person.id, value.key);
                     } : null);
-            row.setTag("person_section:" + value.key);
+            row.setTag("apps".equals(value.key) ? "person_apps" : "person_section:" + value.key);
             if (!editable && !value.details.isEmpty()) PersonUi.text(active, value.details, false);
         }
+        if (editable && !person.id.isLocal()) {
+            if (person.sections.stream().noneMatch(value -> "apps".equals(value.key)))
+                PersonUi.row(active, R.drawable.ic_settings_apps, getString(R.string.person_apps_title), "",
+                        () -> editRemoteSection(person, "apps")).setTag("person_apps");
+            if (person.sections.stream().noneMatch(value -> "duration".equals(value.key)))
+                PersonUi.row(active, R.drawable.ic_nav_limits, getString(R.string.person_duration_title), "",
+                        () -> editRemoteSection(person, "duration")).setTag("person_duration");
+        }
         if (editable && person.id.isLocal()) {
-            LinearLayout duration = PersonUi.card(body);
-            PersonUi.text(duration, getString(R.string.role_service_duration), true);
-            ServiceDurationView control = new ServiceDurationView(this, null);
-            control.setHeadingVisible(false);
-            control.setEditable(true);
-            control.setTag("person_duration:" + person.id.value());
-            duration.addView(control, new LinearLayout.LayoutParams(-1, -2));
+            PersonUi.row(active, R.drawable.ic_nav_limits, getString(R.string.person_duration_title),
+                    ServiceDurationSettings.label(this, true),
+                    () -> PersonRoutes.editSection(this, person.id, "duration")).setTag("person_duration");
             PersonUi.action(body, R.string.role_saved_contracts,
                     () -> {
                         if (PersonRoutes.canEditLocal(this, person.id)) startActivity(
@@ -160,6 +167,13 @@ public final class PersonActivity extends RolePage {
             if (ui != null && ControllerPinManager.isDomModeActive()) ui.openContracts(this, person.id);
         }, false).setTag("person_saved_contracts");
         PersonUi.allowances(body, person);
+    }
+
+    private void editRemoteSection(PersonSnapshot person, String section) {
+        ConnectionUi ui = People.connectionUi();
+        if (!person.id.isLocal() && person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
+                && ControllerPinManager.isDomModeActive() && ui != null)
+            ui.editSection(this, person.id, section);
     }
 
     private void stats(PersonSnapshot person) {
@@ -195,9 +209,12 @@ public final class PersonActivity extends RolePage {
                             System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))
                     : getString(R.string.role_never_synced), false);
         }
-        if (person.id.isLocal()) PersonUi.action(body, R.string.role_keyholder,
-                () -> startActivity(new Intent(this, AuthenticatorActivity.class)), false);
-        else if (person.can(PersonSnapshot.Capability.MANAGE_CONNECTION) && People.connectionUi() != null) {
+        if (person.id.isLocal() && People.connectionUi() != null) PersonUi.action(body, R.string.role_manage_connection,
+                () -> {
+                    ConnectionUi ui = People.connectionUi();
+                    if (ui != null && ControllerPinManager.isDomModeActive()) ui.openConnection(this, person.id);
+                }, false);
+        else if (!person.id.isLocal() && person.can(PersonSnapshot.Capability.MANAGE_CONNECTION) && People.connectionUi() != null) {
             PersonUi.action(body, R.string.role_manage_connection, () -> {
                 ConnectionUi ui = People.connectionUi();
                 if (ui != null && ControllerPinManager.isDomModeActive()) ui.openConnection(this, person.id);

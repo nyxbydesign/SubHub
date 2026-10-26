@@ -105,7 +105,7 @@ public final class VisualIdentityAndroidTest {
 
     @Test public void secondaryPagesUseReadableLayoutsAndFullTouchTargets() throws Exception {
         for (String page : new String[] {"help.HelpActivity", "help.PermissionSetupActivity",
-                "settings.SetupAppsActivity", "security.AuthenticatorActivity",
+                "settings.SetupAppsActivity", "people.LocalAppsActivity", "people.ServiceDurationActivity", "security.AuthenticatorActivity",
                 "privacy.PrivacyActivity", "stats.StatsActivity", "stats.AchievementsActivity",
                 "subliminal.SubliminalSettingsActivity", "popup.PopupStormActivity",
                 "capture.CustomImagesActivity", "capture.ExportActivity",
@@ -257,6 +257,10 @@ public final class VisualIdentityAndroidTest {
         Class<? extends Activity> type = (Class<? extends Activity>) Class.forName("com.subhub.app." + name);
         Intent intent = new Intent(context, type);
         if (type == MainActivity.class) intent.setAction(Intent.ACTION_MAIN);
+        if (type == com.subhub.app.people.LocalAppsActivity.class
+                || type == com.subhub.app.people.ServiceDurationActivity.class)
+            intent.putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID,
+                    com.subhub.app.people.PersonId.LOCAL.value());
         try (ActivityScenario<? extends Activity> page = ActivityScenario.launch(intent)) {
             settle();
             String label = name + (ControllerPinManager.isDomModeActive() ? "-dom" : "-sub");

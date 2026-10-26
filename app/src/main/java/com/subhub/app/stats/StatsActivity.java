@@ -38,6 +38,9 @@ public final class StatsActivity extends PreferencePage {
         summary.setId(R.id.stats_lifetime_summary);
         heading(summary, R.string.stats_all_time);
         LinearLayout numbers = new LinearLayout(this);
+        numbers.setOrientation(getResources().getConfiguration().screenWidthDp < 360
+                || getResources().getConfiguration().fontScale >= 1.3f
+                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         summary.addView(numbers, new LinearLayout.LayoutParams(-1, -2));
         lifetimeTime = metric(numbers, R.string.stats_time);
         lifetimeCensors = metric(numbers, R.string.stats_censors);
@@ -60,6 +63,8 @@ public final class StatsActivity extends PreferencePage {
         LinearLayout.LayoutParams activityParams =
                 (LinearLayout.LayoutParams) daily.getLayoutParams();
         activityParams.bottomMargin = dp(14);
+        button(page, getString(R.string.achievements_title), () -> startActivity(
+                new android.content.Intent(this, AchievementsActivity.class))).setId(R.id.stats_achievements);
         sessionList = card(page);
         bindTotals();
         bindSessions();
@@ -74,6 +79,10 @@ public final class StatsActivity extends PreferencePage {
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
         com.subhub.app.security.ControllerEditMode.renderButton(this,
                 com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+        android.widget.TextView target = com.subhub.app.util.PrimaryHeader.subtitle(findViewById(android.R.id.content));
+        target.setText(R.string.role_this_device);
+        target.setVisibility(com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                ? android.view.View.VISIBLE : android.view.View.GONE);
         com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content)).setVisibility(
                 com.subhub.app.security.ControllerPinManager.isDomModeActive()
                         ? android.view.View.VISIBLE : android.view.View.GONE);
@@ -101,10 +110,12 @@ public final class StatsActivity extends PreferencePage {
     private TextView metric(LinearLayout parent, int name) {
         LinearLayout cell = new LinearLayout(this);
         cell.setOrientation(LinearLayout.VERTICAL);
-        parent.addView(cell, new LinearLayout.LayoutParams(0, -2, 1));
+        boolean horizontal = parent.getOrientation() == LinearLayout.HORIZONTAL;
+        parent.addView(cell, new LinearLayout.LayoutParams(horizontal ? 0 : -1, -2, horizontal ? 1 : 0));
         TextView value = text(cell, "", 22, false);
+        value.setTag("stats:metric-value");
         value.setTypeface(null, Typeface.BOLD);
-        text(cell, getString(name), 12, true);
+        text(cell, getString(name), 12, true).setTag("stats:metric-label");
         return value;
     }
 

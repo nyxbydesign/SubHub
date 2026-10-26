@@ -6,6 +6,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
+import com.subhub.app.R;
 import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.studio.PackCoverArtwork;
 import com.subhub.app.util.AsyncUiScope;
@@ -22,6 +24,9 @@ public final class ContractHeader {
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         PersonUi.text(copy, label, false);
         PersonUi.text(copy, person.contractName, true);
+        TextView version = PersonUi.text(copy, "", false);
+        version.setTag("contract_version:" + person.id.value());
+        version.setVisibility(View.GONE);
         ImageView cover = new ImageView(context);
         cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
         cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -40,12 +45,17 @@ public final class ContractHeader {
             SubHubPackManager packs = new SubHubPackManager(app);
             String id = packs.activePackId();
             com.subhub.app.pack.SubHubPack pack = packs.activePackOverview();
-            if (pack == null || !pack.getName().equals(expectedName)) return new Cover(null, id);
+            if (pack == null || !pack.getName().equals(expectedName)) return new Cover(null, id, "");
             Bitmap bitmap = PackCoverArtwork.decode(packs.readLibraryCover(id), bound);
-            Cover result = new Cover(bitmap, id);
+            Cover result = new Cover(bitmap, id, pack.getPackVersion());
             if (!java.util.Objects.equals(id, packs.activePackId())) result.close();
             return result;
         }, result -> {
+            if (!result.version.isEmpty() && java.util.Objects.equals(result.packId,
+                    new SubHubPackManager(app).activePackId())) {
+                version.setText(context.getString(R.string.person_contract_version, result.version));
+                version.setVisibility(View.VISIBLE);
+            }
             if (result.bitmap != null && java.util.Objects.equals(result.packId,
                     new SubHubPackManager(app).activePackId())) {
                 cover.setImageBitmap(result.bitmap);
@@ -58,8 +68,10 @@ public final class ContractHeader {
 
     private static final class Cover implements AutoCloseable {
         Bitmap bitmap;
-        final String packId;
-        Cover(Bitmap bitmap, String packId) { this.bitmap = bitmap; this.packId = packId; }
+        final String packId, version;
+        Cover(Bitmap bitmap, String packId, String version) {
+            this.bitmap = bitmap; this.packId = packId; this.version = version;
+        }
         @Override public void close() { if (bitmap != null) { bitmap.recycle(); bitmap = null; } }
     }
 }

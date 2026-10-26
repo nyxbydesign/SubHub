@@ -97,9 +97,18 @@ public final class LocalPersonRepository implements PersonRepository {
 
         StatsSnapshot stats = new StatsRepository(context).load();
         LocalContractDetails descriptions = new LocalContractDetails(context);
+        List<String> includedNames = new ArrayList<>();
+        if (!apps.isAllApps()) for (String packageName : apps.getIncludedPackages())
+            includedNames.add(appLabel(packageName));
+        Collections.sort(includedNames, String.CASE_INSENSITIVE_ORDER);
+        sections.add(0, new PersonSnapshot.Section("apps", context.getString(R.string.person_apps_title),
+                apps.isAllApps() ? context.getString(R.string.app_mode_always)
+                        : context.getResources().getQuantityString(R.plurals.apps_included_count,
+                                includedNames.size(), includedNames.size()),
+                String.join("\n", includedNames)));
         List<PersonSnapshot.Section> canonical = new ArrayList<>();
         for (PersonSnapshot.Section section : sections) {
-            String detail = descriptions.forSection(section.key);
+            String detail = "apps".equals(section.key) ? section.details : descriptions.forSection(section.key);
             canonical.add(new PersonSnapshot.Section(section.key, section.title, section.summary, detail));
         }
         boolean paused = new PaidPauseManager(context).isActive();

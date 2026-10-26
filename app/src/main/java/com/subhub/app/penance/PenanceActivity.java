@@ -242,8 +242,9 @@ public final class PenanceActivity extends AppCompatActivity {
                 overview ? R.drawable.ic_nav_money : 0,
                 overview ? R.string.penance_title : walletTitles.get(expandedWalletSection),
                 0);
-        PrimaryHeader.subtitle(binding.getRoot()).setText(manager.getCurrency());
-        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(View.GONE);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(R.string.role_this_device);
+        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
+                ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         if (editorBack != null) editorBack.setEnabled(!overview);
     }
 
@@ -279,8 +280,9 @@ public final class PenanceActivity extends AppCompatActivity {
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setVisibility(editing ? View.VISIBLE : View.GONE);
-        PrimaryHeader.subtitle(binding.getRoot()).setText(manager.getCurrency());
-        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(View.GONE);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(R.string.role_this_device);
+        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
+                ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         displayWalletSections();
         if (connection != null) connection.refresh();
         View[] editable = { binding.ruleDetectionEnabled,

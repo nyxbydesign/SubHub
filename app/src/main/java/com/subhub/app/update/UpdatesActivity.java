@@ -255,19 +255,23 @@ public final class UpdatesActivity extends AppCompatActivity {
             TextView version = row.findViewById(R.id.release_version);
             TextView meta = row.findViewById(R.id.release_meta);
             TextView details = row.findViewById(R.id.release_details);
-            TextView chevron = row.findViewById(R.id.release_chevron);
+            android.widget.ImageView chevron = row.findViewById(R.id.release_chevron);
             version.setText(getString(R.string.update_history_version, item.versionName));
             meta.setText(historyMeta(item, candidate));
             details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
             boolean expanded = expandedHistory.contains(item.tag);
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            chevron.setText(expanded ? "⌄" : "›");
+            chevron.setRotation(expanded ? 90f : 0f);
+            androidx.core.view.ViewCompat.setStateDescription(row,
+                    getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
             row.setContentDescription(getString(R.string.update_history_open, item.versionName));
             row.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
                 details.setVisibility(show ? View.VISIBLE : View.GONE);
-                chevron.setText(show ? "⌄" : "›");
+                chevron.setRotation(show ? 90f : 0f);
+                androidx.core.view.ViewCompat.setStateDescription(row,
+                        getString(show ? R.string.section_expanded : R.string.section_collapsed));
                 if (show) expandedHistory.add(item.tag);
                 else expandedHistory.remove(item.tag);
             });

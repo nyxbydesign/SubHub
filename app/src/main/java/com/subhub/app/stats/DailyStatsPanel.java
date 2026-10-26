@@ -386,7 +386,8 @@ public final class DailyStatsPanel extends LinearLayout {
                 new GridLayout.LayoutParams(
                         GridLayout.spec(index / 7), GridLayout.spec(index % 7, 1f));
         p.width = 0;
-        p.height = height;
+        p.height = v instanceof TextView ? LayoutParams.WRAP_CONTENT : height;
+        v.setMinimumHeight(height);
         p.setMargins(dp(2), dp(2), dp(2), dp(2));
         grid.addView(v, p);
     }

@@ -117,10 +117,9 @@ public final class CensorEditorStructureContractTest {
         }
     }
 
-    @Test public void ritualsGalleryActionOpensWorkspaceWithSeparateDeletionChoice() {
-        try (ActivityScenario<com.subhub.app.atmosphere.AtmosphereActivity> scenario =
-                     ActivityScenario.launch(com.subhub.app.atmosphere.AtmosphereActivity.class)) {
-            onView(withId(R.id.rituals_gallery_card)).perform(revealAboveNavigation(), click());
+    @Test public void censorPhotoToolsOpenWorkspaceWithSeparateDeletionChoice() {
+        try (ActivityScenario<SettingsActivity> scenario = ActivityScenario.launch(SettingsActivity.class)) {
+            onView(withId(R.id.censor_photo_tools)).perform(revealAboveNavigation(), click());
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 Activity export = null;
@@ -137,16 +136,21 @@ public final class CensorEditorStructureContractTest {
     }
 
     @Test public void subModeCannotUseThePhotoToolOrChangeCensorConfiguration() {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        java.util.Map<String, ?> before = new java.util.LinkedHashMap<>(
+                new SettingsRepository(context).preferences().getAll());
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<SettingsActivity> scenario =
-                     ActivityScenario.launch(SettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                        org.junit.Assert.assertNull(activity.findViewById(R.id.button_export));
-                assertFalse(activity.findViewById(R.id.button_add_censor_images).isEnabled());
-                assertFalse(activity.findViewById(R.id.radio_coverage_person).isEnabled());
-                assertFalse(activity.findViewById(R.id.switch_smut_text).isEnabled());
-            });
+        try (ActivityScenario<SettingsActivity> scenario = ActivityScenario.launch(SettingsActivity.class)) {
+            long deadline = android.os.SystemClock.uptimeMillis() + 5000;
+            while (scenario.getState() != androidx.lifecycle.Lifecycle.State.DESTROYED
+                    && android.os.SystemClock.uptimeMillis() < deadline) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                android.os.SystemClock.sleep(25);
+            }
+            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.getState());
         }
+        assertFalse(ControllerPinManager.canEditConfiguration());
+        assertEquals(before, new SettingsRepository(context).preferences().getAll());
     }
 
     private static void assertInside(View expectedGroup, View child) {
