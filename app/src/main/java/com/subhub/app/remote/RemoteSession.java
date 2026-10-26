@@ -86,10 +86,11 @@ public final class RemoteSession {
                 if(batch.changes.isEmpty()) break;
                 send(connection,batch.json(),deadline);
                 store.acknowledge(peer.identity,RemoteProtocol.Ack.parse(read(connection,deadline)));
+                store.markSent(peer.identity,batch);
                 batches++;
             }
         }
-        send(connection,message("state_complete",peer),deadline);
+        send(connection,message("state_complete",peer).put("heads",store.outgoingHeads(peer.identity,peer.generation)),deadline);
         JSONObject wanted=read(connection,deadline);requireType(wanted,"asset_wants",peer);
         JSONArray rows=wanted.getJSONArray("assets");
         if(rows.length()>MAX_ASSET_REQUESTS) throw new IOException("Too many asset requests");
@@ -125,7 +126,9 @@ public final class RemoteSession {
         while(true) {
             checkActive(peer);
             JSONObject frame=read(connection,deadline);
-            if("state_complete".equals(frame.optString("type"))) { requireType(frame,"state_complete",peer);break; }
+            if("state_complete".equals(frame.optString("type"))) {
+                requireType(frame,"state_complete",peer);store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"));break;
+            }
             if(++count>MAX_BATCHES) throw new IOException("Too many sync batches");
             RemoteProtocol.Batch batch=RemoteProtocol.Batch.parse(frame);
             RemoteProtocol.Ack ack=store.receive(peer.identity,batch);

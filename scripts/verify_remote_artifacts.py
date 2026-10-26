@@ -77,6 +77,7 @@ def inspect(apk, expected, aapt, native=False):
                 for library in ("libiroh_ffi.so", "libjnidispatch.so")
             )
         report["native"] = inventory
+        report["checkedLibraries"] = ["libiroh_ffi.so", "libjnidispatch.so"]
         report["nativePageAlignmentPassed"] = all(all(value >= 16384 for value in item["alignment"]) for item in inventory.values())
     return report
 

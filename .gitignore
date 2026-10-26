@@ -45,6 +45,7 @@ app/src/main/assets/achievement_badges/
 build/
 dist/
 .gradle/
+.kotlin/
 **/build/
 *.log
 __pycache__/
