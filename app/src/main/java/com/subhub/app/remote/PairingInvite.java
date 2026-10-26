@@ -45,6 +45,14 @@ public final class PairingInvite {
     }
 
     public static PairingInvite parse(String link, long now) {
+        PairingInvite invite = restore(link);
+        if (now <= 0 || invite.expiresAt <= now || invite.expiresAt - now > LIFETIME_MILLIS) {
+            throw new IllegalArgumentException("Invitation expired or clock incorrect");
+        }
+        return invite;
+    }
+
+    static PairingInvite restore(String link) {
         if (link == null || link.length() > 8192) throw new IllegalArgumentException("Invalid invitation");
         try {
             URI uri = new URI(link);
@@ -64,9 +72,6 @@ public final class PairingInvite {
                 throw new IllegalArgumentException("Unsupported invitation");
             }
             long expires = Long.parseLong(fields.get("expires"));
-            if (now <= 0 || expires <= now || expires - now > LIFETIME_MILLIS) {
-                throw new IllegalArgumentException("Invitation expired or clock incorrect");
-            }
             return new PairingInvite(fields.get("id"), fields.get("peer"), fields.get("route"),
                     expires, Base64.getUrlDecoder().decode(uri.getRawFragment()));
         } catch (URISyntaxException | NullPointerException invalid) {

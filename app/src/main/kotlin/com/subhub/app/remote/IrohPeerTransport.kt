@@ -111,7 +111,7 @@ class IrohPeerTransport private constructor(private val endpoint: Endpoint, priv
 
     private class IrohConnection(private val native: computer.iroh.Connection, private val stream: BiStream) : PeerTransport.Connection {
         private val closed = AtomicBoolean()
-        @Volatile private var timeout = 10_000L
+        @Volatile private var deadlineNanos = System.nanoTime() + 10_000_000_000L
         private val receiver = stream.recv()
         private val sender = stream.send()
         private val input = BufferedInputStream(object : InputStream() {
@@ -124,7 +124,7 @@ class IrohPeerTransport private constructor(private val endpoint: Endpoint, priv
                 if (length == 0) return 0
                 if (closed.get()) throw IOException("Connection closed")
                 try {
-                    val bytes = timed(timeout) { receiver.read(length.coerceAtMost(64 * 1024).toUInt()) }
+                    val bytes = timed(remainingMillis()) { receiver.read(length.coerceAtMost(64 * 1024).toUInt()) }
                     if (bytes.isEmpty()) return -1
                     bytes.copyInto(buffer, offset)
                     return bytes.size
@@ -136,7 +136,7 @@ class IrohPeerTransport private constructor(private val endpoint: Endpoint, priv
             override fun write(buffer: ByteArray, offset: Int, length: Int) {
                 if (offset < 0 || length < 0 || offset > buffer.size - length) throw IndexOutOfBoundsException()
                 if (closed.get()) throw IOException("Connection closed")
-                try { timed(timeout) { sender.writeAll(buffer.copyOfRange(offset, offset + length)) } }
+                try { timed(remainingMillis()) { sender.writeAll(buffer.copyOfRange(offset, offset + length)) } }
                 catch (error: IOException) { close(); throw error }
             }
         }, 64 * 1024)
@@ -146,7 +146,12 @@ class IrohPeerTransport private constructor(private val endpoint: Endpoint, priv
         override fun output(): OutputStream = output
         override fun setReadTimeoutMillis(timeoutMillis: Long) {
             require(timeoutMillis in 1..60_000)
-            timeout = timeoutMillis
+            deadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000
+        }
+        private fun remainingMillis(): Long {
+            val remaining = deadlineNanos - System.nanoTime()
+            if (remaining <= 0) throw SocketTimeoutException("Peer operation timed out")
+            return ((remaining + 999_999) / 1_000_000).coerceAtMost(60_000)
         }
         override fun isDirect(): Boolean = native.paths().any { it.isSelected && it.isIp }
         override fun close() {

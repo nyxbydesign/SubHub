@@ -72,6 +72,10 @@ public final class RemoteAssets {
         }
     }
 
+    public long length(String hash) throws IOException {
+        synchronized(lock) { return expected(hash); }
+    }
+
     public long append(String hash,long offset,byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > CHUNK_BYTES || offset < 0) {
             throw new IOException("Invalid asset chunk");
