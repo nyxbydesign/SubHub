@@ -58,6 +58,37 @@ public final class CensorTapTrackerTest {
         assertFalse(tracker.matchesClickAt(110, 110, 190, 190, 2050L, 2200L));
     }
 
+    @Test public void asynchronousSameCoverageSuspendsBillingButRetainsStationaryClickContinuity() {
+        CensorTapTracker tracker = new CensorTapTracker();
+        List<BBox> regions = List.of(new BBox(100, 200, 100, 100));
+        publish(tracker, regions, 1000L);
+        tracker.suspendDisplayed(tracker, tracker.scope(), regions, viewport());
+        assertFalse(tracker.matchesPoint(150, 250, 1000, 2000, 1200L));
+        assertFalse(tracker.matchesClickAt(110, 210, 190, 290, 1100L, 1200L));
+        publish(tracker, regions, 1300L);
+        assertTrue(tracker.matchesClickAt(110, 210, 190, 290, 1100L, 1400L));
+    }
+
+    @Test public void changedOrEmptyCoalescedPostBreaksPriorGeometryContinuity() {
+        for (List<BBox> next : List.of(List.<BBox>of(), List.of(new BBox(100, 100, 100, 100)))) {
+            CensorTapTracker tracker = new CensorTapTracker();
+            List<BBox> original = List.of(new BBox(100, 200, 100, 100));
+            publish(tracker, original, 1000L);
+            tracker.suspendDisplayed(tracker, tracker.scope(), next, viewport());
+            assertFalse(tracker.matchesPoint(150, 250, 1000, 2000, 1200L));
+            publish(tracker, original, 1300L);
+            assertFalse(tracker.matchesClickAt(110, 210, 190, 290, 1100L, 1400L));
+            assertTrue(tracker.matchesClickAt(110, 210, 190, 290, 1350L, 1400L));
+        }
+    }
+
+    @Test public void foreignAsyncPublisherCannotSuspendAnotherLiveMap() {
+        CensorTapTracker tracker = new CensorTapTracker();
+        publish(tracker, List.of(new BBox(100, 200, 100, 100)), 1000L);
+        tracker.suspendDisplayed(new Object(), tracker.scope(), List.of(), viewport());
+        assertTrue(tracker.matchesClickAt(110, 210, 190, 290, 1100L, 1200L));
+    }
+
     @Test public void oldScopeCannotRearmAfterStopOrForegroundChange() {
         CensorTapTracker tracker = new CensorTapTracker();
         Object publisher = new Object();
@@ -91,6 +122,20 @@ public final class CensorTapTrackerTest {
 
     private static void publish(CensorTapTracker tracker, List<BBox> regions, long drawnAt) {
         tracker.publishDisplayed(tracker, tracker.scope(), regions, viewport(), drawnAt, false);
+    }
+
+    @Test public void withdrawalPreservesScopeButEndsOldGeometryAndCannotClearAnotherPublisher() {
+        CensorTapTracker tracker = new CensorTapTracker(); Object publisher = new Object();
+        List<BBox> regions = List.of(new BBox(100, 200, 100, 100)); long scope = tracker.scope();
+        tracker.publishDisplayed(publisher, scope, regions, viewport(), 1000, false);
+        tracker.withdrawDisplayed(new Object());
+        assertTrue(tracker.matchesPoint(110, 210, 1000, 2000, 1100));
+        tracker.withdrawDisplayed(publisher); assertEquals(scope, tracker.scope());
+        assertFalse(tracker.matchesPoint(110, 210, 1000, 2000, 1100));
+        tracker.publishDisplayed(publisher, scope, regions, viewport(), 1200, false);
+        assertFalse(tracker.matchesClickAt(110, 210, 190, 290, 1100, 1250));
+        assertTrue(tracker.matchesClickAt(110, 210, 190, 290, 1200, 1250));
+        tracker.clearDisplayed(publisher); assertEquals(scope + 1, tracker.scope());
     }
 
     private static BBox viewport() { return new BBox(0, 0, 1000, 2000); }

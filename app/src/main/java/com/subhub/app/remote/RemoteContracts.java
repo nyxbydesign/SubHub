@@ -202,7 +202,7 @@ public final class RemoteContracts {
         JSONObject sections=result.getJSONObject("contract").getJSONObject("sections"),incoming=choice.getJSONObject("sections");
         Iterator<String> names=incoming.keys();while(names.hasNext()){String section=names.next();JSONObject values=sections.getJSONObject(section),replacements=incoming.getJSONObject(section);Iterator<String> keys=replacements.keys();while(keys.hasNext()){String key=keys.next();values.put(key,replacements.get(key));}}
         JSONArray assets=new JSONArray(),old=result.getJSONObject("contract").getJSONArray("assets"),added=choice.getJSONArray("assets");
-        for(int i=0;i<old.length();i++){String path=old.getJSONObject(i).getString("path");if(!(incoming.has("censor") && path.startsWith("assets/censor/")) && !(incoming.has("popup") && path.startsWith("assets/popup/")))assets.put(old.getJSONObject(i));}
+        for(int i=0;i<old.length();i++){String path=old.getJSONObject(i).getString("path");if(!path.startsWith("assets/cover/") && !(incoming.has("censor") && path.startsWith("assets/censor/")) && !(incoming.has("popup") && path.startsWith("assets/popup/")))assets.put(old.getJSONObject(i));}
         for(int i=0;i<added.length();i++)assets.put(added.getJSONObject(i));
         JSONObject metadata=new JSONObject(choice.toString()).put("sections",sections).put("assets",assets);result.put("contract",metadata);
         return RemoteConfiguration.active(result);
@@ -221,6 +221,27 @@ public final class RemoteContracts {
         JSONObject doc=RemoteConfiguration.validate(input);Map<String,File> files=new LinkedHashMap<>();RemoteAssets blobs=assets(peer);JSONArray refs=doc.getJSONObject("contract").getJSONArray("assets");
         for(int i=0;i<refs.length();i++){JSONObject ref=refs.getJSONObject(i);files.put(ref.getString("path"),blobs.finish(ref.getString("hash")));}
         SubHubPackArchive.writeStreaming(RemoteConfiguration.portable(doc),files,output);
+    }
+    @FunctionalInterface public interface ExportDestination { OutputStream open() throws IOException; }
+    public void exportAuthorized(RemoteStore.Peer peer,JSONObject input,ExportDestination destination)throws Exception {
+        synchronized(store){requireExportAuthority(peer);}
+        File prepared=File.createTempFile("peer-export-",".sub",context.getCacheDir());
+        try {
+            try(OutputStream output=new FileOutputStream(prepared)){export(peer,input,output);}
+            OutputStream selected;
+            // Destination opening is the admission point. Preparation and copying never hold this monitor.
+            synchronized(store){requireExportAuthority(peer);selected=destination.open();}
+            if(selected==null)throw new IOException("Export unavailable");
+            try(OutputStream output=selected;InputStream source=new FileInputStream(prepared)) {
+                byte[] buffer=new byte[8192];int count;while((count=source.read(buffer))!=-1)output.write(buffer,0,count);
+            }
+        } finally{prepared.delete();}
+    }
+    private void requireExportAuthority(RemoteStore.Peer selected) {
+        RemoteStore.Peer peer=store.peer(selected.identity,selected.generation);
+        if(peer==null||peer.localRole!=RemoteProtocol.Role.DOM||peer.state!=RemoteStore.State.ACTIVE
+                ||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                ||!com.subhub.app.security.ControllerPinManager.hasCredentials(context))throw new SecurityException("Pairing is not authorized");
     }
     public static void ingest(RemoteAssets blobs,String hash,long length,InputStream input) throws IOException {
         blobs.reserve(hash,length);if(blobs.isComplete(hash)){blobs.finish(hash);return;}

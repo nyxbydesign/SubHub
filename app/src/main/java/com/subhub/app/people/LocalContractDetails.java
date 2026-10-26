@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppTimerManager;
+import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
@@ -104,8 +105,22 @@ public final class LocalContractDetails extends ContextWrapper {
                                 ? getString(R.string.arrangement_minutes, settings.totalMinutes)
                                 : getString(R.string.popup_off)));
         lines.add(detailLine(R.string.arrangement_limits_individual,
-                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)));
+                getString(settings.perAppEnabled ? R.string.control_state_on : R.string.control_state_off)
+                        + "\n" + appAllowances(timers)));
         return lines;
+    }
+
+    private String appAllowances(AppTimerManager timers) {
+        List<String> apps = new ArrayList<>();
+        android.content.pm.PackageManager packages = getPackageManager();
+        for (String name : new AppModeManager(this).getIncludedPackages()) {
+            String label = name;
+            try { label = packages.getApplicationLabel(packages.getApplicationInfo(name, 0)).toString(); }
+            catch (android.content.pm.PackageManager.NameNotFoundException absent) { /* Keep saved assignments. */ }
+            apps.add(getString(R.string.arrangement_app_allowance, label, timers.allowanceMinutes(name)));
+        }
+        Collections.sort(apps, String.CASE_INSENSITIVE_ORDER);
+        return apps.isEmpty() ? getString(R.string.arrangement_no_apps) : String.join("\n", apps);
     }
 
     private List<ArrangementDetail> walletArrangementDetails() {

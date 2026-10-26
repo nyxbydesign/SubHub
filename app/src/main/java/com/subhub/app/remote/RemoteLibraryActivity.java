@@ -48,6 +48,8 @@ public final class RemoteLibraryActivity extends RemotePage {
                 ? R.string.remote_applied : latest.state == RemoteStore.CommandState.CONFLICT
                 ? R.string.remote_conflict : latest.state == RemoteStore.CommandState.REJECTED
                 ? R.string.remote_rejected : R.string.role_changes_pending), false);
+        if (library.saved.isEmpty()) text(body, getString(R.string.remote_no_saved_contracts), false);
+        if (editable && active != null) button(body, R.string.remote_save_current_contract, this::saveCurrent);
         for (Map.Entry<String, JSONObject> entry : library.saved.entrySet()) {
             JSONObject saved = entry.getValue();
             LinearLayout card = PersonUi.card(body);
@@ -70,6 +72,18 @@ public final class RemoteLibraryActivity extends RemotePage {
                     .addCategory(Intent.CATEGORY_OPENABLE), 1);
         });
         button(body, R.string.role_retry, this::load);
+    }
+
+    private void saveCurrent() {
+        authorize(() -> work(() -> {
+            requireEdit();
+            JSONObject current = feature.contracts.current(peer);
+            if (current == null) throw new IOException("Contract baseline unavailable");
+            JSONObject saved = new JSONObject(current.toString());
+            saved.getJSONObject("contract").put("id", java.util.UUID.randomUUID().toString())
+                    .put("updatedAt", System.currentTimeMillis());
+            requireEdit(); feature.contracts.save(peer, saved); feature.changed(); return null;
+        }, ignored -> load()));
     }
 
     private void apply(JSONObject saved) {
@@ -96,10 +110,8 @@ public final class RemoteLibraryActivity extends RemotePage {
         authorize(() -> work(() -> {
             requireEdit();
             if (request == 2) {
-                try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
-                    if (out == null) throw new IOException("Export unavailable");
-                    feature.contracts.export(peer, selected, out);
-                }
+                feature.contracts.exportAuthorized(peer, selected,
+                        () -> getContentResolver().openOutputStream(uri, "wt"));
             } else {
                 File temporary = File.createTempFile("peer-library-", ".part", getCacheDir());
                 try {

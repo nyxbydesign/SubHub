@@ -45,6 +45,8 @@ public final class PersonRoutes {
         if (!canEditLocal(activity, id)) return;
         Class<? extends Activity> target;
         switch (section) {
+            case "apps": target = LocalAppsActivity.class; break;
+            case "duration": target = ServiceDurationActivity.class; break;
             case "censor": target = SettingsActivity.class; break;
             case "limits": target = AppModeActivity.class; break;
             case "wallet": target = PenanceActivity.class; break;

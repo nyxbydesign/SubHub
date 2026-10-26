@@ -48,6 +48,7 @@
     <string name="role_no_app_limits">No daily app limits configured</string>
     <string name="role_app_time">App time</string>
     <string name="role_allowance_usage">%1$d / %2$d min</string>
+    <string name="role_allowance_unknown">%1$d min daily · Usage unknown</string>
     <string name="role_allowance_daily">%1$d min daily</string>
     <string name="role_shared_allowance">Shared daily allowance</string>
     <string name="role_service_inactive">Service inactive</string>
