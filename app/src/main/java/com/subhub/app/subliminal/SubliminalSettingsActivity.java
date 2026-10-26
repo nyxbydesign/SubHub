@@ -30,14 +30,14 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     private final SecureRandom random = new SecureRandom();
     private boolean loading;
     private final Runnable saveCustom = () -> {
-        if (binding != null && !loading) repository.saveCustomPhrases(
+        if (binding != null && !loading && ControllerPinManager.canEditConfiguration()) repository.saveCustomPhrases(
                 binding.customPhrases.getText() == null ? ""
                         : binding.customPhrases.getText().toString());
     };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (!ControllerPinManager.isDomModeActive()) {
+        if (!ControllerPinManager.canEditConfiguration()) {
             finish();
             return;
         }
@@ -55,22 +55,22 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
 
     private void bindListeners() {
         binding.switchWhispers.setOnCheckedChangeListener((button, checked) -> {
-            if (loading) return;
-            if (ControllerPinManager.isDomModeActive()) {
+            if (loading || !ControllerPinManager.canEditConfiguration()) return;
+            if (ControllerPinManager.canEditConfiguration()) {
                 new com.subhub.app.settings.FeatureModuleManager(this).setSubliminalEnabled(checked);
             }
             render(repository.load());
         });
         binding.presetSlider.setLabelFormatter(value -> presetLabel(Math.round(value)));
         binding.presetSlider.addOnChangeListener((slider, value, fromUser) -> {
-            if (loading || !fromUser) return;
+            if (loading || !fromUser || !ControllerPinManager.canEditConfiguration()) return;
             main.removeCallbacks(saveCustom);
             saveCustom.run();
             repository.savePreset(SubliminalSettings.Preset.values()[Math.round(value)]);
             render(repository.load());
         });
         binding.advancedEnabled.setOnCheckedChangeListener((button, checked) -> {
-            if (loading) return;
+            if (loading || !ControllerPinManager.canEditConfiguration()) return;
             main.removeCallbacks(saveCustom);
             saveCustom.run();
             saveAdvanced(checked);
@@ -102,7 +102,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.customPhrases.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
-                if (loading) return;
+                if (loading || !ControllerPinManager.canEditConfiguration()) return;
                 main.removeCallbacks(saveCustom);
                 main.postDelayed(saveCustom, 400L);
             }
@@ -116,7 +116,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         loading = true;
         binding.switchWhispers.setChecked(
                 new com.subhub.app.settings.FeatureModuleManager(this).isSubliminalEnabled());
-        binding.switchWhispers.setEnabled(ControllerPinManager.isDomModeActive());
+        binding.switchWhispers.setEnabled(ControllerPinManager.canEditConfiguration());
         binding.presetSlider.setValue(settings.getPreset().ordinal());
         binding.presetValue.setText(presetLabel(settings.getPreset().ordinal()));
         binding.advancedEnabled.setChecked(settings.isAdvanced());
@@ -141,6 +141,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     }
 
     private void saveAdvanced(boolean enabled) {
+        if (!ControllerPinManager.canEditConfiguration()) return;
         long minimum = (binding.minInterval.getProgress() + 5L) * 1_000L;
         long maximum = (binding.maxInterval.getProgress() + 5L) * 1_000L;
         if (maximum < minimum) maximum = minimum;

@@ -28,10 +28,10 @@ import com.subhub.app.settings.SettingsActivity;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Dom feature pages stay reachable even when disabled; Sub retains its safe surfaces. */
+/** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
-    public enum Screen { HOME, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public enum Screen { HOME, PEOPLE, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -45,35 +45,63 @@ public final class SubHubNavigation {
 
     private SubHubNavigation() {}
 
+    /** Promotes an existing read-only detail page into a primary role destination. */
+    public static void attachToPage(Activity activity, android.widget.LinearLayout content, Screen active) {
+        View scroll = (View) content.getParent();
+        ((ViewGroup) scroll.getParent()).removeView(scroll);
+        android.widget.FrameLayout root = new android.widget.FrameLayout(activity);
+        root.setBackgroundResource(R.drawable.bg_main);
+        root.addView(scroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        activity.getLayoutInflater().inflate(R.layout.view_bottom_pill_nav, root, true);
+        activity.setContentView(root);
+        TextView role = PrimaryHeader.editLockButton(root);
+        role.setVisibility(View.VISIBLE);
+        role.setOnClickListener(view -> {
+            if (ControllerPinManager.isDomModeActive()) {
+                com.subhub.app.security.ControllerEditMode.enterSubMode(activity);
+            } else com.subhub.app.security.ControllerPinGate.unlock(activity, () -> {
+                activity.startActivity(new Intent(activity, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                activity.finish();
+            }, false);
+        });
+        bind(activity, root, active);
+    }
+
     public static void bind(Activity activity, View root, Screen active) {
         View navigation = root.findViewById(R.id.bottom_navigation);
         boolean domMode = ControllerPinManager.isDomModeActive();
         setVisible(navigation, true);
         setVisible(root.findViewById(R.id.nav_home), true);
-        setVisible(root.findViewById(R.id.nav_censor), domMode);
-        setVisible(root.findViewById(R.id.nav_limits), domMode);
-        setVisible(root.findViewById(R.id.nav_money), domMode);
-        setVisible(root.findViewById(R.id.nav_atmosphere), true);
+        setVisible(root.findViewById(R.id.nav_censor), false);
+        setVisible(root.findViewById(R.id.nav_limits), false);
+        setVisible(root.findViewById(R.id.nav_money), false);
+        setVisible(root.findViewById(R.id.nav_atmosphere), false);
+        setVisible(root.findViewById(R.id.nav_people), domMode);
+        setVisible(root.findViewById(R.id.nav_contract), !domMode);
+        setVisible(root.findViewById(R.id.nav_stats), !domMode);
         setVisible(root.findViewById(R.id.nav_settings), true);
+        Screen selected = active;
+        if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
+                || active == Screen.ATMOSPHERE || domMode && (active == Screen.STATS || active == Screen.CONTRACT)) {
+            selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
+        }
         bindTab(activity, root.findViewById(R.id.nav_home),
                 root.findViewById(R.id.nav_home_icon), root.findViewById(R.id.nav_home_label),
-                active, Screen.HOME, MainActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_censor),
-                root.findViewById(R.id.nav_censor_icon), root.findViewById(R.id.nav_censor_label),
-                active, Screen.CENSOR, SettingsActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_limits),
-                root.findViewById(R.id.nav_limits_icon), root.findViewById(R.id.nav_limits_label),
-                active, Screen.LIMITS, AppModeActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_money),
-                root.findViewById(R.id.nav_money_icon), root.findViewById(R.id.nav_money_label),
-                active, Screen.MONEY, PenanceActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_atmosphere),
-                root.findViewById(R.id.nav_atmosphere_icon),
-                root.findViewById(R.id.nav_atmosphere_label),
-                active, Screen.ATMOSPHERE, AtmosphereActivity.class);
+                selected, Screen.HOME, MainActivity.class);
+        ((TextView) root.findViewById(R.id.nav_home_label)).setText(R.string.role_overview);
+        bindTab(activity, root.findViewById(R.id.nav_people),
+                root.findViewById(R.id.nav_people_icon), root.findViewById(R.id.nav_people_label),
+                selected, Screen.PEOPLE, com.subhub.app.people.PeopleActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_contract),
+                root.findViewById(R.id.nav_contract_icon), root.findViewById(R.id.nav_contract_label),
+                selected, Screen.CONTRACT, com.subhub.app.people.ContractActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_stats),
+                root.findViewById(R.id.nav_stats_icon), root.findViewById(R.id.nav_stats_label),
+                selected, Screen.STATS, com.subhub.app.stats.StatsActivity.class);
         bindTab(activity, root.findViewById(R.id.nav_settings),
                 root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
-                active, Screen.SETTINGS, GlobalSettingsActivity.class);
+                selected, Screen.SETTINGS, GlobalSettingsActivity.class);
         bindNavigationLayout(navigation);
     }
 
@@ -215,6 +243,7 @@ public final class SubHubNavigation {
                 activity.getColor(selected ? R.color.accent : R.color.text_primary)));
         tab.setBackgroundResource(R.drawable.bg_bottom_tab_active);
         tab.setOnClickListener(view -> {
+            if (selected && target.isInstance(activity)) return;
             if (selected && activity instanceof PenanceActivity) {
                 ((PenanceActivity) activity).showSectionHome();
                 return;

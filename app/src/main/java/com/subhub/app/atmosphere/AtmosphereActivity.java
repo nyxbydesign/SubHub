@@ -57,6 +57,11 @@ public final class AtmosphereActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (!ControllerPinManager.canEditConfiguration()
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            ControllerEditMode.enterSubMode(this);
+            return;
+        }
         render();
         loadOverview();
     }
@@ -168,7 +173,7 @@ public final class AtmosphereActivity extends AppCompatActivity {
     }
 
     private void requireDom(Runnable action) {
-        if (ControllerPinManager.isDomModeActive()) action.run();
+        if (ControllerPinManager.canEditConfiguration()) action.run();
         else ControllerPinGate.require(this, () -> {
             render();
             action.run();

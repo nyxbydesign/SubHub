@@ -57,7 +57,7 @@ public final class CensorImageEditor implements AutoCloseable {
                         new ActivityResultContracts.OpenMultipleDocuments(), this::importImages);
         add.setOnClickListener(
                 view -> {
-                    if (!importing && ControllerPinManager.isSessionUnlocked()) {
+                    if (!importing && ControllerPinManager.canEditConfiguration()) {
                         picker.launch(new String[] {"image/*"});
                     }
                 });
@@ -69,7 +69,7 @@ public final class CensorImageEditor implements AutoCloseable {
                 || importing
                 || uris == null
                 || uris.isEmpty()
-                || !ControllerPinManager.isSessionUnlocked()) return;
+                || !ControllerPinManager.canEditConfiguration()) return;
         importing = true;
         refresh();
         status.setText(R.string.custom_images_importing);
@@ -78,7 +78,7 @@ public final class CensorImageEditor implements AutoCloseable {
         uiData.loadSerial(
                 taskKey + "import",
                 () ->
-                        ControllerPinManager.isSessionUnlocked()
+                        ControllerPinManager.canEditConfiguration()
                                 ? new CustomImageManager(context).addImages(selected)
                                 : 0,
                 added -> {
@@ -96,7 +96,7 @@ public final class CensorImageEditor implements AutoCloseable {
 
     public void refresh() {
         if (closed) return;
-        boolean editing = ControllerPinManager.isSessionUnlocked() && !importing;
+        boolean editing = ControllerPinManager.canEditConfiguration() && !importing;
         add.setEnabled(editing);
         for (int i = 0; i < list.getChildCount(); i++) {
             android.view.View row = list.getChildAt(i);
@@ -134,7 +134,7 @@ public final class CensorImageEditor implements AutoCloseable {
         releaseThumbnails();
         thumbnails.addAll(data.bitmaps);
         data.bitmaps.clear();
-        boolean editing = ControllerPinManager.isSessionUnlocked() && !importing;
+        boolean editing = ControllerPinManager.canEditConfiguration() && !importing;
         if (data.entries.isEmpty()) {
             TextView empty = new TextView(activity);
             empty.setText(R.string.custom_images_empty);
@@ -161,13 +161,13 @@ public final class CensorImageEditor implements AutoCloseable {
             enabled.setMinimumHeight(dp(48));
             enabled.setOnCheckedChangeListener(
                     (button, checked) -> {
-                        if (ControllerPinManager.isSessionUnlocked() && !importing) {
+                        if (ControllerPinManager.canEditConfiguration() && !importing) {
                             android.content.Context context = app;
                             String id = entry.getId();
                             uiData.loadSerial(
                                     taskKey + "enabled:" + id,
                                     () -> {
-                                        if (ControllerPinManager.isSessionUnlocked())
+                                        if (ControllerPinManager.canEditConfiguration())
                                             new CustomImageManager(context).setEnabled(id, checked);
                                         return null;
                                     },
@@ -194,7 +194,7 @@ public final class CensorImageEditor implements AutoCloseable {
             delete.setEnabled(editing);
             delete.setOnClickListener(
                     view -> {
-                        if (!ControllerPinManager.isSessionUnlocked() || importing) return;
+                        if (!ControllerPinManager.canEditConfiguration() || importing) return;
                         importing = true;
                         refresh();
                         android.content.Context context = app;
@@ -202,7 +202,7 @@ public final class CensorImageEditor implements AutoCloseable {
                         uiData.loadSerial(
                                 taskKey + "delete",
                                 () -> {
-                                    if (ControllerPinManager.isSessionUnlocked())
+                                    if (ControllerPinManager.canEditConfiguration())
                                         new CustomImageManager(context).delete(id);
                                     return null;
                                 },

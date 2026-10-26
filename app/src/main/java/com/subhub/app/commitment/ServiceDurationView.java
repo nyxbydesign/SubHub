@@ -54,7 +54,7 @@ public final class ServiceDurationView extends LinearLayout {
             final long duration = durations[index];
             choices[index].setOnClickListener(
                     view -> {
-                        if (!editing) return;
+                        if (!canEdit()) return;
                         selected = duration;
                         persist();
                         render();
@@ -62,7 +62,7 @@ public final class ServiceDurationView extends LinearLayout {
         }
         hidden.setOnCheckedChangeListener(
                 (button, checked) -> {
-                    if (!updating && editing) persist();
+                    if (!updating && canEdit()) persist();
                 });
         TextWatcher changes =
                 new TextWatcher() {
@@ -75,7 +75,7 @@ public final class ServiceDurationView extends LinearLayout {
 
                     @Override
                     public void afterTextChanged(Editable value) {
-                        if (!updating && editing) persist();
+                        if (!updating && canEdit()) persist();
                     }
                 };
         minimum.addTextChangedListener(changes);
@@ -110,6 +110,7 @@ public final class ServiceDurationView extends LinearLayout {
     }
 
     private void persist() {
+        if (!canEdit()) return;
         try {
             long min = PactDuration.hours(minimum.getText().toString());
             long max = PactDuration.hours(maximum.getText().toString());
@@ -160,6 +161,18 @@ public final class ServiceDurationView extends LinearLayout {
         render();
     }
 
+    private boolean canEdit() {
+        return editing && com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                && com.subhub.app.people.People.isLocalConfigurationAllowed();
+    }
+
+    @Override protected void dispatchRestoreInstanceState(android.util.SparseArray<android.os.Parcelable> state) {
+        updating = true;
+        try { super.dispatchRestoreInstanceState(state); }
+        finally { updating = false; }
+        reload();
+    }
+
     public int choiceAreaHeight() {
         int measured = 0;
         for (int i = 0; i < choices.length; i += 2) {
@@ -191,11 +204,11 @@ public final class ServiceDurationView extends LinearLayout {
                         getContext()
                                 .getColor(checked ? R.color.text_primary : R.color.text_secondary));
             }
-            button.setEnabled(editing);
+            button.setEnabled(canEdit());
         }
-        minimum.setEnabled(editing);
-        maximum.setEnabled(editing);
-        hidden.setEnabled(editing);
+        minimum.setEnabled(canEdit());
+        maximum.setEnabled(canEdit());
+        hidden.setEnabled(canEdit());
     }
 
     private static String hours(long millis) {
