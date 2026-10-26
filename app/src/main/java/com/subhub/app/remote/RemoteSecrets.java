@@ -66,6 +66,90 @@ public final class RemoteSecrets {
         }
     }
 
+    synchronized String controllerSecret(RemoteProtocol.Role role, String identity, String generation)
+            throws GeneralSecurityException {
+        synchronized (LOCK) {
+            byte[] descriptor = read(controllerDescriptor(role, identity, generation));
+            if (descriptor == null) return null;
+            String local;
+            try { local = RemoteProtocol.peerId(new String(descriptor, StandardCharsets.US_ASCII)); }
+            catch (IllegalArgumentException invalid) { throw new GeneralSecurityException("Invalid controller descriptor"); }
+            finally { Arrays.fill(descriptor, (byte) 0); }
+            byte[] value = read(controllerSlot(role, local, identity, generation));
+            if (value == null) throw new GeneralSecurityException("Controller secret unavailable");
+            try {
+                String secret = new String(value, StandardCharsets.US_ASCII);
+                requireControllerSecret(secret);
+                return secret;
+            } finally { Arrays.fill(value, (byte) 0); }
+        }
+    }
+
+    synchronized String controllerSecret(RemoteProtocol.Role role, String local, String identity, String generation)
+            throws GeneralSecurityException {
+        synchronized (LOCK) {
+            byte[] descriptor = read(controllerDescriptor(role, identity, generation));
+            if (descriptor != null) {
+                try {
+                    if (!RemoteProtocol.peerId(local).equals(new String(descriptor, StandardCharsets.US_ASCII)))
+                        throw new GeneralSecurityException("Controller identity changed");
+                } finally { Arrays.fill(descriptor, (byte) 0); }
+            }
+            byte[] value = read(controllerSlot(role, local, identity, generation));
+            if (value == null) {
+                if (descriptor != null) throw new GeneralSecurityException("Controller secret unavailable");
+                return null;
+            }
+            try {
+                String secret = new String(value, StandardCharsets.US_ASCII);
+                requireControllerSecret(secret);
+                return secret;
+            } finally { Arrays.fill(value, (byte) 0); }
+        }
+    }
+
+    synchronized void saveControllerSecret(RemoteProtocol.Role role, String local, String identity,
+            String generation, String secret) throws GeneralSecurityException {
+        synchronized (LOCK) {
+            requireControllerSecret(secret);
+            String previous = controllerSecret(role, local, identity, generation);
+            if (previous != null && !java.security.MessageDigest.isEqual(
+                    previous.getBytes(StandardCharsets.US_ASCII), secret.getBytes(StandardCharsets.US_ASCII)))
+                throw new GeneralSecurityException("Controller credential changed");
+            byte[] value = secret.getBytes(StandardCharsets.US_ASCII);
+            try {
+                if (previous == null) write(controllerSlot(role, local, identity, generation), value);
+                write(controllerDescriptor(role, identity, generation), local.getBytes(StandardCharsets.US_ASCII));
+            } finally { Arrays.fill(value, (byte) 0); }
+        }
+    }
+
+    synchronized void removeControllerSecrets(String identity, String generation) {
+        synchronized (LOCK) {
+            String suffix = "_" + RemoteProtocol.peerId(identity) + "_" + RemoteProtocol.identifier(generation);
+            SharedPreferences.Editor edit = prefs.edit();
+            for (String slot : prefs.getAll().keySet()) {
+                if ((slot.startsWith("controller_seed_v1_") || slot.startsWith("controller_descriptor_v1_"))
+                        && slot.endsWith(suffix)) edit.remove(slot);
+            }
+            if (!edit.commit()) throw new IllegalStateException("Could not remove controller credential");
+        }
+    }
+
+    private static String controllerDescriptor(RemoteProtocol.Role role, String identity, String generation) {
+        return "controller_descriptor_v1_" + java.util.Objects.requireNonNull(role).name() + "_"
+                + RemoteProtocol.peerId(identity) + "_" + RemoteProtocol.identifier(generation);
+    }
+    private static String controllerSlot(RemoteProtocol.Role role, String local, String identity, String generation) {
+        return "controller_seed_v1_" + java.util.Objects.requireNonNull(role).name() + "_"
+                + RemoteProtocol.peerId(local) + "_" + RemoteProtocol.peerId(identity) + "_"
+                + RemoteProtocol.identifier(generation);
+    }
+    private static void requireControllerSecret(String secret) throws GeneralSecurityException {
+        if (secret == null || !secret.matches("[A-Z2-7]{32}"))
+            throw new GeneralSecurityException("Invalid controller credential");
+    }
+
     private SecretKey key() throws GeneralSecurityException {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
         try { store.load(null); }

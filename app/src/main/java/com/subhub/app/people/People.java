@@ -8,6 +8,13 @@ public final class People {
     private static volatile java.util.function.BooleanSupplier remoteAuthority = () -> false;
     private static volatile ConnectionUi connectionUi;
     private static volatile java.util.function.UnaryOperator<PersonSnapshot> localProjection=java.util.function.UnaryOperator.identity();
+    private static volatile com.subhub.app.security.KeyholderProvider keyholder=new com.subhub.app.security.KeyholderProvider() {
+        public State state(){return State.UNAVAILABLE;}
+        public String assignedDomName(){return "";}
+        public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){return com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
+    };
+    public static com.subhub.app.security.KeyholderProvider keyholder(){return keyholder;}
+    public static void installKeyholder(com.subhub.app.security.KeyholderProvider provider){keyholder=java.util.Objects.requireNonNull(provider);}
     private People() {}
 
     public static PersonRepository repository(Context context) {

@@ -33,6 +33,11 @@ public final class RemoteStore extends SQLiteOpenHelper {
         }
     }
 
+    private java.util.function.BiConsumer<String,String> revoked=(identity,generation)->{};
+    private java.util.function.Consumer<Peer> activated=peer->{};
+    synchronized void onActivated(java.util.function.Consumer<Peer> action){activated=java.util.Objects.requireNonNull(action);}
+    synchronized void onRevoked(java.util.function.BiConsumer<String,String> action){revoked=java.util.Objects.requireNonNull(action);}
+
     public RemoteStore(Context context) { this(context, "remote_sync_v1.db"); }
     public RemoteStore(Context context, String databaseName) {
         super(context.getApplicationContext(), databaseName, null, 2);
@@ -178,10 +183,21 @@ public final class RemoteStore extends SQLiteOpenHelper {
         Peer peer = peer(db, identity, generation);
         if (peer == null || peer.state == State.REVOKED) throw new SecurityException("Pairing unavailable");
         db.update("peers", values, "peer=? AND generation=? AND state='PENDING'", new String[]{identity,generation});
+        activated.accept(peer(db,identity,generation));
     }
 
     public synchronized void cancelInvite(String id) {
-        getWritableDatabase().execSQL("UPDATE invites SET consumed=1 WHERE id=?", new Object[]{RemoteProtocol.identifier(id)});
+        id=RemoteProtocol.identifier(id);SQLiteDatabase db=getWritableDatabase();List<Peer> cancelled=new ArrayList<>();
+        db.beginTransaction();
+        try {
+            db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{id});
+            try(Cursor cursor=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state!='REVOKED'",new String[]{id})){
+                while(cursor.moveToNext())cancelled.add(readPeer(cursor));
+            }
+            for(Peer peer:cancelled)revokeRows(db,peer.identity,peer.generation);
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        for(Peer peer:cancelled)revoked.accept(peer.identity,peer.generation);
     }
 
     synchronized void setRoute(String identity,String generation,String route) {
@@ -200,15 +216,16 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     synchronized void revoke(String identity, String generation) {
-        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
-        try {
-            db.execSQL("UPDATE peers SET state='REVOKED' WHERE peer=? AND generation=?", new Object[]{identity,generation});
-            db.delete("outbox", "peer=? AND generation=?", new String[]{identity,generation});
-            db.execSQL("UPDATE outgoing SET offered=0,digest=NULL WHERE peer=? AND generation=?", new Object[]{identity,generation});
-            db.execSQL("UPDATE commands SET status='REJECTED' WHERE peer=? AND generation=? AND status IN ('QUEUED','SENT','APPLYING')",
-                    new Object[]{identity,generation});
-            db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
+        RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{revokeRows(db,identity,generation);db.setTransactionSuccessful();}finally{db.endTransaction();}
+        revoked.accept(identity,generation);
+    }
+    private static void revokeRows(SQLiteDatabase db,String identity,String generation){
+        db.execSQL("UPDATE peers SET state='REVOKED' WHERE peer=? AND generation=?",new Object[]{identity,generation});
+        db.delete("outbox","peer=? AND generation=?",new String[]{identity,generation});
+        db.execSQL("UPDATE outgoing SET offered=0,digest=NULL WHERE peer=? AND generation=?",new Object[]{identity,generation});
+        db.execSQL("UPDATE commands SET status='REJECTED' WHERE peer=? AND generation=? AND status IN ('QUEUED','SENT','APPLYING')",new Object[]{identity,generation});
     }
 
     public synchronized long publish(String identity, String generation, RemoteProtocol.Stream stream,

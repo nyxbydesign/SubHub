@@ -45,7 +45,7 @@ public final class PrimaryHeaderContractTest {
     }
 
     @Test public void everyPrimaryDestinationUsesTheSameHeaderGeometry() {
-        assertHeader(MainActivity.class, R.string.app_name);
+        assertHeader(MainActivity.class, R.string.role_overview);
         assertHeader(SettingsActivity.class, R.string.censor_header_title);
         assertHeader(AppModeActivity.class, R.string.app_mode_title);
         assertHeader(PenanceActivity.class, R.string.penance_title);
@@ -67,6 +67,7 @@ public final class PrimaryHeaderContractTest {
                         context.createConfigurationContext(configuration), R.style.Theme_SubHub);
                 ViewGroup header = (ViewGroup) LayoutInflater.from(themed)
                         .inflate(R.layout.view_primary_header, null, false);
+                ((TextView) PrimaryHeader.editLockButton(header)).setText(R.string.role_dom);
                 PrimaryHeader.bind(header, R.drawable.ic_atmosphere,
                         R.string.atmosphere_title, 0);
                 int pageMargin = themed.getResources().getDimensionPixelSize(R.dimen.page_margin);
@@ -75,14 +76,20 @@ public final class PrimaryHeaderContractTest {
                         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
                 header.layout(0, 0, headerWidth, header.getMeasuredHeight());
                 assertTextFits(header, header.findViewById(R.id.primary_header_title));
-                assertEquals("Primary titles should not split a word at " + width
-                                + "dp / font " + fontScale, 1,
-                        ((TextView) header.findViewById(R.id.primary_header_title)).getLineCount());
+                assertEquals(fontScale, header.getResources().getConfiguration().fontScale, 0.001f);
+                TextView title = header.findViewById(R.id.primary_header_title);
+                assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
+                        themed.getResources().getDisplayMetrics())), title.getTextSize(), 0.01f);
+                assertEquals(View.GONE, header.findViewById(R.id.header_role_badge).getVisibility());
                 assertEquals(View.GONE,
                         header.findViewById(R.id.primary_header_subtitle).getVisibility());
                 assertTextFits(header, header.findViewById(R.id.button_edit_lock));
                 assertTrue(header.findViewById(R.id.button_edit_lock).getHeight()
                         >= dp(themed, 48));
+                assertTrue(header.findViewById(R.id.button_edit_lock).getWidth()
+                        >= dp(themed, 48));
+                assertEquals("The role action remains beside the title",
+                        title.getParent().getParent(), PrimaryHeader.editLockButton(header).getParent());
                 assertTrue(header.getHeight() >= themed.getResources()
                         .getDimensionPixelSize(R.dimen.primary_header_height));
                 if (width == 411 && fontScale == 1f) {
@@ -95,7 +102,7 @@ public final class PrimaryHeaderContractTest {
     @Test public void subModeKeepsCompactHeadersWithoutRedundantSubtitles() {
         ControllerPinManager.enterSubMode();
         try {
-            assertHeader(MainActivity.class, R.string.app_name);
+            assertHeader(MainActivity.class, R.string.role_overview);
             assertHeader(GlobalSettingsActivity.class, R.string.global_settings_title);
             assertHeader(PenanceActivity.class, R.string.penance_title);
         } finally {
@@ -133,13 +140,21 @@ public final class PrimaryHeaderContractTest {
                     assertTextFits(header, PrimaryHeader.backButton(root));
                     assertTrue(PrimaryHeader.backButton(root).getHeight() >= dp(themed, 48));
                     assertTrue(PrimaryHeader.backButton(root).getWidth() >= dp(themed, 48));
+                    assertEquals(root.getResources().getString(R.string.back),
+                            PrimaryHeader.backButton(root).getContentDescription());
+                    assertTrue(PrimaryHeader.backButton(root)
+                            .getCompoundDrawablesRelative()[0] != null);
                     assertEquals(View.GONE, PrimaryHeader.subtitle(root).getVisibility());
                     if (controller) {
+                        assertEquals(View.GONE, root.findViewById(R.id.header_role_badge).getVisibility());
                         assertTextFits(header, PrimaryHeader.editLockButton(root));
                         assertTrue(PrimaryHeader.editLockButton(root).getHeight()
                                 >= dp(themed, 48));
-                    } else assertEquals(View.GONE,
-                            PrimaryHeader.editLockButton(root).getVisibility());
+                    } else {
+                        assertEquals(View.GONE, PrimaryHeader.editLockButton(root).getVisibility());
+                        assertEquals(View.VISIBLE, root.findViewById(R.id.header_role_badge).getVisibility());
+                        assertTextFits(header, root.findViewById(R.id.header_role_badge));
+                    }
                 }
             }
         }
@@ -174,10 +189,14 @@ public final class PrimaryHeaderContractTest {
         }
         assertTrue("Header text exceeds its height", text.getLayout().getHeight()
                 <= text.getHeight() - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
+        assertEquals("The complete text must remain laid out", text.length(),
+                text.getLayout().getLineEnd(text.getLineCount() - 1));
         Rect bounds = new Rect(0, 0, text.getWidth(), text.getHeight());
         header.offsetDescendantRectToMyCoords(text, bounds);
         assertTrue(bounds.top >= header.getPaddingTop());
         assertTrue(bounds.bottom <= header.getHeight() - header.getPaddingBottom());
+        assertTrue(bounds.left >= header.getPaddingLeft());
+        assertTrue(bounds.right <= header.getWidth() - header.getPaddingRight());
     }
 
     private void assertHeader(Class<? extends Activity> activityClass, int titleRes) {
@@ -188,7 +207,7 @@ public final class PrimaryHeaderContractTest {
         }
         try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(intent)) {
             scenario.onActivity(activity -> {
-                View header = activity.findViewById(R.id.primary_header);
+                ViewGroup header = activity.findViewById(R.id.primary_header);
                 ImageView icon = activity.findViewById(R.id.primary_header_icon);
                 TextView title = activity.findViewById(R.id.primary_header_title);
                 TextView subtitle = activity.findViewById(R.id.primary_header_subtitle);
@@ -207,8 +226,31 @@ public final class PrimaryHeaderContractTest {
                         activity.getResources().getDisplayMetrics())), title.getTextSize(), 0.01f);
                 assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12,
                         activity.getResources().getDisplayMetrics())), subtitle.getTextSize(), 0.01f);
-                assertEquals(View.GONE, subtitle.getVisibility());
+                boolean scopedEditor = activity instanceof SettingsActivity
+                        || activity instanceof AppModeActivity || activity instanceof AtmosphereActivity
+                        || activity instanceof PenanceActivity && ControllerPinManager.isDomModeActive();
+                assertEquals(activity.getClass().getSimpleName(),
+                        scopedEditor ? View.VISIBLE : View.GONE, subtitle.getVisibility());
+                if (scopedEditor) {
+                    assertEquals(activity.getString(R.string.role_this_device), subtitle.getText().toString());
+                    assertTextFits(header, subtitle);
+                }
                 assertTrue(ViewCompat.isAccessibilityHeading(title));
+                TextView role = PrimaryHeader.editLockButton(activity.findViewById(android.R.id.content));
+                assertEquals(activity.getString(ControllerPinManager.isDomModeActive()
+                        ? R.string.role_dom : R.string.role_sub), role.getText().toString());
+                assertEquals(activity.getString(ControllerPinManager.isDomModeActive()
+                        ? R.string.role_enter_sub : R.string.role_enter_dom), role.getContentDescription());
+                boolean readOnlyWallet = activity instanceof PenanceActivity
+                        && !ControllerPinManager.isDomModeActive();
+                assertEquals(activity.getClass().getSimpleName(),
+                        readOnlyWallet ? View.GONE : View.VISIBLE, role.getVisibility());
+                TextView badge = activity.findViewById(R.id.header_role_badge);
+                assertEquals(readOnlyWallet ? View.VISIBLE : View.GONE, badge.getVisibility());
+                if (readOnlyWallet) {
+                    assertEquals(activity.getString(R.string.role_sub), badge.getText().toString());
+                    assertTextFits(header, badge);
+                }
                 assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
                         icon.getImportantForAccessibility());
             });

@@ -29,53 +29,60 @@ public final class ControllerPinManager {
     }
 
     public static boolean hasCredentials(Context context) {
-        return isConfigured(context) || new ControllerAuthenticator(context).isPaired();
+        return remoteKeyholderState() != KeyholderProvider.State.NONE
+                || isConfigured(context) || new ControllerAuthenticator(context).isPaired();
     }
     public static boolean allowsUnkeyedAccess(Context context) {
         return !hasCredentials(context) && preferences(context).getBoolean("controller_keyholder_optional", false);
     }
     static boolean allowUnkeyedAccess(Context context) {
-        return preferences(context).edit().putBoolean("controller_keyholder_optional", true).commit();
+        return withLocalAuthority(() -> preferences(context).edit()
+                .putBoolean("controller_keyholder_optional", true).commit());
     }
     public static boolean useWithoutKeyholder(Context context) {
         return !hasCredentials(context) && allowUnkeyedAccess(context);
     }
     public static boolean removePin(Context context) {
-        if (!isDomModeActive()) return false;
-        return preferences(context).edit().remove(KEY_SALT).remove(KEY_HASH)
-                .putBoolean("controller_keyholder_optional", true).commit();
+        if (!isDomModeActive() || remoteKeyholderState() != KeyholderProvider.State.NONE) return false;
+        return withLocalAuthority(() -> isDomModeActive() && preferences(context).edit()
+                .remove(KEY_SALT).remove(KEY_HASH).putBoolean("controller_keyholder_optional", true).commit());
     }
 
     public static boolean setPin(Context context, String pin) {
+        if (remoteKeyholderState() != KeyholderProvider.State.NONE) return false;
         String value = normalize(pin);
         if (!value.matches("[0-9]{4,12}")) return false;
         byte[] salt = new byte[16];
         new SecureRandom().nextBytes(salt);
         try {
             byte[] hash = derive(value, salt);
-            boolean saved = preferences(context).edit()
-                    .putBoolean("controller_keyholder_optional", false)
-                    .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
-                    .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
-                    .commit();
-            if (!saved) return false;
-            enterDomMode();
-            return true;
+            return withLocalAuthority(() -> {
+                boolean saved = preferences(context).edit()
+                        .putBoolean("controller_keyholder_optional", false)
+                        .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
+                        .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
+                        .commit();
+                if (!saved) return false;
+                enterDomMode();
+                return true;
+            });
         } catch (GeneralSecurityException exception) {
             return false;
         }
     }
 
     public static boolean verify(Context context, String pin) {
-        if (!isConfigured(context)) return false;
+        if (remoteKeyholderState() != KeyholderProvider.State.NONE || !isConfigured(context)) return false;
         try {
             SharedPreferences preferences = preferences(context);
             byte[] salt = Base64.decode(preferences.getString(KEY_SALT, ""), Base64.NO_WRAP);
             byte[] expected = Base64.decode(preferences.getString(KEY_HASH, ""), Base64.NO_WRAP);
             byte[] actual = derive(normalize(pin), salt);
             boolean matches = MessageDigest.isEqual(expected, actual);
-            if (matches) enterDomMode();
-            return matches;
+            return withLocalAuthority(() -> {
+                if (matches) enterDomMode();
+                return matches;
+            });
         } catch (IllegalArgumentException | GeneralSecurityException exception) {
             return false;
         }
@@ -104,6 +111,16 @@ public final class ControllerPinManager {
 
     public static void enterSubMode() {
         domModeActive = false;
+    }
+
+    static KeyholderProvider.State remoteKeyholderState() {
+        try { return com.subhub.app.people.People.keyholder().state(); }
+        catch (RuntimeException unavailable) { return KeyholderProvider.State.UNAVAILABLE; }
+    }
+
+    static boolean withLocalAuthority(java.util.function.BooleanSupplier action) {
+        try { return com.subhub.app.people.People.keyholder().withLocalAuthority(action); }
+        catch (RuntimeException unavailable) { return false; }
     }
 
     private static String normalize(String pin) {

@@ -40,7 +40,7 @@ public final class RemoteLibraryActivity extends RemotePage {
     private void render(Library library) {
         active = library.active;
         body.removeAllViews();
-        text(body, peer.name, true);
+        target();
         boolean editable = mayEdit();
         if (!editable) text(body, getString(R.string.remote_read_only), false);
         RemoteStore.Command latest = feature.store.latestCommand(peer.identity, peer.generation);

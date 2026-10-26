@@ -20,24 +20,32 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class KeyholderDiscoveryAndroidTest {
-    @Test public void methodCardsAreExclusiveAndRestoreTheirExpandedSelection() {
-        ControllerPinManager.enterDomMode();
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Test public void remoteChoiceOpensSubPairingAndPreservesTheLocalRole() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        com.subhub.app.people.People.installConnectionUi(new com.subhub.app.people.ConnectionUi() {
+            public void openPairing(android.app.Activity activity) { fail("The explicit Sub pairing route is required"); }
+            public void openPairing(android.app.Activity activity, boolean asDom) { assertFalse(asDom); calls.incrementAndGet(); }
+            public void openConnection(android.app.Activity activity, com.subhub.app.people.PersonId id) { fail("No relationship exists yet"); }
+        });
+        ControllerPinManager.enterSubMode();
         try (ActivityScenario<AuthenticatorActivity> page = ActivityScenario.launch(AuthenticatorActivity.class)) {
-            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
-            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
-            onView(withId(R.id.keyholder_remote_header)).perform(scrollTo(), click());
-            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
-            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
+            onView(withId(R.id.keyholder_pair_device)).perform(scrollTo(), click());
+            assertEquals(1, calls.get());
+            assertFalse(ControllerPinManager.isDomModeActive());
             page.recreate();
-            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
-            onView(withId(R.id.keyholder_pin_header)).perform(scrollTo(), click());
-            onView(withId(R.id.keyholder_pair_button)).check(matches(withEffectiveVisibility(Visibility.GONE)));
-            onView(withId(R.id.keyholder_pin_change_button)).check(matches(withEffectiveVisibility(Visibility.VISIBLE)));
-        } finally { ControllerPinManager.enterSubMode(); }
+            onView(withId(R.id.keyholder_pair_device)).perform(scrollTo(), click());
+            assertEquals(2, calls.get());
+            assertFalse(ControllerPinManager.isDomModeActive());
+        }
     }
     @Test public void dismissedIntroductionStaysDismissedAndRitualsStaysDomOnly() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit();
+        new com.subhub.app.settings.SettingsRepository(context).preferences().edit().remove("controller_pin_salt").remove("controller_pin_hash").commit();
+        context.getSharedPreferences("subhub_controller_auth", 0).edit().clear().commit();
+        assertTrue(ControllerPinManager.useWithoutKeyholder(context));
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<MainActivity> home = ActivityScenario.launch(new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN))) {
             home.onActivity(a->{
@@ -48,21 +56,22 @@ public class KeyholderDiscoveryAndroidTest {
             home.recreate();
             home.onActivity(activity -> {
                 assertEquals(View.GONE, activity.findViewById(R.id.global_notice_host).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
             });
         } finally { context.getSharedPreferences("subhub_home", 0).edit().remove("keyholder_intro_dismissed").commit(); }
     }
-    @Test public void directKeyholderEntryRequiresDomBeforeShowingMethods() {
+    @Test public void directKeyholderEntryOffersSetupWithoutChangingRole() {
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<AuthenticatorActivity> rituals = ActivityScenario.launch(AuthenticatorActivity.class)) {
+        try (ActivityScenario<AuthenticatorActivity> page = ActivityScenario.launch(AuthenticatorActivity.class)) {
+            page.onActivity(a -> {
+                assertNotNull(a.findViewById(R.id.keyholder_pin_change_button));
+                assertNotNull(a.findViewById(R.id.keyholder_pair_device));
+                assertNull(a.findViewById(R.id.authenticator_pairing_qr));
+                assertFalse(a.findViewById(R.id.button_edit_lock).isShown());
+            });
             assertFalse(ControllerPinManager.isDomModeActive());
-            long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
-            while (rituals.getState() != androidx.lifecycle.Lifecycle.State.DESTROYED
-                    && android.os.SystemClock.elapsedRealtime() < deadline) {
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-                android.os.SystemClock.sleep(20);
-            }
-            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, rituals.getState());
+            page.recreate();
+            assertFalse(ControllerPinManager.isDomModeActive());
         }
     }
 }

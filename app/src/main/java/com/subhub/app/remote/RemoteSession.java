@@ -12,6 +12,7 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos)throws Exception {}
         void prepare(RemoteStore.Peer peer) throws Exception;
         void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception;
         List<AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception;
@@ -39,13 +40,14 @@ public final class RemoteSession {
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
-        send(connection,message("hello",peer).put("route",transport.inviteRoute()),deadlineNanos);
+        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1),deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
             requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
+        if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos);
     }
 
@@ -59,7 +61,10 @@ public final class RemoteSession {
         }
         requirePeer(connection,peer);requireType(hello,"hello",peer);
         store.setRoute(identity,generation,hello.getString("route"));
-        send(connection,message("hello_ack",peer),deadlineNanos);
+        JSONObject ready=message("hello_ack",peer);
+        if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
+        send(connection,ready,deadlineNanos);
+        if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos);
     }
 

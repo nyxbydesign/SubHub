@@ -7,11 +7,19 @@ import android.content.SharedPreferences;
 public final class GlobalNoticeState {
     public enum Kind { NONE, PERMISSIONS, KEYHOLDER }
     private final SharedPreferences prefs;
-    public GlobalNoticeState(Context context) { prefs=context.getSharedPreferences("subhub_home",0); }
+    private final Context context;
+    public GlobalNoticeState(Context context) { this.context=context.getApplicationContext(); prefs=context.getSharedPreferences("subhub_home",0); }
     public Kind next(String permissions) {
         if(!permissions.isEmpty() && !permissions.equals(prefs.getString("dismissed_permission_state",""))) return Kind.PERMISSIONS;
-        if(!prefs.getBoolean("keyholder_intro_dismissed",false)) return Kind.KEYHOLDER;
+        if(!com.subhub.app.security.ControllerPinManager.hasCredentials(context)
+                && localSetupAvailable()
+                && !prefs.getBoolean("keyholder_intro_dismissed",false)) return Kind.KEYHOLDER;
         return Kind.NONE;
+    }
+    private boolean localSetupAvailable() {
+        try { return com.subhub.app.people.People.keyholder().state()
+                == com.subhub.app.security.KeyholderProvider.State.NONE; }
+        catch (RuntimeException unavailable) { return false; }
     }
     public void dismiss(Kind kind,String permissions) {
         if(kind==Kind.PERMISSIONS) prefs.edit().putString("dismissed_permission_state",permissions).apply();

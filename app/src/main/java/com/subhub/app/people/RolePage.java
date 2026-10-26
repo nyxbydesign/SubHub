@@ -75,5 +75,6 @@ public abstract class RolePage extends AppCompatActivity {
         TextView back = PrimaryHeader.backButton(findViewById(android.R.id.content));
         back.setVisibility(View.VISIBLE);
         back.setOnClickListener(v -> action.run());
+        PrimaryHeader.editLockButton(findViewById(android.R.id.content)).setVisibility(View.GONE);
     }
 }

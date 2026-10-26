@@ -1,6 +1,10 @@
 package com.subhub.app;
 
 import static org.junit.Assert.*;
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.view.View;
@@ -71,21 +75,36 @@ public class HomeAssignmentsAndroidTest {
                 if (!rendered.get()) android.os.SystemClock.sleep(25);
             }
             assertTrue("Contract did not render", rendered.get());
-            page.onActivity(activity -> {
-                String details = text(activity.findViewById(R.id.role_page_body));
-                com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(activity)
-                        .load(com.subhub.app.people.PersonId.LOCAL);
-                for (com.subhub.app.people.PersonSnapshot.Section section : person.sections)
-                    assertTrue(details.contains(section.details));
-                for (String app : selected) {
-                    try {
-                        String label = context.getPackageManager().getApplicationLabel(
-                                context.getPackageManager().getApplicationInfo(app, 0)).toString();
-                        assertTrue(details.contains(label));
-                    } catch (android.content.pm.PackageManager.NameNotFoundException missing) {
-                        throw new AssertionError(missing);
+            page.onActivity(activity -> assertExpanded(activity, ""));
+            com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(context)
+                    .load(com.subhub.app.people.PersonId.LOCAL);
+            for (com.subhub.app.people.PersonSnapshot.Section section : person.sections) {
+                if (section.details.isEmpty()) continue;
+                openSection(section.key);
+                page.onActivity(activity -> {
+                    assertExpanded(activity, section.key);
+                    assertDetailBlocks(activity, section);
+                    assertFalse(containsEditableInput(activity.findViewById(R.id.role_page_body)));
+                    if ("limits".equals(section.key)) {
+                        String details = text(activity.findViewById(R.id.role_page_body)
+                                .findViewWithTag("contract_details:limits"));
+                        assertTrue(details.contains("Chrome · 15 min"));
+                        assertTrue(details.contains("Settings · 40 min"));
                     }
-                }
+                });
+            }
+            // The final section is Atmosphere; reopening preserves its expansion without exposing inputs.
+            page.recreate();
+            until = android.os.SystemClock.uptimeMillis() + 5000;
+            rendered.set(false);
+            while (!rendered.get() && android.os.SystemClock.uptimeMillis() < until) {
+                page.onActivity(activity -> rendered.set(activity.findViewById(R.id.role_page_body)
+                        .findViewWithTag("contract_details:atmosphere") != null));
+                if (!rendered.get()) android.os.SystemClock.sleep(25);
+            }
+            assertTrue("Restored contract did not render", rendered.get());
+            page.onActivity(activity -> {
+                assertExpanded(activity, "atmosphere");
                 assertFalse(containsEditableInput(activity.findViewById(R.id.role_page_body)));
             });
             assertEquals(selected, apps.getSelectedPackages());
@@ -103,6 +122,31 @@ public class HomeAssignmentsAndroidTest {
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
             if (containsEditableInput(((ViewGroup) view).getChildAt(i))) return true;
         return false;
+    }
+    private static void openSection(String key) {
+        onView(withTagValue(org.hamcrest.Matchers.is("contract_section:" + key)))
+                .perform(revealAboveNavigation(), click());
+    }
+    private static void assertExpanded(com.subhub.app.people.ContractActivity activity, String selected) {
+        View body = activity.findViewById(R.id.role_page_body);
+        for (String key : new String[] {"apps", "censor", "limits", "wallet", "atmosphere"}) {
+            View detail = body.findViewWithTag("contract_details:" + key);
+            if (detail != null) assertEquals("Expansion for " + key,
+                    selected.equals(key) ? View.VISIBLE : View.GONE, detail.getVisibility());
+        }
+    }
+    private static void assertDetailBlocks(com.subhub.app.people.ContractActivity activity,
+            com.subhub.app.people.PersonSnapshot.Section section) {
+        ViewGroup detail = activity.findViewById(R.id.role_page_body).findViewWithTag("contract_details:" + section.key);
+        assertNotNull("Detail for " + section.key, detail);
+        assertTrue("Expanded detail is rendered", detail.isShown());
+        String[] expected = section.details.split("\\n\\s*\\n");
+        assertEquals("Every label/value paragraph is rendered", expected.length, detail.getChildCount());
+        for (int index = 0; index < expected.length; index++) {
+            assertTrue(detail.getChildAt(index) instanceof TextView);
+            assertEquals("Paragraph " + index + " in " + section.key,
+                    expected[index], ((TextView) detail.getChildAt(index)).getText().toString());
+        }
     }
     private static String text(View view) {
         String value = view instanceof TextView ? ((TextView) view).getText().toString() : "";

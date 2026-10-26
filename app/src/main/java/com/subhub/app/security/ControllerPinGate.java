@@ -25,6 +25,29 @@ public final class ControllerPinGate {
             authorized.run();
             return;
         }
+        if (!allowsLocalPin()) { notifyLocked(activity); return; }
+        showPinSetup(activity, authorized, false);
+    }
+
+    /** First local setup does not require a controller session that does not exist yet. */
+    public static void setupLocalPin(Activity activity, Runnable changed) {
+        if (!allowsLocalPin()) { notifyLocked(activity); return; }
+        if (ControllerPinManager.hasCredentials(activity)) {
+            unlock(activity, () -> changePin(activity, changed), false);
+        } else showPinSetup(activity, changed, true);
+    }
+
+    private static boolean allowsLocalPin() {
+        return keyholderState() == KeyholderProvider.State.NONE
+                && com.subhub.app.people.People.isLocalConfigurationAllowed();
+    }
+
+    private static KeyholderProvider.State keyholderState() {
+        try { return com.subhub.app.people.People.keyholder().state(); }
+        catch (RuntimeException unavailable) { return KeyholderProvider.State.UNAVAILABLE; }
+    }
+
+    private static void showPinSetup(Activity activity, Runnable authorized, boolean cancelable) {
         LinearLayout panel = panel(activity);
         panel.addView(title(activity, activity.getString(R.string.controller_pin_setup_title)));
         TextView explainer = explainer(activity, activity.getString(R.string.controller_pin_setup_body));
@@ -33,16 +56,18 @@ public final class ControllerPinGate {
         panel.addView(explainer);
         panel.addView(pin);
         panel.addView(confirmation);
-        AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder builder = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setView(panel)
-                .setCancelable(false)
-                .setPositiveButton(R.string.controller_pin_set, null)
-                .create();
+                .setCancelable(cancelable)
+                .setPositiveButton(R.string.controller_pin_set, null);
+        if (cancelable) builder.setNegativeButton(android.R.string.cancel, null);
+        AlertDialog dialog = builder.create();
         dialog.setOnShowListener(ignored -> {
             styleDialog(activity, dialog);
             bindSubmit(dialog, pin, confirmation);
             com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                    if (!allowsLocalPin()) { dialog.dismiss(); return; }
                     String value = pin.getText().toString();
                     if (!value.equals(confirmation.getText().toString())) {
                         confirmation.setError(activity.getString(R.string.controller_pin_mismatch));
@@ -58,10 +83,12 @@ public final class ControllerPinGate {
                 });
         });
         dialog.show();
+        watchAuthority(activity, dialog, ControllerPinGate::allowsLocalPin, () -> {});
     }
 
-    /** Existing PINs remain valid; replacement requires the same controller authorization as pairing. */
+    /** Local PIN replacement requires local authority and an authenticated controller session. */
     public static void changePin(Activity activity, Runnable changed) {
+        if (!allowsLocalPin()) { notifyLocked(activity); return; }
         if (!ControllerPinManager.isDomModeActive()) { notifyLocked(activity); return; }
         if (!ControllerPinManager.hasCredentials(activity) && !ControllerPinManager.allowsUnkeyedAccess(activity)) { ensureConfigured(activity, changed); return; }
         require(activity, () -> {
@@ -78,7 +105,7 @@ public final class ControllerPinGate {
                 bindSubmit(dialog, pin, confirmation);
                 com.subhub.app.util.InputFocusPolicy.focusController(dialog, pin);
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                    if (!ControllerPinManager.isDomModeActive()) { dialog.dismiss(); return; }
+                    if (!ControllerPinManager.isDomModeActive() || !allowsLocalPin()) { dialog.dismiss(); return; }
                     if (!pin.getText().toString().equals(confirmation.getText().toString()))
                         confirmation.setError(activity.getString(R.string.controller_pin_mismatch));
                     else if (!ControllerPinManager.setPin(activity, pin.getText().toString()))
@@ -87,6 +114,8 @@ public final class ControllerPinGate {
                 });
             });
             dialog.show();
+            watchAuthority(activity, dialog, () -> allowsLocalPin()
+                    && ControllerPinManager.isDomModeActive(), () -> {});
         }, false);
     }
 
@@ -101,7 +130,8 @@ public final class ControllerPinGate {
     }
 
     public static void notifyLocked(android.content.Context context) {
-        android.widget.Toast.makeText(context, R.string.controller_pin_unlock_title,
+        android.widget.Toast.makeText(context, keyholderState() == KeyholderProvider.State.NONE
+                ? R.string.controller_pin_unlock_title : R.string.keyholder_remote_unlock,
                 android.widget.Toast.LENGTH_SHORT).show();
     }
 
@@ -115,6 +145,13 @@ public final class ControllerPinGate {
 
     /** Used only by an explicit role-unlock control. */
     public static void unlock(Activity activity, Runnable authorized, boolean finishOnCancel) {
+        KeyholderProvider.State keyholder = keyholderState();
+        if (keyholder == KeyholderProvider.State.PENDING || keyholder == KeyholderProvider.State.UNAVAILABLE) {
+            android.widget.Toast.makeText(activity, keyholder == KeyholderProvider.State.PENDING
+                    ? R.string.keyholder_pairing_in_progress : R.string.keyholder_remote_code_unavailable,
+                    android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         if (ControllerPinManager.allowsUnkeyedAccess(activity)) {
             ControllerPinManager.enterDomMode(); authorized.run(); return;
         }
@@ -126,10 +163,31 @@ public final class ControllerPinGate {
             authorized.run();
             return;
         }
+        showCredentialPrompt(activity, authorized, finishOnCancel, false);
+    }
+
+    /** Sensitive actions obtain a fresh credential without resetting the surrounding role session. */
+    public static void authenticate(Activity activity, Runnable authorized, boolean finishOnCancel) {
+        KeyholderProvider.State keyholder = keyholderState();
+        if (keyholder == KeyholderProvider.State.PENDING || keyholder == KeyholderProvider.State.UNAVAILABLE
+                || !ControllerPinManager.hasCredentials(activity)) {
+            android.widget.Toast.makeText(activity, R.string.keyholder_remote_code_unavailable,
+                    android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        showCredentialPrompt(activity, authorized, finishOnCancel, true);
+    }
+
+    private static void showCredentialPrompt(Activity activity, Runnable authorized,
+            boolean finishOnCancel, boolean force) {
+        KeyholderProvider.State keyholder = keyholderState();
         LinearLayout panel = panel(activity);
-        panel.addView(title(activity, activity.getString(R.string.controller_pin_unlock_title)));
-        panel.addView(explainer(activity, activity.getString(R.string.controller_pin_unlock_body)));
-        EditText pin = pinInput(activity, R.string.controller_pin_label);
+        boolean remote = keyholder != KeyholderProvider.State.NONE;
+        panel.addView(title(activity, activity.getString(remote
+                ? R.string.keyholder_remote_unlock : R.string.controller_pin_unlock_title)));
+        panel.addView(explainer(activity, activity.getString(remote
+                ? R.string.keyholder_remote_unlock_help : R.string.controller_pin_unlock_body)));
+        EditText pin = pinInput(activity, remote ? R.string.authenticator_code : R.string.controller_pin_label);
         ControllerCredentialChoice credential = new ControllerCredentialChoice(activity, panel, pin);
         panel.addView(pin);
         AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
@@ -154,6 +212,26 @@ public final class ControllerPinGate {
                 });
         });
         dialog.show();
+        watchAuthority(activity, dialog, credential::isCurrentAuthority,
+                () -> {
+                    if (force) authenticate(activity, authorized, finishOnCancel);
+                    else unlock(activity, authorized, finishOnCancel);
+                });
+    }
+
+    private static void watchAuthority(Activity activity, AlertDialog dialog,
+            java.util.function.BooleanSupplier current, Runnable changed) {
+        android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable observe = new Runnable() {
+            @Override public void run() {
+                if (!dialog.isShowing()) return;
+                if (activity.isFinishing() || activity.isDestroyed()) { dialog.dismiss(); return; }
+                if (!current.getAsBoolean()) { dialog.dismiss(); changed.run(); return; }
+                clock.postDelayed(this, 250);
+            }
+        };
+        dialog.setOnDismissListener(ignored -> clock.removeCallbacks(observe));
+        clock.postDelayed(observe, 250);
     }
 
     /** Keyboard submission follows the existing validated button action. */
@@ -215,6 +293,7 @@ public final class ControllerPinGate {
     private static EditText pinInput(Activity activity, int hint) {
         EditText input = new EditText(activity);
         input.setHint(hint);
+        input.setSaveEnabled(false);
         input.setSingleLine(true);
         input.setMaxLines(1);
         com.subhub.app.util.UiIdentity.inputType(input, InputType.TYPE_CLASS_NUMBER
@@ -232,6 +311,7 @@ public final class ControllerPinGate {
         if (window != null) {
             window.setBackgroundDrawableResource(R.drawable.bg_native_dialog);
             window.setDimAmount(0.72f);
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(activity.getColor(R.color.accent_text));
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE)

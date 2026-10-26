@@ -4,10 +4,16 @@ SubHub pairs a Dom device with a Sub device using Iroh. App data stays on the de
 
 ## Pair
 
-1. Configure a keyholder PIN or authenticator on each phone.
-2. On the Dom phone, open People, add a Sub, and create an invitation. Share its link or show its QR code to the other person. Anyone holding an unused invitation can request pairing, so share it privately.
-3. On the Sub phone, open Connection and use the invitation. A QR reader can open the invitation link; SubHub does not require a camera permission.
-4. Review the device identity shown on each phone and approve the pairing explicitly. Check the fingerprints with the other person before accepting an unexpected request.
+1. On the Dom phone, set up local control with a PIN under Settings → Keyholder and enter Dom mode.
+2. Open People, add a Sub, and create an invitation. Share or copy its pairing code, or show its QR code. Anyone holding an unused invitation can request pairing, so share it privately.
+3. On the Sub phone, choose Pair with Dom in setup or Settings → Keyholder. Paste the pairing code. Existing invitation links also work, including links opened by a QR reader; SubHub does not require a camera permission. The Sub does not need to create a local PIN first. If it already has local credentials, authenticate before assigning a Dom.
+4. Review the device fingerprint and shared controls on both phones, then approve the pairing explicitly. Compare fingerprints with the other person before accepting an unexpected request.
+
+The Sub automatically creates a separate authenticator credential for this relationship. Its paired Dom stores it over the encrypted, identity-bound connection before pairing completes. On the Dom phone, open that Sub’s Connection → Keyholder code and authenticate to view a short-lived code. Codes work on the Sub without an active network connection; a successfully used code cannot be reused. Both phones need the correct time.
+
+For an existing pairing, update both phones and let them sync once to provision the relationship’s keyholder code. If protected credential storage is missing or unreadable, the app refuses to replace it silently. When the devices can still connect, unpair from the Dom and approve a new pairing to establish a new credential.
+
+While a Dom is assigned, the Sub’s keyholder screen offers code-based recovery and hides local PIN controls. Old local PIN and manually configured authenticator data are retained privately, but cannot unlock or replace the assigned Dom. Recovery access allows unpairing; ordinary local configuration remains managed until the relationship is revoked.
 
 An invitation expires and is limited to one relationship. Pairing by itself preserves the Sub's current configuration and running session. Android permissions remain local: pairing cannot grant Accessibility, screen capture, usage access, or other platform permissions.
 
@@ -17,7 +23,7 @@ The Dom can view the Sub's last synchronized statistics, daily activity, configu
 
 Open the person's Contract to edit feature settings, included apps and allowances, duration, and supported artwork. Saving retains a contract for that relationship. Applying sends a versioned configuration to the Sub; pending or delivered does not mean applied. Concurrent edits can produce a conflict that requires reloading the current configuration. Use Saved contracts to import, export, delete, or apply a saved contract. These files do not copy local Android permission grants.
 
-Artwork transfers as bounded, verified file content. PINs, authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. Wallet settings can be part of a contract, but pairing does not transfer payment authentication or initiate payments.
+Artwork transfers as bounded, verified file content. Existing PINs and manual authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. The separate relationship authenticator credential is shared only with the approved Dom, stored encrypted, and excluded from contract files and ordinary synchronization records. Wallet settings can be part of a contract, but pairing does not transfer payment authentication or initiate payments.
 
 End session targets the specific active session last observed on that Sub. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued request cannot end a later session. Remote Start and Pause are unavailable.
 
@@ -29,6 +35,6 @@ Keep both apps open for initial pairing and large transfers. With an active rela
 
 ## Unpair, reinstall, and recovery
 
-Unpairing revokes the local relationship immediately and queues a revocation notice for the other device. The other phone can learn about it only when a connection becomes possible. The Sub retains its last applied configuration and returns to local configuration control; unpairing does not reset settings or end a running session.
+Unpairing revokes the local relationship immediately and queues a revocation notice for the other device. The other phone can learn about it only when a connection becomes possible. The Sub retains its last applied configuration and returns to local configuration control; unpairing does not reset settings or end a running session. The revoked relationship’s authenticator credential stops working locally and is removed. Previous local credentials become available again; a Sub that never configured local control can set it up afterward.
 
-Uninstalling or clearing app data loses the installation's identity, pairing records, and pending changes. Reinstalling requires a new invitation and approval; a matching device name does not restore trust. Identity secrets use Android Keystore protection and are excluded from app backup. If protected identity storage becomes unreadable, synchronization fails rather than silently replacing the identity.
+Uninstalling or clearing app data loses the installation's identity, pairing records, and pending changes. Reinstalling requires a new invitation and approval; a matching device name does not restore trust. Identity secrets use Android Keystore protection and are excluded from app backup. If protected identity storage becomes unreadable, synchronization fails rather than silently replacing the identity. The phone cannot receive a revocation notice or verify a relationship code whose wrapping key is lost. Clearing its app data establishes a new identity and requires pairing again, but also loses its local configuration, history, and pending changes. Keep a portable contract on the Dom before resetting a device when possible.

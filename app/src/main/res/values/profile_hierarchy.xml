@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_target_device_identity">%1$s · %2$s</string>
+    <string name="profile_contract_scope">Apps &amp; duration</string>
+    <string name="profile_contract_features">Features</string>
+</resources>

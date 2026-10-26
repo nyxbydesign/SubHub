@@ -44,6 +44,9 @@ public final class PairingInvite {
                 + "&route=" + encode(route) + "&expires=" + expiresAt + "#" + secret();
     }
 
+    /** Shareable payload also works in messengers that do not recognize custom URI schemes. */
+    public String code() { return link().substring("subhubapp://".length()); }
+
     public static PairingInvite parse(String link, long now) {
         PairingInvite invite = restore(link);
         if (now <= 0 || invite.expiresAt <= now || invite.expiresAt - now > LIFETIME_MILLIS) {
@@ -54,6 +57,8 @@ public final class PairingInvite {
 
     static PairingInvite restore(String link) {
         if (link == null || link.length() > 8192) throw new IllegalArgumentException("Invalid invitation");
+        link=link.trim();
+        if(link.startsWith("pair?"))link="subhubapp://"+link;
         try {
             URI uri = new URI(link);
             if (!"subhubapp".equals(uri.getScheme()) || !"pair".equals(uri.getHost())

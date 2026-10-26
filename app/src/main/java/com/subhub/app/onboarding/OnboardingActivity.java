@@ -122,6 +122,7 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void render() {
         if (isFinishing() || isDestroyed()) return;
+        if (!localSetupAllowed() && step > 0 && step < 4) step = 4;
         saveDraft();
         walletRules = null;
         appSelection = null;
@@ -200,16 +201,16 @@ public final class OnboardingActivity extends PreferencePage {
         apps.addView(appSelection, new LinearLayout.LayoutParams(-1, -1));
         appSelection.fillAvailableHeight();
         appSelection.bind(this,
-                () -> ControllerPinManager.isDomModeActive()
-                        || !replay && !ControllerPinManager.hasCredentials(this),
+                () -> localSetupAllowed() && (ControllerPinManager.isDomModeActive()
+                        || !replay && !ControllerPinManager.hasCredentials(this)),
                 this::saveDraft);
         appSelection.load();
     }
 
     private void walletRules() {
         walletRules = new SetupWalletRulesView(this, walletDraft,
-                () -> ControllerPinManager.isDomModeActive()
-                        || !replay && !ControllerPinManager.hasCredentials(this));
+                () -> localSetupAllowed() && (ControllerPinManager.isDomModeActive()
+                        || !replay && !ControllerPinManager.hasCredentials(this)));
         body.addView(walletRules, new LinearLayout.LayoutParams(-1, -2));
         ScrollView scroll = findViewById(R.id.tour_scroll);
         scroll.post(() -> {
@@ -262,54 +263,7 @@ public final class OnboardingActivity extends PreferencePage {
     }
 
     private void keyholder() {
-        text(body, getString(R.string.tour_keyholder_explanation), 15, true);
-        LinearLayout pin =
-                explain(
-                        body,
-                        R.drawable.ic_ux_lock,
-                        R.string.keyholder_pin_heading,
-                        R.string.tour_pin_help);
-        text(
-                pin,
-                getString(
-                        ControllerPinManager.isConfigured(this)
-                                ? R.string.keyholder_status_pin
-                                : R.string.keyholder_status_none),
-                12,
-                true);
-        button(
-                pin,
-                getString(
-                        ControllerPinManager.isConfigured(this)
-                                ? R.string.keyholder_pin_change
-                                : R.string.controller_pin_set),
-                () -> {
-                    if (!ControllerPinManager.hasCredentials(this))
-                        ControllerPinManager.useWithoutKeyholder(this);
-                    ControllerPinGate.changePin(this, this::render);
-                });
-        LinearLayout remote =
-                explain(
-                        body,
-                        R.drawable.ic_keyholder,
-                        R.string.keyholder_remote_title,
-                        R.string.tour_remote_help);
-        boolean paired = new ControllerAuthenticator(this).isPaired();
-        text(
-                remote,
-                getString(paired ? R.string.authenticator_paired : R.string.authenticator_unpaired),
-                12,
-                true);
-        button(
-                remote,
-                getString(paired ? R.string.keyholder_open : R.string.authenticator_pair),
-                () -> {
-                    if (!ControllerPinManager.hasCredentials(this))
-                        ControllerPinManager.useWithoutKeyholder(this);
-                    startActivity(
-                            new Intent(this, AuthenticatorActivity.class)
-                                    .putExtra("keyholder_method", "remote"));
-                });
+        body.addView(new KeyholderSetupView(this), new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void permissions() {
@@ -406,10 +360,17 @@ public final class OnboardingActivity extends PreferencePage {
         if (walletRules != null) walletDraft = walletRules.snapshot();
     }
 
+    private boolean localSetupAllowed() {
+        try {
+            return com.subhub.app.people.People.keyholder().state() == KeyholderProvider.State.NONE
+                    && com.subhub.app.people.People.isLocalConfigurationAllowed();
+        } catch (RuntimeException unavailable) { return false; }
+    }
+
     private void finishSetup() {
         if (!replay) {
 
-            if (appearanceChanged) {
+            if (appearanceChanged && localSetupAllowed()) {
                 SettingsRepository settings = new SettingsRepository(this);
                 CensorAppearance old = settings.loadAppearance();
                 settings.saveAppearance(

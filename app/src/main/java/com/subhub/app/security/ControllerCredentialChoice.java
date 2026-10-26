@@ -12,9 +12,17 @@ import com.subhub.app.R;
 public final class ControllerCredentialChoice {
     private final Activity activity;
     private final EditText input;
+    private final KeyholderProvider.State authority;
     private boolean useAuthenticator;
     public ControllerCredentialChoice(Activity activity, LinearLayout panel, EditText input) {
         this.activity = activity; this.input = input;
+        authority = currentAuthority();
+        if (authority != KeyholderProvider.State.NONE) {
+            useAuthenticator = true;
+            input.setHint(R.string.authenticator_code);
+            input.setInputType(InputType.TYPE_CLASS_NUMBER);
+            return;
+        }
         if (!new ControllerAuthenticator(activity).isPaired()) return;
         RadioGroup methods = new RadioGroup(activity); methods.setOrientation(LinearLayout.HORIZONTAL);
         RadioButton pin = new RadioButton(activity); pin.setId(android.view.View.generateViewId()); pin.setText(R.string.authenticator_method_pin);
@@ -32,6 +40,10 @@ public final class ControllerCredentialChoice {
         methods.check(hasPin ? pin.getId() : code.getId());
     }
     public boolean verify() {
+        if (!isCurrentAuthority()) {
+            input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));
+            return false;
+        }
         if (!useAuthenticator) {
             boolean valid = ControllerPinManager.verify(activity, input.getText().toString());
             if (!valid) {
@@ -43,9 +55,18 @@ public final class ControllerCredentialChoice {
         ControllerAuthenticator.Result result = new ControllerAuthenticator(activity).verify(input.getText().toString());
         if (result == ControllerAuthenticator.Result.SUCCESS) return true;
         if (result == ControllerAuthenticator.Result.INVALID) com.subhub.app.penance.TamperTributeReporter.record(activity);
+        boolean remote = authority != KeyholderProvider.State.NONE;
         input.setError(activity.getString(result == ControllerAuthenticator.Result.THROTTLED
-                ? R.string.authenticator_throttled : result == ControllerAuthenticator.Result.INVALID
-                ? R.string.authenticator_invalid : R.string.authenticator_unavailable));
+                ? remote ? R.string.keyholder_remote_throttled : R.string.authenticator_throttled
+                : result == ControllerAuthenticator.Result.INVALID ? R.string.authenticator_invalid
+                : remote ? R.string.keyholder_remote_code_unavailable : R.string.authenticator_unavailable));
         return false;
+    }
+
+    public boolean isCurrentAuthority() { return authority == currentAuthority(); }
+
+    private static KeyholderProvider.State currentAuthority() {
+        try { return com.subhub.app.people.People.keyholder().state(); }
+        catch (RuntimeException unavailable) { return KeyholderProvider.State.UNAVAILABLE; }
     }
 }

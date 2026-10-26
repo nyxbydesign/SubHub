@@ -9,7 +9,12 @@ import com.subhub.app.security.ControllerPinManager;
 public final class RemoteUi implements ConnectionUi {
     public static void install(Application app) {
         RemoteFeature feature=RemoteFeature.get(app);RemotePersonRepository repository=new RemotePersonRepository(app,feature);
-        People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);
+        People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);People.installKeyholder(new com.subhub.app.security.KeyholderProvider(){
+            public boolean withLocalAuthority(java.util.function.BooleanSupplier action){return feature.recoveryReady()&&feature.keyholder.withLocalAuthority(action);}
+            public State state(){return feature.recoveryReady()?feature.keyholder.state():State.UNAVAILABLE;}
+            public String assignedDomName(){return feature.keyholder.assignedDomName();}
+            public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){return feature.recoveryReady()?feature.keyholder.verifyCode(code):com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
+        });
         People.installLocalProjection(repository::localProjection);People.installConnectionUi(new RemoteUi());feature.installLifecycle(app);
     }
     @Override public void openPairing(Activity activity){openPairing(activity,ControllerPinManager.isDomModeActive());}

@@ -20,6 +20,7 @@ public final class RemoteFeature {
     public final RemoteStore store;
     public final RemoteContracts contracts;
     public final RemoteEndCommands endCommands;
+    public final RemoteKeyholder keyholder;
     private final RemoteSecrets secrets;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
@@ -40,10 +41,13 @@ public final class RemoteFeature {
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
     RemoteFeature(Context context,RemoteStore store) {
         this.context=context.getApplicationContext();this.store=store;secrets=new RemoteSecrets(this.context);
+        keyholder=new RemoteKeyholder(this.context,store,secrets);
+        store.onRevoked((identity,generation)->{keyholder.revoked(identity,generation);secrets.removePending(generation);});
+        store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
         sessions.allowCoreThreadTimeOut(true);
-        try{writer.recover();writer.prunePrepared();recovered=true;}catch(Exception unavailable){recovered=false;}
+        try{writer.recover();writer.prunePrepared();for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){keyholder.revoked(old.identity,old.generation);secrets.removePending(old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
     }
     public boolean recoveryReady(){return recovered;}
     public boolean controlsLocal(){return !recovered || store.isRemotelyControlled();}
@@ -67,8 +71,42 @@ public final class RemoteFeature {
         catch(RejectedExecutionException full){result.completeExceptionally(new IOException("Sync is busy"));}
         return result;
     }
+    PairingInvite restoreInvitation(String id)throws Exception {
+        requireKeyholder();
+        for(RemoteStore.Invitation candidate:store.invitations(System.currentTimeMillis()))if(candidate.id.equals(id)) {
+            String saved=secrets.pendingLink(id);return saved==null?null:PairingInvite.parse(saved,System.currentTimeMillis());
+        }
+        return null;
+    }
     public CompletableFuture<PairingInvite> createInvite() {return submit(()->{requireKeyholder();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
     public CompletableFuture<String> localIdentity(){return submit(()->{requireKeyholder();return transport().localIdentity();});}
+    public static final class Enrollment {
+        private final RemoteFeature owner;private final PairingInvite invitation;private final long expires;
+        private final java.util.concurrent.atomic.AtomicBoolean used=new java.util.concurrent.atomic.AtomicBoolean();
+        public final String domIdentity,localIdentity,fingerprint;
+        private Enrollment(RemoteFeature owner,PairingInvite invite,String identity){this.owner=owner;invitation=invite;domIdentity=invite.domIdentity;localIdentity=identity;fingerprint=PairingInvite.fingerprint(domIdentity,identity,invite.id);expires=SystemClock.elapsedRealtime()+120_000;}
+    }
+    private void requireEnrollmentAccess(){
+        if(controlsLocal())throw new SecurityException("A Dom is already assigned or recovery is unavailable");
+        boolean credentials=ControllerPinManager.isConfigured(context)||new com.subhub.app.security.ControllerAuthenticator(context).isPaired();
+        if(credentials&&!ControllerPinManager.isSessionUnlocked())throw new SecurityException("Existing keyholder authentication required");
+    }
+    public CompletableFuture<Enrollment> prepareEnrollment(String code){return submit(()->{
+        requireEnrollmentAccess();PairingInvite invite=PairingInvite.parse(code,System.currentTimeMillis());String identity=transport().localIdentity();
+        if(identity.equals(invite.domIdentity))throw new SecurityException("Cannot pair with this device");return new Enrollment(this,invite,identity);
+    });}
+    public CompletableFuture<Void> confirmEnrollment(Enrollment enrollment){return submit(()->{
+        requireEnrollmentAccess();
+        if(enrollment==null||enrollment.owner!=this||SystemClock.elapsedRealtime()>enrollment.expires||!enrollment.used.compareAndSet(false,true))throw new SecurityException("Pairing confirmation expired");
+        PairingInvite invite=PairingInvite.parse(enrollment.invitation.code(),System.currentTimeMillis());
+        if(!transport().localIdentity().equals(enrollment.localIdentity)||!PairingInvite.fingerprint(invite.domIdentity,enrollment.localIdentity,invite.id).equals(enrollment.fingerprint))throw new SecurityException("Pairing identity changed");
+        pairing(transport()).acceptConfirmed(invite,"Dom device");changed();return null;
+    });}
+    public void cancelEnrollment(RemoteStore.Peer peer){
+        requireEnrollmentAccess();RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
+        if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state!=RemoteStore.State.PENDING)throw new SecurityException("Enrollment is not pending");
+        store.revoke(current.identity,current.generation);secrets.removePending(current.generation);changed();
+    }
     public CompletableFuture<Void> acceptInvite(String link,String name) {return submit(()->{
         requireKeyholder();
         pairing(transport()).accept(link,name,System.currentTimeMillis());changed();return null;
@@ -90,7 +128,7 @@ public final class RemoteFeature {
     public boolean isConnected(RemoteStore.Peer peer){return connections.containsValue(key(peer));}
     private static String key(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
     private void requireKeyholder(){if(!ControllerPinManager.isSessionUnlocked() || !ControllerPinManager.hasCredentials(context))throw new SecurityException("Keyholder access required");}
-    private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),android.os.Build.MODEL);}
+    private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),android.os.Build.MODEL);}
 
     private PeerTransport transport() throws Exception {
         if(!recovered)throw new IOException("Configuration recovery is pending");
@@ -108,6 +146,7 @@ public final class RemoteFeature {
         }
     }
     private boolean needsBackground() {
+        if(!recovered)return false;
         for(RemoteStore.Peer peer:store.peers(true))if(peer.state!=RemoteStore.State.REVOKED || !"true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))return true;
         return false;
     }
@@ -184,6 +223,19 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception {
+                connection.setReadTimeoutMillis(Math.min(10_000,remaining(deadline)));
+                if(peer.localRole==RemoteProtocol.Role.SUB) {
+                    String secret=keyholder.provisionSub(peer,active.localIdentity());
+                    JSONObject credential=new JSONObject().put("version",1).put("type","keyholder_credential").put("generation",peer.generation).put("authVersion",1).put("authSecret",secret);
+                    requireActive(peer);RemoteProtocol.write(connection.output(),credential);
+                    JSONObject receipt=RemoteProtocol.read(connection.input());requireKeyholderFrame(receipt,"keyholder_receipt",peer);requireActive(peer);
+                } else {
+                    JSONObject credential=RemoteProtocol.read(connection.input());requireKeyholderFrame(credential,"keyholder_credential",peer);
+                    keyholder.receiveDom(peer,active.localIdentity(),credential.getString("authSecret"));requireActive(peer);
+                    RemoteProtocol.write(connection.output(),new JSONObject().put("version",1).put("type","keyholder_receipt").put("generation",peer.generation).put("authVersion",1));
+                }
+            }
             @Override public void prepare(RemoteStore.Peer peer) throws Exception {
                 endCommands.process(peer,System.currentTimeMillis());
                 if(peer.localRole==RemoteProtocol.Role.SUB) {
@@ -200,6 +252,10 @@ public final class RemoteFeature {
             @Override public RemoteAssets assets(RemoteStore.Peer peer) throws Exception{return contracts.assets(peer);}
             @Override public void complete(RemoteStore.Peer peer) throws Exception{contracts.process(peer);}
         });
+    }
+    private void requireActive(RemoteStore.Peer peer){RemoteStore.Peer current=store.peer(peer.identity,peer.generation);if(current==null||current.state!=RemoteStore.State.ACTIVE||current.localRole!=peer.localRole)throw new SecurityException("Pairing is not active");}
+    private static void requireKeyholderFrame(JSONObject frame,String type,RemoteStore.Peer peer)throws Exception {
+        RemoteProtocol.requireVersion(frame);if(!type.equals(frame.getString("type"))||!peer.generation.equals(frame.getString("generation"))||RemoteProtocol.integer(frame,"authVersion")!=1)throw new SecurityException("Keyholder identity mismatch");
     }
     public boolean backgroundWindow() throws Exception {return backgroundWindow(55_000);}
     boolean backgroundWindow(long durationMillis) throws Exception {

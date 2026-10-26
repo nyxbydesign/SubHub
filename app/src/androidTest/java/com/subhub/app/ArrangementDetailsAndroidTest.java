@@ -1,6 +1,10 @@
 package com.subhub.app;
 
 import static org.junit.Assert.*;
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -70,11 +74,35 @@ public class ArrangementDetailsAndroidTest {
         try (ActivityScenario<com.subhub.app.people.ContractActivity> page =
                 ActivityScenario.launch(com.subhub.app.people.ContractActivity.class)) {
             awaitContract(page);
+            page.onActivity(a -> assertExpanded(a, ""));
+            verifyRenderedDetails(page);
             page.onActivity(a -> assertSections(a, 5));
             new PenanceManager(context).configure(false, java.util.Collections.emptyMap(), 1000, 5000, 10, 15);
             page.recreate();
             awaitContract(page);
+            page.onActivity(a -> assertExpanded(a, "atmosphere"));
+            verifyRenderedDetails(page);
             page.onActivity(a -> assertSections(a, 0));
+        }
+    }
+
+    private void verifyRenderedDetails(ActivityScenario<com.subhub.app.people.ContractActivity> page) {
+        com.subhub.app.people.PersonSnapshot snapshot = new com.subhub.app.people.LocalPersonRepository(context)
+                .load(com.subhub.app.people.PersonId.LOCAL);
+        for (com.subhub.app.people.PersonSnapshot.Section section : snapshot.sections) {
+            if (section.details.isEmpty()) continue;
+            openSection(section.key);
+            page.onActivity(activity -> {
+                assertExpanded(activity, section.key);
+                assertDetailBlocks(activity, section);
+                if ("limits".equals(section.key)) {
+                    String detail = text(activity.findViewById(R.id.role_page_body)
+                            .findViewWithTag("contract_details:limits"));
+                    assertTrue(detail.contains("Chrome · 15 min"));
+                    assertTrue(detail.contains("Settings · 40 min"));
+                }
+                assertFalse(ControllerPinManager.isDomModeActive());
+            });
         }
     }
 
@@ -90,7 +118,7 @@ public class ArrangementDetailsAndroidTest {
         for (com.subhub.app.people.PersonSnapshot.Section section : snapshot.sections) {
             assertTrue(visible.contains(section.title));
             assertTrue(visible.contains(section.summary));
-            assertTrue(visible.contains(section.details));
+            assertNotNull(content.findViewWithTag("contract_section:" + section.key));
             assertFalse(section.summary.contains(activity.getString(R.string.role_service_active)));
         }
         assertEquals(activity.getString(R.string.role_disabled), sections.get("censor").summary);
@@ -126,6 +154,31 @@ public class ArrangementDetailsAndroidTest {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
+    private static void openSection(String key) {
+        onView(withTagValue(org.hamcrest.Matchers.is("contract_section:" + key)))
+                .perform(revealAboveNavigation(), click());
+    }
+    private static void assertExpanded(com.subhub.app.people.ContractActivity activity, String selected) {
+        View body = activity.findViewById(R.id.role_page_body);
+        for (String key : new String[] {"apps", "censor", "limits", "wallet", "atmosphere"}) {
+            View detail = body.findViewWithTag("contract_details:" + key);
+            if (detail != null) assertEquals("Expansion for " + key,
+                    selected.equals(key) ? View.VISIBLE : View.GONE, detail.getVisibility());
+        }
+    }
+    private static void assertDetailBlocks(com.subhub.app.people.ContractActivity activity,
+            com.subhub.app.people.PersonSnapshot.Section section) {
+        ViewGroup detail = activity.findViewById(R.id.role_page_body).findViewWithTag("contract_details:" + section.key);
+        assertNotNull("Detail for " + section.key, detail);
+        assertTrue("Expanded detail is rendered", detail.isShown());
+        String[] expected = section.details.split("\\n\\s*\\n");
+        assertEquals("Every label/value paragraph is rendered", expected.length, detail.getChildCount());
+        for (int index = 0; index < expected.length; index++) {
+            assertTrue(detail.getChildAt(index) instanceof TextView);
+            assertEquals("Paragraph " + index + " in " + section.key,
+                    expected[index], ((TextView) detail.getChildAt(index)).getText().toString());
+        }
+    }
     private static String text(View view) {
         String copy = view instanceof TextView ? ((TextView) view).getText().toString() : "";
         if (view instanceof ViewGroup) {

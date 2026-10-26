@@ -46,10 +46,11 @@ public final class ControllerEditMode {
     public static void renderButton(Activity activity, TextView button) {
         boolean editing = ControllerPinManager.isDomModeActive();
         button.setText(editing
-                ? R.string.role_sub : R.string.role_dom);
+                ? R.string.role_dom : R.string.role_sub);
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0);
         button.setContentDescription(activity.getString(editing
                 ? R.string.role_enter_sub : R.string.role_enter_dom));
+        androidx.appcompat.widget.TooltipCompat.setTooltipText(button, button.getContentDescription());
         button.setSelected(editing);
         TextView badge = activity.findViewById(R.id.header_role_badge);
         if (badge != null) badge.setText(editing ? R.string.role_dom : R.string.role_sub);

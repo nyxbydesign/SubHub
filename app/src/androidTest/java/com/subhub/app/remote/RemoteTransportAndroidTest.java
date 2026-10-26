@@ -104,10 +104,7 @@ public class RemoteTransportAndroidTest {
              PeerTransport b = IrohPeerTransport.open(context,seed(),relays,15_000)) {
             String route = a.inviteRoute();
             if (requireRelay) {
-                try (computer.iroh.EndpointTicket ticket = computer.iroh.EndpointTicket.Companion.fromString(route);
-                     computer.iroh.EndpointAddr address = ticket.endpointAddr()) {
-                    assertNotNull("No public relay route available",address.relayUrl());
-                }
+                assertTrue("No public relay route available",IrohTestRoutes.hasRelay(route));
             }
             Future<PeerTransport.Connection> accepting = executor.submit(() -> a.accept(45_000));
             try (PeerTransport.Connection client = b.connect(a.localIdentity(),route,45_000);

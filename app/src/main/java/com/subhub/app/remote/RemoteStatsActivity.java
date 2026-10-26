@@ -9,6 +9,9 @@ import org.json.*;
 import java.util.*;
 
 public final class RemoteStatsActivity extends RemotePage {
+    private final android.os.Handler clock=new android.os.Handler(android.os.Looper.getMainLooper());
+    private android.widget.TextView freshness;
+    private final Runnable age=new Runnable(){public void run(){updateFreshness();clock.postDelayed(this,1000);}};
     private int offset;private RemoteProtocol.Stream selected=RemoteProtocol.Stream.STATS;
     private static final Map<String,Integer> LABELS=new LinkedHashMap<>();
     static {
@@ -19,15 +22,21 @@ public final class RemoteStatsActivity extends RemotePage {
         LABELS.put("tamperEvents",R.string.remote_tamper);LABELS.put("tributes",R.string.stats_tributes);LABELS.put("assessedEUR",R.string.stats_tribute_value);LABELS.put("assessedUSD",R.string.stats_tribute_value);LABELS.put("paidEUR",R.string.stats_paid);LABELS.put("paidUSD",R.string.stats_paid);
         LABELS.put("currentSeconds",R.string.stats_service_time);LABELS.put("currentEvents",R.string.stats_activity);LABELS.put("currentCensors",R.string.stats_censors);LABELS.put("currentLimitMillis",R.string.stats_limited_app_time);LABELS.put("currentLimitStops",R.string.stats_limit_stops);LABELS.put("currentWhispers",R.string.stats_whispers);LABELS.put("currentPopups",R.string.stats_popups);LABELS.put("currentTributes",R.string.stats_tributes);LABELS.put("currentAssessedEUR",R.string.stats_tribute_value);LABELS.put("currentAssessedUSD",R.string.stats_tribute_value);
     }
-    @Override protected void onCreate(Bundle state){super.onCreate(state);page(R.string.role_stats);if(selectPeer())render();}
-    @Override protected void onResume(){super.onResume();if(!isFinishing()&&peer!=null)render();}
+    @Override protected void onCreate(Bundle state){super.onCreate(state);page(R.string.role_stats);if(state!=null){offset=Math.max(0,state.getInt("offset",0));try{selected=RemoteProtocol.Stream.valueOf(state.getString("stream",RemoteProtocol.Stream.STATS.name()));}catch(IllegalArgumentException invalid){selected=RemoteProtocol.Stream.STATS;}if(!Arrays.asList(RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE,RemoteProtocol.Stream.RUNTIME).contains(selected))selected=RemoteProtocol.Stream.STATS;}if(selectPeer())render();}
+    @Override protected void onSaveInstanceState(Bundle state){state.putInt("offset",offset);state.putString("stream",selected.name());super.onSaveInstanceState(state);}
+    @Override protected void onResume(){super.onResume();if(!isFinishing()&&peer!=null){render();clock.post(age);}}
+    @Override protected void onPause(){clock.removeCallbacks(age);super.onPause();}
+    private void updateFreshness(){if(freshness==null||peer==null)return;
+        RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
+        long confirmed=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+selected.name(),"0")),elapsed=System.currentTimeMillis()-confirmed;
+        freshness.setVisibility(peer.state!=RemoteStore.State.ACTIVE||confirmed<=0||elapsed<0||elapsed>(selected==RemoteProtocol.Stream.RUNTIME?90_000:1_800_000)?android.view.View.VISIBLE:android.view.View.GONE);
+    }
     private void render(){
         if(!ControllerPinManager.isDomModeActive()||peer.localRole!=RemoteProtocol.Role.DOM){finish();return;}
-        body.removeAllViews();text(body,peer.name,true);
+        body.removeAllViews();target();
         navigation(R.string.role_stats,RemoteProtocol.Stream.STATS);navigation(R.string.remote_daily_history,RemoteProtocol.Stream.DAILY);navigation(R.string.role_app_time,RemoteProtocol.Stream.APP_USAGE);navigation(R.string.remote_runtime,RemoteProtocol.Stream.RUNTIME);
         text(body,observed(selected),false);
-        long confirmed=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+selected.name(),"0"));
-        if(peer.state!=RemoteStore.State.ACTIVE || confirmed<=0 || System.currentTimeMillis()<confirmed || System.currentTimeMillis()-confirmed>(selected==RemoteProtocol.Stream.RUNTIME?90_000:1_800_000))text(body,getString(R.string.role_stale_data),false);
+        freshness=text(body,getString(R.string.role_stale_data),false);updateFreshness();
         try {
             if(selected==RemoteProtocol.Stream.STATS){JSONObject stats=feature.store.mirrored(peer.identity,peer.generation,selected,"summary");if(!RemoteTelemetry.validSummary(stats)){text(body,getString(R.string.remote_unknown),false);return;}
                 boolean current=false;for(Map.Entry<String,Integer> item:LABELS.entrySet()){String key=item.getKey();if(key.startsWith("current")&&!current){current=true;text(body,getString(R.string.remote_current_session),true);}if(stats.has(key))metric(body,key,item.getValue(),stats.getLong(key));}return;}

@@ -15,12 +15,17 @@
 
     <TextView
         android:id="@+id/button_back"
-        android:layout_width="wrap_content"
+        android:layout_width="48dp"
         android:layout_height="wrap_content"
         android:minWidth="@dimen/control_min_height"
         android:minHeight="@dimen/control_min_height"
         android:gravity="center"
-        android:text="@string/back"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@string/back"
         android:textColor="@color/accent_text"
         android:textSize="@dimen/ui_text_label"
         android:textStyle="bold"
@@ -44,12 +49,6 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <TextView android:id="@+id/header_role_badge"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:layout_marginBottom="6dp" android:background="@drawable/bg_role_badge"
-            android:textColor="@color/accent_text" android:textSize="11sp"
-            android:textStyle="bold" android:text="@string/role_sub" />
-
         <TextView
             android:id="@+id/primary_header_title"
             android:layout_width="match_parent"
@@ -71,9 +70,23 @@
         android:visibility="gone" />
     </LinearLayout>
 
+    <TextView android:id="@+id/header_role_badge"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_marginStart="8dp" android:background="@drawable/bg_role_badge"
+        android:includeFontPadding="false" android:textColor="@color/accent_text"
+        android:textSize="11sp" android:textStyle="bold" android:text="@string/role_sub"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/button_edit_lock"
         style="@style/Widget.SubHub.ControllerEdit"
         android:layout_marginStart="8dp"
+        android:minWidth="48dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:background="@drawable/bg_shell_role"
+        android:elevation="0dp"
+        android:singleLine="false"
+        android:ellipsize="none"
         android:text="@string/controller_edit_locked" />
 </LinearLayout>

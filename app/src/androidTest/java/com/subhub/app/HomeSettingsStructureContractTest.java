@@ -31,6 +31,8 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class HomeSettingsStructureContractTest {
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @org.junit.Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
 
     private static android.content.Intent homeIntent() {
@@ -141,6 +143,10 @@ public final class HomeSettingsStructureContractTest {
         try {
             try (ActivityScenario<GlobalSettingsActivity> scenario =
                          ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
+                        org.hamcrest.Matchers.is("settings:help")))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                                androidx.test.espresso.action.ViewActions.click());
                 scenario.onActivity(activity -> {
                     ViewGroup sections = activity.findViewById(R.id.settings_sections);
                     View helpHeader = sections.findViewWithTag("settings:help");

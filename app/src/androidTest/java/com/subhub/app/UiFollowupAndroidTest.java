@@ -5,6 +5,8 @@ import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
 import static org.junit.Assert.*;
 
 import android.app.Activity;
@@ -41,6 +43,8 @@ import org.junit.*;
 
 /** Focused follow-up contracts and captures; never starts a real payment or service. */
 public class UiFollowupAndroidTest {
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private SharedPreferences preferences;
@@ -83,25 +87,27 @@ public class UiFollowupAndroidTest {
                 assertEquals("Help & About", ((TextView) help.findViewById(R.id.section_title)).getText().toString());
                 assertEquals("Build: " + BuildConfig.VERSION_NAME + " | " + BuildConfig.BUILD_DATE,
                         help.summary().getText().toString());
-                assertTrue(help.summary().isShown());
+                assertFalse(help.summary().isShown());
                 com.subhub.app.util.ExpandableSectionView privacy = section(a, "privacy");
                 assertEquals("Privacy & Permissions", ((TextView) privacy.findViewById(R.id.section_title)).getText().toString());
                 assertFalse(privacy.summary().getText().toString().contains("access settings"));
                 assertNull(a.findViewById(R.id.feature_areas_card));
-                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
-                assertTrue(a.findViewById(R.id.button_help).isShown());
-                assertFalse(privacy.header().isClickable());
-                assertFalse(help.header().isClickable());
+                assertFalse(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertFalse(a.findViewById(R.id.button_help).isShown());
+                assertTrue(privacy.header().isClickable());
+                assertTrue(help.header().isClickable());
                 assertNull(a.findViewById(R.id.button_packs));
                 assertNull(a.findViewById(R.id.apps_card));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("settings:apps"));
-                assertEquals(View.GONE, a.findViewById(R.id.settings_connection).getVisibility());
-                assertEquals(context.getString(R.string.role_security),
+                assertNull(a.findViewById(R.id.settings_connection));
+                assertEquals(context.getString(R.string.keyholder_home_title),
                         ((TextView) a.findViewById(R.id.settings_connections_security)).getText().toString());
                 capture(a, "settings-overview");
             });
+            onView(withTagValue(org.hamcrest.Matchers.is("settings:help"))).perform(revealAboveNavigation(), click());
             page.recreate();
             page.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.button_help).isShown());
                 assertNull(a.findViewById(R.id.app_list_content));
                 android.widget.ScrollView scroll = (android.widget.ScrollView) a.findViewById(R.id.settings_sections).getParent();
                 scroll.scrollTo(0, Integer.MAX_VALUE);
@@ -159,9 +165,9 @@ public class UiFollowupAndroidTest {
         try (ActivityScenario<com.subhub.app.security.AuthenticatorActivity> page =
                 ActivityScenario.launch(com.subhub.app.security.AuthenticatorActivity.class)) {
             page.onActivity(a -> {
-                assertNull(a.findViewById(R.id.keyholder_pin_change_button));
+                assertNotNull(a.findViewById(R.id.keyholder_pin_change_button));
                 assertNull(a.findViewById(R.id.keyholder_pair_button));
-                assertNull(a.findViewById(R.id.keyholder_pair_device));
+                assertNotNull(a.findViewById(R.id.keyholder_pair_device));
                 assertFalse(ControllerPinManager.isDomModeActive());
                 capture(a, "security-sub");
             });

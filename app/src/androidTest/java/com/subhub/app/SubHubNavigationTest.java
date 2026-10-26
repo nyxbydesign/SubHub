@@ -16,6 +16,7 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.SystemClock;
+import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -30,6 +31,7 @@ import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
+import androidx.core.view.ViewCompat;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -186,7 +188,10 @@ public final class SubHubNavigationTest {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<GlobalSettingsActivity> ignored =
                      ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            onView(withId(R.id.button_diagnostics)).perform(scrollTo(), click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is("settings:help")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            onView(withId(R.id.button_diagnostics))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             Activity destination = resumedActivity(DiagnosticsActivity.class);
             assertEquals(DiagnosticsActivity.class, destination.getClass());
             assertEquals(View.GONE,
@@ -214,7 +219,7 @@ public final class SubHubNavigationTest {
         }
     }
 
-    @Test public void pillFitsFontScalingAndKeepsTheLastActionAboveNavigation() {
+    @Test public void railFitsFontScalingAndKeepsTheLastActionAboveNavigation() {
         Context context = ApplicationProvider.getApplicationContext();
         new FeatureModuleManager(context).save(true, true, true);
         try (ActivityScenario<AtmosphereActivity> scenario =
@@ -224,58 +229,121 @@ public final class SubHubNavigationTest {
                 float[] fontScales = {1f, 1.3f, 2f};
                 for (int width : widths) {
                     for (float fontScale : fontScales) {
-                        Configuration configuration = new Configuration(activity.getResources()
-                                .getConfiguration());
-                        configuration.screenWidthDp = width;
-                        configuration.smallestScreenWidthDp = width;
-                        configuration.fontScale = fontScale;
-                        Context themed = new ContextThemeWrapper(activity.createConfigurationContext(
-                                configuration), R.style.Theme_SubHub);
-                        ViewGroup page = (ViewGroup) LayoutInflater.from(themed)
-                                .inflate(R.layout.activity_atmosphere, null, false);
-                        PrimaryHeader.bind(page, R.drawable.ic_atmosphere,
-                                R.string.atmosphere_title, R.string.atmosphere_subtitle_dom);
-                        int pageWidth = Math.round(width * themed.getResources()
-                                .getDisplayMetrics().density);
-                        int pageHeight = Math.round(720 * themed.getResources()
-                                .getDisplayMetrics().density);
-                        measurePage(page, pageWidth, pageHeight);
-                        SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ATMOSPHERE);
-                                // The layout listener applies the measured pill clearance on the
-                                // next pass.
-                                measurePage(page, pageWidth, pageHeight);
-                        measurePage(page, pageWidth, pageHeight);
-                        ViewGroup navigation = page.findViewById(R.id.bottom_navigation);
-                        int target = themed.getResources()
-                                .getDimensionPixelSize(R.dimen.control_min_height);
-                        for (int index = 0; index < navigation.getChildCount(); index++) {
-                            ViewGroup tab = (ViewGroup) navigation.getChildAt(index);
-                            if (tab.getVisibility() != View.VISIBLE) continue;
-                            assertTrue("Navigation target too narrow", tab.getWidth() >= target);
-                            assertTrue("Navigation target too short", tab.getHeight() >= target);
-                            TextView label = (TextView) tab.getChildAt(1);
-                            assertTrue(label.getLayout() != null);
-                            assertEquals("Navigation words should remain whole", 1,
-                                    label.getLineCount());
-                            for (int line = 0; line < label.getLineCount(); line++) {
-                                assertEquals(0, label.getLayout().getEllipsisCount(line));
-                                assertTrue("Navigation label exceeds its width",
-                                        label.getLayout().getLineWidth(line) <= label.getWidth() + 1);
-                            }
-                            assertTrue("Navigation label exceeds its target",
-                                    label.getBottom() <= tab.getHeight() - tab.getPaddingBottom());
+                        for (boolean dom : new boolean[] {true, false}) {
+                            if (dom) ControllerPinManager.enterDomMode();
+                            else ControllerPinManager.enterSubMode();
+                            Configuration configuration = new Configuration(activity.getResources()
+                                    .getConfiguration());
+                            configuration.screenWidthDp = width;
+                            configuration.smallestScreenWidthDp = width;
+                            configuration.fontScale = fontScale;
+                            Context themed = new ContextThemeWrapper(activity.createConfigurationContext(
+                                    configuration), R.style.Theme_SubHub);
+                            ViewGroup page = (ViewGroup) LayoutInflater.from(themed)
+                                    .inflate(R.layout.activity_atmosphere, null, false);
+                            PrimaryHeader.bind(page, R.drawable.ic_atmosphere,
+                                    R.string.atmosphere_title, R.string.atmosphere_subtitle_dom);
+                            int pageWidth = Math.round(width * themed.getResources()
+                                    .getDisplayMetrics().density);
+                            int pageHeight = Math.round(720 * themed.getResources()
+                                    .getDisplayMetrics().density);
+                            measurePage(page, pageWidth, pageHeight);
+                            SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ATMOSPHERE);
+                            // Apply measured navigation clearance before checking the final action.
+                            measurePage(page, pageWidth, pageHeight);
+                            measurePage(page, pageWidth, pageHeight);
+                            ViewGroup navigation = page.findViewById(R.id.bottom_navigation);
+                            assertEquals(fontScale, themed.getResources().getConfiguration().fontScale, 0.001f);
+                            assertRailFits(page, dom ? 3 : 4);
+                            ScrollView scroll = (ScrollView) page.getChildAt(0);
+                            scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
+                            View lastAction = page.findViewById(R.id.button_popup_storm);
+                            Rect bounds = new Rect(0, 0, lastAction.getWidth(), lastAction.getHeight());
+                            page.offsetDescendantRectToMyCoords(lastAction, bounds);
+                            assertTrue("Last action must scroll above navigation",
+                                    bounds.bottom <= navigation.getTop());
                         }
-                        ScrollView scroll = (ScrollView) page.getChildAt(0);
-                        scroll.scrollTo(0, scroll.getChildAt(0).getHeight());
-                        View lastAction = page.findViewById(R.id.button_popup_storm);
-                        Rect bounds = new Rect(0, 0, lastAction.getWidth(), lastAction.getHeight());
-                        page.offsetDescendantRectToMyCoords(lastAction, bounds);
-                        assertTrue("Last action must scroll above navigation",
-                                bounds.bottom <= navigation.getTop());
                     }
                 }
             });
+        } finally { ControllerPinManager.enterDomMode(); }
+    }
+
+    @Test public void actualDeviceShellFitsAtRequestedFontScaleAndViewport() {
+        android.os.Bundle arguments = InstrumentationRegistry.getArguments();
+        String expectedFont = arguments.getString("shell_expected_font_scale");
+        String expectedWidth = arguments.getString("shell_expected_width_dp");
+        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            scenario.onActivity(activity -> {
+                if (expectedFont != null) assertEquals("Actual device font scale", Float.parseFloat(expectedFont),
+                        activity.getResources().getConfiguration().fontScale, 0.01f);
+                if (expectedWidth != null) assertEquals("Actual device viewport", Integer.parseInt(expectedWidth),
+                        activity.getResources().getConfiguration().screenWidthDp);
+                ViewGroup root = activity.findViewById(android.R.id.content);
+                assertRailFits(root, 3);
+                TextView title = activity.findViewById(R.id.primary_header_title);
+                assertCompleteText(title);
+                assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
+                        title.getResources().getDisplayMetrics())), title.getTextSize(), 0.01f);
+                assertTrue(ViewCompat.isAccessibilityHeading(title));
+                TextView role = PrimaryHeader.editLockButton(root);
+                assertCompleteText(role);
+                int target = activity.getResources().getDimensionPixelSize(R.dimen.control_min_height);
+                assertTrue(role.getWidth() >= target && role.getHeight() >= target);
+                Rect titleBounds = new Rect(), roleBounds = new Rect();
+                assertTrue(title.getGlobalVisibleRect(titleBounds));
+                assertTrue(role.getGlobalVisibleRect(roleBounds));
+                assertEquals(title.getWidth(), titleBounds.width());
+                assertEquals(title.getHeight(), titleBounds.height());
+                assertEquals(role.getWidth(), roleBounds.width());
+                assertEquals(role.getHeight(), roleBounds.height());
+                assertFalse("Header title and role action must not overlap", Rect.intersects(titleBounds, roleBounds));
+            });
         }
+    }
+
+    private static void assertRailFits(View root, int expectedTabs) {
+        ViewGroup navigation = root.findViewById(R.id.bottom_navigation);
+        int target = navigation.getResources().getDimensionPixelSize(R.dimen.control_min_height);
+        int visible = 0, rowTop = -1;
+        assertEquals("Navigation spans its viewport", ((View) navigation.getParent()).getWidth(), navigation.getWidth());
+        assertTrue("Navigation must not consume multiple rows of the viewport",
+                navigation.getHeight() <= Math.round(120 * navigation.getResources().getDisplayMetrics().density));
+        for (int index = 0; index < navigation.getChildCount(); index++) {
+            ViewGroup tab = (ViewGroup) navigation.getChildAt(index);
+            if (tab.getVisibility() != View.VISIBLE) continue;
+            visible++;
+            if (rowTop < 0) rowTop = tab.getTop();
+            assertEquals("All navigation targets share one row", rowTop, tab.getTop());
+            assertTrue("Navigation target too narrow", tab.getWidth() >= target);
+            assertTrue("Navigation target too short", tab.getHeight() >= target);
+            assertTrue("Navigation target exceeds viewport", tab.getRight() <= navigation.getWidth() - navigation.getPaddingRight());
+            TextView label = (TextView) tab.getChildAt(1);
+            assertEquals(View.VISIBLE, label.getVisibility());
+            assertCompleteText(label);
+            assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11,
+                    label.getResources().getDisplayMetrics())), label.getTextSize(), 0.01f);
+            assertEquals(label.getText().toString(), tab.getContentDescription().toString());
+            assertTrue("Navigation label exceeds its target", label.getBottom() <= tab.getHeight() - tab.getPaddingBottom());
+            AccessibilityNodeInfo info = tab.createAccessibilityNodeInfo();
+            assertEquals(Button.class.getName(), info.getClassName());
+            assertEquals(tab.isSelected(), info.isSelected());
+            info.recycle();
+        }
+        assertEquals(expectedTabs, visible);
+    }
+
+    private static void assertCompleteText(TextView text) {
+        assertNotNull(text.getLayout());
+        int available = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+        for (int line = 0; line < text.getLineCount(); line++) {
+            assertEquals("Text must not be ellipsized", 0, text.getLayout().getEllipsisCount(line));
+            assertTrue("Text exceeds its width: " + text.getText(), text.getLayout().getLineMax(line) <= available + 1);
+        }
+        assertEquals("The complete label must remain laid out", text.length(),
+                text.getLayout().getLineEnd(text.getLineCount() - 1));
+        assertTrue("Text exceeds its height", text.getLayout().getHeight()
+                <= text.getHeight() - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
     }
 
     private static void measurePage(View page, int width, int height) {

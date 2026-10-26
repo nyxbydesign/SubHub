@@ -3,7 +3,6 @@ package com.subhub.app.util;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.DrawableRes;
@@ -46,60 +45,43 @@ public final class PrimaryHeader {
         ViewGroup header = (ViewGroup) view(root);
         float density = root.getResources().getDisplayMetrics().density;
         int widthDp = root.getResources().getConfiguration().screenWidthDp;
-        boolean compact = widthDp < 360
-                || root.getResources().getConfiguration().fontScale >= 1.3f;
-        int controlMinimum = Math.round((compact ? 64 : 88) * density);
+        int controlMinimum = Math.round(48 * density);
         control.setMinWidth(controlMinimum);
         control.setMinimumWidth(controlMinimum);
+        control.setSingleLine(false);
+        control.setEllipsize(null);
+        TextView badge = root.findViewById(R.id.header_role_badge);
+        badge.setVisibility(control.getVisibility() == View.GONE ? View.VISIBLE : View.GONE);
+        TextView back = backButton(root);
+        back.setText("");
+        back.setContentDescription(root.getResources().getString(R.string.back));
+        androidx.appcompat.widget.TooltipCompat.setTooltipText(back,
+                root.getResources().getString(R.string.back));
+        back.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_shell_back, 0, 0, 0);
+        back.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
+                root.getContext().getColor(R.color.text_primary)));
         int headerWidth = Math.round(widthDp * density) - 2 * root.getResources()
                 .getDimensionPixelSize(R.dimen.page_margin);
         int controlWidth = control.getVisibility() == View.GONE ? 0
                 : Math.max(control.getMinWidth(), (int) Math.ceil(
                 control.getPaint().measureText(control.getText().toString()))
                 + control.getPaddingLeft() + control.getPaddingRight());
-        TextView back = backButton(root);
         int backWidth = back.getVisibility() == View.GONE ? 0
-                : Math.max(back.getMinWidth(), (int) Math.ceil(
-                        back.getPaint().measureText(back.getText().toString())));
+                : Math.round(48 * density);
         ViewGroup.MarginLayoutParams bodyParams =
                 (ViewGroup.MarginLayoutParams) root.findViewById(R.id.primary_header_copy).getLayoutParams();
         int iconWidth = root.getResources().getDimensionPixelSize(R.dimen.primary_header_icon_size);
         int textWidth = headerWidth - header.getPaddingLeft() - header.getPaddingRight()
                 - backWidth - iconWidth - Math.round(19 * density) - controlWidth;
-        boolean stacked = root.getResources().getConfiguration().fontScale >= 1.3f;
-        if (stacked) {
-            textWidth = headerWidth - header.getPaddingLeft() - header.getPaddingRight()
-                    - backWidth - iconWidth - Math.round(11 * density);
-        }
+        if (badge.getVisibility() == View.VISIBLE) textWidth -= (int) Math.ceil(
+                badge.getPaint().measureText(badge.getText().toString()))
+                + badge.getPaddingLeft() + badge.getPaddingRight() + Math.round(8 * density);
         boolean showIcon = hasIcon
                 && title.getPaint().measureText(title.getText().toString()) <= textWidth;
         icon.setVisibility(showIcon ? View.VISIBLE : View.GONE);
         bodyParams.setMarginStart(showIcon || backWidth > 0 ? Math.round(11 * density) : 0);
         View body = root.findViewById(R.id.primary_header_copy);
         body.setLayoutParams(bodyParams);
-        if (stacked && body.getParent() == header) {
-            // Keep the title and explanation together; move the control to its own row
-            // when enlarged text needs the full card width.
-            LinearLayout column = (LinearLayout) header;
-            LinearLayout row = new LinearLayout(root.getContext());
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            column.removeView(icon);
-            column.removeView(body);
-            column.removeView(back);
-            row.addView(back);
-            row.addView(icon);
-            row.addView(body);
-            column.setOrientation(LinearLayout.VERTICAL);
-            column.addView(row, 0, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            LinearLayout.LayoutParams controlParams = (LinearLayout.LayoutParams)
-                    control.getLayoutParams();
-            controlParams.gravity = android.view.Gravity.END;
-            controlParams.setMarginStart(0);
-            controlParams.topMargin = Math.round(8 * density);
-            control.setLayoutParams(controlParams);
-        }
     }
 
     public static View view(View root) {
