@@ -78,6 +78,14 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
     }
 
+    @Test public void floatingContractNumbersKeepTheirAcknowledgementDigest() throws Exception {
+        JSONObject document=new JSONObject().put("whole",1.0f).put("negativeZero",-0.0).put("fraction",0.2f).put("large",Long.MAX_VALUE);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",document,false,1);
+        exchange(false,false);assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE).changes.isEmpty());
+        JSONObject received=dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active");
+        assertEquals(1,received.getInt("whole"));assertEquals(0.2,received.getDouble("fraction"),0.00001);assertEquals(Long.MAX_VALUE,received.getLong("large"));
+    }
+
     @Test public void disconnectAfterCommitBeforeAckReplaysWithoutDuplicatingData() throws Exception {
         sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",7),false,1000);
         assertThrows(IOException.class, () -> exchange(false,true));
@@ -118,6 +126,17 @@ public class RemoteSessionAndroidTest {
         assertEquals(0,dh.prepares);assertEquals(0,sh.prepares);
     }
 
+    @Test public void revokedDomCanNotifyAnActiveSubWithoutWaitingForItToInitiate() throws Exception {
+        dom.revoke(st.localIdentity(),generation);
+        Future<?> receive=server.submit(()->{try(PeerTransport.Connection incoming=st.accept(10_000)) {
+            JSONObject first=RemoteProtocol.read(incoming.input());new RemoteSession(sub,st,sh).receiveRevocation(incoming,first,System.nanoTime()+TimeUnit.SECONDS.toNanos(20));
+        }catch(Exception failure){throw new RuntimeException(failure);}});
+        try(PeerTransport.Connection outgoing=dt.connect(st.localIdentity(),st.inviteRoute(),10_000)) {
+            new RemoteSession(dom,dt,dh).sendRevocation(outgoing,dom.peer(st.localIdentity(),generation),System.nanoTime()+TimeUnit.SECONDS.toNanos(20));
+        }
+        receive.get(25,TimeUnit.SECONDS);assertEquals(RemoteStore.State.REVOKED,sub.peer(dt.localIdentity(),generation).state);
+        assertEquals("true",dom.metadata(st.localIdentity(),generation,"revocation_delivered","false"));
+    }
     private void exchange(boolean domInitiates,boolean dropAck) throws Exception {
         PeerTransport source=domInitiates?dt:st,target=domInitiates?st:dt;
         RemoteStore sourceStore=domInitiates?dom:sub,targetStore=domInitiates?sub:dom;

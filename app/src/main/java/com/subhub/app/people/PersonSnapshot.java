@@ -8,9 +8,9 @@ import java.util.Set;
 
 /** Immutable, presentation-ready data. Connection and data freshness are separate facts. */
 public final class PersonSnapshot {
-    public enum Connection { LOCAL, UNPAIRED, PENDING, CONNECTED, OFFLINE, REVOKED, ERROR }
+    public enum Connection { LOCAL, UNPAIRED, PENDING, PAIRED, CONNECTED, OFFLINE, REVOKED, ERROR }
     public enum Freshness { CURRENT, STALE, UNKNOWN }
-    public enum Capability { VIEW_CONTRACT, EDIT_CONTRACT, VIEW_STATS, MANAGE_CONNECTION }
+    public enum Capability { VIEW_CONTRACT, EDIT_CONTRACT, VIEW_STATS, MANAGE_CONNECTION, END_SESSION }
 
     public final PersonId id;
     public final String name, device, contractName, serviceLabel, currency;
@@ -24,6 +24,7 @@ public final class PersonSnapshot {
     public final int sessions;
     public final boolean serviceActive;
     public final SyncState sync;
+    public final String sessionIdentity;
 
     public PersonSnapshot(PersonId id, String name, String device, String contractName,
             String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
@@ -41,6 +42,16 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync) {
+        this(id,name,device,contractName,serviceLabel,connection,freshness,lastSyncedAt,capabilities,sections,
+                allowances,currency,protectedSeconds,activityEvents,tributeCents,sessions,serviceActive,sync,"");
+    }
+
+    public PersonSnapshot(PersonId id, String name, String device, String contractName,
+            String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
+            Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
+            String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
+            boolean serviceActive, SyncState sync, String sessionIdentity) {
+        this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
         this.id = java.util.Objects.requireNonNull(id);
         this.name = java.util.Objects.requireNonNull(name);
         this.device = device;

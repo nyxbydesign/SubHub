@@ -33,13 +33,15 @@ public final class CommitmentManager {
     }
 
     /** Selects once; neither UI recreation nor reboot draws another duration. */
-    public static synchronized boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
+    public static boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         if (isActive(context)) return false;
         long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
         long now = System.currentTimeMillis();
         long endsAt = now + duration;
         boolean saved = preferences(context).edit()
                 .putLong(KEY_STARTED_AT, now)
+                .putString("commitment_session_identity",java.util.UUID.randomUUID().toString())
                 .putLong(KEY_ENDS_AT, endsAt)
                 .putLong(KEY_DURATION, duration)
                 .putBoolean("commitment_hide_countdown", hideCountdown)
@@ -53,6 +55,7 @@ public final class CommitmentManager {
         reinforceProtection(context);
         HardcoreAutoPayManager.schedule(context);
         return true;
+            }
     }
 
     /** Compatibility for older callers; keeper codes are no longer part of a pact. */
@@ -130,8 +133,9 @@ public final class CommitmentManager {
     }
 
     static void expire(Context context) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         preferences(context).edit()
-                .remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
+                .remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
                 .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                 .remove("commitment_ends_elapsed").remove("commitment_boot")
                 .remove(KEY_SALT).remove(KEY_HASH).apply();
@@ -140,6 +144,7 @@ public final class CommitmentManager {
         context.stopService(new Intent(context, ScreenCaptureService.class));
         ResumeNotificationManager.cancel(context);
         HardcoreAutoPayManager.cancel(context);
+            }
     }
 
     private static SharedPreferences preferences(Context context) {

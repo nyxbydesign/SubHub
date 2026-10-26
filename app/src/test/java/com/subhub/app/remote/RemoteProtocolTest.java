@@ -28,6 +28,16 @@ public class RemoteProtocolTest {
         assertEquals(a.digest(), RemoteProtocol.Ack.parse(new RemoteProtocol.Ack(parsed).json()).digest);
     }
 
+    @Test public void numericDigestSurvivesRealJsonWireNormalization() throws Exception {
+        RemoteProtocol.Batch before=batch("{\"whole\":1.0,\"negativeZero\":-0.0,\"fraction\":0.2,\"exponent\":1e20,\"large\":9223372036854775807,\"nested\":[1.2500,0.0001]}");
+        ByteArrayOutputStream output=new ByteArrayOutputStream();RemoteProtocol.write(output,before.json());
+        RemoteProtocol.Batch after=RemoteProtocol.Batch.parse(RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray())));
+        assertEquals(before.digest(),after.digest());assertEquals(before.digest(),new RemoteProtocol.Ack(after).digest);
+        assertEquals(RemoteProtocol.canonical(new JSONObject().put("value",1.0f)),RemoteProtocol.canonical(new JSONObject().put("value",1)));
+        assertEquals("0",RemoteProtocol.canonical(-0.0));assertThrows(IllegalArgumentException.class,()->RemoteProtocol.canonical(Double.NaN));
+        assertThrows(IllegalArgumentException.class,()->RemoteProtocol.canonical(new java.math.BigDecimal("1e-1000000")));
+    }
+
     @Test public void compressedAndUncompressedFramesCanShareAStream() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         RemoteProtocol.write(output, new JSONObject().put("version", 1).put("text", "short"));

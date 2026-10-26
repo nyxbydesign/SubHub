@@ -135,6 +135,19 @@ public class RemoteConfigurationAndroidTest {
         assertFalse(main().getBoolean("module_censor_enabled",true));assertFalse(new File(root,"writer/journal.json").exists());
         assertThrows(SecurityException.class,()->sub.commandResult(DOM,generation,command,RemoteStore.CommandState.REJECTED,null,"later failure"));
     }
+    @Test public void removedArtworkDoesNotReactivateLocalSelectionsAndMetadataSurvivesUnpair() throws Exception {
+        seed();main().edit().putString(com.subhub.app.capture.CustomImageManager.PREFS_KEY,"[{\"id\":\"old\",\"enabled\":true}]")
+            .putStringSet(com.subhub.app.popup.PopupStormSettings.K_FOLDERS,Set.of("content://local-only")).commit();
+        JSONObject doc=configuration();doc.getJSONObject("contract").put("name","Retained contract");
+        RemoteStore.Command command=deliver(doc);RemoteConfigurationWriter live=new RemoteConfigurationWriter(context,sub);
+        live.apply(sub.peer(DOM,generation),command,assets,Set.of());
+        assertEquals("[]",main().getString(com.subhub.app.capture.CustomImageManager.PREFS_KEY,""));
+        assertTrue(main().getStringSet(com.subhub.app.popup.PopupStormSettings.K_FOLDERS,Set.of("fallback")).isEmpty());
+        sub.revoke(DOM,generation);RemoteContracts contracts=new RemoteContracts(context,sub,live);
+        assertEquals("Retained contract",contracts.localApplied().getJSONObject("contract").getString("name"));
+        main().edit().putBoolean("module_censor_enabled",true).commit();assertNull(contracts.localApplied());
+        assertEquals("credential",main().getString("paypal_secret_fixture",""));
+    }
     private RemoteConfigurationWriter writer(){return new RemoteConfigurationWriter(context,sub,(name,editor)->editor.commit(),new File(root,"writer"));}
     private RemoteStore.Command deliver(JSONObject doc) throws Exception {
         RemoteStore.Command queued=dom.queueConfiguration(SUB,generation,0,0,doc);RemoteProtocol.Batch batch=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONFIGURATION);

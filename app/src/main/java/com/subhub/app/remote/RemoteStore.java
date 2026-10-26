@@ -447,6 +447,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if(batch.stream!=RemoteProtocol.Stream.CONFIGURATION)return;
         for(RemoteProtocol.Change row:batch.changes) {
             String id=new JSONObject(row.body).optString("id","");
+            if(row.key.startsWith("end:"))RemoteEndCommands.markSent(this,identity,batch.generation,id);
             getWritableDatabase().execSQL("UPDATE commands SET status='SENT' WHERE peer=? AND generation=? AND id=? AND status='QUEUED'",new Object[]{identity,batch.generation,id});
         }
     }

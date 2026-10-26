@@ -115,8 +115,9 @@ public final class PersonUi {
         text(card, parent.getContext().getString(R.string.role_app_time), true);
         for (PersonSnapshot.Allowance value : snapshot.allowances) {
             row(card, R.drawable.ic_nav_limits, value.label,
-                    parent.getContext().getString(R.string.role_allowance_usage,
+                    value.usedMillis < 0 ? parent.getContext().getString(R.string.remote_daily_allowance, value.dailyMinutes) : parent.getContext().getString(R.string.role_allowance_usage,
                             value.usedMillis / 60_000L, value.dailyMinutes), null);
+            if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);
             long maximum = value.dailyMinutes * 60_000L;
@@ -131,6 +132,7 @@ public final class PersonUi {
         switch (person.connection) {
             case LOCAL: return context.getString(R.string.role_local_data);
             case PENDING: return context.getString(R.string.role_connection_pending);
+            case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
             case OFFLINE: return context.getString(R.string.role_connection_offline);
             case REVOKED: return context.getString(R.string.role_connection_revoked);

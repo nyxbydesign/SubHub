@@ -40,9 +40,11 @@ public final class AppModeManager {
     }
 
     public void setArmed(boolean armed) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         boolean wasArmed = isArmed();
         preferences.edit().putBoolean(KEY_ARMED, armed).commit();
         syncProtectionSession(wasArmed, armed);
+            }
     }
 
     /** Effective runtime scope; All Apps never changes the saved checkbox selection. */
@@ -102,6 +104,7 @@ public final class AppModeManager {
     }
 
     public void save(boolean armed, Set<String> packages) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         boolean wasArmed = isArmed();
         synchronized (AppModeManager.class) {
         preferences.edit()
@@ -114,6 +117,7 @@ public final class AppModeManager {
                 .commit();
         }
         syncProtectionSession(wasArmed, armed);
+            }
     }
 
     private void migrateAppSelection() {

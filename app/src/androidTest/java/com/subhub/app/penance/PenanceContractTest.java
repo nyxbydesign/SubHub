@@ -32,6 +32,8 @@ import java.util.Map;
 
 @RunWith(AndroidJUnit4.class)
 public final class PenanceContractTest {
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation =
+            new com.subhub.app.UiAutomationStateRule();
     private Context context;
     private PenanceManager manager;
 
@@ -433,9 +435,26 @@ public final class PenanceContractTest {
             });
         }
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity(activity -> assertEquals(View.VISIBLE,
-                    activity.findViewById(R.id.sub_wallet_card).getVisibility()));
+        long now = System.currentTimeMillis();
+        manager.configure(true, 100, 500, 2_000, 0);
+        assertEquals(100, manager.recordStrikes(1, now));
+        new PaidPauseManager(context).configure(true, 375, 12);
+        CommitmentManager.start(context, 60L * 60L * 1000L);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(
+                new android.content.Intent(context, MainActivity.class).setAction(android.content.Intent.ACTION_MAIN))) {
+            scenario.onActivity(activity -> {
+                View service = activity.findViewById(R.id.home_service_widget);
+                View pay = activity.findViewById(R.id.sub_wallet_pay);
+                View pause = activity.findViewById(R.id.sub_wallet_pause);
+                assertTrue(service.isShown());
+                assertEquals(service, pay.getParent());
+                assertEquals(service, pause.getParent());
+                assertEquals(View.VISIBLE, pay.getVisibility());
+                assertEquals(View.VISIBLE, pause.getVisibility());
+                assertTrue(pause.isEnabled());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
+                assertFalse(activity.findViewById(R.id.sub_dashboard).isShown());
+            });
         }
     }
 

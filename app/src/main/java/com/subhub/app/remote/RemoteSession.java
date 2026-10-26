@@ -42,7 +42,8 @@ public final class RemoteSession {
         send(connection,message("hello",peer).put("route",transport.inviteRoute()),deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
-            store.revoke(peer.identity,peer.generation);return;
+            requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
+            send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
         exchange(connection,peer,deadlineNanos);
@@ -53,7 +54,8 @@ public final class RemoteSession {
         String generation=RemoteProtocol.identifier(hello.getString("generation"));
         RemoteStore.Peer peer=store.peer(identity,generation);
         if(peer!=null && peer.state==RemoteStore.State.REVOKED) {
-            send(connection,message("revoked",peer),deadlineNanos);return;
+            send(connection,message("revoked",peer),deadlineNanos);
+            terminalDrain(connection,"revoked_ack",peer,deadlineNanos);return;
         }
         requirePeer(connection,peer);requireType(hello,"hello",peer);
         store.setRoute(identity,generation,hello.getString("route"));
@@ -61,24 +63,47 @@ public final class RemoteSession {
         exchange(connection,peer,deadlineNanos);
     }
 
+    public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+        if(peer.state!=RemoteStore.State.REVOKED || !peer.identity.equals(connection.authenticatedPeerIdentity()))throw new SecurityException("Invalid revocation target");
+        send(connection,message("revoke",peer),deadline);requireType(read(connection,deadline),"revoke_ack",peer);
+        store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
+        try{send(connection,message("revoke_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Revocation receipt is already durable. */}
+    }
+    public void receiveRevocation(PeerTransport.Connection connection,JSONObject frame,long deadline) throws Exception {
+        RemoteStore.Peer peer=store.peer(connection.authenticatedPeerIdentity(),RemoteProtocol.identifier(frame.getString("generation")));
+        if(peer==null)throw new SecurityException("Unknown relationship");requireType(frame,"revoke",peer);
+        store.revoke(peer.identity,peer.generation);store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
+        send(connection,message("revoke_ack",peer),deadline);terminalDrain(connection,"revoke_complete",peer,deadline);
+    }
+
+    private void terminalDrain(PeerTransport.Connection connection,String type,RemoteStore.Peer peer,long deadline)throws Exception {
+        // A QUIC connection close can overtake buffered stream bytes. Keep the reply alive until its receipt.
+        try{requireType(read(connection,deadline),type,peer);}catch(IOException closedAfterReply){/* The terminal application state is already committed. */}
+    }
+
     private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
             push(connection,peer,deadline);
             pull(connection,peer,deadline);
-            send(connection,message("done",peer),deadline);
+            send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
+            try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
             pull(connection,peer,deadline);
             hooks.prepare(peer);
             push(connection,peer,deadline);
-            requireType(read(connection,deadline),"done",peer);
+            requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());
     }
 
     private void push(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
         int batches=0;
-        for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
+        // Historical pagination must not delay current state or an application result.
+        for(RemoteProtocol.Stream stream:new RemoteProtocol.Stream[]{RemoteProtocol.Stream.CONFIGURATION,
+                RemoteProtocol.Stream.COMMAND_RESULT,RemoteProtocol.Stream.RUNTIME,RemoteProtocol.Stream.BASELINE,
+                RemoteProtocol.Stream.CONTRACTS,RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.APP_CATALOG,
+                RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE}) {
             if(stream.writer!=peer.localRole) continue;
             while(batches<MAX_BATCHES) {
                 checkActive(peer);

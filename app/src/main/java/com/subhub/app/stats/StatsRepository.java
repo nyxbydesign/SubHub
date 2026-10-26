@@ -80,6 +80,7 @@ public final class StatsRepository {
     }
 
     public void startSession() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs != 0) return;
@@ -88,6 +89,7 @@ public final class StatsRepository {
             SEEN_TRACK_IDS.clear();
             writeDaily(preferences.edit()
                     .putLong(KEY_ACTIVE_SESSION_START, sessionStartMs)
+                    .putString("active_session_identity",java.util.UUID.randomUUID().toString())
                     .putInt(KEY_ACTIVE_SESSION_BLOCKS, 0)
                     .putLong(KEY_ACTIVE_SESSION_SUBLIMINALS, 0L)
                     .putLong(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS, 0L)
@@ -102,6 +104,7 @@ public final class StatsRepository {
             updateStreak();
             DailyDurationRecorder.changed();
         }
+            }
     }
 
     public boolean onTracks(List<TrackedObject> tracks) {
@@ -147,6 +150,7 @@ public final class StatsRepository {
     }
 
     public void endSession() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs == 0) return;
@@ -169,7 +173,7 @@ public final class StatsRepository {
                     activeLong(KEY_ACTIVE_SESSION_SUBLIMINALS),
                     activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS),
                     activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS)));
-            preferences.edit().remove(KEY_ACTIVE_SESSION_START)
+            preferences.edit().remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START)
                     .remove(KEY_ACTIVE_SESSION_BLOCKS)
                     .remove(KEY_ACTIVE_SESSION_SUBLIMINALS)
                     .remove(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS)
@@ -184,6 +188,7 @@ public final class StatsRepository {
             SEEN_TRACK_IDS.clear();
             DailyDurationRecorder.changed();
         }
+            }
     }
 
     public StatsSnapshot load() {
@@ -238,7 +243,7 @@ public final class StatsRepository {
         // Discard impossible/corrupt timestamps instead of displaying an unbounded timer.
         if (stored <= 0 || stored > now
                 || now - stored > 366L * 24L * 60L * 60L * 1000L) {
-            if (stored != 0) preferences.edit().remove(KEY_ACTIVE_SESSION_START)
+            if (stored != 0) preferences.edit().remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START)
                     .remove(KEY_ACTIVE_SESSION_BLOCKS).apply();
             return;
         }

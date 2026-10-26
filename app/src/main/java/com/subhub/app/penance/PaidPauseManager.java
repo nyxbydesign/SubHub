@@ -89,16 +89,19 @@ public final class PaidPauseManager {
 
     /** Called only after the matching checkout is recorded as paid. */
     public boolean activate() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         if (!canPurchase()) return false;
         boolean rearm = isProtectionRunning();
         long until = System.currentTimeMillis() + getDurationMinutes() * 60_000L;
         preferences.edit().putLong(KEY_ACTIVE_UNTIL, until)
+                .putString("paid_pause_session_identity",java.util.UUID.randomUUID().toString())
                 .putBoolean(KEY_REARM, rearm).commit();
         new AppModeManager(context).setArmed(false);
         context.stopService(new Intent(context, ScreenCaptureService.class));
         ResumeNotificationManager.cancel(context);
         schedule(until);
         return true;
+            }
     }
 
     public void applyBootPolicy() {
@@ -109,14 +112,16 @@ public final class PaidPauseManager {
     }
 
     public void finish() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         boolean rearm = preferences.getBoolean(KEY_REARM, false);
-        preferences.edit().remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
+        preferences.edit().remove("paid_pause_session_identity").remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
         cancel();
         if (rearm && (CommitmentManager.isActive(context)
                 || new HardcoreModeManager(context).isEnabled())) {
             new AppModeManager(context).setArmed(true);
             ResumeNotificationManager.show(context);
         }
+            }
     }
 
     private boolean isProtectionRunning() {

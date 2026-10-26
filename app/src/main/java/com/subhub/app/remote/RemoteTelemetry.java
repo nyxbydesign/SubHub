@@ -43,12 +43,12 @@ public final class RemoteTelemetry {
             publish(peer,RemoteProtocol.Stream.APP_USAGE,key,new JSONObject().put("schema",1).put("epoch",entry.epoch).put("day",entry.day)
                     .put("zone",entry.zone.isEmpty()?JSONObject.NULL:entry.zone).put("package",entry.packageName).put("millis",entry.millis));
         }
-        JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(apps.getIncludedPackages(),System.currentTimeMillis());
+        JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(timers.loadSettings().anyEnabled()?apps.getIncludedPackages():Collections.emptySet(),System.currentTimeMillis());
         for(Map.Entry<String,AppTimerManager.UsageSnapshot> entry:usage.entrySet())now.put(entry.getKey(),entry.getKey().isEmpty()?entry.getValue().totalUsedMillis:entry.getValue().appUsedMillis);
-        publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("millis",now));
+        publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("zone",java.time.ZoneId.systemDefault().getId()).put("millis",now));
         Set<String> catalog=new HashSet<>();
         for(InstalledAppCatalog.Entry entry:InstalledAppCatalog.load(context)) {
-            if(catalog.size()>=512)break;catalog.add(entry.packageName);
+            catalog.add(entry.packageName);
             String label=entry.label.length()>160?entry.label.substring(0,160):entry.label;
             publish(peer,RemoteProtocol.Stream.APP_CATALOG,entry.packageName,new JSONObject().put("schema",1).put("package",entry.packageName).put("label",label));
         }
@@ -61,12 +61,27 @@ public final class RemoteTelemetry {
         if(accessibility!=null)for(android.accessibilityservice.AccessibilityServiceInfo info:accessibility.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK))
             if(info.getResolveInfo()!=null && info.getResolveInfo().serviceInfo!=null && context.getPackageName().equals(info.getResolveInfo().serviceInfo.packageName))enabled=true;
         JSONObject runtime=new JSONObject().put("schema",1).put("observedAt",System.currentTimeMillis()).put("device",Build.MODEL)
-                .put("serviceActive",screen||recognition).put("screenCapture",screen).put("recognitionActive",recognition)
+                .put("serviceActive",com.subhub.app.appmode.RuntimeSessionIdentity.active(context)).put("endSessionSupported",true).put("sessionIdentity",com.subhub.app.appmode.RuntimeSessionIdentity.current(context)).put("screenCapture",screen).put("recognitionActive",recognition)
                 .put("accessibilityBound",ScreenshotAccessibilityService.isRunning()).put("accessibilityEnabled",enabled).put("overlayPermission",Settings.canDrawOverlays(context))
                 .put("notifications",Build.VERSION.SDK_INT<33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)
                 .put("armed",apps.isArmed()).put("paused",new PaidPauseManager(context).isActive()).put("sessionStart",session.getLong("active_session_start_ms",0))
                 .put("sessionEnd",main.getLong("commitment_ends_at",0)).put("appliedRevision",Long.parseLong(store.metadata(peer.identity,peer.generation,"applied_revision","0")));
         publish(peer,RemoteProtocol.Stream.RUNTIME,"current",runtime);
+    }
+    public static boolean validSummary(JSONObject value) {
+        String[] numeric={"protectedSeconds","serviceSeconds","sessions","activityEvents","censors","limitMillis","limitStops","whispers","popups","tamperEvents","tributes","assessedEUR","assessedUSD","paidEUR","paidUSD","currentSeconds","currentEvents","currentCensors","currentLimitMillis","currentLimitStops","currentWhispers","currentPopups","currentTributes","currentAssessedEUR","currentAssessedUSD"};
+        try{if(value==null || RemoteProtocol.integer(value,"schema")!=1 || !(value.get("currency") instanceof String))return false;
+            for(String key:numeric)if(RemoteProtocol.integer(value,key)<0)return false;return true;
+        }catch(JSONException|IllegalArgumentException invalid){return false;}
+    }
+    public static boolean validRuntime(JSONObject value) {
+        try{if(value==null || RemoteProtocol.integer(value,"schema")!=1 || !(value.get("device") instanceof String))return false;
+            for(String key:new String[]{"observedAt","sessionStart","sessionEnd","appliedRevision"})if(RemoteProtocol.integer(value,key)<0)return false;
+            for(String key:new String[]{"serviceActive","screenCapture","recognitionActive","accessibilityBound","accessibilityEnabled","overlayPermission","notifications","armed","paused"})if(!(value.get(key) instanceof Boolean))return false;
+            if(value.has("endSessionSupported") && !(value.get("endSessionSupported") instanceof Boolean))return false;
+            if(value.has("sessionIdentity") && (!(value.get("sessionIdentity") instanceof String) || !value.getString("sessionIdentity").matches("([0-9a-f]{64})?")))return false;
+            return true;
+        }catch(JSONException|IllegalArgumentException invalid){return false;}
     }
     private void publish(RemoteStore.Peer peer,RemoteProtocol.Stream stream,String key,JSONObject body) {
         store.publish(peer.identity,peer.generation,stream,key,body,false,System.currentTimeMillis());

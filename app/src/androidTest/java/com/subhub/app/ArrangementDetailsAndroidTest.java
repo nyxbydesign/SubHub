@@ -1,18 +1,13 @@
 package com.subhub.app;
 
-import static androidx.test.espresso.Espresso.onView;
-import static androidx.test.espresso.action.ViewActions.click;
-import static androidx.test.espresso.matcher.ViewMatchers.withId;
-import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static org.junit.Assert.*;
 
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Rect;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -30,6 +25,7 @@ import org.junit.*;
 
 /** Every arrangement stays visible; summaries describe configuration without an activity claim. */
 public class ArrangementDetailsAndroidTest {
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private SharedPreferences settings, wallet;
     private Map<String, ?> settingsBefore, walletBefore;
@@ -39,10 +35,28 @@ public class ArrangementDetailsAndroidTest {
         wallet = context.getSharedPreferences(PenanceManager.PREFS_NAME, 0);
         settingsBefore = settings.getAll(); walletBefore = wallet.getAll();
         new FeatureModuleManager(context).save(false, false, false, false);
+        settings.edit().putBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, false).commit();
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
         for (PenanceInfraction rule : PenanceInfraction.values())
             if (rule != PenanceInfraction.PAID_PAUSE) rules.put(rule, 125);
         new PenanceManager(context).configure(true, rules, 1000, 5000, 10, 15);
+        new com.subhub.app.penance.PaidPauseManager(context).configure(false, 375, 12);
+        java.util.Set<String> apps = java.util.Set.of("com.android.chrome", "com.android.settings");
+        for (String app : apps) {
+            try { context.getPackageManager().getApplicationInfo(app, 0); }
+            catch (android.content.pm.PackageManager.NameNotFoundException missing) {
+                throw new AssertionError("Capture fixture app missing: " + app, missing);
+            }
+        }
+        com.subhub.app.appmode.AppModeManager assigned = new com.subhub.app.appmode.AppModeManager(context);
+        assigned.setAllAppsEnabled(false);
+        assigned.saveIncludedPackages(apps);
+        com.subhub.app.appmode.AppTimerManager timers = new com.subhub.app.appmode.AppTimerManager(context);
+        timers.saveSettings(true, 30, true, 60);
+        timers.saveAllowances(apps, java.util.Map.of("com.android.chrome", 15, "com.android.settings", 40));
+        assertEquals(apps, assigned.getIncludedPackages());
+        assertEquals(15, timers.allowanceMinutes("com.android.chrome"));
+        assertEquals(40, timers.allowanceMinutes("com.android.settings"));
         ControllerPinManager.enterSubMode();
     }
 
@@ -52,49 +66,69 @@ public class ArrangementDetailsAndroidTest {
         ControllerPinManager.enterSubMode();
     }
 
-    @Test public void allFourRemainVisibleWithFiveOrZeroTributesAndReadableDetails() {
-        try (ActivityScenario<MainActivity> page = ActivityScenario.launch(
-                new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN))) {
-            page.onActivity(a -> {
-                assertEquals("5 Tributes", ((TextView) a.findViewById(R.id.sub_wallet_voice)).getText().toString());
-                assertCards(a);
-            });
-            int[] cards = {R.id.sub_censor_card, R.id.sub_limits_card, R.id.sub_wallet_card, R.id.sub_atmosphere_card};
-            String[] names = {"censor", "limits", "wallet", "rituals"};
-            for (int i = 0; i < cards.length; i++) {
-                final int card = cards[i];
-                final String name = names[i];
-                page.onActivity(a -> a.findViewById(card).performClick());
-                onView(withId(R.id.arrangement_detail_close)).inRoot(isDialog()).check((view, error) -> {
-                    if (error != null) throw error;
-                    View root = view.getRootView();
-                    Rect close = new Rect(), body = new Rect();
-                    assertTrue(view.getGlobalVisibleRect(close));
-                    assertTrue(root.findViewById(R.id.arrangement_detail_body).getGlobalVisibleRect(body));
-                    assertTrue(body.bottom <= close.top);
-                    assertTrue(view.getHeight() >= Math.round(48 * view.getResources().getDisplayMetrics().density));
-                    Bitmap image = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
-                    root.draw(new Canvas(image));
-                    try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "followup-arrangement-" + name + ".png"))) {
-                        assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, out));
-                    } catch (Exception failure) { throw new AssertionError(failure); }
-                    finally { image.recycle(); }
-                });
-                onView(withId(R.id.arrangement_detail_close)).inRoot(isDialog()).perform(click());
-            }
+    @Test public void allFourContractSectionsRemainWithFiveOrZeroTributesAndReadableDetails() {
+        try (ActivityScenario<com.subhub.app.people.ContractActivity> page =
+                ActivityScenario.launch(com.subhub.app.people.ContractActivity.class)) {
+            awaitContract(page);
+            page.onActivity(a -> assertSections(a, 5));
             new PenanceManager(context).configure(false, java.util.Collections.emptyMap(), 1000, 5000, 10, 15);
             page.recreate();
-            page.onActivity(a -> {
-                assertCards(a);
-                assertEquals("0 Tributes", ((TextView) a.findViewById(R.id.sub_wallet_voice)).getText().toString());
-            });
+            awaitContract(page);
+            page.onActivity(a -> assertSections(a, 0));
         }
     }
 
-    private static void assertCards(MainActivity a) {
-        for (int id : new int[] {R.id.sub_censor_card, R.id.sub_limits_card, R.id.sub_wallet_card, R.id.sub_atmosphere_card})
-            assertEquals(View.VISIBLE, a.findViewById(id).getVisibility());
-        for (int id : new int[] {R.id.sub_censor_voice, R.id.sub_limits_summary, R.id.sub_wallet_voice, R.id.sub_atmosphere_status})
-            assertFalse(((TextView) a.findViewById(id)).getText().toString().toLowerCase(java.util.Locale.ROOT).contains("active"));
+    private void assertSections(com.subhub.app.people.ContractActivity activity, int expectedRules) {
+        View content = activity.findViewById(R.id.role_page_body);
+        String visible = text(content);
+        com.subhub.app.people.PersonSnapshot snapshot = new com.subhub.app.people.LocalPersonRepository(activity)
+                .load(com.subhub.app.people.PersonId.LOCAL);
+        assertEquals(4, snapshot.sections.size());
+        for (com.subhub.app.people.PersonSnapshot.Section section : snapshot.sections) {
+            assertTrue(visible.contains(section.title));
+            assertTrue(visible.contains(section.summary));
+            assertTrue(visible.contains(section.details));
+            assertFalse(section.summary.contains(activity.getString(R.string.role_service_active)));
+        }
+        assertEquals(activity.getString(R.string.role_disabled), snapshot.sections.get(0).summary);
+        assertEquals(activity.getResources().getQuantityString(R.plurals.sub_limits_selected, 3, 3),
+                snapshot.sections.get(1).summary);
+        assertEquals(expectedRules == 0 ? activity.getString(R.string.role_disabled)
+                : activity.getString(R.string.role_wallet_rule_count, expectedRules), snapshot.sections.get(2).summary);
+        assertEquals(activity.getResources().getQuantityString(R.plurals.atmosphere_effects_active, 0, 0),
+                snapshot.sections.get(3).summary);
+        View navigation = activity.findViewById(R.id.nav_contract);
+        assertTrue(navigation.isShown());
+        assertTrue(navigation.getHeight() >= Math.round(48 * activity.getResources().getDisplayMetrics().density));
+        assertEquals(15, new com.subhub.app.appmode.AppTimerManager(context).allowanceMinutes("com.android.chrome"));
+        assertEquals(40, new com.subhub.app.appmode.AppTimerManager(context).allowanceMinutes("com.android.settings"));
+        Bitmap image = Bitmap.createBitmap(content.getWidth(), content.getHeight(), Bitmap.Config.ARGB_8888);
+        content.draw(new Canvas(image));
+        try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),
+                "followup-contract-" + expectedRules + "-tributes.png"))) {
+            assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, out));
+        } catch (Exception failure) { throw new AssertionError(failure); }
+        finally { image.recycle(); }
+    }
+
+    private void awaitContract(ActivityScenario<com.subhub.app.people.ContractActivity> page) {
+        long until = android.os.SystemClock.uptimeMillis() + 5000;
+        java.util.concurrent.atomic.AtomicBoolean rendered = new java.util.concurrent.atomic.AtomicBoolean();
+        while (!rendered.get() && android.os.SystemClock.uptimeMillis() < until) {
+            page.onActivity(activity -> rendered.set(text(activity.findViewById(R.id.role_page_body))
+                    .contains(activity.getString(R.string.atmosphere_title))));
+            if (!rendered.get()) android.os.SystemClock.sleep(25);
+        }
+        assertTrue("Contract did not render", rendered.get());
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
+    private static String text(View view) {
+        String copy = view instanceof TextView ? ((TextView) view).getText().toString() : "";
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) copy += "\n" + text(group.getChildAt(index));
+        }
+        return copy;
     }
 }

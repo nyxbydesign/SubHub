@@ -13,11 +13,15 @@ public final class ProtectionSessionManager {
     private ProtectionSessionManager() {}
 
     public static void markMediaProjectionStarted(Context context) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, true).apply();
+            }
     }
 
     public static void markMediaProjectionExplicitlyStopped(Context context) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
         preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, false).apply();
+            }
     }
 
     public static boolean needsMediaProjectionResume(Context context) {
