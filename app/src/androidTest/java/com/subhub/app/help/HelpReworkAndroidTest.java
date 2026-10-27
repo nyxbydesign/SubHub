@@ -85,8 +85,8 @@ public final class HelpReworkAndroidTest {
                 limits.getChildAt(0).performClick();
                 assertEquals(View.GONE, limits.getChildAt(1).getVisibility());
                 assertTrue(((TextView) question(activity, "wallet").getChildAt(1)).getText()
-                        .toString().contains("no separate enable switch"));
-                assertTrue(((TextView) censor.getChildAt(1)).getText().toString().contains("Choose Off"));
+                        .toString().contains("no separate feature switch"));
+                assertTrue(((TextView) censor.getChildAt(1)).getText().toString().contains("or Off"));
                 assertEquals(activity.getString(R.string.help_rework_build,
                                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE),
                         ((TextView) activity.findViewById(R.id.help_build)).getText().toString());
