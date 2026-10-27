@@ -13,8 +13,8 @@
     android:orientation="horizontal"
     android:paddingStart="8dp"
     android:paddingEnd="8dp"
-    android:paddingTop="4dp"
-    android:paddingBottom="4dp">
+    android:paddingTop="5dp"
+    android:paddingBottom="5dp">
 
     <LinearLayout
         android:id="@+id/nav_home"
@@ -31,9 +31,9 @@
             android:text="@string/nav_home" />
     </LinearLayout>
 
-    <LinearLayout android:id="@+id/nav_people" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_people" android:visibility="gone">
+    <LinearLayout android:id="@+id/nav_people" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_your_subs" android:visibility="gone">
         <ImageView android:id="@+id/nav_people_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_people" />
-        <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_people" />
+        <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_your_subs" />
     </LinearLayout>
     <LinearLayout android:id="@+id/nav_activity" style="@style/Widget.SubHub.BottomTab"
         android:contentDescription="@string/dom_activity_title" android:visibility="gone">

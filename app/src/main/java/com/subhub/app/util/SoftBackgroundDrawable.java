@@ -23,7 +23,7 @@ public final class SoftBackgroundDrawable extends Drawable {
             Resources.Theme theme) throws XmlPullParserException, IOException {
         super.inflate(resources, parser, attrs, theme);
         BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inSampleSize = 8;
+        options.inSampleSize = 4;
         artwork = BitmapFactory.decodeResource(resources, R.drawable.subhub_background, options);
     }
 
