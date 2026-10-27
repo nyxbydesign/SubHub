@@ -115,9 +115,9 @@ public final class HomeFavoritesAndroidTest {
                 assertNotNull(sessions);
                 assertTrue(devices.isClickable());
                 assertTrue(sessions.isClickable());
-                assertTrue(contains(devices, "1 online · 1 offline"));
+                assertTrue(contains(devices, "2 online · 1 offline"));
                 assertTrue(contains(sessions, activity.getString(R.string.home_in_session)));
-                assertTrue("Only current active sessions count", contains(sessions, "1 / 2 Subs"));
+                assertTrue("Only current active sessions count", contains(sessions, "1 / 3 Subs"));
                 assertTrue("Stale session is explicitly unknown", contains(sessions, "1 unknown"));
                 TextView lastOnline = root.findViewWithTag("home_recent_connection:" + roster.get(1).id.value());
                 assertNotNull(lastOnline);
@@ -139,6 +139,37 @@ public final class HomeFavoritesAndroidTest {
         }
     }
 
+    @Test public void homeCountsLocalActiveSubAndDeduplicatesRemoteIdentity() {
+        PersonSnapshot remote = statusPerson(person('a', "Alex", 1), PersonSnapshot.Connection.CONNECTED,
+                true, PersonSnapshot.Freshness.CURRENT, System.currentTimeMillis());
+        PersonId nextGeneration = new PersonId("remote_" + String.join("", Collections.nCopies(64, "a")) + "_new_generation");
+        roster = new ArrayList<>(java.util.Arrays.asList(remote, copy(remote, nextGeneration, remote.connection)));
+        com.subhub.app.appmode.AppModeManager appMode = new com.subhub.app.appmode.AppModeManager(context);
+        appMode.setArmed(true);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            awaitTag(scenario, "home_devices");
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                assertTrue(contains(root.findViewWithTag("home_in_session"), "2 / 2 Subs"));
+                assertTrue(contains(root.findViewWithTag("home_devices"), "2 online · 0 offline"));
+                View tab = activity.findViewById(R.id.nav_people);
+                assertEquals("Subs", tab.getContentDescription().toString());
+                assertEquals("Subs", ((TextView) activity.findViewById(R.id.nav_people_label)).getText().toString());
+            });
+        } finally { appMode.setArmed(false); }
+    }
+    @Test public void homePreservesEmptyCountsWithoutLocalOrRemoteSubs() {
+        assertTrue(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.DOM_ONLY));
+        roster.clear();
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            awaitTag(scenario, "home_devices");
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                assertTrue(contains(root.findViewWithTag("home_in_session"), "0 / 0 Subs"));
+                assertTrue(contains(root.findViewWithTag("home_devices"), "0 online · 0 offline"));
+            });
+        }
+    }
     @Test public void longPressFavoritePersistsAndHomeHasOnlyIdentityNavigation() {
         PersonSnapshot favorite = roster.get(1);
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {

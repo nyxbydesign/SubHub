@@ -161,16 +161,18 @@ public final class RoleHomePresenter {
 
     private void homeSummary(List<PersonSnapshot> people) {
         int sessions = 0, subs = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
             if (person.connection == PersonSnapshot.Connection.REVOKED
                     || person.connection == PersonSnapshot.Connection.PENDING
                     || person.connection == PersonSnapshot.Connection.UNPAIRED) continue;
-            if (person.id.isLocal()) continue;
+            if (!counted.add(FavoriteSubStore.identity(person.id))) continue;
             subs++;
             if (person.sync.runtime == PersonSnapshot.Freshness.CURRENT) {
                 if (person.serviceActive) sessions++;
             } else unknownSessions++;
-            if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            if (person.connection == PersonSnapshot.Connection.LOCAL
+                    || person.connection == PersonSnapshot.Connection.CONNECTED) online++;
             else if (person.connection == PersonSnapshot.Connection.OFFLINE
                     || person.connection == PersonSnapshot.Connection.ERROR) offline++;
             else unknownDevices++;

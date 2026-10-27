@@ -88,6 +88,7 @@ public class RemoteActivityAndroidTest {
         assertEquals(1,receiving.load(null,20).entries.size());
     }
     @Test public void exactLookupAndPerPersonRecentWorkBeyondTheFirstFeedPage()throws Exception {
+        receiver.getWritableDatabase().delete("activity_source", null, null);
         long time=System.currentTimeMillis();for(int i=0;i<123;i++)sender.publish(DOM,generation,RemoteProtocol.Stream.EVENTS,"event_"+i,event("event_"+i,time+i),false,time+i);
         receiver.receive(SUB,sender.nextBatch(DOM,generation,RemoteProtocol.Stream.EVENTS));
         ActivityRepository.Page first=receiving.load(null,50);assertEquals(50,first.entries.size());assertNotNull(first.nextCursor);
@@ -99,6 +100,49 @@ public class RemoteActivityAndroidTest {
         RemoteProtocol.Batch replay=sender.nextBatch(DOM,generation,RemoteProtocol.Stream.EVENTS);
         receiver.revoke(SUB,generation);assertThrows(SecurityException.class,()->receiver.receive(SUB,replay));assertTrue(receiving.locate(oldest,20).entries.isEmpty());assertEquals(0,receiving.unreadCount());
         assertEquals(123,count(receiver,"activity_receipts"));
+    }
+    @Test public void combinedFeedPagesExistingLocalAndEligibleRemoteEvents() throws Exception {
+        receiver.getWritableDatabase().delete("activity_source", null, null);
+        long now = System.currentTimeMillis();
+        receiving.foreground("com.example.launcher", "com.example.local", true, now + 10);
+        drain(receiving);
+        receiver.receive(SUB, publish("remote_event", now));
+        ActivityRepository.Page first = receiving.load(null, 1);
+        assertEquals(1, first.entries.size());
+        assertNotNull(first.nextCursor);
+        ActivityRepository.Page second = receiving.load(first.nextCursor, 1);
+        assertEquals(1, second.entries.size());
+        assertNull(second.nextCursor);
+        Set<PersonId> people = new HashSet<>();
+        people.add(first.entries.get(0).personId); people.add(second.entries.get(0).personId);
+        assertEquals(new HashSet<>(Arrays.asList(PersonId.LOCAL, RemotePersonRepository.id(targetPeer))), people);
+        assertEquals(2, receiving.recent(null, 10).size());
+        ActivityEntry remoteEntry = first.entries.get(0).personId.isLocal() ? second.entries.get(0) : first.entries.get(0);
+        ActivityEntry localEntry = first.entries.get(0).personId.isLocal() ? first.entries.get(0) : second.entries.get(0);
+        ActivityRepository prior = ActivitySources.repository();
+        ActivitySources.install(receiving);
+        try (androidx.test.core.app.ActivityScenario<DomActivityActivity> screen =
+                androidx.test.core.app.ActivityScenario.launch(DomActivityActivity.class)) {
+            java.util.concurrent.atomic.AtomicBoolean shown = new java.util.concurrent.atomic.AtomicBoolean();
+            long deadline = android.os.SystemClock.uptimeMillis() + 8000;
+            do {
+                screen.onActivity(activity -> shown.set(
+                        activity.findViewById(com.subhub.app.R.id.dom_activity_list)
+                                .findViewWithTag("activity_entry:" + localEntry.key) != null
+                        && activity.findViewById(com.subhub.app.R.id.dom_activity_list)
+                                .findViewWithTag("activity_entry:" + remoteEntry.key) != null));
+                if (!shown.get()) android.os.SystemClock.sleep(50);
+            } while (!shown.get() && android.os.SystemClock.uptimeMillis() < deadline);
+            assertTrue("Both local and remote events appear on Activity", shown.get());
+        } finally { ActivitySources.install(prior); }
+        assertTrue(remoteEntry.unread);
+        receiving.markRead(Collections.singletonList(remoteEntry.key));
+        assertEquals(0, receiving.unreadCount());
+        assertEquals(remoteEntry.key, receiving.locate(remoteEntry.key, 10).entries.get(0).key);
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
+        assertEquals(1, receiving.load(null, 10).entries.size());
+        assertFalse(receiving.load(null, 10).entries.get(0).personId.isLocal());
     }
     @Test public void reconnectAndLimitLoopsDoNotDuplicateGenuineSourceTransitions()throws Exception {
         long now=System.currentTimeMillis()+1;

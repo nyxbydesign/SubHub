@@ -203,8 +203,10 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             String position=before.substring(6);long boundary="MAX".equals(position)?Long.MAX_VALUE:cursor(position);
             synchronized(store){return localPage(boundary,before,limit);}
         }
-        long boundary = cursor(before);
-        synchronized (store) { return page(boundary, before, limit, null); }
+        synchronized (store) {
+            if (before == null || before.startsWith("all:")) return allPage(before, limit);
+            return page(cursor(before), before, limit, null);
+        }
     }
 
     @Override public Page locate(String entryKey, int limit) throws Exception {
@@ -218,13 +220,59 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         }
         checkKey(entryKey);
         synchronized (store) {
-            try (Cursor row = store.getReadableDatabase().rawQuery("SELECT a.id FROM " + JOIN + " WHERE " + ELIGIBLE + " AND a.entry_key=?", new String[]{entryKey})) {
+            try (Cursor row = store.getReadableDatabase().rawQuery("SELECT a.id,a.received FROM " + JOIN + " WHERE " + ELIGIBLE + " AND a.entry_key=?", new String[]{entryKey})) {
                 if (!row.moveToFirst()) return new Page(Collections.emptyList(), null, null);
-                long boundary = Math.addExact(row.getLong(0), 1);return page(boundary, Long.toString(boundary), limit, null);
+                long boundary = Math.addExact(row.getLong(0), 1);
+                return allPage("all:" + row.getLong(1) + ":1:" + boundary, limit);
             }
         }
     }
 
+    private Page allPage(String requested, int limit) throws Exception {
+        long time = Long.MAX_VALUE, id = Long.MAX_VALUE;
+        int kind = 2;
+        if (requested != null) {
+            String[] parts = requested.split(":", -1);
+            if (parts.length != 4 || !"all".equals(parts[0])
+                    || !parts[1].matches("[0-9]{1,19}") || !parts[2].matches("[01]")
+                    || !parts[3].matches("[1-9][0-9]{0,18}"))
+                throw new IllegalArgumentException("Invalid activity cursor");
+            time = Long.parseLong(parts[1]); kind = Integer.parseInt(parts[2]); id = Long.parseLong(parts[3]);
+            if (time < 0 || id <= 0) throw new IllegalArgumentException("Invalid activity cursor");
+        }
+        String sql = "SELECT kind,row_id,sort_at,event_id,body,peer,generation,received,is_read FROM ("
+                + "SELECT 0 AS kind,id AS row_id,observed AS sort_at,event_id,body,NULL AS peer,"
+                + "NULL AS generation,observed AS received,1 AS is_read FROM activity_source WHERE ?='1' "
+                + "UNION ALL SELECT 1,a.id,a.received,a.event_id,a.body,a.peer,a.generation,a.received,a.is_read FROM "
+                + JOIN + " WHERE " + ELIGIBLE
+                + " AND NOT EXISTS (SELECT 1 FROM activity_receipts newer JOIN peers np "
+                + "ON np.peer=newer.peer AND np.generation=newer.generation "
+                + "WHERE np.local_role='DOM' AND np.state='ACTIVE' AND newer.peer=a.peer "
+                + "AND newer.event_id=a.event_id AND newer.id>a.id)) "
+                + "WHERE sort_at<CAST(? AS INTEGER) OR (sort_at=CAST(? AS INTEGER) AND "
+                + "(kind<CAST(? AS INTEGER) OR (kind=CAST(? AS INTEGER) AND row_id<CAST(? AS INTEGER)))) "
+                + "ORDER BY sort_at DESC,kind DESC,row_id DESC LIMIT " + (limit + 1);
+        String[] args = { DeviceRolePreferences.supportsSub(context) ? "1" : "0", Long.toString(time),
+                Long.toString(time), Integer.toString(kind), Integer.toString(kind), Long.toString(id) };
+        List<ActivityEntry> entries = new ArrayList<>();
+        String next = null;
+        try (Cursor rows = store.getReadableDatabase().rawQuery(sql, args)) {
+            while (rows.moveToNext()) {
+                if (entries.size() == limit) { next = entries.isEmpty() ? null : next; break; }
+                int rowKind = rows.getInt(0); long rowId = rows.getLong(1), sortAt = rows.getLong(2);
+                ActivityEvent event = RemoteActivityWire.decode(new JSONObject(rows.getString(4)));
+                if (rowKind == 0) entries.add(new ActivityEntry("local:" + rows.getString(3), PersonId.LOCAL,
+                        context.getString(R.string.role_this_device), clean(Build.MODEL), event,
+                        rows.getLong(7), false, localLabel(event.packageName)));
+                else entries.add(entry(store.peer(rows.getString(5), rows.getString(6)),
+                        RemoteActivityStore.entryKey(store.peer(rows.getString(5), rows.getString(6)), rows.getString(3)),
+                        rows.getString(4), rows.getLong(7), rows.getInt(8) == 0));
+                next = "all:" + sortAt + ":" + rowKind + ":" + rowId;
+            }
+            if (entries.size() < limit || rows.isAfterLast()) next = null;
+        }
+        return new Page(entries, next, requested);
+    }
     private Page page(long boundary, String requested, int limit, RemoteStore.Peer only) throws Exception {
         List<ActivityEntry> entries = new ArrayList<>();long last = 0;boolean more = false;
         String selection = ELIGIBLE + " AND a.id<?";List<String> args = new ArrayList<>();args.add(Long.toString(boundary));
@@ -265,7 +313,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                             && RemotePersonRepository.id(candidate).equals(person)) { peer = candidate;break; }
                 if (peer == null) return Collections.emptyList();
             }
-            return page(Long.MAX_VALUE, null, limit, peer).entries;
+            return peer == null ? allPage(null, limit).entries : page(Long.MAX_VALUE, null, limit, peer).entries;
         }
     }
 
