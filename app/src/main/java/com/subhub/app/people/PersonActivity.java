@@ -251,33 +251,23 @@ public final class PersonActivity extends RolePage {
             PersonUi.text(body, getString(R.string.role_contract_unavailable), false);
             return;
         }
-        LinearLayout active = PersonUi.card(body);
-        ContractHeader.add(active, person, getString(R.string.role_active_contract), data);
-        if (person.sync.hasPendingConfiguration()) PersonUi.text(active,
-                getString(R.string.role_changes_pending), false);
-        freshness(active, person.sync.contract);
+
         boolean editable = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
                 && (person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
                         : ControllerPinManager.isDomModeActive() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
         PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+        if (person.sync.hasPendingConfiguration()) PersonUi.text(scope,
+                getString(R.string.role_changes_pending), false);
+        freshness(scope, person.sync.contract);
         PersonSnapshot.Section apps = contractSection(person, "apps");
-        if (apps != null) contractSection(scope, person, apps, editable);
-        else {
-            PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.person_apps_title),
-                    getString(R.string.role_unknown_data), editable ? () -> editSection(person, "apps") : null)
-                    .setTag("person_apps");
-        }
-        PersonSnapshot.Section duration = contractSection(person, "duration");
-        if (duration != null) contractSection(scope, person, duration, editable);
-        else {
-            LinearLayout row = PersonUi.row(scope, R.drawable.ic_nav_limits,
-                    getString(R.string.person_duration_title), person.id.isLocal()
-                            ? ServiceDurationSettings.label(this, true) : getString(R.string.role_unknown_data),
-                    editable ? () -> editSection(person, "duration") : null);
-            if (editable) row.setTag("person_duration");
-        }
+        TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
+        if (!editable) appsTitle.setTag("person_apps");
+        PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
+        if (apps != null && !apps.details.isEmpty()) PersonUi.text(scope, apps.details, false);
+        if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
+                () -> editSection(person, "apps"), false).setTag("person_apps");
         LinearLayout features = null;
         for (PersonSnapshot.Section value : person.sections) {
             if ("apps".equals(value.key) || "duration".equals(value.key)) continue;

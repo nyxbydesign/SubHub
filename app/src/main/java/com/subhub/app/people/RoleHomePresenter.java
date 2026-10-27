@@ -133,8 +133,8 @@ public final class RoleHomePresenter {
         List<Object> signature = new ArrayList<>();
         signature.add(favorites.identity());
         for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
-                person.id, person.name, person.device, person.connection, person.serviceLabel,
-                person.sync.runtime, person.sync.stats, person.protectedSeconds,
+                person.id, person.name, person.device, person.connection, person.lastSyncedAt,
+                person.serviceActive, person.serviceLabel, person.sync.runtime, person.sync.stats, person.protectedSeconds,
                 person.activityEvents, person.additionOrder);
         if (domPeople != null && domPeople.getParent() == domBody && signature.equals(renderedDom)) return;
         renderedDom = signature;
@@ -147,6 +147,7 @@ public final class RoleHomePresenter {
                 activity.startActivity(new Intent(activity, PeopleActivity.class));
         }, true).setTag("home_choose_favorite");
         else favoriteOverview(favorite);
+        homeSummary(people);
         List<PersonSnapshot> recent = recentAdditions(people, favorite);
         if (!recent.isEmpty()) {
             heading(domPeople, R.string.home_recent_additions, 0, null);
@@ -156,6 +157,55 @@ public final class RoleHomePresenter {
                 identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
             }
         }
+    }
+
+    private void homeSummary(List<PersonSnapshot> people) {
+        int sessions = 0, subs = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        for (PersonSnapshot person : people) {
+            if (person.connection == PersonSnapshot.Connection.REVOKED
+                    || person.connection == PersonSnapshot.Connection.PENDING
+                    || person.connection == PersonSnapshot.Connection.UNPAIRED) continue;
+            if (person.id.isLocal()) continue;
+            subs++;
+            if (person.sync.runtime == PersonSnapshot.Freshness.CURRENT) {
+                if (person.serviceActive) sessions++;
+            } else unknownSessions++;
+            if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            else if (person.connection == PersonSnapshot.Connection.OFFLINE
+                    || person.connection == PersonSnapshot.Connection.ERROR) offline++;
+            else unknownDevices++;
+        }
+        LinearLayout summaries = new LinearLayout(activity);
+        boolean stacked = activity.getResources().getConfiguration().screenWidthDp < 360
+                || activity.getResources().getConfiguration().fontScale >= 1.3f;
+        summaries.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        summaries.setBaselineAligned(false);
+        domPeople.addView(summaries, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout active = PersonUi.column(activity);
+        LinearLayout devices = PersonUi.column(activity);
+        for (LinearLayout tile : new LinearLayout[]{active, devices}) {
+            tile.setBackgroundResource(R.drawable.bg_home_composition_stat);
+            tile.setPadding(dp(14), dp(12), dp(14), dp(12));
+            LinearLayout.LayoutParams size = stacked ? new LinearLayout.LayoutParams(-1, -2)
+                    : new LinearLayout.LayoutParams(0, -1, 1);
+            size.bottomMargin = dp(10);
+            if (!stacked && tile == devices) size.setMarginStart(dp(10));
+            summaries.addView(tile, size);
+        }
+        active.setTag("home_in_session");
+        devices.setTag("home_devices");
+        PersonUi.text(active, activity.getString(R.string.home_in_session), true);
+        PersonUi.text(active, activity.getString(R.string.home_session_counts, sessions, subs), false);
+        if (unknownSessions > 0) PersonUi.text(active,
+                activity.getString(R.string.home_status_unknown, unknownSessions), false);
+        PersonUi.text(devices, activity.getString(R.string.home_devices), true);
+        PersonUi.text(devices, activity.getString(R.string.home_devices_counts, online, offline), false);
+        if (unknownDevices > 0) PersonUi.text(devices,
+                activity.getString(R.string.home_status_unknown, unknownDevices), false);
+        for (LinearLayout tile : new LinearLayout[]{active, devices}) clickable(tile, () -> {
+            if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                activity.startActivity(new Intent(activity, PeopleActivity.class));
+        });
     }
 
     private void ensureDomSections() {
@@ -224,10 +274,11 @@ public final class RoleHomePresenter {
         TextView device = text(ProfileViews.targetDiscriminator(activity, person), 12, false);
         copy.addView(device);
         TextView connection = text(PersonUi.connection(activity, person), favorite ? 12 : 11, false);
+        connection.setTag("home_recent_connection:" + person.id.value());
         if (person.connection == PersonSnapshot.Connection.CONNECTED)
             connection.setTextColor(activity.getColor(R.color.home_composition_current));
         copy.addView(connection);
-        if (!favorite) for (TextView label : new TextView[] {name, device, connection}) {
+        if (!favorite) for (TextView label : new TextView[] {name, device}) {
             label.setSingleLine(true);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
         }
@@ -259,21 +310,11 @@ public final class RoleHomePresenter {
                 if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
             }).setTag("home_assigned_dom_connection");
         }
-        data.cancel("contract-cover");
-        LinearLayout contract = card(subBody, R.drawable.bg_home_composition_person);
-        contract.setTag("home_active_contract");
-        ContractHeader.add(contract, person, activity.getString(R.string.role_active_contract), data);
-        clickable(contract, () -> {
-            if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class));
-        });
         usage(person, dom);
-        LinearLayout stats = card(subBody, R.drawable.bg_home_composition_stat);
-        PersonUi.row(stats, R.drawable.ic_nav_stats, activity.getString(R.string.role_stats),
-                person.sync.stats == PersonSnapshot.Freshness.UNKNOWN ? activity.getString(R.string.role_unknown_data)
-                        : StatsSnapshot.formatDuration(person.protectedSeconds) + " · " + person.activityEvents
-                                + " " + activity.getString(R.string.role_stat_activity), () -> {
-                    if (!domWorkspace()) activity.startActivity(new Intent(activity, StatsActivity.class));
-                });
+        com.subhub.app.stats.AchievementPreviewView achievements =
+                new com.subhub.app.stats.AchievementPreviewView(activity);
+        subBody.addView(achievements, new LinearLayout.LayoutParams(-1, -2));
+        achievements.load(data, "home-achievement-preview", new com.subhub.app.stats.StatsRepository(activity).load());
         TextView help = text(activity.getString(R.string.role_help_safety), 13, false);
         help.setTextColor(activity.getColor(R.color.accent_text));
         help.setGravity(Gravity.CENTER);
@@ -302,7 +343,14 @@ public final class RoleHomePresenter {
             String copy = value.usedMillis < 0
                     ? activity.getString(R.string.role_allowance_unknown, value.dailyMinutes)
                     : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.dailyMinutes);
-            PersonUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
+            LinearLayout row = PersonUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
+            row.setMinimumHeight(dp(48));
+            row.setPadding(0, dp(4), 0, dp(4));
+            if (!value.packageName.isEmpty()) try {
+                android.widget.ImageView icon = (android.widget.ImageView) row.getChildAt(0);
+                icon.setImageTintList(null);
+                icon.setImageDrawable(activity.getPackageManager().getApplicationIcon(value.packageName));
+            } catch (android.content.pm.PackageManager.NameNotFoundException ignored) { }
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);

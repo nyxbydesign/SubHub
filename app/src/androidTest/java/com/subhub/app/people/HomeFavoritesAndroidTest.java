@@ -99,6 +99,46 @@ public final class HomeFavoritesAndroidTest {
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(saved.getKey(), 0), saved.getValue());
     }
 
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void homeSummaryShowsOnlineAndOfflineDevices() throws Exception {
+        roster = new ArrayList<>(java.util.Arrays.asList(
+                statusPerson(person('a', "Alex", 1), PersonSnapshot.Connection.CONNECTED,
+                        true, PersonSnapshot.Freshness.CURRENT, System.currentTimeMillis()),
+                statusPerson(person('b', "Sam", 2), PersonSnapshot.Connection.OFFLINE,
+                        true, PersonSnapshot.Freshness.STALE, System.currentTimeMillis() - 7_200_000L)));
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            awaitTag(scenario, "home_devices");
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                View devices = root.findViewWithTag("home_devices");
+                View sessions = root.findViewWithTag("home_in_session");
+                assertNotNull(sessions);
+                assertTrue(devices.isClickable());
+                assertTrue(sessions.isClickable());
+                assertTrue(contains(devices, "1 online · 1 offline"));
+                assertTrue(contains(sessions, activity.getString(R.string.home_in_session)));
+                assertTrue("Only current active sessions count", contains(sessions, "1 / 2 Subs"));
+                assertTrue("Stale session is explicitly unknown", contains(sessions, "1 unknown"));
+                TextView lastOnline = root.findViewWithTag("home_recent_connection:" + roster.get(1).id.value());
+                assertNotNull(lastOnline);
+                assertTrue(lastOnline.getText().toString().contains("Last online"));
+                assertFalse(lastOnline.isSingleLine());
+            });
+            MainActivity home = resumed(MainActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                    home.findViewById(R.id.primary_header).setTag("home_header_capture"));
+            ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-header", "home_header_capture");
+            if (home.getResources().getConfiguration().fontScale < 1.3f) {
+                ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-presence", null);
+            } else {
+                ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-session", "home_in_session");
+                ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-devices", "home_devices");
+                ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-last-online",
+                        "home_recent_connection:" + roster.get(1).id.value());
+            }
+        }
+    }
+
     @Test public void longPressFavoritePersistsAndHomeHasOnlyIdentityNavigation() {
         PersonSnapshot favorite = roster.get(1);
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
@@ -211,7 +251,7 @@ public final class HomeFavoritesAndroidTest {
         assertTrue(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.SUB_ONLY));
         assertTrue(ControllerPinManager.isDomModeActive());
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
-            awaitTag(scenario, "home_active_contract");
+            awaitTag(scenario, "achievement_preview");
             scenario.onActivity(activity -> {
                 assertTrue("Device capabilities do not erase a local credential session", ControllerPinManager.isDomModeActive());
                 assertFalse(activity.findViewById(R.id.home_dom_overview).isShown());
@@ -362,6 +402,15 @@ public final class HomeFavoritesAndroidTest {
                         PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.CURRENT, "", ""), "", order);
     }
 
+    private static PersonSnapshot statusPerson(PersonSnapshot person, PersonSnapshot.Connection connection,
+            boolean active, PersonSnapshot.Freshness runtime, long lastContact) {
+        return new PersonSnapshot(person.id, person.name, person.device, person.contractName, person.serviceLabel,
+                connection, person.freshness, lastContact, person.capabilities, person.sections, person.allowances,
+                person.currency, person.protectedSeconds, person.activityEvents, person.tributeCents, person.sessions,
+                active, new PersonSnapshot.SyncState(person.sync.contract, person.sync.stats, runtime,
+                        person.sync.desiredRevision, person.sync.appliedRevision), person.sessionIdentity, person.additionOrder);
+    }
+
     private static PersonSnapshot withConnection(PersonSnapshot person, PersonSnapshot.Connection connection) {
         return copy(person, person.id, connection);
     }
@@ -421,6 +470,7 @@ public final class HomeFavoritesAndroidTest {
 
     private static void assertTextFits(View view, boolean compact) {
         if (view.getTag() instanceof String && ((String) view.getTag()).startsWith("home_recent_person:")) compact = true;
+        if (view.getTag() instanceof String && ((String) view.getTag()).startsWith("home_recent_connection:")) compact = false;
         if (view instanceof TextView) {
             TextView text = (TextView) view;
             assertNotNull(text.getLayout());

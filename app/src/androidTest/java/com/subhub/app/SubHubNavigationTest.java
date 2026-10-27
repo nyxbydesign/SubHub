@@ -469,7 +469,11 @@ public final class SubHubNavigationTest {
         int visible = 0, occupiedBottom = 0, singleRowWidth = 0;
         java.util.Set<Integer> rows = new java.util.HashSet<>();
         java.util.List<Rect> targets = new java.util.ArrayList<>();
-        assertEquals("Navigation spans its viewport", ((View) navigation.getParent()).getWidth(), navigation.getWidth());
+        View parent = (View) navigation.getParent();
+        int margin = navigation.getResources().getDimensionPixelSize(R.dimen.bottom_nav_margin);
+        assertEquals("Floating navigation has its intended left margin", margin, navigation.getLeft());
+        assertEquals("Floating navigation has its intended right margin", margin, parent.getWidth() - navigation.getRight());
+        assertEquals("Floating navigation width stays within its margins", parent.getWidth() - 2 * margin, navigation.getWidth());
         for (int index = 0; index < navigation.getChildCount(); index++) {
             ViewGroup tab = (ViewGroup) navigation.getChildAt(index);
             if (tab.getVisibility() != View.VISIBLE) continue;

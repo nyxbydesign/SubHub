@@ -12,18 +12,30 @@ import com.subhub.app.settings.SettingsActivity;
 /** All person-scoped routes retain the identity through navigation and action dispatch. */
 public final class PersonRoutes {
     public static final String EXTRA_PERSON_ID = "subhub.person.id";
+    private static String pendingSessionStart;
+    private static final String EXTRA_SESSION_START_TOKEN = "subhub.person.session.start";
     private PersonRoutes() {}
 
     public static void open(Context context, PersonId id) {
         context.startActivity(new Intent(context, PersonActivity.class).putExtra(EXTRA_PERSON_ID, id.value()));
     }
 
-    public static void openLocalSession(Context context, PersonId id) {
-        if (id == null || !id.isLocal()) return;
+    public static synchronized void openLocalSession(Context context, PersonId id) {
+        if (id == null || !id.isLocal() || !ControllerPinManager.isDomModeActive()) return;
+        pendingSessionStart = java.util.UUID.randomUUID().toString();
         context.startActivity(new Intent(context, com.subhub.app.MainActivity.class)
                 .setAction(Intent.ACTION_MAIN)
                 .putExtra(EXTRA_PERSON_ID, id.value())
+                .putExtra(EXTRA_SESSION_START_TOKEN, pendingSessionStart)
                 .putExtra(com.subhub.app.MainActivity.EXTRA_LOCAL_SESSION, true));
+    }
+
+    public static synchronized boolean consumeLocalSessionStart(Intent intent) {
+        String token = intent.getStringExtra(EXTRA_SESSION_START_TOKEN);
+        intent.removeExtra(EXTRA_SESSION_START_TOKEN);
+        if (token == null || !token.equals(pendingSessionStart)) return false;
+        pendingSessionStart = null;
+        return isLocalTarget(intent) && ControllerPinManager.isDomModeActive();
     }
 
     public static PersonId requireId(Intent intent) {

@@ -77,6 +77,9 @@ public final class PrimaryHeaderContractTest {
                         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
                 header.layout(0, 0, headerWidth, header.getMeasuredHeight());
                 assertTextFits(header, header.findViewById(R.id.primary_header_title));
+                TextView brand = header.findViewById(R.id.primary_header_brand);
+                assertEquals(themed.getString(R.string.app_name), brand.getText().toString());
+                assertTextFits(header, brand);
                 assertEquals(fontScale, header.getResources().getConfiguration().fontScale, 0.001f);
                 TextView title = header.findViewById(R.id.primary_header_title);
                 assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
@@ -97,6 +100,22 @@ public final class PrimaryHeaderContractTest {
                     assertEquals(dp(themed, 64), header.getHeight());
                 }
             }
+        }
+    }
+
+    @Test public void softenedBackgroundInflatesAndDrawsMoreThanOnce() {
+        for (int i = 0; i < 2; i++) {
+            android.graphics.drawable.Drawable background = context.getDrawable(R.drawable.bg_main);
+            assertTrue(background instanceof android.graphics.drawable.LayerDrawable);
+            android.graphics.drawable.Drawable artwork =
+                    ((android.graphics.drawable.LayerDrawable) background).getDrawable(0);
+            assertTrue(artwork instanceof com.subhub.app.util.SoftBackgroundDrawable);
+            android.graphics.Bitmap pixels = android.graphics.Bitmap.createBitmap(80, 120,
+                    android.graphics.Bitmap.Config.ARGB_8888);
+            background.setBounds(0, 0, 80, 120);
+            background.draw(new android.graphics.Canvas(pixels));
+            assertEquals(255, android.graphics.Color.alpha(pixels.getPixel(40, 60)));
+            pixels.recycle();
         }
     }
 
@@ -141,6 +160,7 @@ public final class PrimaryHeaderContractTest {
                     assertTextFits(header, PrimaryHeader.backButton(root));
                     assertTrue(PrimaryHeader.backButton(root).getHeight() >= dp(themed, 48));
                     assertTrue(PrimaryHeader.backButton(root).getWidth() >= dp(themed, 48));
+                    assertEquals("", PrimaryHeader.backButton(root).getText().toString());
                     assertEquals(root.getResources().getString(R.string.back),
                             PrimaryHeader.backButton(root).getContentDescription());
                     assertTrue(PrimaryHeader.backButton(root)

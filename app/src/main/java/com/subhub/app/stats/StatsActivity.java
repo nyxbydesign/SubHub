@@ -17,6 +17,7 @@ public final class StatsActivity extends PreferencePage {
     private DailyStatsPanel daily;
     private LinearLayout totalsDetails, sessionList, currentSession, allowances;
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
+    private AchievementPreviewView achievements;
     private boolean firstResume = true;
     private int sessionLimit = 3;
     private com.subhub.app.util.AsyncUiScope data;
@@ -55,8 +56,9 @@ public final class StatsActivity extends PreferencePage {
         sessionList.setTag("stats_session_history");
         totalsDetails = card(page);
         totalsDetails.setId(R.id.stats_totals_details);
-        button(page, getString(R.string.achievements_title), () -> startActivity(
-                new android.content.Intent(this, AchievementsActivity.class))).setId(R.id.stats_achievements);
+        achievements = new AchievementPreviewView(this);
+        achievements.setId(R.id.stats_achievements);
+        page.addView(achievements, new LinearLayout.LayoutParams(-1, -2));
         bindTotals();
         bindSessions();
         bindAllowances();
@@ -110,6 +112,7 @@ public final class StatsActivity extends PreferencePage {
     private void bindTotals() {
         StatsRepository repository = new StatsRepository(this);
         StatsSnapshot stats = repository.load();
+        achievements.load(data, "stats-achievement-preview", stats);
         lifetimeTime.setText(duration(stats.getTotalProtectedSeconds()));
         lifetimeCensors.setText(number(stats.getTotalBlocks()));
         lifetimeSessions.setText(number(stats.getSessions()));
