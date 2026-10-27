@@ -135,7 +135,12 @@ public final class PersonUi {
             case PENDING: return context.getString(R.string.role_connection_pending);
             case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
-            case OFFLINE: return context.getString(R.string.role_connection_offline);
+            case OFFLINE:
+                if (person.lastSyncedAt <= 0 || person.lastSyncedAt > System.currentTimeMillis())
+                    return context.getString(R.string.role_offline_last_online_unknown);
+                return context.getString(R.string.role_offline_last_online,
+                        android.text.format.DateUtils.getRelativeTimeSpanString(person.lastSyncedAt,
+                                System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);
             default: return context.getString(R.string.role_connection_unpaired);

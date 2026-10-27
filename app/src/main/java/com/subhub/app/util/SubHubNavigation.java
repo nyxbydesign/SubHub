@@ -245,7 +245,9 @@ public final class SubHubNavigation {
         int minimumTarget = navigation.getResources()
                 .getDimensionPixelSize(R.dimen.control_min_height);
         int horizontalPadding = navigation.getPaddingLeft() + navigation.getPaddingRight();
-        int contentWidth = Math.max(0, pageWidth - horizontalPadding);
+        int margin = Math.min(navigation.getResources().getDimensionPixelSize(R.dimen.bottom_nav_margin),
+                Math.max(0, (pageWidth - 3 * minimumTarget) / 2));
+        int contentWidth = Math.max(0, pageWidth - horizontalPadding - 2 * margin);
         int[] naturalWidths = new int[visibleTabs.size()];
         for (int index = 0; index < visibleTabs.size(); index++) {
             ViewGroup tab = (ViewGroup) visibleTabs.get(index);
@@ -273,10 +275,11 @@ public final class SubHubNavigation {
         if (tabs.getRowCount() < rows) tabs.setRowCount(rows);
         ViewGroup.MarginLayoutParams params =
                 (ViewGroup.MarginLayoutParams) navigation.getLayoutParams();
-        if (params.leftMargin != 0 || params.rightMargin != 0 || params.bottomMargin != 0) {
-            params.leftMargin = 0;
-            params.rightMargin = 0;
-            params.bottomMargin = 0;
+        int bottomMargin = navigation.getResources().getDimensionPixelSize(R.dimen.bottom_nav_bottom_margin);
+        if (params.leftMargin != margin || params.rightMargin != margin || params.bottomMargin != bottomMargin) {
+            params.leftMargin = margin;
+            params.rightMargin = margin;
+            params.bottomMargin = bottomMargin;
             navigation.setLayoutParams(params);
         }
         int extra = contentWidth - naturalWidth;
@@ -352,7 +355,7 @@ public final class SubHubNavigation {
                 ? R.color.accent_text : R.color.text_secondary));
         if (icon != null) ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(
                 activity.getColor(selected ? R.color.accent_text : R.color.text_secondary)));
-        tab.setBackgroundResource(R.drawable.bg_shell_tab);
+        tab.setBackgroundResource(R.drawable.bg_bottom_tab_active);
         if (label != null) {
             label.setSingleLine(false);
             label.setEllipsize(null);

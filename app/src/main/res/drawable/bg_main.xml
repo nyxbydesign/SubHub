@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item><shape>
-        <gradient android:angle="270" android:startColor="#1C1125" android:centerColor="@color/background"
-            android:endColor="#0E0914" />
-    </shape></item>
+    <item><drawable class="com.subhub.app.util.SoftBackgroundDrawable" /></item>
+    <item><shape><solid android:color="#700E0914" /></shape></item>
     <item><shape>
         <gradient android:type="radial" android:gradientRadius="420dp" android:centerX="0.05"
             android:centerY="0.05" android:startColor="#453E234F" android:endColor="#003E234F" />

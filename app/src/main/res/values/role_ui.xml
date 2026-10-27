@@ -71,8 +71,8 @@
     <string name="role_connection_unpaired">Not paired</string>
     <string name="role_connection_pending">Pairing pending</string>
     <string name="role_connection_paired">Paired</string>
-    <string name="role_connection_connected">Connected</string>
-    <string name="role_connection_offline">Paired · Offline</string>
+    <string name="role_connection_connected">Online</string>
+    <string name="role_connection_offline">Offline</string>
     <string name="role_connection_revoked">Pairing revoked</string>
     <string name="role_connection_error">Connection unavailable</string>
     <string name="role_last_synced">Last synced: %1$s</string>
@@ -94,4 +94,5 @@
     <string name="role_no_paired_devices">No devices paired</string>
     <string name="role_configured_by_dom">Configured by Dom</string>
     <string name="role_help_safety">Help &amp; safety</string>
+    <string name="person_add_more_apps">Add more</string>
 </resources>

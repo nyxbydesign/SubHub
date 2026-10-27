@@ -229,6 +229,13 @@ public final class MainActivity extends AppCompatActivity {
     private void handleShortcutIntent(Intent intent) {
         if (intent == null) return;
         if (!DeviceRolePreferences.supportsSub(this)) { intent.setAction(Intent.ACTION_MAIN); return; }
+        if (localSessionPage && com.subhub.app.people.PersonRoutes.consumeLocalSessionStart(intent)) {
+            binding.getRoot().post(() -> {
+                if (!localSessionPage || !ControllerPinManager.isDomModeActive()) return;
+                binding.commitmentStartPanel.reload();
+                toggleProtection(binding.buttonProtection);
+            });
+        }
         String action = intent.getAction();
         intent.setAction(Intent.ACTION_MAIN);
         if (AppShortcuts.ACTION_START_PROTECTION.equals(action)) {

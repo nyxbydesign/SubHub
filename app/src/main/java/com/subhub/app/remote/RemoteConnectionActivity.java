@@ -17,7 +17,8 @@ public final class RemoteConnectionActivity extends RemotePage {
     @Override protected void onPause(){resumed=false;codeRequest++;clock.removeCallbacks(poll);if(codeDialog!=null)codeDialog.dismiss();super.onPause();}
     private void render(){
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
-        String status=getString(feature.isConnected(peer)?R.string.role_connection_connected:peer.state==RemoteStore.State.REVOKED?R.string.role_connection_revoked:peer.state==RemoteStore.State.PENDING?R.string.role_connection_pending:R.string.remote_paired);
+        boolean online=PeerPresence.online(feature.isConnected(peer),peer.lastSyncedAt,System.currentTimeMillis());
+        String status=getString(peer.state==RemoteStore.State.REVOKED?R.string.role_connection_revoked:peer.state==RemoteStore.State.PENDING?R.string.role_connection_pending:online?R.string.role_connection_connected:R.string.role_connection_offline);
         if(codeDialog!=null&&(peer.state!=RemoteStore.State.ACTIVE||!com.subhub.app.security.ControllerPinManager.isDomModeActive()))codeDialog.dismiss();
         String signature=peer.state+":"+status+":"+peer.lastSyncedAt+":"+details+":"+com.subhub.app.security.ControllerPinManager.isDomModeActive();
         if(signature.equals(rendered))return;rendered=signature;body.removeAllViews();
@@ -27,7 +28,7 @@ public final class RemoteConnectionActivity extends RemotePage {
         String model=getString(R.string.remote_unknown);
         try{org.json.JSONObject runtime=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");if(RemoteTelemetry.validRuntime(runtime))model=runtime.optString("device",model);}catch(Exception unavailable){/* Keep unavailable source observations distinct from this phone. */}
         PersonUi.row(device,0,getString(R.string.role_device),model,null);
-        text(device,getString(R.string.role_last_synced,peer.lastSyncedAt==0?getString(R.string.remote_unknown):java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(peer.lastSyncedAt))),false);
+        text(device,getString(R.string.role_last_online,peer.lastSyncedAt<=0 || peer.lastSyncedAt>System.currentTimeMillis()?getString(R.string.remote_unknown):java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(peer.lastSyncedAt))),false);
         String error=feature.store.metadata(peer.identity,peer.generation,"connection_error","");if(!error.isEmpty())text(device,getString(R.string.remote_failure),false);
         if(peer.state==RemoteStore.State.ACTIVE){
             android.widget.LinearLayout shared=PersonUi.card(body);text(shared,getString(R.string.remote_shared_controls),true);

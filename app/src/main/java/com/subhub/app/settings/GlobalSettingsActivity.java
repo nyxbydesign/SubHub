@@ -85,8 +85,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             recreate();
         });
         body.addView(role, new LinearLayout.LayoutParams(-1, -2));
-        action(body, R.string.keyholder_home_title,
-                () -> startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class)))
+        action(body, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
                 .setId(R.id.settings_connections_security);
 
         heading(body, R.string.device_settings_privacy, "privacy");
@@ -139,6 +138,21 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonDiagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticsActivity.class)));
         PersonUi.text(help, getString(R.string.settings_build_summary, com.subhub.app.BuildConfig.VERSION_NAME,
                 com.subhub.app.BuildConfig.BUILD_DATE), false).setTag("settings_build_info");
+    }
+
+    private void openConnectionOrKeyholder() {
+        if (hasAssignedConnection()) com.subhub.app.people.People.connectionUi().openConnection(this, PersonId.LOCAL);
+        else startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
+    }
+
+    private boolean hasAssignedConnection() {
+        try {
+            com.subhub.app.security.KeyholderProvider.State state = com.subhub.app.people.People.keyholder().state();
+            return !DeviceRolePreferences.isDomWorkspace(this)
+                    && (state == com.subhub.app.security.KeyholderProvider.State.READY
+                        || state == com.subhub.app.security.KeyholderProvider.State.PENDING)
+                    && com.subhub.app.people.People.connectionUi() != null;
+        } catch (RuntimeException unavailable) { return false; }
     }
 
     private void heading(LinearLayout parent, int title, String key) {
@@ -195,6 +209,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
+        ((TextView) findViewById(R.id.settings_connections_security)).setText(
+                hasAssignedConnection() ? R.string.role_connection : R.string.keyholder_home_title);
         boolean local = DeviceRolePreferences.supportsSub(this);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);

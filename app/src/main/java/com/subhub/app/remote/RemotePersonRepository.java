@@ -25,7 +25,8 @@ public final class RemotePersonRepository implements PersonRepository {
         if(!RemoteTelemetry.validSummary(stats))stats=null;if(!RemoteTelemetry.validRuntime(runtime))runtime=null;
         PersonSnapshot.Freshness contract=freshness(peer,RemoteProtocol.Stream.BASELINE,configuration!=null,30*60_000),statistics=freshness(peer,RemoteProtocol.Stream.STATS,stats!=null,30*60_000),live=freshness(peer,RemoteProtocol.Stream.RUNTIME,runtime!=null,90_000);
         PersonSnapshot.Connection connection=peer.state==RemoteStore.State.REVOKED?PersonSnapshot.Connection.REVOKED:peer.state==RemoteStore.State.PENDING?PersonSnapshot.Connection.PENDING:
-                feature.isConnected(peer)?PersonSnapshot.Connection.CONNECTED:store.metadata(peer.identity,peer.generation,"connection_error","").isEmpty()?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
+                PeerPresence.online(feature.isConnected(peer),peer.lastSyncedAt,System.currentTimeMillis())?PersonSnapshot.Connection.CONNECTED:
+                peer.lastSyncedAt==0 && store.metadata(peer.identity,peer.generation,"connection_error","").isEmpty()?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
         EnumSet<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.MANAGE_CONNECTION,PersonSnapshot.Capability.VIEW_STATS);
         if(configuration!=null)capabilities.add(PersonSnapshot.Capability.VIEW_CONTRACT);
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
