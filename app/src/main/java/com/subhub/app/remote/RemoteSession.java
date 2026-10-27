@@ -40,7 +40,7 @@ public final class RemoteSession {
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
-        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1),deadlineNanos);
+        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1),deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
             requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
@@ -48,7 +48,8 @@ public final class RemoteSession {
         }
         requireType(response,"hello_ack",peer);
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==1);
+        activityVersion(response);
+        exchange(connection,peer,deadlineNanos,false);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -63,7 +64,7 @@ public final class RemoteSession {
         store.setRoute(identity,generation,hello.getString("route"));
         JSONObject ready=message("hello_ack",peer);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
-        boolean activity=activityVersion(hello)==1;if(activity)ready.put("activityVersion",1);
+        activityVersion(hello);boolean activity=false;
         send(connection,ready,deadlineNanos);
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos,activity);
@@ -116,7 +117,7 @@ public final class RemoteSession {
                 RemoteProtocol.Stream.COMMAND_RESULT,RemoteProtocol.Stream.RUNTIME,RemoteProtocol.Stream.BASELINE,
                 RemoteProtocol.Stream.EVENTS,RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.APP_CATALOG,
                 RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE}) {
-            if(stream.writer!=peer.localRole) continue;
+            if(stream.writer!=peer.localRole || !PeerDataPolicy.permits(stream)) continue;
             if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
             while(batches<MAX_BATCHES) {
                 checkActive(peer);

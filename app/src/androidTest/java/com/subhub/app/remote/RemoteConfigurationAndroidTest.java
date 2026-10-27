@@ -97,13 +97,13 @@ public class RemoteConfigurationAndroidTest {
         assertThrows(IllegalStateException.class,()->dom.queueConfiguration(SUB,generation,0,0,configuration()));
     }
     @Test public void unchangedHeadsRefreshOnlyCaughtUpStreams() throws Exception {
-        sub.publish(DOM,generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",1),false,1);
-        dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));assertEquals("missing",dom.metadata(SUB,generation,"confirmed_STATS","missing"));
-        RemoteProtocol.Batch batch=sub.nextBatch(DOM,generation,RemoteProtocol.Stream.STATS);dom.receive(SUB,batch);
-        dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));assertTrue(Long.parseLong(dom.metadata(SUB,generation,"confirmed_STATS","0"))>0);
-        assertThrows(SecurityException.class,()->dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation).put("STATS",0)));
-        sub.putMetadata(DOM,generation,"unavailable_STATS","true");dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));
-        assertEquals("0",dom.metadata(SUB,generation,"confirmed_STATS","missing"));
+        sub.publish(DOM,generation,RemoteProtocol.Stream.BASELINE,"active",new JSONObject().put("count",1),false,1);
+        dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));assertEquals("missing",dom.metadata(SUB,generation,"confirmed_BASELINE","missing"));
+        RemoteProtocol.Batch batch=sub.nextBatch(DOM,generation,RemoteProtocol.Stream.BASELINE);dom.receive(SUB,batch);
+        dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));assertTrue(Long.parseLong(dom.metadata(SUB,generation,"confirmed_BASELINE","0"))>0);
+        assertThrows(SecurityException.class,()->dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation).put("BASELINE",0)));
+        sub.putMetadata(DOM,generation,"unavailable_BASELINE","true");dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));
+        assertEquals("0",dom.metadata(SUB,generation,"confirmed_BASELINE","missing"));
     }
 
 
