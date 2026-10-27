@@ -155,6 +155,32 @@ public final class DomActivityAndroidTest {
         fail("Native scrolling did not expose the complete row: " + expected.key);
     }
 
+    @Test public void activityShowsOneHeadingPerLocalCalendarDay() throws Exception {
+        ActivityEntry first = entry("first", ActivityEvent.Kind.APP_OPENED, false);
+        ActivityEntry second = entry("second", ActivityEvent.Kind.APP_OPENED, false);
+        long previous = first.event.observedAt - 48L * 60 * 60 * 1000;
+        ActivityEvent event = new ActivityEvent("older", ActivityEvent.Kind.APP_OPENED, previous,
+                "com.android.chrome", 0, "", "", 0);
+        ActivityEntry older = new ActivityEntry("older", first.personId, first.personName, first.device,
+                event, previous, false, "Chrome");
+        repository.latest = List.of(first, second, older);
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            for (int index = 0; index < repository.latest.size(); index++) {
+                ActivityEntry expected = repository.latest.get(index);
+                scrollRow(page, index, expected.key, 0);
+                final boolean hasHeading = index != 1;
+                page.onActivity(a -> {
+                    ListView list = a.findViewById(R.id.dom_activity_list);
+                    View heading = list.findViewWithTag("activity_date:" + expected.key);
+                    if (hasHeading) assertNotNull(heading);
+                    else assertNull(heading);
+                    assertNotNull(list.findViewWithTag("activity_entry:" + expected.key));
+                });
+            }
+        }
+    }
+
     @Test public void notificationEntryDoesNotQueryOrShowPrivateFactsUntilPinUnlock() throws Exception {
         repository.latest = fourKinds(false);
         ControllerPinManager.enterSubMode();

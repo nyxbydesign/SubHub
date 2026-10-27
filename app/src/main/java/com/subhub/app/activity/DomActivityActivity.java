@@ -279,7 +279,8 @@ public final class DomActivityActivity extends AppCompatActivity {
         if (!resumed || reading || !mayRead() || !list.isShown()) return;
         List<ActivityEntry> visible = new ArrayList<>();
         for (int index = list.getFirstVisiblePosition(); index <= list.getLastVisiblePosition() && index < state.entries.size(); index++) {
-            View row = list.getChildAt(index - list.getFirstVisiblePosition());
+            View container = list.getChildAt(index - list.getFirstVisiblePosition());
+            View row = container == null ? null : container.findViewWithTag("activity_entry:" + state.entries.get(index).key);
             Rect bounds = new Rect();
             ActivityEntry entry = state.entries.get(index);
             if (entry.unread && row != null && row.getGlobalVisibleRect(bounds)) {
@@ -311,6 +312,16 @@ public final class DomActivityActivity extends AppCompatActivity {
         PageResult(ActivityRepository.Page page, int unread) { this.page = page; this.unread = Math.max(0, unread); }
     }
 
+    static boolean sameDay(long first, long second) {
+        java.util.Calendar a = java.util.Calendar.getInstance();
+        java.util.Calendar b = java.util.Calendar.getInstance();
+        a.setTimeInMillis(first);
+        b.setTimeInMillis(second);
+        return a.get(java.util.Calendar.ERA) == b.get(java.util.Calendar.ERA)
+                && a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR)
+                && a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR);
+    }
+
     private final class FeedAdapter extends BaseAdapter {
         public int getCount() { return state == null ? 0 : state.entries.size(); }
         public ActivityEntry getItem(int position) { return state.entries.get(position); }
@@ -318,6 +329,13 @@ public final class DomActivityActivity extends AppCompatActivity {
         public View getView(int position, View recycled, ViewGroup parent) {
             ActivityEntry entry = getItem(position);
             LinearLayout outside = PersonUi.column(DomActivityActivity.this);
+            if (position == 0 || !sameDay(getItem(position - 1).event.observedAt, entry.event.observedAt)) {
+                TextView heading = PersonUi.text(outside, DateUtils.formatDateTime(DomActivityActivity.this,
+                        entry.event.observedAt, DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_YEAR
+                                | DateUtils.FORMAT_ABBREV_MONTH), true);
+                androidx.core.view.ViewCompat.setAccessibilityHeading(heading, true);
+                heading.setTag("activity_date:" + entry.key);
+            }
             LinearLayout card = PersonUi.card(outside);
             card.setTag("activity_entry:" + entry.key);
             LinearLayout row = new LinearLayout(DomActivityActivity.this);
@@ -345,7 +363,7 @@ public final class DomActivityActivity extends AppCompatActivity {
                 indicator.setTag("activity_unread:" + entry.key);
             }
             card.setMinimumHeight(PersonUi.dp(DomActivityActivity.this, 72));
-            outside.setContentDescription(entry.personName + ". " + ActivityText.title(DomActivityActivity.this, entry)
+            card.setContentDescription(entry.personName + ". " + ActivityText.title(DomActivityActivity.this, entry)
                     + ". " + detail + ". " + time.getText() + (entry.unread ? ". " + getString(R.string.dom_activity_unread) : ""));
             return outside;
         }
