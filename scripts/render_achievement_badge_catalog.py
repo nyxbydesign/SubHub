@@ -11,7 +11,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANAGER = ROOT / "app/src/main/java/com/subhub/app/stats/AchievementManager.java"
+MANAGERS = [ROOT / "app/src/main/java/com/subhub/app/stats" / name for name in (
+    "AchievementManager.java", "DomAchievementCatalog.java")]
 DRAWABLES = ROOT / "app/src/main/res/drawable-nodpi"
 OUTPUT = ROOT / "docs/brand/achievement-badge-catalog.png"
 
@@ -23,8 +24,8 @@ MARGIN = 28
 
 
 def catalog_ids() -> list[str]:
-    source = MANAGER.read_text(encoding="utf-8")
-    return re.findall(r'a\("([a-z0-9_]+)"', source)
+    return [achievement_id for manager in MANAGERS
+            for achievement_id in re.findall(r'a\("([a-z0-9_]+)"', manager.read_text(encoding="utf-8"))]
 
 
 def font(size: int) -> ImageFont.ImageFont:
@@ -38,8 +39,8 @@ def font(size: int) -> ImageFont.ImageFont:
 
 def main() -> None:
     ids = catalog_ids()
-    if len(ids) != 58 or len(ids) != len(set(ids)):
-        raise SystemExit(f"Expected 58 unique achievement IDs, found {len(ids)}")
+    if not ids or len(ids) != len(set(ids)):
+        raise SystemExit(f"Expected nonempty, unique achievement IDs, found {len(ids)}")
 
     badges: list[tuple[str, Image.Image]] = []
     digests: set[str] = set()
@@ -70,9 +71,10 @@ def main() -> None:
     label_font = font(18)
     meta_font = font(20)
 
-    draw.text((MARGIN, 24), "SUBHUB · 58 ORIGINAL ACHIEVEMENT BADGES",
+    draw.text((MARGIN, 24), f"SUBHUB · {len(ids)} ACHIEVEMENT BADGES",
               fill="#f5edf8", font=title_font)
-    draw.text((MARGIN, 76), "One badge per milestone · coordinated tier families",
+    dom = sum(achievement_id.startswith("dom_") for achievement_id in ids)
+    draw.text((MARGIN, 76), f"{len(ids) - dom} Sub badges · {dom} Dom badges · coordinated tier families",
               fill="#c986df", font=meta_font)
 
     for index, (achievement_id, badge) in enumerate(badges):

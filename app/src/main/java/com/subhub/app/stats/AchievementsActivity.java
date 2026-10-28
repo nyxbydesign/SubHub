@@ -38,6 +38,7 @@ import java.util.Set;
 /** Illustrated, grouped achievement catalog for both recovered and SubHub-native milestones. */
 public final class AchievementsActivity extends AppCompatActivity {
     private static final String[] CATEGORY_ORDER = {
+            "dom_subs", "dom_time", "dom_sessions", "dom_tribute", "dom_hardcore",
             "sessions", "time", "streaks", "app_mode", "limits", "pact", "hardcore",
             "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
             "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
@@ -46,6 +47,7 @@ public final class AchievementsActivity extends AppCompatActivity {
     private ActivityAchievementsBinding binding;
     private AchievementManager manager;
     private StatsSnapshot stats;
+    private Dialog detailDialog;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -57,11 +59,40 @@ public final class AchievementsActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        manager = new AchievementManager(this);
-        stats = new StatsRepository(this).load();
-        manager.checkAchievements(stats);
-        manager.takePendingNotifications();
-        rebuild();
+        manager = AchievementManager.forWorkspace(this);
+        if (!manager.isAccessible()) { finish(); return; }
+        if (manager.getRole() == AchievementRole.DOM) {
+            binding.getRoot().setVisibility(View.INVISIBLE);
+            stats = null;
+            AchievementManager captured = manager;
+            android.content.Context app = getApplicationContext();
+            com.subhub.app.util.AsyncUiScope.forPage(this).load("dom-achievement-catalog", () -> {
+                captured.checkDomAchievements(new DomStatsRepository(app).load());
+                return captured;
+            }, loaded -> {
+                if (manager != loaded || !loaded.isAccessible()) { finish(); return; }
+                loaded.takePendingNotifications();
+                rebuild();
+                binding.getRoot().setVisibility(View.VISIBLE);
+            }, failure -> { if (!manager.isAccessible()) finish(); else {
+                rebuild(); binding.getRoot().setVisibility(View.VISIBLE);
+            }});
+        } else {
+            binding.getRoot().setVisibility(View.VISIBLE);
+            stats = new StatsRepository(this).load();
+            manager.checkAchievements(stats);
+            manager.takePendingNotifications();
+            rebuild();
+        }
+    }
+
+    @Override protected void onPause() {
+        if (detailDialog != null) { detailDialog.dismiss(); detailDialog = null; }
+        if (manager != null && manager.getRole() == AchievementRole.DOM) {
+            com.subhub.app.util.AsyncUiScope.forPage(this).cancel("dom-achievement-catalog");
+            binding.getRoot().setVisibility(View.INVISIBLE);
+        }
+        super.onPause();
     }
 
     private void rebuild() {
@@ -137,6 +168,7 @@ public final class AchievementsActivity extends AppCompatActivity {
     }
 
     private static boolean isTieredCategory(String category) {
+        if (category.startsWith("dom_")) return true;
         switch (category) {
             case "sessions": case "time": case "streaks": case "app_mode":
             case "blocks": case "peaks": case "censor": case "appearance":
@@ -318,7 +350,7 @@ public final class AchievementsActivity extends AppCompatActivity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         progressRowParams.topMargin = dp(11);
         progressRow.setLayoutParams(progressRowParams);
-        if (progress.isCountable() && !concealed) {
+        if (progress.isCountable() && progress.isKnown() && !concealed) {
             ProgressBar bar = new ProgressBar(this, null,
                     android.R.attr.progressBarStyleHorizontal);
             bar.setMax(100);
@@ -339,6 +371,7 @@ public final class AchievementsActivity extends AppCompatActivity {
             progressRow.addView(count);
         } else {
             TextView status = text(concealed ? getString(R.string.achievement_secret)
+                    : !progress.isKnown() ? getString(R.string.dom_progress_unavailable)
                     : getString(unlocked ? R.string.achievement_unlocked_tag
                     : R.string.achievement_locked), 9,
                     unlocked ? R.color.accent_hot : R.color.text_muted, true);
@@ -353,10 +386,12 @@ public final class AchievementsActivity extends AppCompatActivity {
     }
 
     private void showAchievementDetails(AchievementManager.Achievement achievement) {
+        if (!manager.isAccessible() || achievement.getRole() != manager.getRole()) return;
         boolean unlocked = manager.isUnlocked(achievement.getId());
         boolean concealed = achievement.isHidden() && !unlocked;
         AchievementManager.Progress progress = manager.progress(achievement, stats);
         Dialog dialog = new Dialog(this);
+        detailDialog = dialog;
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         View content = LayoutInflater.from(this).inflate(
                 R.layout.dialog_achievement_details, null, false);
@@ -421,11 +456,15 @@ public final class AchievementsActivity extends AppCompatActivity {
 
     private String formatProgress(AchievementManager.Achievement achievement,
             AchievementManager.Progress progress) {
+        if (!progress.isKnown()) return getString(R.string.dom_progress_unavailable);
         String category = achievement.getCategory();
-        if ("time".equals(category)) {
+        if ("time".equals(category) || "dom_time".equals(category)) {
             return compactDuration(progress.getCurrent()) + " / "
                     + compactDuration(progress.getTarget());
         }
+        if ("dom_tribute".equals(category)) return
+                com.subhub.app.penance.WalletCurrency.format(manager.progressCurrency(), progress.getCurrent())
+                + " / " + com.subhub.app.penance.WalletCurrency.format(manager.progressCurrency(), progress.getTarget());
         if (achievement.getId().startsWith("wallet_paid_")) {
             return formatEuros(progress.getCurrent()) + " / "
                     + formatEuros(progress.getTarget());
@@ -447,6 +486,11 @@ public final class AchievementsActivity extends AppCompatActivity {
 
     private int categoryTitle(String category) {
         switch (category) {
+            case "dom_subs": return R.string.dom_category_subs;
+            case "dom_time": return R.string.dom_category_time;
+            case "dom_sessions": return R.string.dom_category_sessions;
+            case "dom_tribute": return R.string.dom_category_tribute;
+            case "dom_hardcore": return R.string.dom_category_hardcore;
             case "blocks": return R.string.achievement_category_blocks;
             case "time": return R.string.achievement_category_time;
             case "sessions": return R.string.achievement_category_sessions;
