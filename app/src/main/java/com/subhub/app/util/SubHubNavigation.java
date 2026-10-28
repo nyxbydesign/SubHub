@@ -83,12 +83,12 @@ public final class SubHubNavigation {
         boolean activityAvailable = com.subhub.app.activity.ActivitySources.repository().supports(null);
         setVisible(root.findViewById(R.id.nav_activity), domMode && activityAvailable);
         setVisible(root.findViewById(R.id.nav_contract), !domMode);
-        setVisible(root.findViewById(R.id.nav_stats), !domMode);
+        setVisible(root.findViewById(R.id.nav_stats), true);
         setVisible(root.findViewById(R.id.nav_settings), true);
         Screen selected = active;
         if (active == Screen.ACTIVITY && (!domMode || !activityAvailable)) selected = Screen.HOME;
         if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
-                || active == Screen.ATMOSPHERE || domMode && (active == Screen.STATS || active == Screen.CONTRACT)) {
+                || active == Screen.ATMOSPHERE || domMode && active == Screen.CONTRACT) {
             selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
         }
         ((TextView) root.findViewById(R.id.nav_home_label)).setText(R.string.role_overview);
