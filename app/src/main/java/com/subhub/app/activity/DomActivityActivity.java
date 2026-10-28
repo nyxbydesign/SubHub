@@ -32,6 +32,8 @@ import com.subhub.app.util.SubHubNavigation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 /** A protected, paged history of facts received from currently paired Subs. */
 public final class DomActivityActivity extends AppCompatActivity {
@@ -40,6 +42,7 @@ public final class DomActivityActivity extends AppCompatActivity {
     private static final int PAGE_SIZE = 50;
     private AsyncUiScope work;
     private FeedState state;
+    private List<ActivityGroup> groups = Collections.emptyList();
     private ListView list;
     private TextView status, unread, retry, older, latest, notifications;
     private final FeedAdapter adapter = new FeedAdapter();
@@ -69,6 +72,7 @@ public final class DomActivityActivity extends AppCompatActivity {
         public String focusKey;
         public int position, offset;
         public List<ActivityEntry> entries = Collections.emptyList();
+        public final Set<String> expanded = new HashSet<>();
     }
 
     @Override protected void onCreate(Bundle saved) {
@@ -79,6 +83,8 @@ public final class DomActivityActivity extends AppCompatActivity {
             state.cursor = saved.getString("activity_cursor");
             state.position = saved.getInt("activity_position");
             state.offset = saved.getInt("activity_offset");
+            ArrayList<String> expanded = saved.getStringArrayList("activity_expanded");
+            if (expanded != null) state.expanded.addAll(expanded);
         }
         state.focusKey = saved == null ? getIntent().getStringExtra(EXTRA_ENTRY_KEY) : saved.getString("activity_focus");
         state.local = saved == null ? getIntent().getBooleanExtra(EXTRA_LOCAL_HISTORY, false)
@@ -116,8 +122,8 @@ public final class DomActivityActivity extends AppCompatActivity {
         list.addFooterView(footer, null, false);
         list.setAdapter(adapter);
         list.setOnItemClickListener((parent, view, position, id) -> {
-            if (!mayRead() || position >= state.entries.size()) return;
-            PersonRoutes.open(this, state.entries.get(position).personId);
+            if (!mayRead() || position >= groups.size()) return;
+            PersonRoutes.open(this, groups.get(position).latest().personId);
         });
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
             public void onScrollStateChanged(AbsListView view, int scrollState) { markVisibleRead(); }
@@ -205,6 +211,7 @@ public final class DomActivityActivity extends AppCompatActivity {
         output.putString("activity_focus", state.focusKey);
         output.putInt("activity_position", state.position);
         output.putInt("activity_offset", state.offset);
+        output.putStringArrayList("activity_expanded", new ArrayList<>(state.expanded));
         super.onSaveInstanceState(output);
     }
 
@@ -240,7 +247,7 @@ public final class DomActivityActivity extends AppCompatActivity {
             state.entries = result.page.entries;
             if (requestedFocus != null) state.cursor = result.page.cursor;
             state.nextCursor = result.page.nextCursor;
-            adapter.notifyDataSetChanged();
+            rebuildGroups();
             older.setVisibility(state.nextCursor == null ? View.GONE : View.VISIBLE);
             unread.setText(result.unread > 0 ? getString(R.string.dom_activity_unread_count, result.unread) : "");
             unread.setVisibility(result.unread > 0 ? View.VISIBLE : View.GONE);
@@ -249,18 +256,34 @@ public final class DomActivityActivity extends AppCompatActivity {
             status.setVisibility(state.entries.isEmpty() ? View.VISIBLE : View.GONE);
             list.setVisibility(View.VISIBLE);
             int position = state.position;
-            if (state.focusKey != null) {
-                for (int i = 0; i < state.entries.size(); i++) if (state.focusKey.equals(state.entries.get(i).key)) { position = i; break; }
+            String focused = state.focusKey;
+            if (focused != null) {
+                for (int i = 0; i < groups.size(); i++) if (groups.get(i).contains(focused)) {
+                    position = i;
+                    state.expanded.add(groups.get(i).key);
+                    adapter.notifyDataSetChanged();
+                    break;
+                }
                 state.focusKey = null;
             }
             latest.setVisibility(atLatest() ? View.GONE : View.VISIBLE);
             list.setSelectionFromTop(position, state.offset);
             reserveNavigation();
-            list.post(this::markVisibleRead);
+            list.post(() -> {
+                if (focused != null) {
+                    View target = list.findViewWithTag("activity_entry:" + focused);
+                    if (target != null) {
+                        int[] row = new int[2], viewport = new int[2];
+                        target.getLocationOnScreen(row); list.getLocationOnScreen(viewport);
+                        list.smoothScrollBy(row[1] - viewport[1], 0);
+                    }
+                }
+                markVisibleRead();
+            });
         }, failure -> {
             if (!resumed || !mayRead()) return;
             state.entries = Collections.emptyList();
-            adapter.notifyDataSetChanged();
+            rebuildGroups();
             list.setVisibility(View.INVISIBLE);
             unread.setVisibility(View.GONE);
             status.setText(R.string.dom_activity_unavailable);
@@ -278,11 +301,9 @@ public final class DomActivityActivity extends AppCompatActivity {
     private void markVisibleRead() {
         if (!resumed || reading || !mayRead() || !list.isShown()) return;
         List<ActivityEntry> visible = new ArrayList<>();
-        for (int index = list.getFirstVisiblePosition(); index <= list.getLastVisiblePosition() && index < state.entries.size(); index++) {
-            View container = list.getChildAt(index - list.getFirstVisiblePosition());
-            View row = container == null ? null : container.findViewWithTag("activity_entry:" + state.entries.get(index).key);
+        for (ActivityEntry entry : state.entries) {
+            View row = list.findViewWithTag("activity_entry:" + entry.key);
             Rect bounds = new Rect();
-            ActivityEntry entry = state.entries.get(index);
             if (entry.unread && row != null && row.getGlobalVisibleRect(bounds)) {
                 Rect rail = new Rect();
                 if (findViewById(R.id.bottom_navigation).getGlobalVisibleRect(rail)) bounds.bottom = Math.min(bounds.bottom, rail.top);
@@ -300,10 +321,18 @@ public final class DomActivityActivity extends AppCompatActivity {
             List<ActivityEntry> updated = new ArrayList<>();
             for (ActivityEntry entry : state.entries) updated.add(keys.contains(entry.key) ? entry.read() : entry);
             state.entries = Collections.unmodifiableList(updated);
-            adapter.notifyDataSetChanged();
+            rebuildGroups();
             for (ActivityEntry entry : visible) ActivityNotifications.cancel(getApplicationContext(), entry);
             ActivitySources.changed();
         }, failure -> { reading = false; });
+    }
+
+    private void rebuildGroups() {
+        groups = ActivityGroup.from(state.entries);
+        Set<String> keys = new HashSet<>();
+        for (ActivityGroup group : groups) keys.add(group.key);
+        state.expanded.retainAll(keys);
+        adapter.notifyDataSetChanged();
     }
 
     private static final class PageResult {
@@ -323,19 +352,47 @@ public final class DomActivityActivity extends AppCompatActivity {
     }
 
     private final class FeedAdapter extends BaseAdapter {
-        public int getCount() { return state == null ? 0 : state.entries.size(); }
-        public ActivityEntry getItem(int position) { return state.entries.get(position); }
+        public int getCount() { return groups.size(); }
+        public ActivityGroup getItem(int position) { return groups.get(position); }
         public long getItemId(int position) { return position; }
         public View getView(int position, View recycled, ViewGroup parent) {
-            ActivityEntry entry = getItem(position);
+            ActivityGroup group = getItem(position);
+            ActivityEntry entry = group.latest();
             LinearLayout outside = PersonUi.column(DomActivityActivity.this);
-            if (position == 0 || !sameDay(getItem(position - 1).event.observedAt, entry.event.observedAt)) {
+            if (position == 0 || !sameDay(getItem(position - 1).latest().event.observedAt, entry.event.observedAt)) {
                 TextView heading = PersonUi.text(outside, DateUtils.formatDateTime(DomActivityActivity.this,
                         entry.event.observedAt, DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_YEAR
                                 | DateUtils.FORMAT_ABBREV_MONTH), true);
                 androidx.core.view.ViewCompat.setAccessibilityHeading(heading, true);
                 heading.setTag("activity_date:" + entry.key);
             }
+            LinearLayout card = entryCard(outside, entry);
+            if (group.entries.size() > 1) {
+                card.setOnClickListener(view -> { if (mayRead()) PersonRoutes.open(DomActivityActivity.this, entry.personId); });
+                boolean expanded = state.expanded.contains(group.key);
+                int hiddenUnread = group.unread() - (entry.unread ? 1 : 0);
+                if (!expanded && hiddenUnread > 0)
+                    PersonUi.text(card, getString(R.string.dom_activity_unread_count, hiddenUnread), false);
+                TextView toggle = PersonUi.action(card, R.string.dom_activity_group_expand, () -> {
+                    if (!mayRead()) return;
+                    rememberPosition();
+                    if (!state.expanded.remove(group.key)) state.expanded.add(group.key);
+                    notifyDataSetChanged();
+                    list.setSelectionFromTop(state.position, state.offset);
+                    list.post(DomActivityActivity.this::markVisibleRead);
+                }, false);
+                toggle.setText(expanded ? getString(R.string.dom_activity_group_collapse)
+                        : getString(R.string.dom_activity_group_expand, group.entries.size()));
+                toggle.setTag("activity_group:" + entry.key);
+                if (expanded) for (int index = 1; index < group.entries.size(); index++) {
+                    ActivityEntry child = group.entries.get(index);
+                    LinearLayout detail = entryCard(outside, child);
+                    detail.setOnClickListener(view -> { if (mayRead()) PersonRoutes.open(DomActivityActivity.this, child.personId); });
+                }
+            }
+            return outside;
+        }
+        private LinearLayout entryCard(LinearLayout outside, ActivityEntry entry) {
             LinearLayout card = PersonUi.card(outside);
             card.setTag("activity_entry:" + entry.key);
             LinearLayout row = new LinearLayout(DomActivityActivity.this);
@@ -365,7 +422,7 @@ public final class DomActivityActivity extends AppCompatActivity {
             card.setMinimumHeight(PersonUi.dp(DomActivityActivity.this, 72));
             card.setContentDescription(entry.personName + ". " + ActivityText.title(DomActivityActivity.this, entry)
                     + ". " + detail + ". " + time.getText() + (entry.unread ? ". " + getString(R.string.dom_activity_unread) : ""));
-            return outside;
+            return card;
         }
     }
 }

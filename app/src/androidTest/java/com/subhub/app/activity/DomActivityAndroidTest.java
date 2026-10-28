@@ -157,7 +157,7 @@ public final class DomActivityAndroidTest {
 
     @Test public void activityShowsOneHeadingPerLocalCalendarDay() throws Exception {
         ActivityEntry first = entry("first", ActivityEvent.Kind.APP_OPENED, false);
-        ActivityEntry second = entry("second", ActivityEvent.Kind.APP_OPENED, false);
+        ActivityEntry second = entry("second", ActivityEvent.Kind.APP_LIMIT_REACHED, false);
         long previous = first.event.observedAt - 48L * 60 * 60 * 1000;
         ActivityEvent event = new ActivityEvent("older", ActivityEvent.Kind.APP_OPENED, previous,
                 "com.android.chrome", 0, "", "", 0);
@@ -178,6 +178,46 @@ public final class DomActivityAndroidTest {
                     assertNotNull(list.findViewWithTag("activity_entry:" + expected.key));
                 });
             }
+        }
+    }
+
+    @Test public void repeatedEventsExpandWithNativeTapsAndKeepTheirExpansionAfterRecreation() throws Exception {
+        repository.latest = List.of(entry("group-first",ActivityEvent.Kind.APP_OPENED,false),
+                entry("other-kind",ActivityEvent.Kind.TRIBUTE_TRIGGERED,false),
+                entry("group-second",ActivityEvent.Kind.APP_OPENED,false),
+                entry("group-third",ActivityEvent.Kind.APP_OPENED,false));
+        try(ActivityScenario<DomActivityActivity> page=ActivityScenario.launch(intent(null))) {
+            awaitUi(page,DomActivityAndroidTest::ready);
+            page.onActivity(a->{ListView list=a.findViewById(R.id.dom_activity_list);
+                assertEquals(2,list.getAdapter().getCount()-list.getFooterViewsCount());
+                assertNull(list.findViewWithTag("activity_entry:group-second"));
+                assertEquals(a.getString(R.string.dom_activity_group_expand,3),((TextView)list.findViewWithTag("activity_group:group-first")).getText().toString());
+                assertTextFits(list);});
+            capture(page,"group-collapsed");
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"activity_group:group-first"))).perform(click());
+            awaitUi(page,a->ready(a)&&a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:group-third")!=null);
+            page.onActivity(a->assertTextFits(a.findViewById(R.id.dom_activity_list)));
+            capture(page,"group-expanded");
+            page.recreate();
+            awaitUi(page,a->ready(a)&&a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:group-second")!=null);
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"activity_group:group-first"))).perform(click());
+            awaitUi(page,a->ready(a)&&a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:group-second")==null);
+            assertEquals(4,repository.latest.size());
+        }
+    }
+    @Test public void aNotificationFocusExpandsItsGroupAndRevealsTheOriginalFact() throws Exception {
+        List<ActivityEntry> facts=new ArrayList<>();
+        for(int index=0;index<8;index++)facts.add(entry("focus-group-"+index,ActivityEvent.Kind.APP_OPENED,false));
+        repository.history=facts;
+        try(ActivityScenario<DomActivityActivity> page=ActivityScenario.launch(intent("focus-group-7"))) {
+            awaitUi(page,a->{if(!ready(a))return false;
+                View row=a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:focus-group-7");
+                Rect bounds=new Rect(),rail=new Rect();a.findViewById(R.id.bottom_navigation).getGlobalVisibleRect(rail);
+                return row!=null&&row.getGlobalVisibleRect(bounds)&&bounds.top<rail.top&&bounds.bottom>bounds.top;});
+            assertEquals(List.of("focus-group-7"),repository.locations);
+            page.recreate();awaitUi(page,DomActivityAndroidTest::ready);
+            assertEquals(1,repository.locations.size());
+            page.onActivity(a->assertNotNull(a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:focus-group-7")));
         }
     }
 
@@ -252,6 +292,8 @@ public final class DomActivityAndroidTest {
             assertFalse(repository.submitted.isEmpty());
             assertTrue("No offscreen or rail-obscured row is acknowledged", eligible.containsAll(repository.submitted));
             assertFalse(repository.submitted.contains("fixture-visible-49"));
+            assertEquals("Collapsed facts are not acknowledged merely because their group is visible",
+                    List.of("fixture-visible-0"),repository.submitted);
             repository.releaseRead.countDown();
             awaitUi(page, a -> ready(a) && repository.read.containsAll(repository.submitted));
         }

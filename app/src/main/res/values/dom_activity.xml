@@ -30,4 +30,6 @@
     <item type="id" name="dom_activity_notification_action" />
     <item type="id" name="dom_activity_latest_action" />
     <item type="id" name="dom_activity_older_action" />
+    <string name="dom_activity_group_expand">Show %1$d events</string>
+    <string name="dom_activity_group_collapse">Hide events</string>
 </resources>
