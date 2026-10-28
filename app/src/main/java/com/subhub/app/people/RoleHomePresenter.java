@@ -34,6 +34,7 @@ public final class RoleHomePresenter {
     private List<Object> renderedDom;
     private long lastRefresh;
     private boolean displayedDom, sessionPage;
+    private TaskSummary taskSummary;
 
     public static final class HomeSelection extends ViewModel {
         boolean allUsage;
@@ -101,18 +102,22 @@ public final class RoleHomePresenter {
             List<PersonSnapshot> values = new ArrayList<>();
             if (dom) {
                 if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application))
-                    return new HomeData(values, null);
+                    return new HomeData(values, null, null);
                 for (PersonId id : repository.people()) {
                     if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application)) break;
                     values.add(repository.load(id));
                 }
             } else values.add(repository.load(PersonId.LOCAL));
-            return new HomeData(PersonDisplayOrder.sorted(values, locale), dom ? null : assignedDom(application));
+            return new HomeData(PersonDisplayOrder.sorted(values, locale), dom ? null : assignedDom(application),
+                    dom ? null : TaskSummary.read(application));
         }, loaded -> {
             if (dom != domWorkspace() || sessionPage
                     || dom && !ControllerPinManager.isDomModeActive()) return;
             if (dom) renderDom(loaded.people);
-            else if (!loaded.people.isEmpty()) renderSub(loaded.people.get(0), loaded.dom);
+            else if (!loaded.people.isEmpty()) {
+                taskSummary = loaded.tasks;
+                renderSub(loaded.people.get(0), loaded.dom);
+            }
         }, failure -> {
             if (dom != domWorkspace()
                     || dom && !ControllerPinManager.isDomModeActive()) return;
@@ -300,6 +305,18 @@ public final class RoleHomePresenter {
         if (domWorkspace() && ControllerPinManager.isDomModeActive()) PersonRoutes.open(activity, person.id);
     }
 
+    private String taskSubtitle() {
+        try {
+            com.subhub.app.tasks.TaskRepository repo = new com.subhub.app.tasks.TaskRepository(activity, PersonId.LOCAL);
+            if (!repo.allowed()) return activity.getString(R.string.tasks_disabled);
+            if (!repo.supported()) return activity.getString(R.string.tasks_update_devices);
+            if (taskSummary == null || !taskSummary.scope.equals(repo.target().scope) || taskSummary.active < 0)
+                return activity.getString(R.string.tasks_profile_unavailable);
+            return activity.getResources().getQuantityString(R.plurals.tasks_active_count,
+                    taskSummary.active, taskSummary.active);
+        } catch (RuntimeException unavailable) { return activity.getString(R.string.tasks_profile_unavailable); }
+    }
+
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
         subBody.removeAllViews();
         relationship.removeAllViews();
@@ -312,7 +329,7 @@ public final class RoleHomePresenter {
                 if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
             }).setTag("home_assigned_dom_connection");
         }
-        PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks, activity.getString(R.string.tasks_title), "", () -> {
+        PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks, activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
             if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
                     .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
         }).setTag("home_tasks");
@@ -453,9 +470,28 @@ public final class RoleHomePresenter {
         AssignedDom(String name, int status) { this.name = name; this.status = status; }
     }
 
+    private static final class TaskSummary {
+        final String scope;
+        final int active;
+        TaskSummary(String scope, int active) { this.scope = scope; this.active = active; }
+        static TaskSummary read(android.content.Context app) {
+            try {
+                com.subhub.app.tasks.TaskRepository repo = new com.subhub.app.tasks.TaskRepository(app, PersonId.LOCAL);
+                String scope = repo.target().scope;
+                if (!repo.allowed() || !repo.supported()) return new TaskSummary(scope, -1);
+                int count = com.subhub.app.tasks.TaskEngine.activeCount(repo.list(System.currentTimeMillis()));
+                if (!scope.equals(repo.target().scope)) return new TaskSummary("", -1);
+                return new TaskSummary(scope, count);
+            } catch (Exception unavailable) { return new TaskSummary("", -1); }
+        }
+    }
+
     private static final class HomeData {
         final List<PersonSnapshot> people;
         final AssignedDom dom;
-        HomeData(List<PersonSnapshot> people, AssignedDom dom) { this.people = people; this.dom = dom; }
+        final TaskSummary tasks;
+        HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks) {
+            this.people = people; this.dom = dom; this.tasks = tasks;
+        }
     }
 }

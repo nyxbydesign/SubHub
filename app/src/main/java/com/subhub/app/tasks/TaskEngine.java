@@ -7,7 +7,7 @@ import java.util.*;
 
 /** Pure task projection. The Sub owns deadline outcomes; a timely pending proof never times out. */
 public final class TaskEngine {
-    public enum Status { SCHEDULED, ACTIVE, PENDING, ACCEPTED, DENIED, TIMED_OUT, REFUSED, SKIPPED }
+    public enum Status { SCHEDULED, ACTIVE, PENDING, ACCEPTED, DENIED, TIMED_OUT, REFUSED, SKIPPED, CANCELLED }
     public static final class Occurrence {
         public final TaskDefinition task;
         public final LocalDate date;
@@ -24,18 +24,33 @@ public final class TaskEngine {
     private final Map<String, Status> states = new HashMap<>();
     private final Map<String, TaskAction> submissions = new HashMap<>();
     private final Set<String> refusedSeries = new HashSet<>();
+    private final Set<String> cancelledOccurrences = new HashSet<>(), cancelledSeries = new HashSet<>();
     private final Map<String, TaskAttachment> media = new HashMap<>();
+
+    public static int activeCount(Collection<Occurrence> occurrences) {
+        Set<String> active = new HashSet<>();
+        for (Occurrence occurrence : occurrences)
+            if (occurrence.status == Status.ACTIVE) active.add(occurrence.id);
+        return active.size();
+    }
 
     public List<TaskDefinition> definitions() { return new ArrayList<>(tasks.values()); }
     public boolean seriesRefused(String id) { return refusedSeries.contains(id); }
+    public boolean seriesCancelled(String id) { return cancelledSeries.contains(id); }
+    public boolean cancelled(String id, LocalDate date) {
+        return cancelledSeries.contains(id) || date != null && cancelledOccurrences.contains(id + ":" + date);
+    }
+    public boolean hasCancellations() { return !cancelledSeries.isEmpty() || !cancelledOccurrences.isEmpty(); }
+    public TaskAction action(String id) { return seen.get(id); }
     public Occurrence occurrence(String id, LocalDate date, long now) {
         TaskDefinition task = tasks.get(id);
         if (task == null) throw new IllegalArgumentException("Task unavailable");
         String key = task.occurrenceId(date);
         Status state = states.get(key);
+        if (cancelled(id, date)) state = Status.CANCELLED;
         if (state == null) state = refusedSeries.contains(id) ? Status.REFUSED
                 : now < task.start(date).toEpochMilli() ? Status.SCHEDULED : Status.ACTIVE;
-        return new Occurrence(task, date, state, submissions.get(key));
+        return new Occurrence(task, date, state, state == Status.CANCELLED ? null : submissions.get(key));
     }
     /** A duplicate exact action is acknowledged without repeating its state transition or effects. */
     public boolean apply(TaskAction action, boolean actorDom) throws JSONException {
@@ -62,7 +77,11 @@ public final class TaskEngine {
             Occurrence occurrence = occurrence(action.taskId, action.date, action.at);
             TaskDefinition task = occurrence.task;
             String key = occurrence.id;
-            switch (action.kind) {
+            if (action.cancellation()) {
+                if (action.kind == TaskAction.Kind.CANCEL_SERIES) cancelledSeries.add(task.id);
+                else cancelledOccurrences.add(key);
+                states.put(key, Status.CANCELLED);
+            } else if (!cancelled(task.id, action.date)) switch (action.kind) {
                 case SUBMIT: case OUTSIDE:
                     if (occurrence.status != Status.ACTIVE || action.at >= task.end(action.date).toEpochMilli())
                         throw new IllegalStateException("Task is not accepting completion requests");

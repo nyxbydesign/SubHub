@@ -224,7 +224,7 @@ public final class TaskMediaActivity extends RolePage {
         if (displayed != null) { displayed.close(); displayed = null; }
     }
 
-    private static File resolve(TaskRepository repo, TaskAttachment media, String expected, boolean dom) throws Exception {
+    static File resolve(TaskRepository repo, TaskAttachment media, String expected, boolean dom) throws Exception {
         TaskRepository.Target target = repo.target();
         if ((expected != null && !expected.equals(target.scope)) || dom != repo.isDom() || !repo.allowed())
             throw new SecurityException("Attachment access changed");
@@ -237,7 +237,7 @@ public final class TaskMediaActivity extends RolePage {
         return file;
     }
 
-    private static Loaded load(TaskRepository repo, TaskAttachment media, String expected, boolean dom, Context app) throws Exception {
+    static Loaded load(TaskRepository repo, TaskAttachment media, String expected, boolean dom, Context app) throws Exception {
         String scope = repo.target().scope;
         File file = resolve(repo, media, expected == null ? scope : expected, dom);
         String privateRoot = app.getFilesDir().getCanonicalPath() + File.separator;
@@ -259,7 +259,7 @@ public final class TaskMediaActivity extends RolePage {
         } catch (Exception problem) { if (bitmap != null) bitmap.recycle(); throw problem; }
     }
 
-    private static final class Loaded implements AutoCloseable {
+    static final class Loaded implements AutoCloseable {
         final String scope;
         final File file;
         final Bitmap bitmap;

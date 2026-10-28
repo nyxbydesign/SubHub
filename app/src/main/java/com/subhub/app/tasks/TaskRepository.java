@@ -40,7 +40,8 @@ public final class TaskRepository {
     public boolean isDom() { target(); return ControllerPinManager.isDomModeActive(); }
     public boolean supported() {
         Target target = target();
-        return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"));
+        return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"))
+                && (cancellationSupported() || !TaskRuntime.get(context).hasCancellations(target.scope));
     }
     public boolean allowed() {
         if (person.isLocal()) return SubFeaturePolicy.allowed(context, "tasks");
@@ -60,7 +61,7 @@ public final class TaskRepository {
         List<TaskEngine.Occurrence> result = new ArrayList<>(engine.recorded(now));
         Set<String> present = new HashSet<>(); for (TaskEngine.Occurrence row : result) present.add(row.id);
         for (TaskDefinition task : engine.definitions()) {
-            if (engine.seriesRefused(task.id)) continue;
+            if (engine.seriesRefused(task.id) || engine.seriesCancelled(task.id)) continue;
             LocalDate today = Instant.ofEpochMilli(now).atZone(task.zone).toLocalDate();
             LocalDate upcoming = task.nextDate(today);
             if (upcoming != null) {
@@ -104,6 +105,7 @@ public final class TaskRepository {
             List<TaskAttachment> media, String submissionId) throws Exception {
         Target target = target();
         boolean dom = kind == TaskAction.Kind.ACCEPT || kind == TaskAction.Kind.DENY;
+        if (kind == TaskAction.Kind.CANCEL_ONCE || kind == TaskAction.Kind.CANCEL_SERIES) throw new SecurityException("Use task cancellation");
         if (dom) requireDom(target); else requireSub(target);
         if (kind == TaskAction.Kind.CREATE || kind == TaskAction.Kind.TIMEOUT || kind == TaskAction.Kind.SKIP)
             throw new SecurityException("Invalid user action");
@@ -111,11 +113,33 @@ public final class TaskRepository {
         append(target, new TaskAction(UUID.randomUUID().toString(), taskId, kind, date,
                 System.currentTimeMillis(), text, submissionId, media, null), dom);
     }
+    public boolean cancellationSupported() {
+        Target target = target();
+        return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity,
+                target.peer.generation, "tasks_cancel_version", "0"));
+    }
+    public void cancel(String taskId, LocalDate date, boolean series) throws Exception {
+        synchronized (SubFeaturePolicy.LOCK) {
+            synchronized (remote.store) {
+                Target target = target(); requireDom(target);
+                if (!cancellationSupported()) throw new IllegalStateException("Update both devices to cancel tasks");
+                TaskEngine engine = TaskRuntime.get(context).store.load(target.scope);
+                TaskEngine.Occurrence occurrence = engine.occurrence(taskId, date, System.currentTimeMillis());
+                if (series && !occurrence.task.recurring()) series = false;
+                if (series ? engine.seriesCancelled(taskId) : engine.cancelled(taskId, date)) return;
+                TaskAction action = new TaskAction(UUID.randomUUID().toString(), taskId,
+                        series ? TaskAction.Kind.CANCEL_SERIES : TaskAction.Kind.CANCEL_ONCE,
+                        date, System.currentTimeMillis(), "", "", List.of(), null);
+                append(target, action, true);
+            }
+        }
+    }
+
     private void append(Target target, TaskAction action, boolean dom) throws Exception {
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (remote.store) {
                 Target live = target();
-                if (!live.scope.equals(target.scope) || !allowed()) throw new SecurityException("Tasks are unavailable");
+                if (!live.scope.equals(target.scope) || !allowed() && !action.cancellation()) throw new SecurityException("Tasks are unavailable");
                 if (dom) requireDom(live); else requireSub(live);
                 TaskRuntime runtime = TaskRuntime.get(context);
                 if (action.kind == TaskAction.Kind.CREATE) {

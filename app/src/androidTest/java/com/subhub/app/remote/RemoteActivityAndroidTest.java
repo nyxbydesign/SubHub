@@ -101,6 +101,63 @@ public class RemoteActivityAndroidTest {
         receiver.revoke(SUB,generation);assertThrows(SecurityException.class,()->receiver.receive(SUB,replay));assertTrue(receiving.locate(oldest,20).entries.isEmpty());assertEquals(0,receiving.unreadCount());
         assertEquals(123,count(receiver,"activity_receipts"));
     }
+    @Test public void unpairedServiceWindowCallbacksPersistLocalSelectedAppAndReopenOnActivity() throws Exception {
+        RemoteStore local = database(); String name = databases.get(databases.size() - 1);
+        RemoteActivityRepository repository = new RemoteActivityRepository(context, local, () -> {}, notifications);
+        ActivityRepository priorUi = ActivitySources.repository();
+        java.lang.reflect.Field installed = RemoteActivityRecorder.class.getDeclaredField("installed"); installed.setAccessible(true);
+        RemoteActivityRecorder.Sink priorRecorder = (RemoteActivityRecorder.Sink) installed.get(null);
+        com.subhub.app.appmode.AppModeManager mode = new com.subhub.app.appmode.AppModeManager(context);
+        mode.saveIncludedPackages(Collections.singleton("com.example.selected"));
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putBoolean(com.subhub.app.appmode.AppModeManager.KEY_ALL_APPS, false).commit();
+        try {
+            assertTrue(local.peers(false).isEmpty()); RemoteActivityRecorder.install(repository);
+            java.util.concurrent.atomic.AtomicReference<com.subhub.app.service.ScreenshotAccessibilityService> service = new java.util.concurrent.atomic.AtomicReference<>();
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                try {
+                    com.subhub.app.service.ScreenshotAccessibilityService instance = new com.subhub.app.service.ScreenshotAccessibilityService();
+                    java.lang.reflect.Method attach = android.content.ContextWrapper.class.getDeclaredMethod("attachBaseContext", Context.class);
+                    attach.setAccessible(true); attach.invoke(instance, context);
+                    java.lang.reflect.Field penanceField = instance.getClass().getDeclaredField("penance"); penanceField.setAccessible(true);
+                    penanceField.set(instance, new PenanceManager(context)); service.set(instance);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            // Invoke the actual callback without granting/binding Accessibility or starting capture.
+            // This proves the service-to-recorder edge, not Android's live event delivery.
+            for (String app : Arrays.asList("com.example.unselected", "com.example.selected", "com.example.selected")) {
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    android.view.accessibility.AccessibilityEvent event = android.view.accessibility.AccessibilityEvent.obtain(
+                            android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+                    try { event.setPackageName(app); event.setClassName("android.app.Activity"); service.get().onAccessibilityEvent(event); }
+                    finally { event.recycle(); }
+                });
+            }
+            drain(repository); assertEquals(1, repository.recent(PersonId.LOCAL, 20).size());
+            ActivityEntry entry = repository.recent(PersonId.LOCAL, 1).get(0);
+            assertEquals("com.example.selected", entry.event.packageName); assertFalse(entry.unread);
+            repository.close(); local.close(); local = new RemoteStore(context, name);
+            repository = new RemoteActivityRepository(context, local, () -> {}, notifications); drain(repository);
+            assertEquals(entry.key, repository.recent(PersonId.LOCAL, 1).get(0).key);
+            ActivitySources.install(repository); ControllerPinManager.enterDomMode();
+            try (androidx.test.core.app.ActivityScenario<DomActivityActivity> page =
+                    androidx.test.core.app.ActivityScenario.launch(DomActivityActivity.class)) {
+                java.util.concurrent.atomic.AtomicBoolean shown = new java.util.concurrent.atomic.AtomicBoolean();
+                long deadline = android.os.SystemClock.uptimeMillis() + 8000;
+                do {
+                    page.onActivity(activity -> shown.set(activity.findViewById(com.subhub.app.R.id.dom_activity_list)
+                            .findViewWithTag("activity_entry:" + entry.key) != null));
+                    if (!shown.get()) android.os.SystemClock.sleep(50);
+                } while (!shown.get() && android.os.SystemClock.uptimeMillis() < deadline);
+                assertTrue(shown.get()); page.recreate();
+                page.onActivity(activity -> assertNotNull(activity.findViewById(com.subhub.app.R.id.dom_activity_list)));
+            }
+        } finally {
+            ActivitySources.install(priorUi); RemoteActivityRecorder.install(priorRecorder);
+            repository.close(); local.close();
+        }
+    }
+
     @Test public void combinedFeedPagesExistingLocalAndEligibleRemoteEvents() throws Exception {
         receiver.getWritableDatabase().delete("activity_source", null, null);
         long now = System.currentTimeMillis();

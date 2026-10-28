@@ -24,8 +24,10 @@ public final class TaskPeer {
     }
     private void exchange() throws Exception {
         runtime.sweep(target);
-        JSONObject status = frame("tasks_status").put("allowed", runtime.enabled(target))
-                .put("received", runtime.enabled(target) ? runtime.store.received(target.scope) : 0);
+        boolean localAllowed = runtime.enabled(target) && (!runtime.store.load(target.scope).hasCancellations()
+                || "1".equals(runtime.authorityLock().metadata(target.peer.identity, target.peer.generation, "tasks_cancel_version", "0")));
+        JSONObject status = frame("tasks_status").put("allowed", localAllowed)
+                .put("received", localAllowed ? runtime.store.received(target.scope) : 0);
         JSONObject remote;
         boolean dom = target.peer.localRole == RemoteProtocol.Role.DOM;
         if (!dom && runtime.enabled(target)) status.put("timezone", java.time.ZoneId.systemDefault().getId());
@@ -43,7 +45,7 @@ public final class TaskPeer {
             } catch (IllegalStateException invalid) { zone = ""; received = 0; }
             runtime.authorityLock().taskTimezoneReceived(target.peer.identity, target.peer.generation, zone, received);
         }
-        boolean enabled = remoteAllowed && runtime.enabled(target);
+        boolean enabled = remoteAllowed && localAllowed && runtime.enabled(target);
         if (!enabled) return; // Neither side reads, writes or acknowledges the private journal while disabled.
         long remoteThrough = RemoteProtocol.integer(remote, "received");
         if (dom) { push(remoteThrough); pull(); }

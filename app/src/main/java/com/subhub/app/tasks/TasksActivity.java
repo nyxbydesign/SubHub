@@ -57,6 +57,8 @@ public final class TasksActivity extends RolePage {
     private PersonId person;
     private boolean primary;
     private boolean resumed;
+    private TaskAttachmentView inlineMedia;
+    private List<Object> inlineSignature;
     private final Handler clock = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -124,6 +126,7 @@ public final class TasksActivity extends RolePage {
         resumed = false;
         clock.removeCallbacks(tick);
         if (model != null) model.changed = null;
+        closeInlineMedia();
         if (body != null) body.removeAllViews();
         super.onPause();
     }
@@ -190,8 +193,12 @@ public final class TasksActivity extends RolePage {
 
     private void render() {
         if (!resumed || isFinishing() || !samePerson()) return;
-        body.removeAllViews();
         Snapshot state = model.snapshot;
+        List<Object> signature = inlineSignature(state);
+        if (inlineMedia != null && !inlineMedia.isClosed() && !model.busy && model.failure == null
+                && signature != null && signature.equals(inlineSignature) && inlineAuthorized()) return;
+        closeInlineMedia();
+        body.removeAllViews();
         title("create".equals(model.form) ? R.string.tasks_new
                 : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
         boolean nested = !primary || !model.form.isEmpty() || !model.selected.isEmpty();
@@ -261,7 +268,7 @@ public final class TasksActivity extends RolePage {
         }
         if (!state.allowed) {
             PersonUi.text(PersonUi.card(body), getString(R.string.tasks_disabled), false);
-            return;
+            if (!state.dom) return;
         }
         if (!model.selected.isEmpty()) {
             TaskEngine.Occurrence selected = state.find(model.selected);
@@ -275,11 +282,11 @@ public final class TasksActivity extends RolePage {
         summary.setTag("tasks_summary");
         TasksUi.counts(summary, count(state, TaskEngine.Status.ACTIVE),
                 count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
-        if (state.canCreate && state.zone == null) {
+        if (state.canCreate && state.allowed && state.zone == null) {
             PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);
             action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
         }
-        if (state.canCreate && state.zone != null) action(body, R.string.tasks_create, "tasks_create", () -> {
+        if (state.canCreate && state.allowed && state.zone != null) action(body, R.string.tasks_create, "tasks_create", () -> {
             model.openForm("create");
             model.draft.putString("id", UUID.randomUUID().toString());
             model.draft.putString("start", START.format(LocalDateTime.now(state.zone).plusHours(1).withSecond(0).withNano(0)));
@@ -293,7 +300,7 @@ public final class TasksActivity extends RolePage {
                 + count(state, TaskEngine.Status.SCHEDULED);
         if (model.history) shown += count(state, TaskEngine.Status.ACCEPTED) + count(state, TaskEngine.Status.DENIED)
                 + count(state, TaskEngine.Status.TIMED_OUT) + count(state, TaskEngine.Status.REFUSED)
-                + count(state, TaskEngine.Status.SKIPPED);
+                + count(state, TaskEngine.Status.SKIPPED) + count(state, TaskEngine.Status.CANCELLED);
         if (shown == 0) TasksUi.empty(body, R.string.tasks_no_open);
         else {
             section(state, R.string.tasks_active, TaskEngine.Status.ACTIVE);
@@ -301,7 +308,7 @@ public final class TasksActivity extends RolePage {
             section(state, R.string.tasks_scheduled, TaskEngine.Status.SCHEDULED);
             if (model.history) section(state, R.string.tasks_history, TaskEngine.Status.ACCEPTED,
                     TaskEngine.Status.DENIED, TaskEngine.Status.TIMED_OUT, TaskEngine.Status.REFUSED,
-                    TaskEngine.Status.SKIPPED);
+                    TaskEngine.Status.SKIPPED, TaskEngine.Status.CANCELLED);
         }
         action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
     }
@@ -383,7 +390,59 @@ public final class TasksActivity extends RolePage {
                         "refuse_series:" + occurrence.id, () -> act(occurrence, TaskAction.Kind.REFUSE_SERIES), false);
             }
         }
+        if (state.dom && occurrence.status != TaskEngine.Status.CANCELLED) {
+            if (state.canCancel) action(actions, R.string.tasks_cancel_task, "cancel_task:" + occurrence.id,
+                    () -> confirmCancellation(occurrence), false);
+            else PersonUi.text(actions, getString(R.string.tasks_cancel_update), false);
+        }
         if (actions.getChildCount() == 0) body.removeView(actions);
+        if (state.allowed && occurrence.task.attachment != null && inlineAuthorized()) {
+            LinearLayout media = PersonUi.card(body);
+            PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
+            inlineMedia = new TaskAttachmentView(this, data, repository, occurrence.task.attachment,
+                    model.scope, state.dom, this::inlineAuthorized, this::refresh);
+            media.addView(inlineMedia, new LinearLayout.LayoutParams(-1, -2));
+            inlineSignature = inlineSignature(state);
+        }
+    }
+
+    private void confirmCancellation(TaskEngine.Occurrence occurrence) {
+        if (model.busy || !model.dom || !ControllerPinManager.isDomModeActive()) return;
+        if (inlineMedia != null) inlineMedia.pause();
+        boolean[] series = {false};
+        androidx.appcompat.app.AlertDialog.Builder dialog = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.tasks_cancel_task)
+                .setNegativeButton(R.string.tasks_keep_task, null)
+                .setPositiveButton(R.string.tasks_cancel_task, (window, which) -> {
+                    TaskRepository repo = repository;
+                    mutate(() -> { repo.cancel(occurrence.task.id, occurrence.date, series[0]); return null; }, true);
+                });
+        if (occurrence.task.recurring()) dialog.setSingleChoiceItems(
+                new String[]{getString(R.string.tasks_cancel_occurrence), getString(R.string.tasks_cancel_series)},
+                0, (window, which) -> series[0] = which == 1);
+        else dialog.setMessage(getString(R.string.tasks_cancel_confirm, occurrence.task.title));
+        dialog.show();
+    }
+
+    private boolean inlineAuthorized() {
+        try {
+            return resumed && samePerson() && model.form.isEmpty() && !model.selected.isEmpty()
+                    && model.dom == ControllerPinManager.isDomModeActive()
+                    && model.scope.equals(repository.target().scope) && repository.allowed();
+        } catch (RuntimeException denied) { return false; }
+    }
+
+    private List<Object> inlineSignature(Snapshot state) {
+        if (state == null || !state.valid || !state.allowed || !model.form.isEmpty() || model.selected.isEmpty()) return null;
+        TaskEngine.Occurrence row = state.find(model.selected);
+        if (row == null || row.task.attachment == null) return null;
+        return java.util.Arrays.asList(model.scope, state.dom, state.canCancel, state.canCreate, model.selected, row.status,
+                row.submission == null ? "" : row.submission.id, state.refused.contains(row.task.id), model.message);
+    }
+
+    private void closeInlineMedia() {
+        if (inlineMedia != null) { inlineMedia.close(); inlineMedia = null; }
+        inlineSignature = null;
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
@@ -399,7 +458,6 @@ public final class TasksActivity extends RolePage {
             PersonUi.text(card, String.join(" · ", days), false);
         }
         if (!occurrence.task.text.isEmpty()) PersonUi.text(card, occurrence.task.text, false);
-        if (occurrence.task.attachment != null) attachment(card, occurrence.task.attachment);
     }
 
     private void author() {
@@ -629,6 +687,7 @@ public final class TasksActivity extends RolePage {
             case DENIED: return R.string.tasks_denied;
             case TIMED_OUT: return R.string.tasks_timed_out;
             case SKIPPED: return R.string.tasks_skipped;
+            case CANCELLED: return R.string.tasks_cancelled;
             default: return R.string.tasks_refused;
         }
     }
@@ -657,7 +716,7 @@ public final class TasksActivity extends RolePage {
     private static final class Snapshot {
         String scope, name;
         ZoneId zone;
-        boolean valid = true, dom, allowed, chosen, canCreate, canOptOut, supported;
+        boolean valid = true, dom, allowed, chosen, canCreate, canOptOut, supported, canCancel;
         List<TaskEngine.Occurrence> rows = List.of();
         final Set<String> refused = new HashSet<>();
         TaskEngine.Occurrence find(String id) {
@@ -672,7 +731,8 @@ public final class TasksActivity extends RolePage {
             value.chosen = SubFeaturePolicy.chosen(app, "tasks");
             value.canOptOut = repo.person.isLocal() && !value.dom && !DeviceRolePreferences.isDomWorkspace(app);
             value.supported = repo.supported();
-            value.canCreate = value.supported && value.dom && ControllerPinManager.hasCredentials(app)
+            value.canCancel = value.dom && repo.cancellationSupported();
+            value.canCreate = value.supported && value.allowed && value.dom && ControllerPinManager.hasCredentials(app)
                     && (!repo.person.isLocal() || PersonRoutes.canEditLocal(app, repo.person));
             try { value.zone = repo.schedulingZone(); }
             catch (IllegalStateException unavailable) { value.zone = null; }

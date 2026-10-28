@@ -29,6 +29,10 @@ public final class TaskRuntime {
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "subhub-tasks"));
     private volatile boolean installed, foreground;
     private TaskRuntime(Context context) { this.context = context; store = new TaskStore(context); }
+    boolean hasCancellations(String scope) {
+        try { return store.load(scope).hasCancellations(); }
+        catch (org.json.JSONException invalid) { throw new IllegalStateException("Task history unavailable", invalid); }
+    }
     public RemoteAssets assets(String scope) throws Exception {
         if (!scope.matches("local|[0-9a-f]{64}_[A-Za-z0-9_-]{1,128}")) throw new SecurityException("Invalid Tasks scope");
         return new RemoteAssets(new File(context.getFilesDir(), "tasks-media/" + scope));
@@ -81,7 +85,7 @@ public final class TaskRuntime {
                     long now = System.currentTimeMillis(); TaskEngine engine = store.load(target.scope); int count = 0;
                     long resumeAfter = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0);
                     for (TaskDefinition task : engine.definitions()) {
-                        if (engine.seriesRefused(task.id)) continue;
+                        if (engine.seriesRefused(task.id) || engine.seriesCancelled(task.id)) continue;
                         LocalDate today = Instant.ofEpochMilli(now).atZone(task.zone).toLocalDate();
                         for (LocalDate date = task.nextDate(task.firstStart.toLocalDate()); date != null && !date.isAfter(today);
                                 date = task.nextDate(date.plusDays(1))) {
@@ -106,8 +110,11 @@ public final class TaskRuntime {
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (authorityLock()) {
                 requireActive(target);
+                TaskEngine engine = store.load(target.scope);
+                cancelNotifications(target, engine);
                 if (!enabled(target)) return;
                 for (TaskStore.Effect effect : store.pending(target.scope)) {
+                    if (engine.cancelled(effect.action.taskId, effect.action.date)) { store.done(target.scope, effect); continue; }
                     requireActive(target);
                     if ("notification".equals(effect.kind)) {
                         if (target.peer != null && target.peer.localRole != RemoteProtocol.Role.DOM) { store.done(target.scope, effect); continue; }
@@ -124,6 +131,18 @@ public final class TaskRuntime {
             }
         }
     }
+    private void cancelNotifications(TaskRepository.Target target, TaskEngine engine) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null || !engine.hasCancellations()) return;
+        String prefix = "tasks:" + target.scope + ":";
+        for (android.service.notification.StatusBarNotification notification : manager.getActiveNotifications()) {
+            String tag = notification.getTag();
+            if (tag == null || !tag.startsWith(prefix)) continue;
+            TaskAction action = engine.action(tag.substring(prefix.length()));
+            if (action != null && engine.cancelled(action.taskId, action.date)) manager.cancel(tag, notification.getId());
+        }
+    }
+
     public boolean enabled(TaskRepository.Target target) {
         return target.peer != null && target.peer.localRole == RemoteProtocol.Role.DOM
                 || SubFeaturePolicy.allowed(context, "tasks");
