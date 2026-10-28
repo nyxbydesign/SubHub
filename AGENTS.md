@@ -125,6 +125,9 @@ RemoteFeature uses multiple concurrent session workers. A fixture holding invita
 pending across recreation must verify the worker count and gate every worker before submitting
 that creation. Verify the accepted future is still pending and release all fixture gates in
 `finally`; one blocked submitted task does not serialize the pool.
+Statistics refresh fixtures must advance the actual retained counter baseline. Lowering a
+preference does not remove dated database evidence and cannot prove that progress changed.
+Preserve existing history when selecting the next synthetic counter value.
 Keep debug manifest Activities and Services instantiable at the minimum SDK: guard their entry
 points and annotate API-specific helpers, not the whole component. A component-wide `@RequiresApi`
 also raises its manifest requirement, even when its entry point contains a runtime SDK guard.
