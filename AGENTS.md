@@ -77,8 +77,9 @@ Release signing is supplied only through the repository Actions secrets named in
 
 ## Development releases
 
-Every non-`master` branch push builds its exact pushed commit and publishes a signed GitHub
-prerelease named `v<VERSION_NAME>-dev.<release workflow run_number>`. Do not cancel an older push's
+Every non-`master` branch push outside `dependabot/**` builds its exact pushed commit and
+publishes a signed GitHub prerelease named `v<VERSION_NAME>-dev.<release workflow run_number>`.
+Dependabot pull requests keep the read-only Android CI test, lint, and APK build checks. Do not cancel an older push's
 build just because a new commit arrives. Each tag is unique and immutable; verify all APKs,
 checksums and updater metadata in the draft before publishing. Dev builds must not become the
 latest stable release or accidentally enable private experimental flags. Stable release tags
