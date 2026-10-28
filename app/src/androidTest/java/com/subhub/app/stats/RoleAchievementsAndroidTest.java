@@ -59,6 +59,8 @@ public final class RoleAchievementsAndroidTest {
     private final List<String> names = new ArrayList<>();
     private final List<String> uiPeers = new ArrayList<>();
     private final String generation = UUID.randomUUID().toString();
+    private Map<String, Map<String, Long>> localDays;
+    private String localSince;
 
     @Before public void prepare() {
         for (String name : Arrays.asList("betablocker_achievements", StatsRepository.PREFS_NAME,
@@ -77,6 +79,17 @@ public final class RoleAchievementsAndroidTest {
     }
 
     @After public void restore() {
+        if (localDays != null) {
+            android.database.sqlite.SQLiteDatabase database = DailyStatsStore.get(context).getWritableDatabase();
+            for (Map.Entry<String, Map<String, Long>> day : localDays.entrySet()) {
+                database.execSQL("DELETE FROM daily WHERE day=? AND metric IN ('service_ms','sessions')", new Object[]{day.getKey()});
+                for (Map.Entry<String, Long> metric : day.getValue().entrySet())
+                    if (metric.getKey().equals("service_ms") || metric.getKey().equals("sessions"))
+                        database.execSQL("INSERT INTO daily(day,metric,value) VALUES(?,?,?)",
+                                new Object[]{day.getKey(), metric.getKey(), metric.getValue()});
+            }
+            database.execSQL("UPDATE metadata SET value=? WHERE name='since'", new Object[]{localSince});
+        }
         if (!uiPeers.isEmpty()) try (RemoteStore store = new RemoteStore(context)) {
             for (String identity : uiPeers) store.getWritableDatabase().execSQL(
                     "UPDATE peers SET state='REVOKED' WHERE peer=? AND generation=?", new Object[]{identity, generation});
@@ -192,19 +205,43 @@ public final class RoleAchievementsAndroidTest {
         value.put("hardcoreEnabled", "true"); assertFalse(RemoteTelemetry.validRuntime(value));
     }
 
+    @Test public void dailyMirrorsRespectPairingReplayAndWalletConsent() throws Exception {
+        RemoteStore store = store(); String a = identity('a'), b = identity('b');
+        String today = java.time.LocalDate.now().toString();
+        for (String id : Arrays.asList(a, b)) {
+            peer(store, id, generation, RemoteProtocol.Role.DOM, RemoteStore.State.ACTIVE);
+            mirror(store, id, RemoteProtocol.Stream.RUNTIME, "current", runtime(false, false, id.equals(a)));
+            mirror(store, id, RemoteProtocol.Stream.DAILY, today, daily(today, 60_000, 100));
+        }
+        DomDailyStatsSource source = new DomDailyStatsSource(context);
+        DailyStatsPanel.DailyData first = source.load(store, today, today);
+        assertEquals(first.days, source.load(store, today, today).days);
+        assertEquals(Long.valueOf(120_000), first.days.get(today).get("service_ms"));
+        assertEquals(Long.valueOf(100), first.days.get(today).get("paid_EUR"));
+        mirror(store, a, RemoteProtocol.Stream.DAILY, today, daily(today, 120_000, 150));
+        assertEquals(Long.valueOf(180_000), source.load(store, today, today).days.get(today).get("service_ms"));
+        store.getWritableDatabase().execSQL("UPDATE peers SET state='REVOKED' WHERE peer=?", new Object[]{b});
+        assertEquals(Long.valueOf(120_000), source.load(store, today, today).days.get(today).get("service_ms"));
+        ControllerPinManager.enterSubMode();
+        assertThrows(SecurityException.class, () -> source.load(store, today, today));
+    }
+
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void nativeDomStatisticsShowCombinedFactsAndNoSubHistory() throws Exception {
         seedUi();
         try (ActivityScenario<StatsActivity> scenario = launch(StatsActivity.class)) {
-            awaitTag(scenario, "dom_stats_paired"); capture(scenario, "dom-statistics");
+            await(scenario, root -> texts(root.findViewWithTag("dom_stats_paired")).trim().equals("3"));
+            capture(scenario, "dom-statistics");
             scenario.onActivity(activity -> {
                 assertNotNull(activity.findViewById(android.R.id.content).findViewWithTag("dom_statistics"));
-                assertEquals("3", textAt(activity, "dom_stats_paired").trim().split("\\n")[1]);
+                assertEquals("3", textAt(activity, "dom_stats_paired").trim());
                 assertTrue(textAt(activity, "dom_stats_hardcore").contains("2"));
                 assertTrue(textAt(activity, "dom_paid_EUR").contains(com.subhub.app.penance.WalletCurrency.format("EUR", 1250)));
                 assertEquals(context.getString(com.subhub.app.R.string.role_dom),
                         com.subhub.app.util.PrimaryHeader.editLockButton(activity.findViewById(android.R.id.content)).getText().toString());
-                assertNull(activity.findViewById(com.subhub.app.R.id.profile_stats_current));
+                assertNotNull(activity.findViewById(com.subhub.app.R.id.profile_stats_current));
+                assertNotNull(activity.findViewById(com.subhub.app.R.id.daily_statistics_panel));
+                assertTrue(activity.findViewById(com.subhub.app.R.id.nav_stats).isSelected());
                 assertFits(activity.findViewById(android.R.id.content));
             });
         }
@@ -232,26 +269,126 @@ public final class RoleAchievementsAndroidTest {
         }
     }
 
-    @Test public void domHomeRoutesToItsStatisticsAndAchievements() throws Exception {
+    @Test public void bothHomeCardsRouteToTheSameStatisticsAndAchievementsSections() throws Exception {
         seedUi();
-        // Earn fixture badges before navigation so their one-time snackbar cannot cover a row.
-        AchievementManager earned = AchievementManager.forWorkspace(context);
-        earned.checkDomAchievements(new DomStatsRepository(context).load());
-        assertFalse(earned.takePendingNotifications().isEmpty());
-        assertTrue(earned.takePendingNotifications().isEmpty());
-        try (ActivityScenario<MainActivity> scenario = launch(MainActivity.class)) {
-            awaitTag(scenario, "home_dom_statistics");
-            onView(withTagValue(is((Object)"home_dom_statistics")))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-            awaitScreen(StatsActivity.class, "dom_stats_paired");
-            androidx.test.espresso.Espresso.pressBack();
-            awaitTag(scenario, "home_dom_achievements");
-            onView(withTagValue(is((Object)"home_dom_achievements")))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-            awaitScreen(AchievementsActivity.class, null);
-            androidx.test.espresso.Espresso.pressBack();
-            awaitTag(scenario, "home_dom_statistics");
+        for (boolean dom : new boolean[]{true, false}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            consumeNotifications();
+            try (ActivityScenario<MainActivity> scenario = launch(MainActivity.class)) {
+                await(scenario, root -> {
+                    View overview = root.findViewById(dom ? com.subhub.app.R.id.home_dom_overview : com.subhub.app.R.id.home_sub_summary);
+                    View preview = overview.findViewWithTag("achievement_preview");
+                    return preview != null && texts(preview).contains(context.getString(com.subhub.app.R.string.achievements_title));
+                });
+                scenario.onActivity(activity -> {
+                    View overview = activity.findViewById(dom ? com.subhub.app.R.id.home_dom_overview : com.subhub.app.R.id.home_sub_summary);
+                    View preview = overview.findViewWithTag("achievement_preview");
+                    assertEquals(AchievementPreviewView.class, preview.getClass());
+                    assertEquals(3, badges(preview));
+                    assertTrue(activity.findViewById(com.subhub.app.R.id.nav_stats).isShown());
+                });
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.nav_stats)).perform(click());
+                awaitScreen(StatsActivity.class, "stats_sections");
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_achievements))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                awaitScreen(AchievementsActivity.class, "stats_sections");
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.nav_stats))
+                        .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isSelected()));
+                androidx.test.espresso.Espresso.pressBack();
+                androidx.test.espresso.Espresso.pressBack();
+                awaitTag(scenario, "achievement_preview");
+                onView(withTagValue(is((Object)"achievement_preview")))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                awaitScreen(AchievementsActivity.class, "stats_sections");
+                androidx.test.espresso.Espresso.pressBack();
+            }
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void bothStatisticsPagesShareCalendarLayoutAndRestoreMonthlySelection() throws Exception {
+        seedUi(); seedDailyUi();
+        for (boolean dom : new boolean[]{true, false}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            try (ActivityScenario<StatsActivity> scenario = launch(StatsActivity.class)) {
+                await(scenario, root -> root.findViewById(com.subhub.app.R.id.daily_day_summary) != null
+                        && ((ViewGroup)root.findViewById(com.subhub.app.R.id.stats_achievements)).getChildCount() > 0);
+                scenario.onActivity(activity -> {
+                    View root = activity.findViewById(android.R.id.content);
+                    for (int id : new int[]{com.subhub.app.R.id.stats_lifetime_summary,
+                            com.subhub.app.R.id.daily_statistics_panel, com.subhub.app.R.id.stats_totals_details,
+                            com.subhub.app.R.id.stats_achievements, com.subhub.app.R.id.stats_section_statistics,
+                            com.subhub.app.R.id.stats_section_achievements}) assertNotNull(root.findViewById(id));
+                    assertTrue(root.findViewById(com.subhub.app.R.id.nav_stats).isSelected());
+                    assertTrue(root.findViewById(com.subhub.app.R.id.stats_section_statistics).isSelected());
+                    assertFits(root);
+                });
+                capture(scenario, dom ? "dom-shared-statistics" : "sub-shared-statistics");
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.daily_range_year))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                await(scenario, root -> root.findViewById(com.subhub.app.R.id.daily_range_year).isSelected());
+                if (java.time.LocalDate.now().getMonthValue() > 1) {
+                    onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription(context.getString(com.subhub.app.R.string.stats_previous_month)))
+                            .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                    String previous = java.time.LocalDate.now().minusMonths(1).format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", java.util.Locale.getDefault()));
+                    awaitText(scenario, previous);
+                    scenario.recreate();
+                    awaitText(scenario, previous);
+                } else scenario.recreate();
+                await(scenario, root -> root.findViewById(com.subhub.app.R.id.daily_range_year) != null
+                        && root.findViewById(com.subhub.app.R.id.daily_range_year).isSelected());
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.daily_range_30))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+                await(scenario, root -> root.findViewById(com.subhub.app.R.id.daily_range_30).isSelected());
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.daily_metric_filter))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+                capture(scenario, dom ? "dom-shared-calendar" : "sub-shared-calendar");
+            }
+        }
+    }
+
+    private void consumeNotifications() {
+        AchievementManager manager = AchievementManager.forWorkspace(context);
+        if (manager.getRole() == AchievementRole.DOM) manager.checkDomAchievements(new DomStatsRepository(context).load());
+        else manager.checkAchievements(new StatsRepository(context).load());
+        manager.takePendingNotifications();
+    }
+
+    private static int badges(View view) {
+        int count = view instanceof AchievementBadgeView ? 1 : 0;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup)view).getChildCount(); i++) count += badges(((ViewGroup)view).getChildAt(i));
+        return count;
+    }
+
+    private void seedDailyUi() throws Exception {
+        context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit()
+                .putLong("total_protected_time", 75_600).putInt("sessions_count", 35).commit();
+        new StatsRepository(context).load();
+        DailyStatsStore.awaitWrites();
+        DailyStatsStore local = DailyStatsStore.get(context);
+        String first = java.time.LocalDate.now().minusDays(34).toString(), last = java.time.LocalDate.now().toString();
+        localDays = new LinkedHashMap<>(local.days(first, last)); localSince = local.since();
+        for (int day = 0; day < 35; day++) {
+            String date = java.time.LocalDate.now().minusDays(day).toString();
+            localDays.putIfAbsent(date, Collections.emptyMap());
+            local.getWritableDatabase().execSQL("INSERT OR REPLACE INTO daily(day,metric,value) VALUES(?,?,?)", new Object[]{date, "service_ms", (day + 1) * 120_000});
+            local.getWritableDatabase().execSQL("INSERT OR REPLACE INTO daily(day,metric,value) VALUES(?,?,?)", new Object[]{date, "sessions", 1});
+            try (RemoteStore store = new RemoteStore(context)) {
+                for (int i = 0; i < 3; i++) {
+                    String id = identity((char)('a' + i));
+                    mirror(store, id, RemoteProtocol.Stream.DAILY,
+                            date, daily(date, (i + 1) * (day + 1) * 60_000L, (i + 1) * 25));
+                    if (day == 0) mirror(store, id, RemoteProtocol.Stream.STATS, "summary",
+                            summary((i + 1) * 37_800L, 35, (i + 1) * 875, 0));
+                }
+            }
+        }
+        local.getWritableDatabase().execSQL("UPDATE metadata SET value=? WHERE name='since'", new Object[]{first});
+    }
+
+    private static JSONObject daily(String date, long time, long paid) throws Exception {
+        return new JSONObject().put("schema", 1).put("day", date).put("zone", JSONObject.NULL)
+                .put("metrics", new JSONObject().put("service_ms", time).put("sessions", 1).put("paid_EUR", paid));
     }
 
     private void awaitScreen(Class<?> expected, String tag) throws Exception {

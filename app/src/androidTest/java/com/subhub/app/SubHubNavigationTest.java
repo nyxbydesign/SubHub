@@ -108,7 +108,7 @@ public final class SubHubNavigationTest {
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_money).getVisibility());
                 assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
                 assertVisibleTabOrder(activity.findViewById(android.R.id.content),
-                        R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_settings);
+                        R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_stats, R.id.nav_settings);
             });
         }
     }
@@ -259,8 +259,8 @@ public final class SubHubNavigationTest {
                 if (expectedWidth != null) assertEquals(Integer.parseInt(expectedWidth),
                         activity.getResources().getConfiguration().screenWidthDp);
                 View root = activity.findViewById(android.R.id.content);
-                assertRailFits(root, 5);
-                assertVisibleTabOrder(root, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_settings);
+                assertRailFits(root, 6);
+                assertVisibleTabOrder(root, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_stats, R.id.nav_settings);
                 TextView title = activity.findViewById(R.id.primary_header_title);
                 assertEquals(activity.getString(com.subhub.app.activity.ActivitySources.repository().localOnly()
                         ? R.string.dom_activity_local_title : R.string.dom_activity_title), title.getText().toString());
@@ -386,9 +386,9 @@ public final class SubHubNavigationTest {
                             measurePage(page, pageWidth, pageHeight);
                             ViewGroup navigation = page.findViewById(R.id.bottom_navigation);
                             assertEquals(fontScale, themed.getResources().getConfiguration().fontScale, 0.001f);
-                            assertRailFits(page, 5);
+                            assertRailFits(page, com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(activity) ? 6 : 5);
                             assertVisibleTabOrder(page, dom
-                                    ? new int[] {R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_settings}
+                                    ? new int[] {R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_stats, R.id.nav_settings}
                                     : new int[] {R.id.nav_home, R.id.nav_tasks, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings});
                             if (dom) assertTrue(page.findViewById(R.id.nav_activity).isSelected());
                             ScrollView scroll = (ScrollView) page.getChildAt(0);
@@ -416,7 +416,7 @@ public final class SubHubNavigationTest {
                 if (expectedWidth != null) assertEquals("Actual device viewport", Integer.parseInt(expectedWidth),
                         activity.getResources().getConfiguration().screenWidthDp);
                 ViewGroup root = activity.findViewById(android.R.id.content);
-                assertRailFits(root, 5);
+                assertRailFits(root, 6);
                 TextView title = activity.findViewById(R.id.primary_header_title);
                 assertCompleteText(title);
                 assertEquals(Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 20,
@@ -455,7 +455,7 @@ public final class SubHubNavigationTest {
                     SubHubNavigation.bind(activity, page, SubHubNavigation.Screen.ACTIVITY);
                     measurePage(page, densityWidth, densityHeight);
                     measurePage(page, densityWidth, densityHeight);
-                    assertRailFits(page, 5);
+                    assertRailFits(page, com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(activity) ? 6 : 5);
                     View navigation = page.findViewById(R.id.bottom_navigation);
                     android.widget.ListView list = page.findViewById(R.id.dom_activity_list);
                     assertTrue("Activity content must clear every measured navigation row", list.getPaddingBottom()

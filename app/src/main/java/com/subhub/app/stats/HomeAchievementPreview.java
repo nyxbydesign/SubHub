@@ -32,7 +32,10 @@ public final class HomeAchievementPreview {
         AchievementManager manager = AchievementManager.forWorkspace(app.getApplicationContext());
         if (manager.getRole() == AchievementRole.DOM)
             manager.checkDomAchievements(new DomStatsRepository(app).load());
-        else manager.checkAchievements(stats);
+        else {
+            if (stats == null) stats = new StatsRepository(app).load();
+            manager.checkAchievements(stats);
+        }
         return from(manager, stats);
     }
 
