@@ -267,7 +267,13 @@ public class TaskPlaybackAndroidTest {
             page.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("task_attachment:" + first.hash)));
             tapInline("task_proof_attachments:" + occurrence()); awaitInline(page, "task_proof_page:" + occurrence());
             page.recreate(); awaitInline(page, "task_proof_page:" + occurrence());
-            awaitInline(page, "task_attachment:" + second.hash); tapInline("task_attachment:" + first.hash);
+            awaitInline(page, "task_attachment:" + second.hash);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                java.util.concurrent.atomic.AtomicReference<TasksActivity> recreated = new java.util.concurrent.atomic.AtomicReference<>();
+                page.onActivity(recreated::set);
+                com.subhub.app.UiRefreshWitness.capture(recreated.get(), "tasks-proof-controls-after-recreation");
+            }
+            tapInline("task_attachment:" + first.hash);
             awaitResumedMedia(); androidx.test.espresso.Espresso.pressBack();
             awaitInline(page, "task_proof_page:" + occurrence());
             androidx.test.espresso.Espresso.pressBack(); awaitInline(page, "task_detail:" + occurrence());

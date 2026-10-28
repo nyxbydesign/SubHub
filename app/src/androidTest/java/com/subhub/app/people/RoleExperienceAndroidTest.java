@@ -91,6 +91,8 @@ public final class RoleExperienceAndroidTest {
         People.installRemoteRepository(null);
         People.installRemoteAuthority(() -> false);
         People.installConnectionUi(null);
+        assertTrue(ControllerPinManager.setPin(context, "2468"));
+        assertTrue(ControllerPinManager.verify(context, "2468"));
         assertTrue(new SettingsRepository(context).preferences().edit()
                 .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,
                         com.subhub.app.security.DeviceRolePreferences.Mode.BOTH.name()).commit());

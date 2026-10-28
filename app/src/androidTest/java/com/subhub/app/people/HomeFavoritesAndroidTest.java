@@ -56,6 +56,7 @@ public final class HomeFavoritesAndroidTest {
     private final AtomicInteger activityReads = new AtomicInteger(), recentLimit = new AtomicInteger();
     private List<PersonSnapshot> roster;
     private FavoriteSubStore favorites;
+    private volatile List<ActivityEntry> fixedEvents;
 
     @Before public void prepare() {
         assertFalse("Use an inactive, owned UI guest", LocalSessionControls.isActive(context));
@@ -63,6 +64,8 @@ public final class HomeFavoritesAndroidTest {
                 "betablocker_stats", "betablocker_achievements"))
             original.put(name, new LinkedHashMap<>(context.getSharedPreferences(name, 0).getAll()));
         assertTrue(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).edit().clear().commit());
+        assertTrue(ControllerPinManager.setPin(context, "2468"));
+        assertTrue(ControllerPinManager.verify(context, "2468"));
         ControllerPinManager.enterDomMode();
         assertTrue(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
         OnboardingState.complete(context);
@@ -97,6 +100,93 @@ public final class HomeFavoritesAndroidTest {
         if (originalActivity != null) ActivitySources.install(originalActivity);
         for (Map.Entry<String, Map<String, ?>> saved : original.entrySet())
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(saved.getKey(), 0), saved.getValue());
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void changedFavoriteAndActivityKeepOtherHomeSectionsAndScrolledPosition() throws Exception {
+        assertTrue(favorites.toggle(roster.get(0)));
+        fixedEvents = events(5);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            String favorite = "home_favorite:" + roster.get(0).id.value();
+            String recent = "home_recent_person:" + roster.get(1).id.value();
+            awaitTag(scenario, favorite); awaitTag(scenario, "activity_preview_entry:fact-0");
+            MainActivity home = resumed(MainActivity.class);
+            com.subhub.app.UiRefreshWitness.frame(home);
+            AtomicReference<View> summary = new AtomicReference<>(), recentRow = new AtomicReference<>(), preview = new AtomicReference<>();
+            AtomicReference<View> event = new AtomicReference<>(), favoriteView = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicInteger position = new java.util.concurrent.atomic.AtomicInteger();
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                summary.set(root.findViewWithTag("home_devices")); recentRow.set(root.findViewWithTag(recent));
+                preview.set(root.findViewWithTag("activity_preview:all")); event.set(root.findViewWithTag("activity_preview_entry:fact-0"));
+                favoriteView.set(root.findViewWithTag(favorite));
+                com.subhub.app.UiRefreshWitness.scroll(root).scrollTo(0, PersonUi.dp(activity, 220));
+            });
+            com.subhub.app.UiRefreshWitness.frame(home);
+            scenario.onActivity(activity -> position.set(com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.home_dom_overview)).getScrollY()));
+            assertTrue("Fixture must be scrolled", position.get() > 0);
+            PersonSnapshot first = roster.get(0);
+            PersonSnapshot changed = new PersonSnapshot(first.id, first.name, first.device, first.contractName,
+                    first.serviceLabel, first.connection, first.freshness, first.lastSyncedAt, first.capabilities,
+                    first.sections, first.allowances, first.currency, first.protectedSeconds + 120,
+                    first.activityEvents + 1, first.tributeCents, first.sessions, first.serviceActive,
+                    first.sync, first.sessionIdentity, first.additionOrder);
+            roster = new ArrayList<>(java.util.Arrays.asList(changed, roster.get(1)));
+            refreshHome(scenario);
+            com.subhub.app.UiRefreshWitness.capture(home, "home-dom-changed-statistics");
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                assertNotSame(favoriteView.get(), root.findViewWithTag(favorite));
+                assertTrue(contains(root.findViewWithTag("home_favorite_stats:" + first.id.value()),
+                        com.subhub.app.stats.StatsSnapshot.formatDuration(changed.protectedSeconds) + " · "
+                                + changed.activityEvents + " " + activity.getString(R.string.role_stat_activity)));
+                assertSame(summary.get(), root.findViewWithTag("home_devices"));
+                assertSame(recentRow.get(), root.findViewWithTag(recent));
+                assertSame(preview.get(), root.findViewWithTag("activity_preview:all"));
+                assertSame(event.get(), root.findViewWithTag("activity_preview_entry:fact-0"));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(root).getScrollY());
+            });
+            ActivityEntry previous = fixedEvents.get(0);
+            ActivityEntry updated = new ActivityEntry(previous.key, previous.personId, previous.personName, previous.device,
+                    previous.event, previous.receivedAt, true, "Settings");
+            List<ActivityEntry> next = new ArrayList<>(fixedEvents); next.set(0, updated); fixedEvents = next;
+            ActivitySources.changed();
+            long deadline = SystemClock.uptimeMillis() + 5000;
+            AtomicReference<Boolean> rendered = new AtomicReference<>(false);
+            do {
+                scenario.onActivity(activity -> rendered.set(contains(activity.findViewById(R.id.home_dom_overview)
+                        .findViewWithTag("activity_preview_entry:fact-0"), com.subhub.app.activity.ActivityText.title(activity, updated))));
+                if (!rendered.get()) SystemClock.sleep(20);
+            } while (!rendered.get() && SystemClock.uptimeMillis() < deadline);
+            com.subhub.app.UiRefreshWitness.capture(home, "home-dom-changed-activity");
+            assertTrue("Changed Activity title did not arrive", rendered.get());
+            scenario.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_dom_overview);
+                assertSame(event.get(), root.findViewWithTag("activity_preview_entry:fact-0"));
+                assertSame(summary.get(), root.findViewWithTag("home_devices"));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(root).getScrollY());
+            });
+        }
+    }
+
+    private void refreshHome(ActivityScenario<MainActivity> scenario) throws Exception {
+        scenario.onActivity(activity -> {
+            try { java.lang.reflect.Field field = MainActivity.class.getDeclaredField("roleHome"); field.setAccessible(true);
+                ((RoleHomePresenter) field.get(activity)).refresh(true);
+            } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        });
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        AtomicReference<Boolean> pending = new AtomicReference<>(true);
+        do {
+            scenario.onActivity(activity -> {
+                try { java.lang.reflect.Field field = MainActivity.class.getDeclaredField("roleHome"); field.setAccessible(true);
+                    java.lang.reflect.Field data = RoleHomePresenter.class.getDeclaredField("data"); data.setAccessible(true);
+                    pending.set(((com.subhub.app.util.AsyncUiScope) data.get(field.get(activity))).isPending("role-home"));
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            if (pending.get()) SystemClock.sleep(20);
+        } while (pending.get() && SystemClock.uptimeMillis() < deadline);
+        assertFalse("Home read did not finish", pending.get());
     }
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
@@ -411,6 +501,7 @@ public final class HomeFavoritesAndroidTest {
     }
 
     private List<ActivityEntry> events(int limit) {
+        if (fixedEvents != null) return new ArrayList<>(fixedEvents.subList(0, Math.min(limit, fixedEvents.size())));
         List<ActivityEntry> events = new ArrayList<>();
         PersonSnapshot person = roster.get(0);
         for (int index = 0; index < Math.min(6, limit); index++) events.add(new ActivityEntry("fact-" + index,

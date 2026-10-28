@@ -58,6 +58,7 @@ public final class DailyStatsPanel extends LinearLayout {
     private long rendered;
     private Map<String, Map<String, Long>> data = Collections.emptyMap();
     private String since;
+    private List<Object> renderedInput;
     private final com.subhub.app.util.AsyncUiScope uiData;
     private final String taskKey;
 
@@ -139,18 +140,25 @@ public final class DailyStatsPanel extends LinearLayout {
                             store.since(), store.days(first.toString(), today.toString()));
                 },
                 loaded -> {
-                    if (source != null && !source.accessible()) { removeAllViews(); return; }
+                    if (source != null && !source.accessible()) { renderedInput = null; removeAllViews(); return; }
                     since = loaded.since;
                     data = loaded.days;
                     render(today, first);
                 },
                 failure -> {
+                    renderedInput = null;
                     removeAllViews();
                     label(this, getContext().getString(R.string.daily_unavailable), 14, true);
                 });
     }
 
     private void render(LocalDate today, LocalDate first) {
+        Map<String, Map<String, Long>> values = new TreeMap<>();
+        for (Map.Entry<String, Map<String, Long>> day : data.entrySet())
+            values.put(day.getKey(), new TreeMap<>(day.getValue()));
+        List<Object> input = Arrays.asList(today, first, range, metric, month, selected, since, values);
+        if (input.equals(renderedInput) && getChildCount() > 0) return;
+        renderedInput = input;
         removeAllViews();
         if (compact) {
             label(this, getContext().getString(R.string.daily_today), 18, false)

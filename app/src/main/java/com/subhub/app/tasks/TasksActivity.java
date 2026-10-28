@@ -58,7 +58,10 @@ public final class TasksActivity extends RolePage {
     private boolean primary;
     private boolean resumed;
     private final List<TaskAttachmentView> inlineMedia = new ArrayList<>();
-    private List<Object> inlineSignature;
+    private List<Object> renderedState, renderedLocation;
+    private boolean renderedLoading;
+    private final java.util.Map<String, TaskCard> taskCards = new java.util.HashMap<>();
+    private final Set<String> shownCards = new HashSet<>();
     private final Handler clock = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -127,6 +130,8 @@ public final class TasksActivity extends RolePage {
         clock.removeCallbacks(tick);
         if (model != null) model.changed = null;
         closeInlineMedia();
+        renderedState = null; renderedLocation = null;
+        taskCards.clear(); shownCards.clear();
         if (body != null) body.removeAllViews();
         super.onPause();
     }
@@ -196,10 +201,34 @@ public final class TasksActivity extends RolePage {
     private void render() {
         if (!resumed || isFinishing() || !samePerson()) return;
         Snapshot state = model.snapshot;
-        List<Object> signature = inlineSignature(state);
-        if (!inlineMedia.isEmpty() && inlineMedia.stream().noneMatch(TaskAttachmentView::isClosed)
-                && !model.busy && model.failure == null && signature != null
-                && signature.equals(inlineSignature) && inlineAuthorized()) return;
+        List<Object> location = java.util.Arrays.asList(model.scope, ControllerPinManager.isDomModeActive(),
+                primary, model.form, model.selected, model.proofAttachments);
+        List<Object> signature = new ArrayList<>(location);
+        java.util.Collections.addAll(signature, model.busy, model.history, model.message,
+                state == null ? null : model.selected.isEmpty() ? state.contentSignature
+                        : java.util.Arrays.asList(state.contextSignature, state.rowSignatures.get(model.selected)));
+        if (model.form.isEmpty() && model.failure == null && signature.equals(renderedState)
+                && body.getChildCount() > 0 && inlineMedia.stream().noneMatch(TaskAttachmentView::isClosed)
+                && (inlineMedia.isEmpty() || inlineAuthorized()) && (!renderedLoading || model.loading)) return;
+        android.widget.ScrollView scroll = null;
+        for (android.view.ViewParent parent = body.getParent(); parent != null; parent = parent.getParent())
+            if (parent instanceof android.widget.ScrollView) { scroll = (android.widget.ScrollView) parent; break; }
+        boolean retainPosition = location.equals(renderedLocation);
+        int position = scroll == null ? 0 : scroll.getScrollY();
+        renderedState = signature; renderedLocation = location; renderedLoading = model.loading;
+        shownCards.clear();
+        renderContent();
+        taskCards.keySet().retainAll(shownCards);
+        if (retainPosition && position > 0 && scroll != null) {
+            android.widget.ScrollView retained = scroll;
+            retained.post(() -> {
+                if (resumed && location.equals(renderedLocation)) retained.scrollTo(0, position);
+            });
+        }
+    }
+
+    private void renderContent() {
+        Snapshot state = model.snapshot;
         closeInlineMedia();
         body.removeAllViews();
         title("create".equals(model.form) ? R.string.tasks_new
@@ -339,14 +368,23 @@ public final class TasksActivity extends RolePage {
         if (visible.isEmpty()) return;
         PersonUi.text(body, getString(R.string.tasks_section_count, getString(heading), visible.size()), true);
         for (TaskEngine.Occurrence occurrence : visible) {
-            LinearLayout card = PersonUi.card(body);
-            card.setTag("task:" + occurrence.id);
             DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
                     .withZone(occurrence.task.zone);
             String timing = getString(occurrence.status == TaskEngine.Status.SCHEDULED
                     ? R.string.tasks_starts : R.string.tasks_due,
                     display.format(occurrence.status == TaskEngine.Status.SCHEDULED
                             ? occurrence.task.start(occurrence.date) : occurrence.task.end(occurrence.date)));
+            List<Object> signature = java.util.Arrays.asList(state.scope, state.dom,
+                    occurrence.task.title, timing, occurrence.status);
+            shownCards.add(occurrence.id);
+            TaskCard previous = taskCards.get(occurrence.id);
+            if (previous != null && signature.equals(previous.signature)) {
+                body.addView(previous.view);
+                continue;
+            }
+            LinearLayout card = PersonUi.card(body);
+            card.setTag("task:" + occurrence.id);
+            taskCards.put(occurrence.id, new TaskCard(card, signature));
             PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, timing, () -> {
                 if (model.busy || model.loading) return;
                 model.selected = occurrence.id;
@@ -355,6 +393,12 @@ public final class TasksActivity extends RolePage {
             }).setTag("task_open:" + occurrence.id);
             TasksUi.badge(card, getString(statusLabel(occurrence.status)));
         }
+    }
+
+    private static final class TaskCard {
+        final LinearLayout view;
+        final List<Object> signature;
+        TaskCard(LinearLayout view, List<Object> signature) { this.view = view; this.signature = signature; }
     }
 
     private void detail(Snapshot state, TaskEngine.Occurrence occurrence) {
@@ -418,7 +462,6 @@ public final class TasksActivity extends RolePage {
             else PersonUi.text(actions, getString(R.string.tasks_cancel_update), false);
         }
         if (actions.getChildCount() == 0) body.removeView(actions);
-        if (!inlineMedia.isEmpty()) inlineSignature = inlineSignature(state);
     }
 
     private void embed(LinearLayout parent, TaskAttachment attachment, boolean dom) {
@@ -462,20 +505,9 @@ public final class TasksActivity extends RolePage {
         } catch (RuntimeException denied) { return false; }
     }
 
-    private List<Object> inlineSignature(Snapshot state) {
-        if (state == null || !state.valid || !state.allowed || !model.form.isEmpty()
-                || model.proofAttachments || model.selected.isEmpty()) return null;
-        TaskEngine.Occurrence row = state.find(model.selected);
-        if (row == null || row.task.attachment == null
-                && (row.submission == null || row.submission.attachments.size() != 1)) return null;
-        return java.util.Arrays.asList(model.scope, state.dom, state.canCancel, state.canCreate, model.selected, row.status,
-                row.submission == null ? "" : row.submission.id, state.refused.contains(row.task.id), model.message);
-    }
-
     private void closeInlineMedia() {
         for (TaskAttachmentView media : inlineMedia) media.close();
         inlineMedia.clear();
-        inlineSignature = null;
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
@@ -752,6 +784,8 @@ public final class TasksActivity extends RolePage {
         boolean valid = true, dom, allowed, chosen, canCreate, canOptOut, supported, canCancel;
         List<TaskEngine.Occurrence> rows = List.of();
         final Set<String> refused = new HashSet<>();
+        List<Object> contentSignature, contextSignature;
+        final java.util.Map<String, List<Object>> rowSignatures = new java.util.HashMap<>();
         TaskEngine.Occurrence find(String id) {
             for (TaskEngine.Occurrence row : rows) if (row.id.equals(id)) return row;
             return null;
@@ -772,6 +806,17 @@ public final class TasksActivity extends RolePage {
             value.rows = repo.list(System.currentTimeMillis());
             TaskEngine engine = repo.engine();
             for (TaskDefinition definition : engine.definitions()) if (engine.seriesRefused(definition.id)) value.refused.add(definition.id);
+            List<Object> content = new ArrayList<>(java.util.Arrays.asList(value.scope, value.name, value.zone,
+                    value.valid, value.dom, value.allowed, value.chosen, value.canCreate, value.canOptOut,
+                    value.supported, value.canCancel, new java.util.TreeSet<>(value.refused)));
+            value.contextSignature = new ArrayList<>(content);
+            for (TaskEngine.Occurrence row : value.rows) {
+                List<Object> fields = java.util.Arrays.asList(row.id, row.status, row.task.json().toString(),
+                        row.submission == null ? null : row.submission.json().toString());
+                value.rowSignatures.put(row.id, fields);
+                content.add(fields);
+            }
+            value.contentSignature = content;
             verify(repo, value.scope, value.dom);
             return value;
         }
