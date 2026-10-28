@@ -99,6 +99,10 @@ intent to that action; `ActivityScenario` compares the launch and activity inten
 ignores valid lifecycle events. Preserve the mismatch log and correct only the fixture; do not
 change Home behavior, widen the timeout or reset the guest to resolve this observer failure.
 
+Seed earned synthetic achievements and consume their pending notifications before navigation-only
+fixtures. A one-time achievement snackbar can cover a correctly located row; dedicated notification
+tests must retain the real notification path.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
