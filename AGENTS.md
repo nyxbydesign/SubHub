@@ -90,6 +90,10 @@ passed workloads to repair export evidence. Verify the structured payload as wel
 status: Android `exec-out` can return diagnostic text with a zero host exit code. Preserve failed
 exports and shutdown observers, and reconcile actual closure separately.
 
+Source-based instrumentation inventories must accept fully qualified eligibility annotations such as `@androidx.test.filters.SdkSuppress` as well as imported annotation names. Reconcile every selected method against the actual package, annotation and APK source witness before launching the guest.
+
+Remote transport fixtures with an isolated Context must complete `LegacyPackMigration.recoverAndMigrate(context)` and assert `RemoteFeature.recoveryReady()` before testing session cancellation or background expiry. Migration readiness belongs to that Context's files and preference stores; readiness from the application Context does not qualify the isolated fixture.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
