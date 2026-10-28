@@ -312,7 +312,7 @@ public final class RoleHomePresenter {
                 if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
             }).setTag("home_assigned_dom_connection");
         }
-        PersonUi.row(subBody, R.drawable.ic_nav_contract, activity.getString(R.string.tasks_title), "", () -> {
+        PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks, activity.getString(R.string.tasks_title), "", () -> {
             if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
                     .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
         }).setTag("home_tasks");

@@ -31,7 +31,7 @@ import java.util.List;
 /** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
-    public enum Screen { HOME, PEOPLE, ACTIVITY, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public enum Screen { HOME, PEOPLE, TASKS, ACTIVITY, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -79,12 +79,14 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_money), false);
         setVisible(root.findViewById(R.id.nav_atmosphere), false);
         setVisible(root.findViewById(R.id.nav_people), domMode);
-        setVisible(root.findViewById(R.id.nav_activity), domMode);
+        setVisible(root.findViewById(R.id.nav_tasks), true);
+        boolean activityAvailable = com.subhub.app.activity.ActivitySources.repository().supports(null);
+        setVisible(root.findViewById(R.id.nav_activity), domMode && activityAvailable);
         setVisible(root.findViewById(R.id.nav_contract), !domMode);
         setVisible(root.findViewById(R.id.nav_stats), !domMode);
         setVisible(root.findViewById(R.id.nav_settings), true);
         Screen selected = active;
-        if (active == Screen.ACTIVITY && !domMode) selected = Screen.HOME;
+        if (active == Screen.ACTIVITY && (!domMode || !activityAvailable)) selected = Screen.HOME;
         if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
                 || active == Screen.ATMOSPHERE || domMode && (active == Screen.STATS || active == Screen.CONTRACT)) {
             selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
@@ -96,6 +98,10 @@ public final class SubHubNavigation {
         bindTab(activity, root.findViewById(R.id.nav_people),
                 root.findViewById(R.id.nav_people_icon), root.findViewById(R.id.nav_people_label),
                 selected, Screen.PEOPLE, com.subhub.app.people.PeopleActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_tasks),
+                root.findViewById(R.id.nav_tasks_icon), root.findViewById(R.id.nav_tasks_label),
+                selected, Screen.TASKS, domMode ? com.subhub.app.tasks.TasksOverviewActivity.class
+                        : com.subhub.app.tasks.TasksActivity.class);
         bindTab(activity, root.findViewById(R.id.nav_activity),
                 root.findViewById(R.id.nav_activity_icon), root.findViewById(R.id.nav_activity_label),
                 selected, Screen.ACTIVITY, com.subhub.app.activity.DomActivityActivity.class);
@@ -109,7 +115,7 @@ public final class SubHubNavigation {
                 root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
                 selected, Screen.SETTINGS, GlobalSettingsActivity.class);
         bindNavigationLayout(navigation);
-        bindActivityUnread(activity, root, domMode && ControllerPinManager.isDomModeActive());
+        bindActivityUnread(activity, root, domMode && activityAvailable && ControllerPinManager.isDomModeActive());
     }
 
     private static void bindActivityUnread(Activity activity, View root, boolean domMode) {
@@ -366,7 +372,11 @@ public final class SubHubNavigation {
         tab.setOnClickListener(view -> {
             if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomModeActive()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
-            if (selected && target.isInstance(activity)) return;
+            if (selected && target.isInstance(activity)) {
+                if (activity instanceof com.subhub.app.tasks.TasksActivity)
+                    ((com.subhub.app.tasks.TasksActivity) activity).showSectionHome();
+                return;
+            }
             if (selected && activity instanceof PenanceActivity) {
                 ((PenanceActivity) activity).showSectionHome();
                 return;

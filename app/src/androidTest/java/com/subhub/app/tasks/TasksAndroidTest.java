@@ -169,8 +169,13 @@ public final class TasksAndroidTest {
             tap("tasks_day_1"); tap("tasks_day_5"); tap("tasks_refusal");
             page.recreate();
             awaitTag(page, "tasks_save");
+            onView(withTagValue(is("tasks_zone"))).check(doesNotExist());
+            onView(withTagValue(is("tasks_timezone"))).check(matches(withText(
+                    context.getString(R.string.tasks_timezone, ZoneId.systemDefault().getId()))));
             onView(withTagValue(is("tasks_title"))).check(matches(withText(titlePrefix + "created")));
             onView(withTagValue(is("tasks_duration"))).check(matches(withText("45")));
+            onView(withTagValue(is("tasks_title"))).perform(NativeUiActions.revealAboveNavigation());
+            capture("tasks-create");
             tap("tasks_save");
             await(() -> store.load(scope).definitions().size() == 1);
             TaskDefinition created = store.load(scope).definitions().get(0);
@@ -191,6 +196,7 @@ public final class TasksAndroidTest {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
             String id = occurrenceId(task);
+            openTask(page, task);
             awaitTag(page, "request:" + id); tap("request:" + id);
             edit("tasks_text", "Synthetic completion proof");
             page.recreate(); awaitTag(page, "tasks_send");
@@ -201,6 +207,7 @@ public final class TasksAndroidTest {
             assertEquals("Synthetic completion proof", submitted.text);
             assertEquals(TaskAction.Kind.SUBMIT, submitted.kind);
             switchRole(page, true);
+            openTask(page, task);
             awaitTag(page, "accept:" + id); tap("accept:" + id);
             await(() -> row(task).status == TaskEngine.Status.ACCEPTED);
             JSONArray actions = store.load(scope).json().getJSONArray("actions");
@@ -215,11 +222,13 @@ public final class TasksAndroidTest {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
             String id = occurrenceId(task);
+            openTask(page, task);
             awaitTag(page, "outside:" + id); tap("outside:" + id);
             await(() -> row(task).status == TaskEngine.Status.PENDING);
             String submission = row(task).submission.id;
             assertEquals(TaskAction.Kind.OUTSIDE, row(task).submission.kind);
             switchRole(page, true);
+            openTask(page, task);
             awaitTag(page, "deny:" + id); tap("deny:" + id);
             await(() -> row(task).status == TaskEngine.Status.DENIED);
             JSONArray actions = store.load(scope).json().getJSONArray("actions");
@@ -232,13 +241,17 @@ public final class TasksAndroidTest {
         TaskDefinition series = seed("series refusal", true);
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<TasksActivity> page = launch()) {
+            openTask(page, single);
             awaitTag(page, "refuse:" + occurrenceId(single)); tap("refuse:" + occurrenceId(single));
             await(() -> row(single).status == TaskEngine.Status.REFUSED);
             assertFalse(store.load(scope).seriesRefused(single.id));
+            androidx.test.espresso.Espresso.pressBack();
+            openTask(page, series);
             String tag = "refuse_series:" + occurrenceId(series);
             awaitTag(page, tag); tap(tag);
             await(() -> store.load(scope).seriesRefused(series.id));
             assertEquals(TaskEngine.Status.REFUSED, row(series).status);
+            androidx.test.espresso.Espresso.pressBack();
             page.recreate(); awaitTag(page, "tasks_history");
             onView(withTagValue(is(tag))).check(doesNotExist());
             tap("tasks_history");
@@ -388,6 +401,87 @@ public final class TasksAndroidTest {
         }
     }
 
+    @Test public void tasksTabRetainsListDetailAndSubmissionNavigation() throws Exception {
+        TaskDefinition task = seed("Read one chapter", false);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "task_open:" + occurrenceId(task));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks))
+                    .check(matches(androidx.test.espresso.matcher.ViewMatchers.isSelected()));
+            capture("tasks-list");
+            openTask(page, task);
+            awaitTag(page, "task_detail:" + occurrenceId(task));
+            capture("tasks-detail");
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(page, "task_open:" + occurrenceId(task));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_settings)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks)).perform(click());
+            awaitTag(page, "task_open:" + occurrenceId(task));
+            assertEquals(Lifecycle.State.RESUMED, page.getState());
+            openTask(page, task);
+            tap("request:" + occurrenceId(task));
+            awaitTag(page, "tasks_send");
+            edit("tasks_text", "Read the chapter and wrote a short summary.");
+            onView(withTagValue(is("tasks_text"))).perform(NativeUiActions.revealAboveNavigation());
+            capture("tasks-submission");
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(page, "task_detail:" + occurrenceId(task));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks)).perform(click());
+            awaitTag(page, "task_open:" + occurrenceId(task));
+            onView(withTagValue(is("tasks_send"))).check(doesNotExist());
+        }
+    }
+
+    @Test public void domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList() throws Exception {
+        seed("Prepare tomorrow", false);
+        try (ActivityScenario<TasksOverviewActivity> page = ActivityScenario.launch(TasksOverviewActivity.class)) {
+            awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks))
+                    .check(matches(androidx.test.espresso.matcher.ViewMatchers.isSelected()));
+            capture("tasks-overview");
+            tap("tasks_profile:" + PersonId.LOCAL.value());
+            await(() -> {
+                AtomicBoolean found = new AtomicBoolean();
+                instrumentation.runOnMainSync(() -> {
+                    for (Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+                            .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
+                        if (activity instanceof TasksActivity) found.set(PersonId.LOCAL.equals(
+                                PersonRoutes.requireId(activity.getIntent()))
+                                && activity.findViewById(android.R.id.content).findViewWithTag("tasks_create") != null);
+                    }
+                });
+                return found.get();
+            });
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
+        }
+    }
+
+    private void openTask(ActivityScenario<TasksActivity> page, TaskDefinition task) throws Exception {
+        awaitTag(page, "task_open:" + occurrenceId(task));
+        tap("task_open:" + occurrenceId(task));
+        awaitTag(page, "task_detail:" + occurrenceId(task));
+    }
+
+    private void capture(String name) throws Exception {
+        instrumentation.waitForIdleSync();
+        java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
+        instrumentation.runOnMainSync(() -> {
+            for (Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+                    .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED))
+                activity.getWindow().getDecorView().postOnAnimation(() ->
+                        activity.getWindow().getDecorView().postOnAnimation(frame::countDown));
+        });
+        assertTrue(frame.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        android.graphics.Bitmap pixels = instrumentation.getUiAutomation().takeScreenshot();
+        assertNotNull(pixels);
+        File folder = new File(context.getExternalFilesDir(null), "tasks-ui");
+        assertTrue(folder.isDirectory() || folder.mkdirs());
+        try (java.io.FileOutputStream stream = new java.io.FileOutputStream(new File(folder, name + ".png"))) {
+            assertTrue(pixels.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream));
+        } finally { pixels.recycle(); }
+    }
+
     private ActivityScenario<TasksActivity> launch() {
         // No target extra exercises the incoming/local route's explicit LOCAL default.
         return ActivityScenario.launch(new Intent(context, TasksActivity.class));
@@ -423,7 +517,7 @@ public final class TasksAndroidTest {
     private void edit(String tag, String text) {
         onView(withTagValue(is(tag))).perform(NativeUiActions.revealAboveNavigation(), click(), replaceText(text), closeSoftKeyboard());
     }
-    private void awaitTag(ActivityScenario<TasksActivity> page, String tag) throws Exception {
+    private void awaitTag(ActivityScenario<? extends Activity> page, String tag) throws Exception {
         await(() -> {
             AtomicBoolean present = new AtomicBoolean();
             page.onActivity(activity -> {

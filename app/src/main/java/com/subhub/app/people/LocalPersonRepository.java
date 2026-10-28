@@ -96,18 +96,20 @@ public final class LocalPersonRepository implements PersonRepository {
         StatsSnapshot stats = new StatsRepository(context).load();
         LocalContractDetails descriptions = new LocalContractDetails(context);
         List<String> includedNames = new ArrayList<>();
+        List<PersonSnapshot.App> includedApps = new ArrayList<>();
         if (!apps.isAllApps()) for (String packageName : apps.getIncludedPackages())
-            includedNames.add(appLabel(packageName));
-        Collections.sort(includedNames, String.CASE_INSENSITIVE_ORDER);
+            includedApps.add(new PersonSnapshot.App(packageName, appLabel(packageName)));
+        includedApps.sort(java.util.Comparator.comparing(value -> value.label, String.CASE_INSENSITIVE_ORDER));
+        for (PersonSnapshot.App app : includedApps) includedNames.add(app.label);
         sections.add(0, new PersonSnapshot.Section("apps", context.getString(R.string.person_apps_title),
                 apps.isAllApps() ? context.getString(R.string.app_mode_always)
                         : context.getResources().getQuantityString(R.plurals.apps_included_count,
                                 includedNames.size(), includedNames.size()),
-                String.join("\n", includedNames)));
+                String.join("\n", includedNames), includedApps));
         List<PersonSnapshot.Section> canonical = new ArrayList<>();
         for (PersonSnapshot.Section section : sections) {
             String detail = "apps".equals(section.key) ? section.details : descriptions.forSection(section.key);
-            canonical.add(new PersonSnapshot.Section(section.key, section.title, section.summary, detail));
+            canonical.add(new PersonSnapshot.Section(section.key, section.title, section.summary, detail, section.apps));
         }
         boolean paused = new PaidPauseManager(context).isActive();
         boolean active = paused || CommitmentManager.isActive(context) || apps.isArmed()

@@ -146,7 +146,7 @@ public final class RoleExperienceAndroidTest {
                     context.getString(R.string.achievements_title))));
             ProfileStatsActivityAndroidTest.captureNativeProfile(home, "sub-achievements", "achievement_preview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_tasks, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings);
                 assertFalse(home.findViewById(R.id.commitment_start_panel).isShown());
                 assertFalse(home.findViewById(R.id.sub_dashboard).isShown());
                 assertTrue(home.findViewById(R.id.button_protection).isShown());
@@ -157,7 +157,16 @@ public final class RoleExperienceAndroidTest {
             ContractActivity contract = resumed(ContractActivity.class);
             await(() -> hasTag(contract, "person_contract_scope"));
             capture(contract, "sub-contract");
+            tapTag(contract, "contract_section:apps");
+            await(() -> {
+                AtomicReference<Boolean> visible = new AtomicReference<>(false);
+                onMain(() -> visible.set(contract.findViewById(android.R.id.content)
+                        .findViewWithTag("contract_app_icon:com.android.chrome").isShown()));
+                return visible.get();
+            });
+            capture(contract, "sub-contract-apps");
             onMain(() -> {
+                assertContractIcons(contract);
                 assertFalse(hasInput(contract.findViewById(R.id.role_page_body)));
                 assertTrue(contract.findViewById(R.id.nav_contract).isSelected());
                 assertFits(contract.getWindow().getDecorView());
@@ -191,7 +200,7 @@ public final class RoleExperienceAndroidTest {
             MainActivity home = resumed(MainActivity.class);
             capture(home, "dom-overview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_activity, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_settings);
                 assertFalse(home.findViewById(R.id.home_service_widget).isShown());
                 assertTrue(home.findViewById(R.id.button_edit_lock).isShown());
                 assertFits(home.getWindow().getDecorView());
@@ -199,7 +208,7 @@ public final class RoleExperienceAndroidTest {
             tap(home, R.id.nav_people);
             PeopleActivity people = resumed(PeopleActivity.class);
             await(() -> visibleChildCount(PeopleActivity.class, R.id.role_page_body) > 0
-                    && bodyContains(people, context.getString(R.string.role_this_device)));
+                    && bodyContains(people, ProfileNames.get(context, false)));
             capture(people, "dom-people");
             onMain(() -> PersonRoutes.open(people, PersonId.LOCAL));
             PersonActivity person = resumed(PersonActivity.class);
@@ -217,13 +226,22 @@ public final class RoleExperienceAndroidTest {
             tapTag(person, "person_tab:contracts");
             await(() -> hasTag(person, "person_apps"));
             assertChildHasNoSession(person);
+            onMain(() -> assertContractIcons(person));
             capture(person, "dom-person-contracts");
             tapTag(person, "person_apps");
             LocalAppsActivity apps = resumed(LocalAppsActivity.class);
             await(() -> appPickerLoaded(apps));
+            capture(apps, "dom-apps-viewport");
             onMain(() -> {
+                View list = apps.findViewById(R.id.app_list);
+                View nav = apps.findViewById(R.id.bottom_navigation);
+                int[] listAt = new int[2], navAt = new int[2];
+                list.getLocationOnScreen(listAt); nav.getLocationOnScreen(navAt);
+                assertTrue("App list fills the unused viewport", list.getHeight() > apps.getResources().getDisplayMetrics().heightPixels * .45f);
+                assertTrue("List stays above navigation", listAt[1] + list.getHeight() <= navAt[1]);
+                assertTrue("No large unused region above navigation", navAt[1] - listAt[1] - list.getHeight() < PersonUi.dp(apps, 40));
                 assertEquals(PersonId.LOCAL, PersonRoutes.requireId(apps.getIntent()));
-                assertEquals(context.getString(R.string.role_this_device),
+                assertEquals(ProfileNames.get(context, false),
                         ((TextView) apps.findViewById(R.id.person_editor_target)).getText().toString());
                 assertFits(apps.getWindow().getDecorView());
             });
@@ -1025,6 +1043,17 @@ public final class RoleExperienceAndroidTest {
     private boolean childReady(PersonActivity activity, String section) {
         if ("contracts".equals(section)) return hasTag(activity, "person_apps");
         return bodyContains(activity, context.getString(R.string.role_device));
+    }
+
+    private static void assertContractIcons(Activity activity) {
+        View root = activity.findViewById(android.R.id.content);
+        for (String name : List.of("com.android.chrome", "com.android.vending")) {
+            android.widget.ImageView icon = root.findViewWithTag("contract_app_icon:" + name);
+            assertNotNull("Selected contract app has its own icon row", icon);
+            assertNotNull(icon.getDrawable());
+            assertEquals(PersonUi.dp(activity, 32), icon.getLayoutParams().width);
+            assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, icon.getImportantForAccessibility());
+        }
     }
 
     private void assertChildHasNoSession(PersonActivity activity) {

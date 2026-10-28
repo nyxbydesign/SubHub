@@ -125,7 +125,7 @@ public final class ContractActivity extends RolePage {
         detail.setTag("contract_details:" + value.key);
         detail.setBackgroundResource(R.drawable.bg_home_composition_stat);
         detail.setPadding(PersonUi.dp(this, 12), PersonUi.dp(this, 4), PersonUi.dp(this, 12), PersonUi.dp(this, 8));
-        if ("apps".equals(value.key)) ContractAppList.add(detail, value.details);
+        if ("apps".equals(value.key)) ContractAppList.add(detail, value);
         else for (String block : value.details.split("\\n\\s*\\n")) {
             SpannableString copyText = new SpannableString(block);
             int firstLine = "apps".equals(value.key) ? -1 : block.indexOf('\n');

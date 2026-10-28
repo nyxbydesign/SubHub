@@ -21,12 +21,13 @@ public final class RemotePersonRepository implements PersonRepository {
     }
     @Override public PersonSnapshot load(PersonId id) throws Exception {
         RemoteStore.Peer peer=peer(id);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new IllegalArgumentException("Not a paired Sub");
-        JSONObject configuration=feature.contracts.current(peer),stats=null,runtime=null;
+        JSONObject configuration=feature.contracts.current(peer),stats=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.STATS,"summary"),runtime=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");
+        if(!RemoteTelemetry.validSummary(stats))stats=null;if(!RemoteTelemetry.validRuntime(runtime))runtime=null;
         PersonSnapshot.Freshness contract=freshness(peer,RemoteProtocol.Stream.BASELINE,configuration!=null,30*60_000),statistics=freshness(peer,RemoteProtocol.Stream.STATS,stats!=null,30*60_000),live=freshness(peer,RemoteProtocol.Stream.RUNTIME,runtime!=null,90_000);
         PersonSnapshot.Connection connection=peer.state==RemoteStore.State.REVOKED?PersonSnapshot.Connection.REVOKED:peer.state==RemoteStore.State.PENDING?PersonSnapshot.Connection.PENDING:
                 PeerPresence.online(feature.isConnected(peer),peer.lastSyncedAt,System.currentTimeMillis())?PersonSnapshot.Connection.CONNECTED:
                 peer.lastSyncedAt==0 && store.metadata(peer.identity,peer.generation,"connection_error","").isEmpty()?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
-        EnumSet<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.MANAGE_CONNECTION);
+        EnumSet<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.MANAGE_CONNECTION,PersonSnapshot.Capability.VIEW_STATS);
         if(configuration!=null)capabilities.add(PersonSnapshot.Capability.VIEW_CONTRACT);
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
         String sessionIdentity=runtime==null?"":runtime.optString("sessionIdentity","");
@@ -75,11 +76,11 @@ public final class RemotePersonRepository implements PersonRepository {
             result.add(new PersonSnapshot.Section(group,context.getString(title),"",String.join("\n",parts)));
         }
         JSONObject appDoc=configuration.getJSONObject("apps"),service=configuration.getJSONObject("service");
-        List<String> names=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
-            JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);names.add(app==null?id:app.optString("label",id));
+        List<String> names=new ArrayList<>();List<PersonSnapshot.App> appRows=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
+            JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);String label=app==null?id:app.optString("label",id);names.add(label);appRows.add(new PersonSnapshot.App(id,label));
         }
         String appSummary=appDoc.getBoolean("all")?context.getString(R.string.remote_all_apps):context.getString(R.string.remote_app_count,names.size());
-        result.add(new PersonSnapshot.Section("apps",context.getString(R.string.remote_apps),appSummary,String.join("\n",names)));
+        result.add(new PersonSnapshot.Section("apps",context.getString(R.string.remote_apps),appSummary,String.join("\n",names),appRows));
         long duration=service.getLong("duration");String rendered;
         if(duration==-1)rendered=context.getResources().getStringArray(R.array.remote_duration_choices)[0];
         else if(duration==-2)rendered=(service.getLong("minimum")/60_000)+"–"+(service.getLong("maximum")/60_000)+" "+context.getString(R.string.remote_minutes);
@@ -90,7 +91,12 @@ public final class RemotePersonRepository implements PersonRepository {
     private List<PersonSnapshot.Allowance> allowances(RemoteStore.Peer peer,JSONObject configuration) throws Exception {
         if(configuration==null)return Collections.emptyList();JSONObject limits=configuration.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits");
         if(!limits.optBoolean("app_timer_per_app_enabled") && !limits.optBoolean("app_timer_total_enabled"))return Collections.emptyList();
-        JSONObject usage=new JSONObject(),apps=configuration.getJSONObject("apps"),budgets=apps.getJSONObject("allowances");
+        JSONObject today=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_USAGE,"today");
+        // Dates belong to the source device, which may be in a different time zone.
+
+        boolean currentUsage=today!=null && freshness(peer,RemoteProtocol.Stream.APP_USAGE,true,30*60_000)==PersonSnapshot.Freshness.CURRENT;
+        if(currentUsage)try{currentUsage=java.time.LocalDate.now(java.time.ZoneId.of(today.getString("zone"))).toString().equals(today.getString("day")) && today.getInt("schema")==1;}catch(Exception invalid){currentUsage=false;}
+        JSONObject usage=!currentUsage?new JSONObject():today.getJSONObject("millis"),apps=configuration.getJSONObject("apps"),budgets=apps.getJSONObject("allowances");
         List<PersonSnapshot.Allowance> result=new ArrayList<>();Set<String> packages=RemoteConfiguration.selected(configuration);
         if(apps.getBoolean("all"))for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))if(!row.deleted)packages.add(row.key);
         if(limits.optBoolean("app_timer_per_app_enabled"))for(String name:packages) {

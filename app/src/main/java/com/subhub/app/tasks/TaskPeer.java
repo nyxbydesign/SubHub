@@ -28,12 +28,20 @@ public final class TaskPeer {
                 .put("received", runtime.enabled(target) ? runtime.store.received(target.scope) : 0);
         JSONObject remote;
         boolean dom = target.peer.localRole == RemoteProtocol.Role.DOM;
+        if (!dom && runtime.enabled(target)) status.put("timezone", java.time.ZoneId.systemDefault().getId());
         if (dom) { send(status); remote = read("tasks_status"); }
         else { remote = read("tasks_status"); send(status); }
         boolean remoteAllowed = TaskJson.bool(remote, "allowed");
         if (dom) synchronized (runtime.authorityLock()) {
             runtime.requireActive(target);
             runtime.authorityLock().taskConsentReceived(target.peer.identity, target.peer.generation, remoteAllowed);
+            String zone = remote.optString("timezone", "");
+            long received = 0;
+            if (remoteAllowed) try {
+                received = System.currentTimeMillis();
+                TaskTimezone.require(zone, received, received);
+            } catch (IllegalStateException invalid) { zone = ""; received = 0; }
+            runtime.authorityLock().taskTimezoneReceived(target.peer.identity, target.peer.generation, zone, received);
         }
         boolean enabled = remoteAllowed && runtime.enabled(target);
         if (!enabled) return; // Neither side reads, writes or acknowledges the private journal while disabled.

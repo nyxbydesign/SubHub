@@ -27,7 +27,9 @@ public class RemoteRuntimeAndroidTest {
             @Override public SharedPreferences getSharedPreferences(String name,int mode){preferences.add(name);return super.getSharedPreferences(prefix+name,mode);}
             @Override public File getFilesDir(){return directory("files");}@Override public File getNoBackupFilesDir(){return directory("private");}
             private File directory(String name){File value=new File(root,name);value.mkdirs();return value;}};
+        assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context));
         new StatsRepository(context).endSession();feature=new RemoteFeature(context,new RemoteStore(context,prefix+"dom.db"));source=new RemoteStore(context,prefix+"sub.db");
+        assertTrue(feature.recoveryReady());
         PairingInvite invite=PairingInvite.create(DOM,"ticket",1000);generation=invite.id;feature.store.saveInvite(invite);feature.store.bindInvite(generation,SUB,invite.tokenHash(),1001);feature.store.approveInvite(generation,SUB,"Sub",1001);feature.store.activate(SUB,generation);source.acceptInvite(invite,"Dom");source.activate(DOM,generation);
     }
     @After public void cleanup()throws Exception {

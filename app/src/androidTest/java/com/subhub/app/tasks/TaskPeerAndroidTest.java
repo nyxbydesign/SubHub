@@ -32,6 +32,7 @@ public class TaskPeerAndroidTest {
     private boolean oldTasks;
     @Before public void setup() throws Exception {
         runtime = TaskRuntime.get(context); store = RemoteFeature.get(context).store;
+        oldTasks = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getBoolean("tasks", true);
         generation = "tasks_" + UUID.randomUUID();
         domId = RemoteProtocol.sha256(("dom" + generation).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         subId = RemoteProtocol.sha256(("sub" + generation).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -39,7 +40,6 @@ public class TaskPeerAndroidTest {
         store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'SUB','ACTIVE','')", new Object[]{domId, generation, "Synthetic Dom"});
         domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
         domScope = subId + "_" + generation; subScope = domId + "_" + generation;
-        oldTasks = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getBoolean("tasks", true);
         context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", true).commit();
         LocalDateTime local = LocalDateTime.ofInstant(Instant.now().minusSeconds(120), ZoneOffset.UTC).withSecond(0).withNano(0);
         start = local.toInstant(ZoneOffset.UTC).toEpochMilli();
@@ -48,7 +48,8 @@ public class TaskPeerAndroidTest {
     }
     @After public void cleanup() throws Exception {
         context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", oldTasks).commit();
-        for (String scope : List.of(domScope, subScope)) {
+        for (String scope : new String[]{domScope, subScope}) {
+            if (scope == null) continue;
             for (String table : new String[]{"projections", "journal", "receipts", "cursors", "effects"})
                 runtime.store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE scope=?", new Object[]{scope});
             File directory = new File(context.getFilesDir(), "tasks-media/" + scope);
@@ -56,8 +57,9 @@ public class TaskPeerAndroidTest {
                 paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { java.nio.file.Files.delete(path); } catch (IOException failure) { throw new IllegalStateException(failure); } });
             }
         }
-        for (String table : new String[]{"peers", "remote_metadata", "local_objects", "outbox", "remote_objects", "outgoing", "incoming", "commands"})
+        for (String table : new String[]{"activity_receipts", "remote_metadata", "local_objects", "outbox", "remote_objects", "outgoing", "incoming", "commands", "peers"})
             store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE generation=?", new Object[]{generation});
+        if (domPeer != null) com.subhub.app.activity.ActivityNotifications.cancelPeer(context, RemotePersonRepository.id(domPeer));
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         for (android.service.notification.StatusBarNotification notification : manager.getActiveNotifications())
             if (notification.getTag() != null && notification.getTag().startsWith("tasks:" + domScope + ":")) manager.cancel(notification.getTag(), notification.getId());
@@ -92,6 +94,46 @@ public class TaskPeerAndroidTest {
         assertEquals(1, runtime.store.received(subScope)); assertEquals(1, runtime.store.load(subScope).definitions().size());
         assertEquals("true", store.metadata(domPeer.identity, generation, "tasks_allowed", ""));
     }
+    @Test public void authenticatedSubTimezoneIsReceivedRefreshedAndWithdrawnOnOptout() throws Exception {
+        java.util.TimeZone previous = java.util.TimeZone.getDefault();
+        boolean wasDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"));
+            session(true, new AtomicInteger());
+            assertEquals("Asia/Tokyo", store.metadata(subId, generation, "tasks_timezone", ""));
+            long received = Long.parseLong(store.metadata(subId, generation, "tasks_timezone_received", "0"));
+            assertEquals(ZoneId.of("Asia/Tokyo"), TaskTimezone.require("Asia/Tokyo", received, System.currentTimeMillis()));
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
+            com.subhub.app.security.ControllerPinManager.enterDomMode();
+            TaskRepository repository = new TaskRepository(context, RemotePersonRepository.id(domPeer));
+            assertEquals(ZoneId.of("Asia/Tokyo"), repository.schedulingZone());
+            store.taskTimezoneReceived(subId, generation, "Asia/Tokyo", 1);
+            assertThrows(IllegalStateException.class, repository::schedulingZone);
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"));
+            session(true, new AtomicInteger());
+            assertEquals("America/New_York", store.metadata(subId, generation, "tasks_timezone", ""));
+            TaskDefinition created = new TaskDefinition(UUID.randomUUID().toString(), "Future synthetic task", "",
+                    LocalDateTime.now(repository.schedulingZone()).plusHours(2).withSecond(0).withNano(0),
+                    repository.schedulingZone(), 60_000, Set.of(), true, false, null);
+            repository.create(created);
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"));
+            session(true, new AtomicInteger());
+            assertEquals(ZoneId.of("Asia/Tokyo"), repository.schedulingZone());
+            TaskDefinition retained = repository.engine().definitions().get(0);
+            assertEquals(ZoneId.of("America/New_York"), retained.zone);
+            assertEquals(created.occurrenceId(created.firstStart.toLocalDate()), retained.occurrenceId(retained.firstStart.toLocalDate()));
+            assertEquals(created.end(created.firstStart.toLocalDate()), retained.end(retained.firstStart.toLocalDate()));
+            context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
+            session(true, new AtomicInteger());
+            assertEquals("", store.metadata(subId, generation, "tasks_timezone", "unexpected"));
+            assertEquals("0", store.metadata(subId, generation, "tasks_timezone_received", "unexpected"));
+        } finally {
+            java.util.TimeZone.setDefault(previous);
+            if (wasDom) com.subhub.app.security.ControllerPinManager.enterDomMode();
+            else com.subhub.app.security.ControllerPinManager.enterSubMode();
+        }
+    }
+
     @Test public void attachmentBytesAreHashVerifiedAndStayWithinTheSelectedRelationship() throws Exception {
         byte[] bytes = new byte[RemoteAssets.CHUNK_BYTES + 13]; new Random(77).nextBytes(bytes);
         byte[] header = new byte[]{(byte) 137, 80, 78, 71, 13, 10, 26, 10}; System.arraycopy(header, 0, bytes, 0, header.length);
@@ -116,7 +158,7 @@ public class TaskPeerAndroidTest {
         assertThrows(SecurityException.class, () -> runtime.sweep(new TaskRepository.Target(domScope, domPeer)));
         assertEquals(0, runtime.store.received(subScope));
     }
-    @Test public void irohTasksProofMediaAndReviewWorkWithoutMonitoringStreams() throws Exception {
+    @Test public void irohTasksProofMediaAndReviewNegotiateAlongsideActivity() throws Exception {
         byte[] domSeed = new byte[32], subSeed = new byte[32];
         new java.security.SecureRandom().nextBytes(domSeed); new java.security.SecureRandom().nextBytes(subSeed);
         ExecutorService serving = Executors.newSingleThreadExecutor();
@@ -147,18 +189,30 @@ public class TaskPeerAndroidTest {
             irohSession(domTransport, subTransport, serving, calls); irohSession(domTransport, subTransport, serving, calls);
             assertEquals(TaskEngine.Status.ACCEPTED, runtime.store.load(subScope).occurrence(task.id, submitted.date, submitted.at).status);
             assertEquals(8, calls.get());
-            for (RemoteProtocol.Stream stream : new RemoteProtocol.Stream[]{RemoteProtocol.Stream.STATS, RemoteProtocol.Stream.DAILY,
-                    RemoteProtocol.Stream.APP_USAGE, RemoteProtocol.Stream.RUNTIME, RemoteProtocol.Stream.EVENTS}) {
-                assertThrows(SecurityException.class, () -> store.publish(domId, generation, stream, "forbidden", new JSONObject(), false, 1));
-                RemoteProtocol.Batch batch = new RemoteProtocol.Batch(generation, stream, 0, 1,
-                        List.of(new RemoteProtocol.Change(1, "forbidden", "{}", false, 1)));
-                assertThrows(SecurityException.class, () -> store.receive(subId, batch));
-                assertThrows(SecurityException.class, () -> store.acknowledge(domId, new RemoteProtocol.Ack(batch)));
-                assertTrue(store.published(domId, generation, stream).isEmpty());
-                assertTrue(store.mirror(subId, generation, stream).isEmpty());
-                JSONObject heads = store.outgoingHeads(domId, generation);
-                if (stream == RemoteProtocol.Stream.EVENTS) assertFalse(heads.has(stream.name()));
-                else assertEquals(-1, heads.getLong(stream.name()));
+            RemoteProtocol.Stream[] monitoring = {RemoteProtocol.Stream.STATS, RemoteProtocol.Stream.DAILY,
+                    RemoteProtocol.Stream.APP_USAGE, RemoteProtocol.Stream.RUNTIME, RemoteProtocol.Stream.EVENTS};
+            long observed = System.currentTimeMillis();
+            for (RemoteProtocol.Stream stream : monitoring) {
+                JSONObject body = new JSONObject().put("schema", 1).put("synthetic", true);
+                if (stream == RemoteProtocol.Stream.EVENTS) body = new JSONObject().put("schema", 1).put("id", "synthetic_event")
+                        .put("kind", "APP_OPENED").put("observedAt", observed).put("packageName", "com.example.synthetic")
+                        .put("amountCents", 0).put("currency", "").put("reason", "").put("limitMinutes", 0)
+                        .put("zone", "UTC").put("day", Instant.ofEpochMilli(observed).atZone(ZoneId.of("UTC")).toLocalDate().toString())
+                        .put("configuration", "");
+                store.publish(domId, generation, stream, stream == RemoteProtocol.Stream.EVENTS ? "synthetic_event" : "synthetic",
+                        body, false, observed);
+            }
+            irohSession(domTransport, subTransport, serving, calls);
+            irohSession(domTransport, subTransport, serving, calls);
+            for (RemoteProtocol.Stream stream : monitoring) {
+                assertEquals(1, store.published(domId, generation, stream).size());
+                assertEquals(1, store.mirror(subId, generation, stream).size());
+                assertTrue(store.nextBatch(domId, generation, stream).changes.isEmpty());
+                assertEquals(1, store.nextBatch(domId, generation, stream).after);
+            }
+            try (android.database.Cursor rows = store.getReadableDatabase().rawQuery(
+                    "SELECT COUNT(*) FROM activity_receipts WHERE peer=? AND generation=?", new String[]{subId, generation})) {
+                assertTrue(rows.moveToFirst()); assertEquals(1, rows.getInt(0));
             }
         } finally {
             Arrays.fill(domSeed, (byte) 0); Arrays.fill(subSeed, (byte) 0);
@@ -170,7 +224,7 @@ public class TaskPeerAndroidTest {
             try (PeerTransport.Connection connection = subTransport.accept(10_000)) {
                 JSONObject hello = RemoteProtocol.read(connection.input());
                 assertEquals(domId, connection.authenticatedPeerIdentity());
-                assertFalse(hello.has("activityVersion")); assertEquals(1, hello.getInt("tasksVersion"));
+                assertEquals(1, hello.getInt("activityVersion")); assertEquals(1, hello.getInt("tasksVersion"));
                 new RemoteSession(store, subTransport, hooks(true, calls)).incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(25));
             } catch (Exception failure) { throw new RuntimeException(failure); }
         });

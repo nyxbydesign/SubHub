@@ -42,6 +42,7 @@
         <service android:name=".capture.export.ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
         <activity android:name=".tasks.TasksActivity" android:exported="false" />
+        <activity android:name=".tasks.TasksOverviewActivity" android:exported="false" />
         <activity android:name=".tasks.TaskMediaActivity" android:exported="false" />
         <activity android:name=".security.AuthenticatorActivity" android:exported="false" />
         <activity android:name=".capture.export.ExportAppearanceActivity" android:exported="false" />
