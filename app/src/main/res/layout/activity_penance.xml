@@ -88,6 +88,12 @@
                             <EditText android:id="@+id/rule_app_open_amount" style="@style/Widget.SubHub.MoneyInput" />
                         </LinearLayout>
                     </LinearLayout>
+                    <LinearLayout style="@style/Widget.SubHub.WalletRuleCard">
+                        <com.subhub.app.util.StateToggle android:id="@+id/rule_task_failure_enabled" style="@style/Widget.SubHub.RuleToggle" android:text="@string/tasks_tribute_rule" />
+                        <TextView style="@style/Widget.SubHub.RuleHelp" android:text="@string/tasks_tribute_rule_help" />
+                        <TextView android:labelFor="@id/rule_task_failure_amount" style="@style/Widget.SubHub.RuleCostLabel" android:layout_marginTop="@dimen/ui_gap_control" />
+                        <EditText android:id="@+id/rule_task_failure_amount" style="@style/Widget.SubHub.MoneyInput" />
+                    </LinearLayout>
                     <LinearLayout android:id="@+id/tamper_rule_panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="@dimen/ui_card_padding_compact">
                         <com.subhub.app.util.StateToggle android:id="@+id/rule_tamper_enabled" style="@style/Widget.SubHub.RuleToggle" android:text="@string/penance_rule_tamper_title" />
                         <TextView style="@style/Widget.SubHub.FieldHelp" android:text="@string/penance_rule_tamper_help" />

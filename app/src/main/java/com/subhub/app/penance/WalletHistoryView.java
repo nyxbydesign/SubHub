@@ -125,6 +125,7 @@ public final class WalletHistoryView extends LinearLayout {
                     case CENSORED_DWELL -> R.string.penance_history_dwell;
                     case CENSORED_TAP -> R.string.penance_history_tap;
                     case WATCHED_APP_OPEN -> R.string.penance_history_app_open;
+                    case TASK_FAILURE -> R.string.tasks_tribute_rule;
                     case TAMPER_ATTEMPT -> R.string.penance_history_tamper;
                     default -> R.string.penance_history_detection;
                 };

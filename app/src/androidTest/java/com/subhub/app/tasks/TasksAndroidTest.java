@@ -1,0 +1,476 @@
+package com.subhub.app.tasks;
+
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
+import static androidx.test.espresso.action.ViewActions.replaceText;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.*;
+
+import android.app.Activity;
+import android.app.Instrumentation;
+import android.app.NotificationManager;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.os.SystemClock;
+import android.service.notification.StatusBarNotification;
+import android.util.Base64;
+import android.view.View;
+import android.view.ViewGroup;
+import androidx.lifecycle.Lifecycle;
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.espresso.intent.Intents;
+import androidx.test.espresso.intent.matcher.IntentMatchers;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.NativeUiActions;
+import com.subhub.app.R;
+import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.people.PersonRoutes;
+import com.subhub.app.remote.RemoteAssets;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
+import com.subhub.app.security.KeyholderPresentationAndroidTest;
+import com.subhub.app.security.SubFeaturePolicy;
+import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.settings.SharedPreferenceTestRestore;
+import java.io.File;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.time.DayOfWeek;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONArray;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+/** Native controls against the real local ledger on an unpaired, empty Tasks fixture. */
+@RunWith(AndroidJUnit4.class)
+public final class TasksAndroidTest {
+    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+    private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+    private final Context context = instrumentation.getTargetContext();
+    private final String titlePrefix = "Tasks UI " + UUID.randomUUID() + " ";
+    private final Map<String, List<ContentValues>> originalRows = new LinkedHashMap<>();
+    private final List<File> createdMediaFiles = new ArrayList<>();
+    private Map<String, ?> originalConsent;
+    private TaskRepository repository;
+    private TaskStore store;
+    private String scope;
+    private boolean ownsFixture;
+
+    @Before public void prepare() throws Exception {
+        assertTrue("Use an unpaired Tasks UI guest", RemoteFeature.get(context).store.peers(false).isEmpty());
+        repository = new TaskRepository(context, PersonId.LOCAL);
+        store = TaskRuntime.get(context).store;
+        scope = repository.target().scope;
+        assertEquals("local", scope);
+        synchronized (SubFeaturePolicy.LOCK) {
+            assertTrue("Use an empty Tasks fixture; existing tasks are never removed", store.load(scope).definitions().isEmpty());
+            SQLiteDatabase db = store.getReadableDatabase();
+            for (String table : List.of("projections", "journal", "receipts", "cursors", "effects")) {
+                ArrayList<ContentValues> rows = new ArrayList<>();
+                try (Cursor cursor = db.query(table, null, "scope=?", new String[]{scope}, null, null, null)) {
+                    while (cursor.moveToNext()) {
+                        ContentValues row = new ContentValues();
+                        for (int i = 0; i < cursor.getColumnCount(); i++) {
+                            String key = cursor.getColumnName(i);
+                            switch (cursor.getType(i)) {
+                                case Cursor.FIELD_TYPE_NULL: row.putNull(key); break;
+                                case Cursor.FIELD_TYPE_INTEGER: row.put(key, cursor.getLong(i)); break;
+                                case Cursor.FIELD_TYPE_STRING: row.put(key, cursor.getString(i)); break;
+                                default: throw new AssertionError("Unexpected task fixture column");
+                            }
+                        }
+                        rows.add(row);
+                    }
+                }
+                originalRows.put(table, rows);
+            }
+            ownsFixture = true;
+        }
+        SharedPreferences consent = context.getSharedPreferences(SubFeaturePolicy.STORE, 0);
+        originalConsent = new LinkedHashMap<>(consent.getAll());
+        assertTrue(consent.edit().putBoolean("tasks", true).putBoolean("hardcore_locally_consented", false).commit());
+        assertTrue(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit());
+        ControllerPinManager.initialize(context);
+        assertTrue(ControllerPinManager.setPin(context, "2468"));
+        ControllerPinManager.enterDomMode();
+        assertTrue(PersonRoutes.canEditLocal(context, PersonId.LOCAL));
+        instrumentation.waitForIdleSync();
+    }
+
+    @After public void restore() throws Exception {
+        if (ownsFixture) {
+            synchronized (SubFeaturePolicy.LOCK) {
+                TaskEngine engine = store.load(scope);
+                for (TaskDefinition task : engine.definitions())
+                    assertTrue("Do not delete another fixture's tasks", task.title.startsWith(titlePrefix));
+                Set<String> ids = new java.util.HashSet<>();
+                JSONArray actions = engine.json().getJSONArray("actions");
+                for (int i = 0; i < actions.length(); i++) ids.add(actions.getJSONObject(i).getString("id"));
+                NotificationManager notifications = context.getSystemService(NotificationManager.class);
+                for (StatusBarNotification posted : notifications.getActiveNotifications()) {
+                    for (String id : ids) if (("tasks:" + scope + ":" + id).equals(posted.getTag()))
+                        notifications.cancel(posted.getTag(), posted.getId());
+                }
+                SQLiteDatabase db = store.getWritableDatabase();
+                db.beginTransaction();
+                try {
+                    for (Map.Entry<String, List<ContentValues>> table : originalRows.entrySet()) {
+                        db.delete(table.getKey(), "scope=?", new String[]{scope});
+                        for (ContentValues row : table.getValue()) db.insertOrThrow(table.getKey(), null, row);
+                    }
+                    db.setTransactionSuccessful();
+                } finally { db.endTransaction(); }
+            }
+        }
+        if (originalConsent != null)
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(SubFeaturePolicy.STORE, 0), originalConsent);
+        for (File file : createdMediaFiles) {
+            assertEquals(taskMediaRoot(), file.getParentFile());
+            assertFalse(Files.isSymbolicLink(file.toPath()));
+            assertTrue(!file.exists() || file.delete());
+        }
+    }
+
+    @Test public void createWithNativeControlsAndRetainAuthorDraftAfterRecreation() throws Exception {
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "tasks_create");
+            tap("tasks_create");
+            edit("tasks_title", titlePrefix + "created");
+            edit("tasks_text", "A synthetic task with clear instructions.");
+            edit("tasks_duration", "45");
+            tap("tasks_day_1"); tap("tasks_day_5"); tap("tasks_refusal");
+            page.recreate();
+            awaitTag(page, "tasks_save");
+            onView(withTagValue(is("tasks_title"))).check(matches(withText(titlePrefix + "created")));
+            onView(withTagValue(is("tasks_duration"))).check(matches(withText("45")));
+            tap("tasks_save");
+            await(() -> store.load(scope).definitions().size() == 1);
+            TaskDefinition created = store.load(scope).definitions().get(0);
+            assertEquals(titlePrefix + "created", created.title);
+            assertEquals(45 * 60_000L, created.durationMillis);
+            assertEquals(EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.FRIDAY), created.weekdays);
+            assertTrue(created.allowRefusal);
+            assertFalse(created.failureTribute);
+            assertEquals(ZoneId.systemDefault(), created.zone);
+            awaitTag(page, "tasks_create");
+            onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
+            assertEquals(1, store.load(scope).definitions().size());
+        }
+    }
+
+    @Test public void subRequestsCompletionWithNativeTextThenDomAcceptsTheExactSubmission() throws Exception {
+        TaskDefinition task = seed("proof", false);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            String id = occurrenceId(task);
+            awaitTag(page, "request:" + id); tap("request:" + id);
+            edit("tasks_text", "Synthetic completion proof");
+            page.recreate(); awaitTag(page, "tasks_send");
+            onView(withTagValue(is("tasks_text"))).check(matches(withText("Synthetic completion proof")));
+            tap("tasks_send");
+            await(() -> row(task).status == TaskEngine.Status.PENDING);
+            TaskAction submitted = row(task).submission;
+            assertEquals("Synthetic completion proof", submitted.text);
+            assertEquals(TaskAction.Kind.SUBMIT, submitted.kind);
+            switchRole(page, true);
+            awaitTag(page, "accept:" + id); tap("accept:" + id);
+            await(() -> row(task).status == TaskEngine.Status.ACCEPTED);
+            JSONArray actions = store.load(scope).json().getJSONArray("actions");
+            TaskAction last = TaskAction.parse(actions.getJSONObject(actions.length() - 1));
+            assertEquals(TaskAction.Kind.ACCEPT, last.kind);
+            assertEquals(submitted.id, last.submissionId);
+        }
+    }
+
+    @Test public void outsideRequestCanBeDeniedWithNativeReviewControls() throws Exception {
+        TaskDefinition task = seed("outside", false);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            String id = occurrenceId(task);
+            awaitTag(page, "outside:" + id); tap("outside:" + id);
+            await(() -> row(task).status == TaskEngine.Status.PENDING);
+            String submission = row(task).submission.id;
+            assertEquals(TaskAction.Kind.OUTSIDE, row(task).submission.kind);
+            switchRole(page, true);
+            awaitTag(page, "deny:" + id); tap("deny:" + id);
+            await(() -> row(task).status == TaskEngine.Status.DENIED);
+            JSONArray actions = store.load(scope).json().getJSONArray("actions");
+            assertEquals(submission, TaskAction.parse(actions.getJSONObject(actions.length() - 1)).submissionId);
+        }
+    }
+
+    @Test public void refuseOneOccurrenceThenCancelARecurringSeriesWithNativeTaps() throws Exception {
+        TaskDefinition single = seed("single refusal", false);
+        TaskDefinition series = seed("series refusal", true);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "refuse:" + occurrenceId(single)); tap("refuse:" + occurrenceId(single));
+            await(() -> row(single).status == TaskEngine.Status.REFUSED);
+            assertFalse(store.load(scope).seriesRefused(single.id));
+            String tag = "refuse_series:" + occurrenceId(series);
+            awaitTag(page, tag); tap(tag);
+            await(() -> store.load(scope).seriesRefused(series.id));
+            assertEquals(TaskEngine.Status.REFUSED, row(series).status);
+            page.recreate(); awaitTag(page, "tasks_history");
+            onView(withTagValue(is(tag))).check(doesNotExist());
+            tap("tasks_history");
+            awaitTag(page, "task:" + occurrenceId(series));
+        }
+    }
+
+    @Test public void resumeRevalidatesRoleAndDropsAnAuthorDraft() throws Exception {
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "tasks_create"); tap("tasks_create");
+            edit("tasks_title", titlePrefix + "must not be submitted");
+            switchRole(page, false);
+            awaitTag(page, "tasks_allowed");
+            onView(withTagValue(is("tasks_save"))).check(doesNotExist());
+            onView(withTagValue(is("tasks_create"))).check(doesNotExist());
+            assertTrue(store.load(scope).definitions().isEmpty());
+            switchRole(page, true);
+            awaitTag(page, "tasks_create"); tap("tasks_create");
+            onView(withTagValue(is("tasks_title"))).check(matches(withText("")));
+        }
+    }
+
+    @Test public void localSubOwnsOptOutAcrossRecreationAndDomCannotEditIt() throws Exception {
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "tasks_allowed"); tap("tasks_allowed");
+            await(() -> !repository.allowed());
+            page.recreate(); awaitTag(page, "tasks_allowed");
+            onView(withText(R.string.tasks_disabled)).check(matches(isDisplayed()));
+            switchRole(page, true);
+            awaitTag(page, "tasks_target");
+            onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
+            assertFalse(repository.allowed());
+        }
+    }
+
+    @Test public void documentPickerUsesSupportedMimeTypesAndCancellationRetainsForm() throws Exception {
+        Intents.init();
+        try {
+            Intents.intending(IntentMatchers.hasAction(Intent.ACTION_OPEN_DOCUMENT))
+                    .respondWith(new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null));
+            try (ActivityScenario<TasksActivity> page = launch()) {
+                awaitTag(page, "tasks_create"); tap("tasks_create");
+                edit("tasks_title", titlePrefix + "picker draft");
+                tap("tasks_add_media");
+                Intents.intended(IntentMatchers.hasAction(Intent.ACTION_OPEN_DOCUMENT));
+                Intent picker = Intents.getIntents().stream()
+                        .filter(intent -> Intent.ACTION_OPEN_DOCUMENT.equals(intent.getAction())).findFirst().get();
+                assertTrue(picker.hasCategory(Intent.CATEGORY_OPENABLE));
+                assertEquals("*/*", picker.getType());
+                String[] types = picker.getStringArrayExtra(Intent.EXTRA_MIME_TYPES);
+                assertNotNull(types); assertEquals(10, types.length);
+                assertTrue(List.of(types).containsAll(List.of("image/png", "audio/mpeg", "video/mp4")));
+                assertEquals(0, picker.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                awaitTag(page, "tasks_save");
+                onView(withTagValue(is("tasks_title"))).check(matches(withText(titlePrefix + "picker draft")));
+                assertTrue(store.load(scope).definitions().isEmpty());
+            }
+        } finally { Intents.release(); }
+    }
+
+    @Test public void mediaViewerRejectsAnAttachmentOutsideTheRelationshipProjection() throws Exception {
+        TaskAttachment forged = new TaskAttachment("0000000000000000000000000000000000000000000000000000000000000000", "image/png", 128);
+        Intent intent = new Intent(context, TaskMediaActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
+                .putExtra(TaskMediaActivity.EXTRA_SCOPE, scope)
+                .putExtra(TaskMediaActivity.EXTRA_DOM, true)
+                .putExtra(TaskMediaActivity.EXTRA_ATTACHMENT, forged.json().toString());
+        try (ActivityScenario<TaskMediaActivity> page = ActivityScenario.launch(intent)) {
+            await(() -> mediaRefused(page));
+        }
+    }
+
+    @Test public void skippedOccurrencesAppearOnlyInHistoryWithoutUserActions() throws Exception {
+        long now = System.currentTimeMillis();
+        LocalDateTime start = LocalDateTime.now().minusHours(2).withSecond(0).withNano(0);
+        TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), titlePrefix + "skipped",
+                "Synthetic task from before Tasks resumed", start, ZoneId.systemDefault(), 60_000L,
+                Set.of(), false, true, null);
+        synchronized (SubFeaturePolicy.LOCK) {
+            store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE,
+                    null, task.start(start.toLocalDate()).toEpochMilli() - 60_000L,
+                    "", "", List.of(), task), true, false);
+            store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.SKIP,
+                    start.toLocalDate(), now, "", "", List.of(), null), false, false);
+        }
+        assertEquals(TaskEngine.Status.SKIPPED, row(task).status);
+        assertFalse(row(task).failed());
+        assertTrue(store.pending(scope).isEmpty());
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            String id = occurrenceId(task);
+            awaitTag(page, "tasks_history");
+            onView(withTagValue(is("task:" + id))).check(doesNotExist());
+            tap("tasks_history");
+            awaitTag(page, "task:" + id);
+            page.onActivity(activity -> assertTrue(containsText(
+                    activity.findViewById(R.id.role_page_body).findViewWithTag("task:" + id),
+                    context.getString(R.string.tasks_skipped))));
+            onView(withTagValue(is("request:" + id))).check(doesNotExist());
+            onView(withTagValue(is("refuse:" + id))).check(doesNotExist());
+            onView(withTagValue(is("accept:" + id))).check(doesNotExist());
+        }
+    }
+
+    @Test public void visibleImageClosesOnRoleOrOptOutChangeWithoutPausing() throws Exception {
+        byte[] bytes = Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", Base64.DEFAULT);
+        StringBuilder hash = new StringBuilder();
+        for (byte value : MessageDigest.getInstance("SHA-256").digest(bytes))
+            hash.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+        File root = taskMediaRoot();
+        for (String suffix : List.of("blob", "part", "size")) {
+            File file = new File(root, hash + "." + suffix);
+            assertFalse(Files.isSymbolicLink(file.toPath()));
+            if (!file.exists()) createdMediaFiles.add(file);
+        }
+        RemoteAssets assets = TaskRuntime.get(context).assets(scope);
+        assets.reserve(hash.toString(), bytes.length);
+        if (!assets.isComplete(hash.toString())) {
+            assertEquals(0, assets.offset(hash.toString()));
+            assets.append(hash.toString(), 0, bytes);
+            assets.finish(hash.toString());
+        }
+        TaskAttachment image = new TaskAttachment(hash.toString(), "image/gif", bytes.length);
+        seed("image authorization", false, image);
+        for (boolean roleChange : new boolean[]{true, false}) {
+            if (roleChange) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            Intent intent = new Intent(context, TaskMediaActivity.class)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
+                    .putExtra(TaskMediaActivity.EXTRA_SCOPE, scope)
+                    .putExtra(TaskMediaActivity.EXTRA_DOM, roleChange)
+                    .putExtra(TaskMediaActivity.EXTRA_ATTACHMENT, image.json().toString());
+            try (ActivityScenario<TaskMediaActivity> page = ActivityScenario.launch(intent)) {
+                await(() -> {
+                    AtomicBoolean shown = new AtomicBoolean();
+                    page.onActivity(activity -> {
+                        View view = activity.findViewById(R.id.role_page_body).findViewWithTag("task_media_image");
+                        shown.set(view instanceof android.widget.ImageView && view.isShown()
+                                && ((android.widget.ImageView) view).getDrawable() != null);
+                    });
+                    return shown.get();
+                });
+                assertEquals(Lifecycle.State.RESUMED, page.getState());
+                if (roleChange) ControllerPinManager.enterSubMode(); else repository.setAllowed(false);
+                await(() -> page.getState() == Lifecycle.State.DESTROYED);
+            }
+        }
+    }
+
+    private ActivityScenario<TasksActivity> launch() {
+        // No target extra exercises the incoming/local route's explicit LOCAL default.
+        return ActivityScenario.launch(new Intent(context, TasksActivity.class));
+    }
+
+    private TaskDefinition seed(String suffix, boolean recurring) throws Exception {
+        return seed(suffix, recurring, null);
+    }
+
+    private TaskDefinition seed(String suffix, boolean recurring, TaskAttachment attachment) throws Exception {
+        LocalDateTime start = LocalDateTime.now().minusMinutes(2).withSecond(0).withNano(0);
+        TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), titlePrefix + suffix,
+                "Synthetic task instructions", start, ZoneId.systemDefault(), 86_400_000L,
+                recurring ? EnumSet.allOf(DayOfWeek.class) : Set.of(), true, false, attachment);
+        store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE,
+                null, System.currentTimeMillis(), "", "", List.of(), task), true, false);
+        return task;
+    }
+
+    private String occurrenceId(TaskDefinition task) { return task.occurrenceId(task.firstStart.toLocalDate()); }
+    private TaskEngine.Occurrence row(TaskDefinition task) throws Exception {
+        return store.load(scope).occurrence(task.id, task.firstStart.toLocalDate(), System.currentTimeMillis());
+    }
+    private void switchRole(ActivityScenario<TasksActivity> page, boolean dom) {
+        page.moveToState(Lifecycle.State.CREATED);
+        if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+        page.moveToState(Lifecycle.State.RESUMED);
+    }
+    private void tap(String tag) {
+        onView(withTagValue(is(tag))).perform(NativeUiActions.revealAboveNavigation(), click());
+        instrumentation.waitForIdleSync();
+    }
+    private void edit(String tag, String text) {
+        onView(withTagValue(is(tag))).perform(NativeUiActions.revealAboveNavigation(), click(), replaceText(text), closeSoftKeyboard());
+    }
+    private void awaitTag(ActivityScenario<TasksActivity> page, String tag) throws Exception {
+        await(() -> {
+            AtomicBoolean present = new AtomicBoolean();
+            page.onActivity(activity -> {
+                View target = activity.findViewById(android.R.id.content).findViewWithTag(tag);
+                present.set(target != null && target.isEnabled());
+            });
+            return present.get();
+        });
+        instrumentation.waitForIdleSync();
+    }
+    private File taskMediaRoot() throws Exception {
+        // Android's /data/user/0 and /data/data aliases identify the same app-private directory.
+        File root = new File(context.getFilesDir().getCanonicalFile(), "tasks-media/" + scope);
+        assertFalse(Files.isSymbolicLink(root.toPath()));
+        return root;
+    }
+
+    private boolean mediaRefused(ActivityScenario<TaskMediaActivity> page) {
+        if (page.getState() == Lifecycle.State.DESTROYED) return true;
+        AtomicBoolean result = new AtomicBoolean();
+        try {
+            page.onActivity(activity -> {
+                View root = activity.findViewById(R.id.role_page_body);
+                assertNull(root.findViewWithTag("task_media_image"));
+                assertNull(root.findViewWithTag("task_media_player"));
+                result.set(containsText(root, context.getString(R.string.tasks_media_unavailable)));
+            });
+        } catch (IllegalStateException race) {
+            if (page.getState() == Lifecycle.State.DESTROYED) return true;
+            throw race;
+        }
+        return result.get();
+    }
+    private static boolean containsText(View view, String text) {
+        if (view instanceof android.widget.TextView && text.contentEquals(((android.widget.TextView) view).getText())) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) if (containsText(group.getChildAt(i), text)) return true;
+        }
+        return false;
+    }
+    private interface Condition { boolean ready() throws Exception; }
+    private static void await(Condition condition) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + 10_000;
+        while (!condition.ready()) {
+            if (SystemClock.uptimeMillis() >= deadline) throw new AssertionError("Tasks UI did not reach the expected state");
+            SystemClock.sleep(40);
+        }
+    }
+}

@@ -295,6 +295,42 @@ public final class PenanceManager {
         return recordInfractionResult(infraction, count, nowMillis, null).chargedCents;
     }
 
+    /** Atomically records a local failure and its permanent occurrence receipt; never schedules a payment. */
+    public int recordTaskFailure(String occurrence, long nowMillis) {
+        if (occurrence == null || occurrence.length() > 512 || nowMillis <= 0)
+            throw new IllegalArgumentException("Invalid task failure");
+        String receipt = "task_failure_receipt_" + java.util.UUID.nameUUIDFromBytes(
+                occurrence.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) {
+                if (preferences.contains(receipt)) {
+                    // A failed commit can already be visible in SharedPreferences memory.
+                    if (!preferences.edit().commit()) throw new IllegalStateException("Task tribute receipt is not durable");
+                    return 0;
+                }
+                int amount = 0;
+                List<PenanceEvent> events = loadEvents();
+                if (com.subhub.app.security.SubFeaturePolicy.allowed(context, "tasks")
+                        && isInfractionEnabled(PenanceInfraction.TASK_FAILURE)
+                        && new AppModeManager(context).isArmed()) {
+                    trimHistoryForInsertion(events);
+                    if (events.size() < MAX_EVENTS) amount = PenancePolicy.boundedCharge(
+                            currentCurrencyEvents(events), nowMillis, 1,
+                            getInfractionCents(PenanceInfraction.TASK_FAILURE), getDailyCapCents(),
+                            getWeeklyCapCents(), ZoneId.systemDefault());
+                }
+                if (amount > 0) events.add(new PenanceEvent(receipt, nowMillis,
+                        nowMillis + getMercyMinutes() * 60_000L, amount, 1,
+                        PenanceInfraction.TASK_FAILURE, PenanceEvent.Status.OPEN, "", getCurrency()));
+                if (!preferences.edit().putBoolean(receipt, true)
+                        .putString(KEY_EVENTS, encodeEvents(events)).commit())
+                    throw new IllegalStateException("Task tribute was not saved");
+                if (amount > 0) new StatsRepository(context).recordTributeEvent(amount, false, getCurrency());
+                return amount;
+            }
+        }
+    }
+
     public enum SourceDetectionStatus { REJECTED, APPLIED, ACKNOWLEDGED }
     public static final class SourceDetectionResult {
         public final SourceDetectionStatus status;
@@ -334,6 +370,7 @@ public final class PenanceManager {
         if ((infraction == PenanceInfraction.NEW_DETECTION
                 || infraction == PenanceInfraction.CENSORED_DWELL
                 || infraction == PenanceInfraction.CENSORED_TAP) && !modules.isCensorEnabled()) return rejected;
+        if (infraction == PenanceInfraction.TASK_FAILURE) return rejected;
         if (infraction == null || !isEnabled() || !isInfractionEnabled(infraction)
                 || !new AppModeManager(context).isArmed() || count <= 0) return rejected;
         synchronized (LOCK) {
