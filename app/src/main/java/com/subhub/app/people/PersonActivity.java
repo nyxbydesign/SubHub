@@ -166,6 +166,10 @@ public final class PersonActivity extends RolePage {
             LinearLayout destinations = PersonUi.card(body);
             destinations.setTag("person_destinations");
             destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
+            PersonUi.row(destinations, R.drawable.ic_nav_contract, getString(R.string.tasks_title), "", () -> {
+                if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
+                        .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
+            }).setTag("person_tab:tasks");
             destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
             destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
             ActivityPreview.add(body, person.id, 3, data, "person-recent-activity");

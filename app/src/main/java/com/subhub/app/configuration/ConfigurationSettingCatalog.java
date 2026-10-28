@@ -94,6 +94,8 @@ public final class ConfigurationSettingCatalog {
         add("wallet", "rule_censored_tap_cents", R.string.pack_field_rule_censored_tap_cents, R.string.pack_group_tribute_rules, Kind.MONEY, 250, 1, 10000, 0, List.of());
         add("wallet", "rule_watched_app_open_enabled", R.string.pack_field_rule_watched_app_open_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("wallet", "rule_watched_app_open_cents", R.string.pack_field_rule_watched_app_open_cents, R.string.pack_group_tribute_rules, Kind.MONEY, 50, 1, 10000, 0, List.of());
+        add("wallet", "rule_task_failure_enabled", R.string.tasks_tribute_rule_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
+        add("wallet", "rule_task_failure_cents", R.string.tasks_tribute_rule_cents, R.string.pack_group_tribute_rules, Kind.MONEY, 100, 1, 10000, 0, List.of());
         add("wallet", "rule_tamper_attempt_enabled", R.string.pack_field_rule_tamper_attempt_enabled, R.string.pack_group_tribute_rules, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("wallet", "rule_tamper_attempt_cents", R.string.pack_field_rule_tamper_attempt_cents, R.string.pack_group_tribute_rules, Kind.MONEY, 500, 1, 10000, 0, List.of());
         add("wallet", "detection_batch", R.string.pack_field_detection_batch, R.string.pack_group_tribute_rules, Kind.INTEGER, 1, 1, 100, 0, List.of());
@@ -218,7 +220,7 @@ public final class ConfigurationSettingCatalog {
         if (values.has("daily_cap_cents")) {
             int daily = values.optInt("daily_cap_cents");
             for (String rule : List.of("new_detection", "censored_dwell", "censored_tap",
-                    "watched_app_open", "tamper_attempt")) {
+                    "watched_app_open", "tamper_attempt", "task_failure")) {
                 if (Boolean.TRUE.equals(values.opt("rule_" + rule + "_enabled"))
                         && values.has("rule_" + rule + "_cents")
                         && values.optInt("rule_" + rule + "_cents") > daily) {

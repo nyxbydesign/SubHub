@@ -40,6 +40,7 @@ public final class PenanceChargeNotifier {
     }
 
     private static String label(Context context, PenanceInfraction infraction) {
+        if (infraction == PenanceInfraction.TASK_FAILURE) return context.getString(R.string.tasks_tribute_rule);
         if (infraction == PenanceInfraction.CENSORED_DWELL) {
             return context.getString(R.string.penance_history_dwell);
         }

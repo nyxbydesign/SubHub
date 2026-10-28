@@ -48,6 +48,7 @@ final class PayPalOrderDetails {
     }
 
     private static String label(Context context, PenanceInfraction infraction) {
+        if (infraction == PenanceInfraction.TASK_FAILURE) return context.getString(R.string.tasks_tribute_rule);
         if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
             return context.getString(R.string.penance_history_tamper);
         }

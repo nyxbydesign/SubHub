@@ -29,7 +29,7 @@ public final class ConfigurationSettingCatalogTest {
             }
 
         }
-        assertEquals(111, keys.size());
+        assertEquals(113, keys.size());
         assertNull(ConfigurationSettingCatalog.field("censor", "app_mode_kind"));
         assertTrue(ConfigurationSchema.isSecretOrRuntimeKey("app_included_packages_v1"));
     }

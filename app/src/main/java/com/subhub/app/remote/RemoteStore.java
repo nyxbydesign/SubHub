@@ -113,6 +113,11 @@ public final class RemoteStore extends SQLiteOpenHelper {
             return c.moveToFirst();
         }
     }
+    public synchronized void taskConsentReceived(String identity, String generation, boolean allowed) {
+        Peer current = active(getWritableDatabase(), identity, generation);
+        if (current.localRole != RemoteProtocol.Role.DOM) throw new SecurityException("Only the paired Sub advertises task consent");
+        putMetadata(identity, generation, "tasks_allowed", Boolean.toString(allowed));
+    }
 
     synchronized void saveInvite(PairingInvite invite) {
         if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
@@ -480,6 +485,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
         JSONObject doc=RemoteConfiguration.active(configuration);SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             Peer peer=active(db,identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Only the paired Dom controls configuration");
+            doc=com.subhub.app.tasks.TaskContractFields.forPeer(doc,
+                    "1".equals(metadata(identity,generation,"tasks_version","0")), true);
             long previous=Long.parseLong(metadata(identity,generation,"desired_revision","0"));
             if(previous!=expectedDesired || previous==Long.MAX_VALUE || expectedApplied<0)throw new IllegalStateException("Configuration changed; reload before saving");
             Command pending=latestCommand(identity,generation);if(pending!=null && pending.pending())throw new IllegalStateException("A configuration change is pending");
