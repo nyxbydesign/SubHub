@@ -7,6 +7,7 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -115,6 +116,31 @@ public final class PenanceManager {
         for (PenanceInfraction rule : PenanceInfraction.values())
             if (rule != PenanceInfraction.PAID_PAUSE && isInfractionEnabled(rule)) return true;
         return new PaidPauseManager(context).isEnabled();
+    }
+
+    /** Effective saved participation without migrating configuration or expiring active effects. */
+    public static boolean observedEnabled(Context context) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet")) return false;
+        SharedPreferences stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!stored.getBoolean(KEY_RULE_PARTICIPATION_MIGRATED, false)) {
+            SharedPreferences global = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+            if (!stored.getBoolean(KEY_ENABLED, false)
+                    || !global.getBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true)) return false;
+        }
+        for (PenanceInfraction rule : PenanceInfraction.values()) {
+            if (rule == PenanceInfraction.PAID_PAUSE) continue;
+            if (stored.getBoolean(ruleEnabledKey(rule), rule == PenanceInfraction.NEW_DETECTION && rule.enabledByDefault())) return true;
+        }
+        return stored.getBoolean(PaidPauseManager.KEY_ENABLED, false);
+    }
+
+    public static int observedRuleCount(Context context) {
+        if (!observedEnabled(context)) return 0;
+        SharedPreferences stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        int count = 0;
+        for (PenanceInfraction rule : PenanceInfraction.values())
+            if (stored.getBoolean(ruleEnabledKey(rule), rule == PenanceInfraction.NEW_DETECTION && rule.enabledByDefault())) count++;
+        return count;
     }
 
     /** Preserve effective off states without retaining a second switch or changing saved costs. */
@@ -507,6 +533,41 @@ public final class PenanceManager {
         }
     }
 
+    /** Historical statistics never advance checkout, ledger lifecycle or payment accumulators. */
+    public RetainedStatistics retainedStatistics() {
+        return readRetainedStatistics(context);
+    }
+
+    public static RetainedStatistics readRetainedStatistics(Context context) {
+        SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        synchronized (LOCK) {
+            java.util.Map<String, PenanceEvent> unique = new java.util.LinkedHashMap<>();
+            for (PenanceEvent event : decodeEvents(preferences.getString(KEY_EVENTS, ""))) unique.putIfAbsent(event.getId(), event);
+            java.util.Map<String, Long> paid = new java.util.LinkedHashMap<>();
+            for (String currency : new String[]{"EUR", "USD"}) {
+                long retained = 0;
+                for (PenanceEvent event : unique.values()) {
+                    if (event.getStatus() != PenanceEvent.Status.PAID || !currency.equals(event.getCurrency())) continue;
+                    long amount = Math.max(0, event.getAmountCents());
+                    retained = retained > Long.MAX_VALUE - amount ? Long.MAX_VALUE : retained + amount;
+                }
+                Object stored = preferences.getAll().get(totalPaidKey(currency));
+                long accumulator = stored instanceof Number ? Math.max(0, ((Number) stored).longValue()) : 0;
+                paid.put(currency, Math.max(accumulator, retained));
+            }
+            return new RetainedStatistics(new ArrayList<>(unique.values()), paid);
+        }
+    }
+
+    public static final class RetainedStatistics {
+        public final List<PenanceEvent> events;
+        public final java.util.Map<String, Long> paidCents;
+        private RetainedStatistics(List<PenanceEvent> events, java.util.Map<String, Long> paidCents) {
+            this.events = Collections.unmodifiableList(events);
+            this.paidCents = Collections.unmodifiableMap(paidCents);
+        }
+    }
+
     public boolean forgiveLatestInMercy(long nowMillis) {
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
@@ -756,9 +817,10 @@ public final class PenanceManager {
             return Math.max(0L, preferences.getLong(key, 0L));
         }
         long migratedTotal = 0L;
+        java.util.Set<String> receipts = new java.util.HashSet<>();
         for (PenanceEvent event : events) {
             if (event.getStatus() != PenanceEvent.Status.PAID
-                    || !currency.equals(event.getCurrency())) continue;
+                    || !currency.equals(event.getCurrency()) || !receipts.add(event.getId())) continue;
             long amount = Math.max(0, event.getAmountCents());
             migratedTotal = migratedTotal > Long.MAX_VALUE - amount
                     ? Long.MAX_VALUE : migratedTotal + amount;
@@ -804,7 +866,10 @@ public final class PenanceManager {
     }
 
     private List<PenanceEvent> loadEvents() {
-        String raw = preferences.getString(KEY_EVENTS, "");
+        return decodeEvents(preferences.getString(KEY_EVENTS, ""));
+    }
+
+    private static List<PenanceEvent> decodeEvents(String raw) {
         List<PenanceEvent> events = new ArrayList<>();
         if (raw == null || raw.trim().isEmpty()) return events;
         for (String line : raw.split(";")) {

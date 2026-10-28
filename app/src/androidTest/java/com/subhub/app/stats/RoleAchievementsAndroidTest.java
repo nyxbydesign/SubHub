@@ -230,11 +230,11 @@ public final class RoleAchievementsAndroidTest {
     public void nativeDomStatisticsShowCombinedFactsAndNoSubHistory() throws Exception {
         seedUi();
         try (ActivityScenario<StatsActivity> scenario = launch(StatsActivity.class)) {
-            await(scenario, root -> texts(root.findViewWithTag("dom_stats_paired")).trim().equals("3"));
+            await(scenario, root -> texts(root.findViewWithTag("dom_stats_paired")).trim().equals("4"));
             capture(scenario, "dom-statistics");
             scenario.onActivity(activity -> {
                 assertNotNull(activity.findViewById(android.R.id.content).findViewWithTag("dom_statistics"));
-                assertEquals("3", textAt(activity, "dom_stats_paired").trim());
+                assertEquals("4", textAt(activity, "dom_stats_paired").trim());
                 assertTrue(textAt(activity, "dom_stats_hardcore").contains("2"));
                 assertTrue(textAt(activity, "dom_paid_EUR").contains(com.subhub.app.penance.WalletCurrency.format("EUR", 1250)));
                 assertEquals(context.getString(com.subhub.app.R.string.role_dom),

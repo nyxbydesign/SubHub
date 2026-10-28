@@ -101,10 +101,12 @@ public final class StatsRepository {
     private final SharedPreferences preferences;
     private final Context app;
 
-    public StatsRepository(Context context) {
+    public StatsRepository(Context context) { this(context, true); }
+
+    StatsRepository(Context context, boolean recordDaily) {
         app = context.getApplicationContext();
         preferences = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        synchronized (SESSION_LOCK) { syncDaily(); }
+        if (recordDaily) synchronized (SESSION_LOCK) { syncDaily(); }
     }
 
     public void startSession() {
@@ -269,14 +271,28 @@ public final class StatsRepository {
     }
 
     public StatsSnapshot load() {
+        return load(true);
+    }
+
+    StatsSnapshot retainedSnapshot() { return load(false); }
+
+    boolean observedSessionActive() { return observedSessionStart() > 0; }
+
+    private long observedSessionStart() {
+        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0L), now = System.currentTimeMillis();
+        return start > 0 && start <= now && now - start <= 366L * 24L * 60L * 60L * 1000L ? start : 0;
+    }
+
+    private StatsSnapshot load(boolean restore) {
         synchronized (SESSION_LOCK) {
-            restoreActiveSession();
+            if (restore) restoreActiveSession();
+            long observedStart = restore ? sessionStartMs : observedSessionStart();
             long protectedSeconds = preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0);
             long totalSessionSeconds = preferences.getLong(KEY_TOTAL_SESSION_TIME, 0);
             long currentSessionSeconds = 0;
-            if (sessionStartMs > 0) {
+            if (observedStart > 0) {
                 currentSessionSeconds = Math.max(0,
-                        (System.currentTimeMillis() - sessionStartMs) / 1000);
+                        (System.currentTimeMillis() - observedStart) / 1000);
                 protectedSeconds += currentSessionSeconds;
                 totalSessionSeconds += currentSessionSeconds;
             }
@@ -284,7 +300,8 @@ public final class StatsRepository {
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
                     preferences.getInt(KEY_CURRENT_STREAK, 0),
                     preferences.getString(KEY_LAST_SESSION_DATE, ""), protectedSeconds,
-                    sessionBlocks, preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
+                    restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
+                    preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),
                     preferences.getInt(KEY_BROWSER_SESSIONS, 0),
                     preferences.getInt(KEY_BROWSER_PAGES, 0),
@@ -409,7 +426,7 @@ public final class StatsRepository {
 
     public long tributeCents(String currency, boolean currentSession) {
         synchronized (SESSION_LOCK) {
-            restoreActiveSession();
+            if (currentSession) restoreActiveSession();
             String key = currencyKey(currentSession ? KEY_ACTIVE_SESSION_TRIBUTE_CENTS
                     : KEY_TRIBUTE_CENTS, currency);
             return currentSession ? activeLong(key) : preferences.getLong(key, 0L);

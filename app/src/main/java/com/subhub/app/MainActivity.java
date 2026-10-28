@@ -779,6 +779,7 @@ public final class MainActivity extends AppCompatActivity {
             showAchievementUnlock(first, unlocked.size() - 1);
             return;
         }
+        if (achievements.getRole() == com.subhub.app.stats.AchievementRole.DOM) return;
         MilestoneManager.Result milestone =
                 MilestoneManager.takeUnseen(this, stats.getTotalBlocks());
         if (milestone != null) {
