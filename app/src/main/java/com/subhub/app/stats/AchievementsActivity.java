@@ -55,12 +55,15 @@ public final class AchievementsActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.achievements_title, false);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        StatsSections.add(this, binding.achievementContent, true);
     }
 
     @Override protected void onResume() {
         super.onResume();
         manager = AchievementManager.forWorkspace(this);
         if (!manager.isAccessible()) { finish(); return; }
+        com.subhub.app.util.SubHubNavigation.bind(this, binding.getRoot(),
+                com.subhub.app.util.SubHubNavigation.Screen.STATS);
         if (manager.getRole() == AchievementRole.DOM) {
             binding.getRoot().setVisibility(View.INVISIBLE);
             stats = null;

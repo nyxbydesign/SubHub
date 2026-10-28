@@ -31,6 +31,7 @@ public final class RoleHomePresenter {
     private final HomeSelection selection;
     private final FavoriteSubStore favorites;
     private LinearLayout domPeople;
+    private com.subhub.app.stats.AchievementPreviewView domAchievements;
     private List<Object> renderedDom;
     private long lastRefresh;
     private boolean displayedDom, sessionPage;
@@ -80,6 +81,7 @@ public final class RoleHomePresenter {
         if (dom && !ControllerPinManager.isDomModeActive()) {
             data.cancel("role-home");
             domPeople = null;
+            domAchievements = null;
             renderedDom = null;
             if (domBody.findViewWithTag("home_dom_unlock") == null) {
                 domBody.removeAllViews();
@@ -135,6 +137,7 @@ public final class RoleHomePresenter {
     }
 
     private void renderDom(List<PersonSnapshot> people) {
+        if (domAchievements != null) domAchievements.load(data, "home-achievement-preview");
         List<Object> signature = new ArrayList<>();
         signature.add(favorites.identity());
         for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
@@ -223,16 +226,7 @@ public final class RoleHomePresenter {
         domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(domPeople, activity.getString(R.string.role_loading), false);
         com.subhub.app.activity.ActivityPreview.add(domBody, null, 5, data, "home-activity-preview");
-        LinearLayout progress = PersonUi.card(domBody);
-        progress.setTag("home_dom_progress");
-        PersonUi.row(progress, R.drawable.ic_nav_stats, activity.getString(R.string.role_stats), null, () -> {
-            if (domWorkspace() && ControllerPinManager.isDomModeActive())
-                activity.startActivity(new Intent(activity, StatsActivity.class));
-        }).setTag("home_dom_statistics");
-        PersonUi.row(progress, R.drawable.ic_nav_stats, activity.getString(R.string.achievements_title), null, () -> {
-            if (domWorkspace() && ControllerPinManager.isDomModeActive())
-                activity.startActivity(new Intent(activity, com.subhub.app.stats.AchievementsActivity.class));
-        }).setTag("home_dom_achievements");
+        domAchievements = achievementPreview(domBody);
     }
 
     static List<PersonSnapshot> recentAdditions(List<PersonSnapshot> people, PersonSnapshot favorite) {
@@ -344,16 +338,20 @@ public final class RoleHomePresenter {
                     .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
         }).setTag("home_tasks");
         usage(person, dom);
-        com.subhub.app.stats.AchievementPreviewView achievements =
-                new com.subhub.app.stats.AchievementPreviewView(activity);
-        subBody.addView(achievements, new LinearLayout.LayoutParams(-1, -2));
-        achievements.load(data, "home-achievement-preview", new com.subhub.app.stats.StatsRepository(activity).load());
+        achievementPreview(subBody);
         TextView help = text(activity.getString(R.string.role_help_safety), 13, false);
         help.setTextColor(activity.getColor(R.color.accent_text));
         help.setGravity(Gravity.CENTER);
         help.setMinHeight(dp(48));
         subBody.addView(help, new LinearLayout.LayoutParams(-1, -2));
         clickable(help, () -> activity.startActivity(new Intent(activity, HelpActivity.class)));
+    }
+
+    private com.subhub.app.stats.AchievementPreviewView achievementPreview(LinearLayout parent) {
+        com.subhub.app.stats.AchievementPreviewView preview = new com.subhub.app.stats.AchievementPreviewView(activity);
+        parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
+        preview.load(data, "home-achievement-preview");
+        return preview;
     }
 
     private void usage(PersonSnapshot person, AssignedDom dom) {

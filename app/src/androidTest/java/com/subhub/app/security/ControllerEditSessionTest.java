@@ -103,7 +103,7 @@ public final class ControllerEditSessionTest {
                                 activity.findViewById(R.id.bottom_navigation).getVisibility());
                         assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_people).getVisibility());
                         assertEquals(View.GONE, activity.findViewById(R.id.nav_contract).getVisibility());
-                        assertEquals(View.GONE, activity.findViewById(R.id.nav_stats).getVisibility());
+                        assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_stats).getVisibility());
                         assertFalse(activity.findViewById(R.id.home_service_widget).isShown());
                     });
         }
