@@ -35,7 +35,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private DeviceRoleView role;
-    private LinearLayout privacy, permissions, localPermissions, featureChoices;
+    private LinearLayout privacy, permissions, localPermissions, featureChoices, names;
+    private Boolean namesDom;
     private View permissionsHeading;
     private HardcoreModeManager hardcore;
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
@@ -82,11 +83,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         detach(header);
         body.removeAllViews();
         body.addView(header);
-        LinearLayout names = PersonUi.card(body);
+        names = PersonUi.card(body);
         names.setTag("settings_profile_names");
-        PersonUi.text(names, getString(R.string.profile_names_title), true);
-        if (DeviceRolePreferences.supportsDom(this)) nameField(names, true);
-        if (DeviceRolePreferences.supportsSub(this)) nameField(names, false);
         LinearLayout device = PersonUi.card(body);
         role = new DeviceRoleView(this, () -> {
             recreate();
@@ -238,6 +236,13 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
+        boolean dom = DeviceRolePreferences.isDomWorkspace(this);
+        if (namesDom == null || namesDom != dom) {
+            namesDom = dom;
+            names.removeAllViews();
+            PersonUi.text(names, getString(R.string.profile_names_title), true);
+            nameField(names, dom);
+        }
         ((TextView) findViewById(R.id.settings_connections_security)).setText(
                 hasAssignedConnection() ? R.string.role_connection : R.string.keyholder_home_title);
         boolean local = DeviceRolePreferences.supportsSub(this);

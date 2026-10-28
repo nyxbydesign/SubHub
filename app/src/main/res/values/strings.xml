@@ -1155,7 +1155,7 @@
     <string name="limits_waiting_service">Waiting for accessibility service</string>
     <string name="limits_less_than_minute">&lt;1m</string>
     <string name="limits_apps_unavailable">Could not load apps</string>
-    <string name="profile_names_title">Names</string>
+    <string name="profile_names_title">Name</string>
     <string name="profile_dom_name">Dom name</string>
     <string name="profile_sub_name">Sub name</string>
     <string name="profile_configured_by_name">Configured by %1$s</string>

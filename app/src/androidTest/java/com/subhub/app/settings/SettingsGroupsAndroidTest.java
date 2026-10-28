@@ -144,6 +144,33 @@ public class SettingsGroupsAndroidTest {
             capture(page,"settings-sub");
         }
     }
+    @Test public void activeModeShowsOnlyItsOwnNameThroughNativeSwitchesAndRecreation() {
+        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        com.subhub.app.people.ProfileNames.set(context,true,"Fixture Dom");
+        com.subhub.app.people.ProfileNames.set(context,false,"Fixture Sub");
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            assertNameField(page,true,"Fixture Dom");
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_edit_lock)).perform(click());
+            assertNameField(page,false,"Fixture Sub");
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"profile_name:sub"))).perform(
+                    androidx.test.espresso.action.ViewActions.replaceText("Updated Sub"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+            page.recreate();assertNameField(page,false,"Updated Sub");
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_edit_lock)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withHint(R.string.controller_pin_label)).perform(
+                    androidx.test.espresso.action.ViewActions.replaceText("2468"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.controller_pin_unlock)).perform(click());
+            assertNameField(page,true,"Fixture Dom");
+            page.recreate();assertNameField(page,true,"Fixture Dom");
+            assertEquals("Updated Sub",com.subhub.app.people.ProfileNames.get(context,false));
+        }
+    }
+    private static void assertNameField(ActivityScenario<GlobalSettingsActivity> page,boolean dom,String expected) {
+        page.onActivity(a->{View root=a.findViewById(android.R.id.content);
+            assertNull(root.findViewWithTag(dom?"profile_name:sub":"profile_name:dom"));
+            android.widget.EditText field=root.findViewWithTag(dom?"profile_name:dom":"profile_name:sub");
+            assertNotNull(field);assertTrue(field.isShown());assertEquals(expected,field.getText().toString());});
+    }
+
     @Test public void hardcoreConsentIsLocalAndDoesNotRequireAControllerUnlock() throws Exception {
         ControllerPinManager.enterSubMode();
         try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
