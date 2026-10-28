@@ -1,5 +1,7 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.storage.StoredPayloads;
+
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -37,7 +39,7 @@ final class RemoteActivityStore {
                     throw new SecurityException("Activity identity mismatch");
                 try (Cursor old = db.rawQuery("SELECT body FROM activity_receipts WHERE peer=? AND generation=? AND event_id=?",
                         new String[]{peer.identity, peer.generation, event.id})) {
-                    if (old.moveToFirst() && !old.getString(0).equals(change.body))
+                    if (old.moveToFirst() && !StoredPayloads.read(old,0).equals(change.body))
                         throw new SecurityException("Activity facts are immutable");
                 }
             } catch (JSONException invalid) { throw new SecurityException("Invalid activity record", invalid); }
@@ -47,7 +49,7 @@ final class RemoteActivityStore {
     static void accept(SQLiteDatabase db, RemoteStore.Peer peer, RemoteProtocol.Change change, long receivedAt) {
         ContentValues row = new ContentValues();
         row.put("entry_key", entryKey(peer, change.key));row.put("peer", peer.identity);row.put("generation", peer.generation);
-        row.put("event_id", change.key);row.put("body", change.body);row.put("received", receivedAt);
+        row.put("event_id", change.key);StoredPayloads.put(row,"body",change.body);row.put("received", receivedAt);
         db.insertWithOnConflict("activity_receipts", null, row, SQLiteDatabase.CONFLICT_IGNORE);
     }
 
