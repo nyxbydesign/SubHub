@@ -90,6 +90,9 @@ public class RemoteEnrollmentAndroidTest {
         androidx.test.espresso.intent.Intents.init();
         try {
             if (rotatePending) {
+                java.lang.reflect.Field pool = RemoteFeature.class.getDeclaredField("sessions"); pool.setAccessible(true);
+                assertEquals("Fixture gate must cover every session worker", 4,
+                        ((java.util.concurrent.ThreadPoolExecutor) pool.get(feature)).getCorePoolSize());
                 // Gate every session worker so the accepted creation stays queued through rotation.
                 for (int worker = 0; worker < 4; worker++) blockers.add(feature.submit(() -> {
                     entered.countDown();

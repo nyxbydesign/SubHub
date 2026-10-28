@@ -61,6 +61,8 @@ public final class ActivityPreview {
         private AutoCloseable observer;
         private boolean pendingRefresh, listening;
         private String newest;
+        private final java.util.Map<String, EntryRow> renderedRows = new java.util.LinkedHashMap<>();
+        private int message;
         private final java.util.concurrent.atomic.AtomicBoolean scheduled = new java.util.concurrent.atomic.AtomicBoolean();
 
         Preview(Context context, PersonId person, int limit, AsyncUiScope data, String jobKey) {
@@ -114,7 +116,7 @@ public final class ActivityPreview {
         private boolean retainAccess() {
             if (allowed()) return true;
             setVisibility(GONE);
-            rows.removeAllViews();
+            clearRows();
             newest = null;
             data.cancel(jobKey);
             return false;
@@ -152,7 +154,7 @@ public final class ActivityPreview {
                 data.cancel(jobKey);
                 pendingRefresh = false;
                 newest = null;
-                rows.removeAllViews();
+                clearRows();
                 setVisibility(GONE);
                 return;
             }
@@ -178,10 +180,8 @@ public final class ActivityPreview {
                     continueRefresh();
                     return;
                 }
-                rows.removeAllViews();
+                showMessage(R.string.dom_activity_unavailable, true);
                 newest = null;
-                PersonUi.text(rows, getContext().getString(R.string.dom_activity_unavailable), false);
-                PersonUi.action(rows, R.string.role_retry, this::refresh, false);
                 continueRefresh();
             });
         }
@@ -192,11 +192,25 @@ public final class ActivityPreview {
             main.post(this::refresh);
         }
 
-        private void render(List<ActivityEntry> entries) {
+        private void clearRows() {
             rows.removeAllViews();
+            renderedRows.clear();
+            message = 0;
+        }
+
+        private void showMessage(int label, boolean retry) {
+            int signature = retry ? -label : label;
+            if (message == signature) return;
+            clearRows();
+            message = signature;
+            PersonUi.text(rows, getContext().getString(label), false);
+            if (retry) PersonUi.action(rows, R.string.role_retry, this::refresh, false);
+        }
+
+        private void render(List<ActivityEntry> entries) {
             newest = null;
             if (entries == null) {
-                PersonUi.text(rows, getContext().getString(R.string.dom_activity_unavailable), false);
+                showMessage(R.string.dom_activity_unavailable, false);
                 return;
             }
             List<ActivityEntry> sorted = new ArrayList<>(entries);
@@ -207,13 +221,20 @@ public final class ActivityPreview {
                         && (person == null || person.equals(entry.personId));
             }
             if (!valid) {
-                PersonUi.text(rows, getContext().getString(R.string.dom_activity_unavailable), false);
+                showMessage(R.string.dom_activity_unavailable, false);
                 return;
             }
             sorted.sort(Comparator.comparingLong((ActivityEntry entry) -> entry.event.observedAt).reversed()
                     .thenComparing(entry -> entry.key));
-            if (sorted.isEmpty()) PersonUi.text(rows, getContext().getString(R.string.dom_activity_empty), false);
-            else newest = sorted.get(0).key;
+            if (sorted.isEmpty()) { showMessage(R.string.dom_activity_empty, false); return; }
+            newest = sorted.get(0).key;
+            if (renderedRows.isEmpty()) clearRows();
+            java.util.Iterator<java.util.Map.Entry<String, EntryRow>> previous = renderedRows.entrySet().iterator();
+            while (previous.hasNext()) {
+                java.util.Map.Entry<String, EntryRow> old = previous.next();
+                if (!identities.contains(old.getKey())) { rows.removeView(old.getValue().view); previous.remove(); }
+            }
+            int index = 0;
             for (ActivityEntry entry : sorted) {
                 List<String> details = new ArrayList<>();
                 if (person == null) details.add(entry.personName + " · "
@@ -223,10 +244,42 @@ public final class ActivityPreview {
                 details.add(DateUtils.getRelativeTimeSpanString(entry.event.observedAt,
                         System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString());
                 if (entry.unread) details.add(getContext().getString(R.string.dom_activity_unread));
-                PersonUi.row(rows, ActivityText.icon(entry), ActivityText.title(getContext(), entry),
-                        String.join("\n", details), () -> {
-                            if (allowed()) PersonRoutes.open(getContext(), entry.personId);
-                        }).setTag("activity_preview_entry:" + entry.key);
+                EntryRow row = renderedRows.get(entry.key);
+                if (row == null) { row = new EntryRow(entry); renderedRows.put(entry.key, row); }
+                row.bind(entry, String.join("\n", details));
+                if (rows.indexOfChild(row.view) != index) {
+                    rows.removeView(row.view);
+                    rows.addView(row.view, index);
+                }
+                index++;
+            }
+        }
+
+        private final class EntryRow {
+            final LinearLayout view;
+            final android.widget.ImageView icon;
+            final android.widget.TextView title, detail;
+            ActivityEntry entry;
+            int resource;
+            EntryRow(ActivityEntry entry) {
+                this.entry = entry;
+                resource = ActivityText.icon(entry);
+                view = PersonUi.row(rows, resource, ActivityText.title(getContext(), entry), " ", () -> {
+                    if (allowed()) PersonRoutes.open(getContext(), this.entry.personId);
+                });
+                view.setTag("activity_preview_entry:" + entry.key);
+                icon = (android.widget.ImageView) view.getChildAt(0);
+                LinearLayout copy = (LinearLayout) view.getChildAt(1);
+                title = (android.widget.TextView) copy.getChildAt(0);
+                detail = (android.widget.TextView) copy.getChildAt(1);
+            }
+            void bind(ActivityEntry value, String text) {
+                entry = value;
+                String label = ActivityText.title(getContext(), value);
+                if (!android.text.TextUtils.equals(title.getText(), label)) title.setText(label);
+                if (!android.text.TextUtils.equals(detail.getText(), text)) detail.setText(text);
+                int next = ActivityText.icon(value);
+                if (resource != next) { resource = next; icon.setImageResource(next); }
             }
         }
     }

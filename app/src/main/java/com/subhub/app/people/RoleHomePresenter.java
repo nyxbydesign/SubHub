@@ -32,10 +32,15 @@ public final class RoleHomePresenter {
     private final FavoriteSubStore favorites;
     private LinearLayout domPeople;
     private com.subhub.app.stats.AchievementPreviewView domAchievements;
-    private List<Object> renderedDom;
+    private LinearLayout domFavorite, domSummary, domRecent, subUsage;
+    private TextView subTasksDetail;
+    private com.subhub.app.stats.AchievementPreviewView subAchievements;
+    private List<Object> renderedFavorite, renderedSummary, renderedRecent, renderedUsage, renderedRelationship;
     private long lastRefresh;
     private boolean displayedDom, sessionPage;
     private TaskSummary taskSummary;
+    private PersonSnapshot subPerson;
+    private AssignedDom subDom;
 
     public static final class HomeSelection extends ViewModel {
         boolean allUsage;
@@ -82,7 +87,7 @@ public final class RoleHomePresenter {
             data.cancel("role-home");
             domPeople = null;
             domAchievements = null;
-            renderedDom = null;
+            resetDomSignatures();
             if (domBody.findViewWithTag("home_dom_unlock") == null) {
                 domBody.removeAllViews();
                 PersonUi.action(domBody, R.string.home_dom_locked, () ->
@@ -124,7 +129,8 @@ public final class RoleHomePresenter {
             if (dom != domWorkspace()
                     || dom && !ControllerPinManager.isDomModeActive()) return;
             relationship.setVisibility(View.GONE);
-            if (dom) renderedDom = null;
+            if (dom) resetDomSignatures();
+            else renderedRelationship = null;
             LinearLayout target = dom ? domPeople : subBody;
             target.removeAllViews();
             PersonUi.text(target, activity.getString(R.string.role_person_unavailable), false);
@@ -137,34 +143,56 @@ public final class RoleHomePresenter {
     }
 
     private void renderDom(List<PersonSnapshot> people) {
-        if (domAchievements != null) domAchievements.load(data, "home-achievement-preview");
-        List<Object> signature = new ArrayList<>();
-        signature.add(favorites.identity());
-        for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
-                person.id, person.name, person.device, person.connection, person.lastSyncedAt,
-                person.serviceActive, person.serviceLabel, person.sync.runtime, person.sync.stats, person.protectedSeconds,
-                person.activityEvents, person.additionOrder);
-        if (domPeople != null && domPeople.getParent() == domBody && signature.equals(renderedDom)) return;
-        renderedDom = signature;
         ensureDomSections();
-        domPeople.removeAllViews();
-        heading(domPeople, R.string.home_favorite_title, 0, null);
+        domAchievements.load(data, "home-achievement-preview");
         PersonSnapshot favorite = favorites.resolve(people);
-        if (favorite == null) PersonUi.action(domPeople, R.string.home_favorite_choose, () -> {
-            if (domWorkspace() && ControllerPinManager.isDomModeActive())
-                activity.startActivity(new Intent(activity, PeopleActivity.class));
-        }, true).setTag("home_choose_favorite");
-        else favoriteOverview(favorite);
-        homeSummary(people);
+        List<Object> signature = favorite == null ? java.util.Collections.singletonList(favorites.identity())
+                : personSignature(favorite, true);
+        if (!signature.equals(renderedFavorite)) {
+            renderedFavorite = signature;
+            domFavorite.removeAllViews();
+            heading(domFavorite, R.string.home_favorite_title, 0, null);
+            if (favorite == null) PersonUi.action(domFavorite, R.string.home_favorite_choose, () -> {
+                if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                    activity.startActivity(new Intent(activity, PeopleActivity.class));
+            }, true).setTag("home_choose_favorite");
+            else favoriteOverview(favorite);
+        }
+        signature = new ArrayList<>();
+        for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
+                person.id, person.connection, person.serviceActive, person.sync.runtime);
+        if (!signature.equals(renderedSummary)) {
+            renderedSummary = signature;
+            domSummary.removeAllViews();
+            homeSummary(people);
+        }
         List<PersonSnapshot> recent = recentAdditions(people, favorite);
-        if (!recent.isEmpty()) {
-            heading(domPeople, R.string.home_recent_additions, 0, null);
-            for (PersonSnapshot person : recent) {
-                LinearLayout recentCard = card(domPeople, R.drawable.bg_home_recent);
-                recentCard.setPadding(dp(12), dp(8), dp(12), dp(8));
-                identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
+        signature = new ArrayList<>();
+        for (PersonSnapshot person : recent) signature.addAll(personSignature(person, false));
+        if (!signature.equals(renderedRecent)) {
+            renderedRecent = signature;
+            domRecent.removeAllViews();
+            if (!recent.isEmpty()) {
+                heading(domRecent, R.string.home_recent_additions, 0, null);
+                for (PersonSnapshot person : recent) {
+                    LinearLayout recentCard = card(domRecent, R.drawable.bg_home_recent);
+                    recentCard.setPadding(dp(12), dp(8), dp(12), dp(8));
+                    identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
+                }
             }
         }
+    }
+
+    private void resetDomSignatures() {
+        renderedFavorite = null; renderedSummary = null; renderedRecent = null;
+    }
+
+    private List<Object> personSignature(PersonSnapshot person, boolean favorite) {
+        List<Object> signature = new ArrayList<>(java.util.Arrays.asList(person.id, person.name,
+                ProfileViews.targetDiscriminator(activity, person), PersonUi.connection(activity, person)));
+        if (favorite) java.util.Collections.addAll(signature, person.serviceLabel,
+                person.sync.runtime, person.sync.stats, person.protectedSeconds, person.activityEvents);
+        return signature;
     }
 
     private void homeSummary(List<PersonSnapshot> people) {
@@ -190,7 +218,7 @@ public final class RoleHomePresenter {
                 || activity.getResources().getConfiguration().fontScale >= 1.3f;
         summaries.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         summaries.setBaselineAligned(false);
-        domPeople.addView(summaries, new LinearLayout.LayoutParams(-1, -2));
+        domSummary.addView(summaries, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout active = PersonUi.column(activity);
         LinearLayout devices = PersonUi.column(activity);
         for (LinearLayout tile : new LinearLayout[]{active, devices}) {
@@ -219,12 +247,17 @@ public final class RoleHomePresenter {
     }
 
     private void ensureDomSections() {
-        if (domPeople != null && domPeople.getParent() == domBody) return;
+        if (domPeople != null && domPeople.getParent() == domBody
+                && domFavorite != null && domFavorite.getParent() == domPeople) return;
         domBody.removeAllViews();
         domPeople = PersonUi.column(activity);
         domPeople.setTag("home_people_composition");
         domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(domPeople, activity.getString(R.string.role_loading), false);
+        resetDomSignatures();
+        domFavorite = PersonUi.column(activity); domSummary = PersonUi.column(activity); domRecent = PersonUi.column(activity);
+        for (LinearLayout slot : new LinearLayout[]{domFavorite, domSummary, domRecent})
+            domPeople.addView(slot, new LinearLayout.LayoutParams(-1, -2));
+        PersonUi.text(domFavorite, activity.getString(R.string.role_loading), false);
         com.subhub.app.activity.ActivityPreview.add(domBody, null, 5, data, "home-activity-preview");
         domAchievements = achievementPreview(domBody);
     }
@@ -248,7 +281,7 @@ public final class RoleHomePresenter {
     }
 
     private void favoriteOverview(PersonSnapshot person) {
-        LinearLayout card = card(domPeople, R.drawable.bg_home_favorite);
+        LinearLayout card = card(domFavorite, R.drawable.bg_home_favorite);
         card.setTag("home_favorite:" + person.id.value());
         identityHeader(card, person, true).setTag("home_favorite_identity:" + person.id.value());
         divider(card);
@@ -322,23 +355,50 @@ public final class RoleHomePresenter {
     }
 
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
-        subBody.removeAllViews();
-        relationship.removeAllViews();
-        relationship.setVisibility(dom == null ? View.GONE : View.VISIBLE);
-        if (dom != null) {
-            LinearLayout linked = card(relationship, R.drawable.bg_home_composition_stat);
-            PersonUi.row(linked, R.drawable.ic_nav_people, dom.name, activity.getString(dom.status), () -> {
-                if (domWorkspace()) return;
-                ConnectionUi ui = People.connectionUi();
-                if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
-            }).setTag("home_assigned_dom_connection");
+        subPerson = person; subDom = dom;
+        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
+        List<Object> relationSignature = dom == null ? java.util.Collections.emptyList()
+                : java.util.Arrays.asList(dom.name, dom.status);
+        if (!relationSignature.equals(renderedRelationship)) {
+            renderedRelationship = relationSignature;
+            relationship.removeAllViews();
+            if (dom != null) {
+                LinearLayout linked = card(relationship, R.drawable.bg_home_composition_stat);
+                PersonUi.row(linked, R.drawable.ic_nav_people, dom.name, activity.getString(dom.status), () -> {
+                    if (domWorkspace()) return;
+                    ConnectionUi ui = People.connectionUi();
+                    if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
+                }).setTag("home_assigned_dom_connection");
+            }
         }
-        PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks, activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
-            if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
-                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
-        }).setTag("home_tasks");
-        usage(person, dom);
-        achievementPreview(subBody);
+        relationship.setVisibility(dom == null ? View.GONE : View.VISIBLE);
+        String subtitle = taskSubtitle();
+        if (!android.text.TextUtils.equals(subTasksDetail.getText(), subtitle)) subTasksDetail.setText(subtitle);
+        List<Object> usageSignature = new ArrayList<>();
+        usageSignature.add(selection.allUsage);
+        for (PersonSnapshot.Allowance value : person.allowances) java.util.Collections.addAll(usageSignature,
+                value.packageName, value.label, value.dailyMinutes, value.usedMillis);
+        if (!usageSignature.equals(renderedUsage)) {
+            renderedUsage = usageSignature;
+            subUsage.removeAllViews();
+            usage(person, dom);
+        }
+        subAchievements.load(data, "home-achievement-preview");
+    }
+
+    private void ensureSubSections() {
+        subBody.removeAllViews();
+        renderedUsage = null; renderedRelationship = null;
+        LinearLayout tasks = PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks,
+                activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
+                    if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
+                            .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
+                });
+        tasks.setTag("home_tasks");
+        subTasksDetail = (TextView) ((LinearLayout) tasks.getChildAt(1)).getChildAt(1);
+        subUsage = PersonUi.column(activity);
+        subBody.addView(subUsage, new LinearLayout.LayoutParams(-1, -2));
+        subAchievements = achievementPreview(subBody);
         TextView help = text(activity.getString(R.string.role_help_safety), 13, false);
         help.setTextColor(activity.getColor(R.color.accent_text));
         help.setGravity(Gravity.CENTER);
@@ -356,7 +416,7 @@ public final class RoleHomePresenter {
 
     private void usage(PersonSnapshot person, AssignedDom dom) {
         if (person.allowances.isEmpty()) return;
-        LinearLayout card = card(subBody, R.drawable.bg_home_composition_stat);
+        LinearLayout card = card(subUsage, R.drawable.bg_home_composition_stat);
         card.setTag("home_app_time");
         PersonUi.text(card, activity.getString(R.string.role_app_time), true);
         List<PersonSnapshot.Allowance> values = new ArrayList<>(person.allowances);
@@ -397,7 +457,7 @@ public final class RoleHomePresenter {
             more.setMinHeight(dp(48));
             more.setGravity(Gravity.CENTER);
             card.addView(more, new LinearLayout.LayoutParams(-1, -2));
-            clickable(more, () -> { selection.allUsage = !selection.allUsage; renderSub(person, dom); });
+            clickable(more, () -> { selection.allUsage = !selection.allUsage; renderSub(subPerson, subDom); });
         }
     }
 

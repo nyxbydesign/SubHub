@@ -59,6 +59,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
 import org.junit.After;
 import org.junit.Before;
@@ -78,6 +79,7 @@ public final class TasksAndroidTest {
     private final Map<String, List<ContentValues>> originalRows = new LinkedHashMap<>();
     private final List<File> createdMediaFiles = new ArrayList<>();
     private Map<String, ?> originalConsent;
+    private final Map<String, Map<String, ?>> presentationPreferences = new LinkedHashMap<>();
     private TaskRepository repository;
     private TaskStore store;
     private String scope;
@@ -126,6 +128,8 @@ public final class TasksAndroidTest {
     }
 
     @After public void restore() throws Exception {
+        for (Map.Entry<String, Map<String, ?>> saved : presentationPreferences.entrySet())
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(saved.getKey(), 0), saved.getValue());
         if (ownsFixture) {
             synchronized (SubFeaturePolicy.LOCK) {
                 TaskEngine engine = store.load(scope);
@@ -399,6 +403,132 @@ public final class TasksAndroidTest {
                 await(() -> page.getState() == Lifecycle.State.DESTROYED);
             }
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void taskListRefreshRetainsUnchangedCardsAndPositionWhenAnotherTaskArrives() throws Exception {
+        List<TaskDefinition> tasks = new ArrayList<>();
+        for (int i = 0; i < 12; i++) tasks.add(seed("Scroll row " + i, false));
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            String first = "task:" + occurrenceId(tasks.get(0));
+            awaitTag(page, "task_open:" + occurrenceId(tasks.get(0)));
+            AtomicReference<View> retained = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicInteger position = new java.util.concurrent.atomic.AtomicInteger();
+            page.onActivity(activity -> {
+                retained.set(activity.findViewById(android.R.id.content).findViewWithTag(first));
+                com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.role_page_body)).scrollTo(0, 300);
+            });
+            AtomicReference<TasksActivity> current = new AtomicReference<>(); page.onActivity(current::set);
+            com.subhub.app.UiRefreshWitness.frame(current.get());
+            page.onActivity(activity -> position.set(com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.role_page_body)).getScrollY()));
+            assertTrue("Fixture must be scrolled", position.get() > 0);
+            refreshTasks(page);
+            com.subhub.app.UiRefreshWitness.capture(current.get(), "tasks-list-unchanged-refresh");
+            page.onActivity(activity -> {
+                assertSame(retained.get(), activity.findViewById(android.R.id.content).findViewWithTag(first));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.role_page_body)).getScrollY());
+            });
+            TaskDefinition arriving = seed("New arrival", false);
+            refreshTasks(page);
+            awaitTag(page, "task_open:" + occurrenceId(arriving));
+            com.subhub.app.UiRefreshWitness.capture(current.get(), "tasks-list-new-arrival");
+            page.onActivity(activity -> {
+                assertSame(retained.get(), activity.findViewById(android.R.id.content).findViewWithTag(first));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.role_page_body)).getScrollY());
+            });
+            openTask(page, arriving);
+            awaitTag(page, "task_detail:" + occurrenceId(arriving));
+            androidx.test.espresso.Espresso.pressBack(); awaitTag(page, "task_open:" + occurrenceId(arriving));
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subHomeTaskCountUpdatesWithoutReplacingOtherControlsOrPosition() throws Exception {
+        seed("Home count first", false);
+        for (String name : List.of("betablocker_achievements", "betablocker_stats"))
+            presentationPreferences.put(name, new LinkedHashMap<>(context.getSharedPreferences(name, 0).getAll()));
+        com.subhub.app.onboarding.OnboardingState.complete(context);
+        java.util.concurrent.atomic.AtomicLong usage = new java.util.concurrent.atomic.AtomicLong(60_000);
+        com.subhub.app.people.People.installLocalProjection(local -> {
+            List<com.subhub.app.people.PersonSnapshot.Allowance> allowances = new ArrayList<>();
+            for (int i = 0; i < 8; i++) allowances.add(new com.subhub.app.people.PersonSnapshot.Allowance(
+                    i == 0 ? "com.android.chrome" : "synthetic.app" + i, "Synthetic app " + (i + 1), usage.get(), 30 + i * 10));
+            return new com.subhub.app.people.PersonSnapshot(local.id, local.name, local.device, local.contractName,
+                    local.serviceLabel, local.connection, local.freshness, local.lastSyncedAt, local.capabilities,
+                    local.sections, allowances, local.currency, local.protectedSeconds, local.activityEvents,
+                    local.tributeCents, local.sessions, local.serviceActive, local.sync, local.sessionIdentity, local.additionOrder);
+        });
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<com.subhub.app.MainActivity> page = ActivityScenario.launch(new Intent(context, com.subhub.app.MainActivity.class)
+                .setAction(Intent.ACTION_MAIN).putExtra(com.subhub.app.MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true))) {
+            awaitTag(page, "home_tasks"); awaitTag(page, "home_app_time"); awaitTag(page, "achievement_preview");
+            AtomicReference<com.subhub.app.MainActivity> current = new AtomicReference<>(); page.onActivity(current::set);
+            AtomicReference<View> tasks = new AtomicReference<>(), allowances = new AtomicReference<>(), achievements = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicInteger position = new java.util.concurrent.atomic.AtomicInteger();
+            page.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_sub_summary);
+                tasks.set(root.findViewWithTag("home_tasks")); allowances.set(root.findViewWithTag("home_app_time"));
+                achievements.set(root.findViewWithTag("achievement_preview"));
+                com.subhub.app.UiRefreshWitness.scroll(root).scrollTo(0, com.subhub.app.people.PersonUi.dp(activity, 120));
+            });
+            com.subhub.app.UiRefreshWitness.frame(current.get());
+            page.onActivity(activity -> position.set(com.subhub.app.UiRefreshWitness.scroll(activity.findViewById(R.id.home_sub_summary)).getScrollY()));
+            assertTrue("Fixture must be scrolled", position.get() > 0);
+            seed("Home count second", false);
+            refreshHome(page);
+            com.subhub.app.UiRefreshWitness.capture(current.get(), "home-sub-changed-task-count");
+            page.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_sub_summary);
+                assertSame(tasks.get(), root.findViewWithTag("home_tasks"));
+                assertTrue(containsText(tasks.get(), activity.getResources().getQuantityString(R.plurals.tasks_active_count, 2, 2)));
+                assertSame(allowances.get(), root.findViewWithTag("home_app_time"));
+                assertSame(achievements.get(), root.findViewWithTag("achievement_preview"));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(root).getScrollY());
+            });
+            usage.set(120_000); refreshHome(page);
+            com.subhub.app.UiRefreshWitness.capture(current.get(), "home-sub-changed-usage");
+            page.onActivity(activity -> {
+                View root = activity.findViewById(R.id.home_sub_summary);
+                assertSame(tasks.get(), root.findViewWithTag("home_tasks"));
+                assertNotSame(allowances.get(), root.findViewWithTag("home_app_time"));
+                assertTrue(containsText(root.findViewWithTag("home_app_time"), activity.getString(R.string.role_allowance_usage, 2, 30)));
+                assertSame(achievements.get(), root.findViewWithTag("achievement_preview"));
+                assertEquals(position.get(), com.subhub.app.UiRefreshWitness.scroll(root).getScrollY());
+            });
+        }
+    }
+
+    private void refreshTasks(ActivityScenario<TasksActivity> page) throws Exception {
+        page.onActivity(TasksActivity::refresh);
+        await(() -> {
+            AtomicBoolean done = new AtomicBoolean();
+            page.onActivity(activity -> {
+                try { java.lang.reflect.Field model = TasksActivity.class.getDeclaredField("model"); model.setAccessible(true);
+                    Object state = model.get(activity); java.lang.reflect.Field loading = state.getClass().getDeclaredField("loading");
+                    loading.setAccessible(true); done.set(!loading.getBoolean(state));
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            return done.get();
+        });
+    }
+
+    private void refreshHome(ActivityScenario<com.subhub.app.MainActivity> page) throws Exception {
+        page.onActivity(activity -> {
+            try { java.lang.reflect.Field field = com.subhub.app.MainActivity.class.getDeclaredField("roleHome"); field.setAccessible(true);
+                ((com.subhub.app.people.RoleHomePresenter) field.get(activity)).refresh(true);
+            } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        });
+        await(() -> {
+            AtomicBoolean done = new AtomicBoolean();
+            page.onActivity(activity -> {
+                try { java.lang.reflect.Field field = com.subhub.app.MainActivity.class.getDeclaredField("roleHome"); field.setAccessible(true);
+                    java.lang.reflect.Field data = com.subhub.app.people.RoleHomePresenter.class.getDeclaredField("data"); data.setAccessible(true);
+                    done.set(!((com.subhub.app.util.AsyncUiScope) data.get(field.get(activity))).isPending("role-home"));
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            return done.get();
+        });
     }
 
     @Test public void tasksTabRetainsListDetailAndSubmissionNavigation() throws Exception {

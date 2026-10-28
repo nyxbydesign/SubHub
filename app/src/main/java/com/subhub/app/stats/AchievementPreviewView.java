@@ -12,6 +12,7 @@ import com.subhub.app.util.AsyncUiScope;
 
 /** Compact achievement progress shared by the overview and local statistics. */
 public final class AchievementPreviewView extends LinearLayout {
+    private java.util.List<Object> rendered;
     public AchievementPreviewView(android.content.Context context) {
         super(context);
         setOrientation(VERTICAL);
@@ -28,6 +29,7 @@ public final class AchievementPreviewView extends LinearLayout {
     public void load(AsyncUiScope data, String key, StatsSnapshot stats) {
         android.content.Context app = getContext().getApplicationContext();
         data.load(key, () -> HomeAchievementPreview.load(app, stats), this::render, failure -> {
+            rendered = null;
             removeAllViews();
             PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
         });
@@ -36,8 +38,15 @@ public final class AchievementPreviewView extends LinearLayout {
     public void load(AsyncUiScope data, String key) { load(data, key, null); }
 
     void render(HomeAchievementPreview preview) {
+        if (!preview.achievements.isAccessible()) { rendered = null; removeAllViews(); return; }
+        java.util.List<Object> signature = new java.util.ArrayList<>();
+        java.util.Collections.addAll(signature, preview.fingerprint, preview.achievements.getTotalCount(),
+                preview.achievements.progressCurrency(), preview.next == null || preview.progress.isKnown());
+        for (AchievementManager.Achievement achievement : preview.achievements.all())
+            java.util.Collections.addAll(signature, achievement.getId(), preview.achievements.isUnlocked(achievement.getId()));
+        if (signature.equals(rendered) && getChildCount() > 0) return;
+        rendered = signature;
         removeAllViews();
-        if (!preview.achievements.isAccessible()) return;
         PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
         PersonUi.text(this, getContext().getString(R.string.achievements_progress_compact,
                 preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()), false);
