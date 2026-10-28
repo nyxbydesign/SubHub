@@ -33,10 +33,16 @@ public final class CustomImageManager {
     private static final int MAX_IMAGES = 64;
 
     private final Context context;
+    private final String artGroup;
     private final SharedPreferences preferences;
     private final File storeDirectory;
 
     public CustomImageManager(Context context) {
+        this(context, "censor");
+    }
+    public CustomImageManager(Context context, String group) {
+        if (!"censor".equals(group) && !"popup".equals(group)) throw new IllegalArgumentException("Unknown artwork group");
+        artGroup = group;
         this.context = context.getApplicationContext();
         preferences = this.context.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
@@ -47,6 +53,12 @@ public final class CustomImageManager {
     }
 
     public List<Entry> listEntries() {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(context);
+        if (remote != null) {
+            List<Entry> result = new ArrayList<>();
+            for (String path : remote.artwork(artGroup)) result.add(new Entry(path, remote.artworkEnabled(path)));
+            return Collections.unmodifiableList(result);
+        }
         String raw = preferences.getString(PREFS_KEY, null);
         if (raw == null) return Collections.emptyList();
         List<Entry> entries = new ArrayList<>();
@@ -67,6 +79,8 @@ public final class CustomImageManager {
     }
 
     public int addImages(List<Uri> uris) {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(context);
+        if (remote != null) return remote.addArtwork(artGroup, uris == null ? Collections.emptyList() : uris);
         if (uris == null || uris.isEmpty()) return 0;
         List<Entry> entries = new ArrayList<>(listEntries());
         int added = 0;
@@ -98,6 +112,8 @@ public final class CustomImageManager {
     }
 
     public void setEnabled(String id, boolean enabled) {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(context);
+        if (remote != null) { remote.enableArtwork(id, enabled); return; }
         List<Entry> updated = new ArrayList<>();
         for (Entry entry : listEntries()) {
             updated.add(entry.id.equals(id) ? new Entry(id, enabled) : entry);
@@ -106,6 +122,8 @@ public final class CustomImageManager {
     }
 
     public void delete(String id) {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(context);
+        if (remote != null) { remote.deleteArtwork(id); return; }
         List<Entry> updated = new ArrayList<>();
         for (Entry entry : listEntries()) {
             if (!entry.id.equals(id)) updated.add(entry);
@@ -223,6 +241,8 @@ public final class CustomImageManager {
     }
 
     public Bitmap thumbnail(String id, int maximumDimension) {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(context);
+        if (remote != null) return remote.thumbnail(id, maximumDimension);
         return decode(fileFor(id), maximumDimension);
     }
 

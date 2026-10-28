@@ -116,7 +116,7 @@ public final class LocalPersonRepository implements PersonRepository {
                 : active ? R.string.role_service_active : R.string.role_service_inactive);
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
         if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
-        return new PersonSnapshot(id, context.getString(R.string.role_this_device), Build.MODEL,
+        return new PersonSnapshot(id, ProfileNames.get(context, false), Build.MODEL,
                 context.getString(R.string.role_local_configuration),
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
                 capabilities, canonical, allowances, wallet.getCurrency(),

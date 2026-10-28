@@ -23,6 +23,7 @@ import java.util.List;
 /** Shared private image editor, embedded alongside censor appearance controls. */
 public final class CensorImageEditor implements AutoCloseable {
     private final AppCompatActivity activity;
+    private final String artGroup;
     private final android.content.Context app;
     private final Button add;
     private final TextView status;
@@ -39,15 +40,19 @@ public final class CensorImageEditor implements AutoCloseable {
 
     public CensorImageEditor(
             AppCompatActivity activity, Button add, TextView status, LinearLayout list) {
+        this(activity, add, status, list, "censor");
+    }
+    public CensorImageEditor(AppCompatActivity activity, Button add, TextView status, LinearLayout list, String group) {
+        artGroup = group;
         this.activity = activity;
         this.add = add;
         this.status = status;
         this.list = list;
-        app = activity.getApplicationContext();
+        app = com.subhub.app.configuration.FeatureEditorSession.context(activity);
         uiData = com.subhub.app.util.AsyncUiScope.forPage(activity);
         taskKey = "censor-images:" + System.identityHashCode(this) + ":";
         preferences =
-                activity.getApplicationContext()
+                com.subhub.app.configuration.FeatureEditorSession.context(activity)
                         .getSharedPreferences(
                                 com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,
                                 android.content.Context.MODE_PRIVATE);
@@ -57,7 +62,7 @@ public final class CensorImageEditor implements AutoCloseable {
                         new ActivityResultContracts.OpenMultipleDocuments(), this::importImages);
         add.setOnClickListener(
                 view -> {
-                    if (!importing && ControllerPinManager.canEditConfiguration()) {
+                    if (!importing && com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup)) {
                         picker.launch(new String[] {"image/*"});
                     }
                 });
@@ -69,7 +74,7 @@ public final class CensorImageEditor implements AutoCloseable {
                 || importing
                 || uris == null
                 || uris.isEmpty()
-                || !ControllerPinManager.canEditConfiguration()) return;
+                || !com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup)) return;
         importing = true;
         refresh();
         status.setText(R.string.custom_images_importing);
@@ -78,8 +83,8 @@ public final class CensorImageEditor implements AutoCloseable {
         uiData.loadSerial(
                 taskKey + "import",
                 () ->
-                        ControllerPinManager.canEditConfiguration()
-                                ? new CustomImageManager(context).addImages(selected)
+                        com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup)
+                                ? new CustomImageManager(context, artGroup).addImages(selected)
                                 : 0,
                 added -> {
                     importing = false;
@@ -96,7 +101,7 @@ public final class CensorImageEditor implements AutoCloseable {
 
     public void refresh() {
         if (closed) return;
-        boolean editing = ControllerPinManager.canEditConfiguration() && !importing;
+        boolean editing = com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup) && !importing;
         add.setEnabled(editing);
         for (int i = 0; i < list.getChildCount(); i++) {
             android.view.View row = list.getChildAt(i);
@@ -116,7 +121,7 @@ public final class CensorImageEditor implements AutoCloseable {
         android.content.Context context = app;
         uiData.load(
                 taskKey + "read",
-                () -> ImageData.load(new CustomImageManager(context)),
+                () -> ImageData.load(new CustomImageManager(context, artGroup)),
                 data -> {
                     if (preferences.getLong(CustomImageManager.REVISION_KEY, 0) != revision) {
                         data.close();
@@ -134,7 +139,7 @@ public final class CensorImageEditor implements AutoCloseable {
         releaseThumbnails();
         thumbnails.addAll(data.bitmaps);
         data.bitmaps.clear();
-        boolean editing = ControllerPinManager.canEditConfiguration() && !importing;
+        boolean editing = com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup) && !importing;
         if (data.entries.isEmpty()) {
             TextView empty = new TextView(activity);
             empty.setText(R.string.custom_images_empty);
@@ -161,14 +166,14 @@ public final class CensorImageEditor implements AutoCloseable {
             enabled.setMinimumHeight(dp(48));
             enabled.setOnCheckedChangeListener(
                     (button, checked) -> {
-                        if (ControllerPinManager.canEditConfiguration() && !importing) {
+                        if (com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup) && !importing) {
                             android.content.Context context = app;
                             String id = entry.getId();
                             uiData.loadSerial(
                                     taskKey + "enabled:" + id,
                                     () -> {
-                                        if (ControllerPinManager.canEditConfiguration())
-                                            new CustomImageManager(context).setEnabled(id, checked);
+                                        if (com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup))
+                                            new CustomImageManager(context, artGroup).setEnabled(id, checked);
                                         return null;
                                     },
                                     ignored -> {
@@ -194,7 +199,7 @@ public final class CensorImageEditor implements AutoCloseable {
             delete.setEnabled(editing);
             delete.setOnClickListener(
                     view -> {
-                        if (!ControllerPinManager.canEditConfiguration() || importing) return;
+                        if (!com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup) || importing) return;
                         importing = true;
                         refresh();
                         android.content.Context context = app;
@@ -202,8 +207,8 @@ public final class CensorImageEditor implements AutoCloseable {
                         uiData.loadSerial(
                                 taskKey + "delete",
                                 () -> {
-                                    if (ControllerPinManager.canEditConfiguration())
-                                        new CustomImageManager(context).delete(id);
+                                    if (com.subhub.app.configuration.FeatureEditorSession.canEdit(activity, artGroup))
+                                        new CustomImageManager(context, artGroup).delete(id);
                                     return null;
                                 },
                                 ignored -> {

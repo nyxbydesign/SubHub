@@ -55,6 +55,10 @@ public final class PersonRoutes {
 
     public static void editSection(Activity activity, PersonId id, String section) {
         if (!canEditLocal(activity, id)) return;
+        activity.startActivity(new Intent(activity, sectionActivity(section)).putExtra(EXTRA_PERSON_ID, id.value()));
+    }
+
+    public static Class<? extends Activity> sectionActivity(String section) {
         Class<? extends Activity> target;
         switch (section) {
             case "apps": target = LocalAppsActivity.class; break;
@@ -65,6 +69,6 @@ public final class PersonRoutes {
             case "atmosphere": target = AtmosphereActivity.class; break;
             default: throw new IllegalArgumentException("Unknown contract section");
         }
-        activity.startActivity(new Intent(activity, target).putExtra(EXTRA_PERSON_ID, id.value()));
+        return target;
     }
 }

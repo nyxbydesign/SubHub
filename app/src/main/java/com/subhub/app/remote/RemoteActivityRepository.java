@@ -262,7 +262,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                 int rowKind = rows.getInt(0); long rowId = rows.getLong(1), sortAt = rows.getLong(2);
                 ActivityEvent event = RemoteActivityWire.decode(new JSONObject(rows.getString(4)));
                 if (rowKind == 0) entries.add(new ActivityEntry("local:" + rows.getString(3), PersonId.LOCAL,
-                        context.getString(R.string.role_this_device), clean(Build.MODEL), event,
+                        com.subhub.app.people.ProfileNames.get(context, false), clean(Build.MODEL), event,
                         rows.getLong(7), false, localLabel(event.packageName)));
                 else entries.add(entry(store.peer(rows.getString(5), rows.getString(6)),
                         RemoteActivityStore.entryKey(store.peer(rows.getString(5), rows.getString(6)), rows.getString(3)),
@@ -294,7 +294,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             while(rows.moveToNext()){
                 if(entries.size()==limit){more=true;break;}
                 ActivityEvent event=RemoteActivityWire.decode(new JSONObject(rows.getString(2)));
-                entries.add(new ActivityEntry("local:"+rows.getString(1),PersonId.LOCAL,context.getString(R.string.role_this_device),clean(Build.MODEL),event,rows.getLong(3),false,localLabel(event.packageName)));last=rows.getLong(0);
+                entries.add(new ActivityEntry("local:"+rows.getString(1),PersonId.LOCAL,com.subhub.app.people.ProfileNames.get(context, false),clean(Build.MODEL),event,rows.getLong(3),false,localLabel(event.packageName)));last=rows.getLong(0);
             }
         }
         return new Page(entries,more?"local:"+last:null,requested);

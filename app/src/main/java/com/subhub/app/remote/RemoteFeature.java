@@ -231,6 +231,9 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public String displayName(RemoteStore.Peer peer) {
+                return com.subhub.app.people.ProfileNames.get(context, peer.localRole == RemoteProtocol.Role.DOM);
+            }
             @Override public void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception {
                 connection.setReadTimeoutMillis(Math.min(10_000,remaining(deadline)));
                 if(peer.localRole==RemoteProtocol.Role.SUB) {

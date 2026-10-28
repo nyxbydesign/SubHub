@@ -90,6 +90,7 @@ public final class HardcoreModeManager {
     }
 
     public void disable() {
+        SubFeaturePolicy.consentHardcore(context, false);
         HardcoreAutoPayManager.cancel(context);
         preferences.edit().putBoolean(KEY_REQUESTED, false).commit();
         if (policies != null && policies.isAdminActive(admin)) {
@@ -106,6 +107,7 @@ public final class HardcoreModeManager {
     }
 
     public void onAdminDisabled() {
+        SubFeaturePolicy.consentHardcore(context, false);
         // disable() clears KEY_REQUESTED before removing admin, so only an out-of-band
         // deactivation reaches this reporter as a tamper signal.
         if (isRequested()) TamperTributeReporter.record(context);

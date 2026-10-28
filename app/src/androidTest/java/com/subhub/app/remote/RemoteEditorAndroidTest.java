@@ -169,12 +169,120 @@ public class RemoteEditorAndroidTest {
     private static EditText firstEditor(View root){if(root instanceof EditText)return (EditText)root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){EditText found=firstEditor(((ViewGroup)root).getChildAt(i));if(found!=null)return found;}return null;}
 
 
+    @Test public void sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState() throws Exception {
+        SharedPreferences local=context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0);
+        SharedPreferences wallet=context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0);
+        Map<String,?> before=new HashMap<>(local.getAll()),walletBefore=new HashMap<>(wallet.getAll());
+        Class<?>[] destinations={com.subhub.app.settings.SettingsActivity.class,com.subhub.app.appmode.AppModeActivity.class,
+                com.subhub.app.penance.PenanceActivity.class,com.subhub.app.subliminal.SubliminalSettingsActivity.class,
+                com.subhub.app.popup.PopupStormActivity.class,com.subhub.app.people.LocalAppsActivity.class,
+                com.subhub.app.people.ServiceDurationActivity.class};
+        for(Class<?> destination:destinations)try(ActivityScenario<?> page=ActivityScenario.launch(new Intent(context,destination)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            page.onActivity(a->{
+                assertTrue(destination.getSimpleName(),com.subhub.app.configuration.FeatureEditorSession.remote(a));
+                assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply"));
+                View navigation=a.findViewById(R.id.bottom_navigation);
+                assertTrue(navigation==null || navigation.getVisibility()==View.GONE);
+                android.content.Context draft=com.subhub.app.configuration.FeatureEditorSession.context(a);
+                assertNotSame(local,draft.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0));
+                draft.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).edit().putString("local_only_witness","remote draft").commit();
+            });
+            page.recreate();
+            page.onActivity(a->assertTrue(com.subhub.app.configuration.FeatureEditorSession.remote(a)));
+        }
+        assertEquals(before,local.getAll());assertEquals(walletBefore,wallet.getAll());
+        assertNull(feature.store.latestCommand(peer.identity,generation));
+    }
+    @Test public void sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity() throws Exception {
+        SharedPreferences local=context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0);
+        Map<String,?> before=new HashMap<>(local.getAll());
+        try(ActivityScenario<com.subhub.app.settings.SettingsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.settings.SettingsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            AtomicReference<View> selection=new AtomicReference<>();
+            page.onActivity(a->selection.set(a.findViewById(R.id.button_appearance_details)));tapView(selection.get());
+            page.onActivity(a->selection.set(a.findViewById(R.id.radio_blur)));tapView(selection.get());
+            page.recreate();
+            page.onActivity(a->{assertTrue(((RadioButton)a.findViewById(R.id.radio_blur)).isChecked());selection.set(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply"));});
+            tapView(selection.get());await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+        }
+        JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");
+        assertEquals("blur",saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").getString("censor_type"));
+        assertEquals(before,local.getAll());
+    }
+    @Test public void sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals() throws Exception {
+        String dom=source.peers(false).get(0).identity;
+        source.publish(dom,generation,RemoteProtocol.Stream.DAILY,"2026-10-25",new JSONObject().put("schema",1).put("day","2026-10-25")
+                .put("zone",JSONObject.NULL).put("metrics",new JSONObject().put("service_ms",3661000)),false,1);
+        feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.DAILY));
+        Map<String,?> before=new HashMap<>(context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
+        try(ActivityScenario<com.subhub.app.stats.StatsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.stats.StatsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            page.onActivity(a->{assertNotNull(a.findViewById(R.id.daily_statistics_panel));
+                assertEquals(View.GONE,a.findViewById(R.id.bottom_navigation).getVisibility());
+                assertNotNull(find(a.findViewById(R.id.stats_lifetime_summary),context.getString(R.string.role_unknown_data)));});
+            page.recreate();
+            page.onActivity(a->assertNotNull(a.findViewById(R.id.daily_statistics_panel)));
+        }
+        assertEquals(before,context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME,0).getAll());
+    }
+    @Test public void sharedWhispersEnableIsQueuedWithoutChangingTheDomModule() throws Exception {
+        JSONObject saved=nativeToggle(com.subhub.app.subliminal.SubliminalSettingsActivity.class,R.id.switch_whispers);
+        assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_subliminal_enabled"));
+    }
+    @Test public void sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime() throws Exception {
+        boolean running=com.subhub.app.popup.PopupStormManager.get().isRunning();
+        JSONObject saved=nativeToggle(com.subhub.app.popup.PopupStormActivity.class,R.id.switch_popup_storm);
+        assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("popup").getBoolean("popup_storm_enabled"));
+        assertEquals(running,com.subhub.app.popup.PopupStormManager.get().isRunning());
+    }
+    @Test public void sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials() throws Exception {
+        JSONObject saved=nativeToggle(com.subhub.app.penance.PenanceActivity.class,R.id.rule_app_open_enabled);
+        assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("wallet")
+                .getBoolean("rule_"+com.subhub.app.penance.PenanceInfraction.WATCHED_APP_OPEN.preferenceKey()+"_enabled"));
+    }
+    private JSONObject nativeToggle(Class<?> target,int toggle) throws Exception {
+        Map<String,?> before=new HashMap<>(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).getAll());
+        Map<String,?> wallet=new HashMap<>(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0).getAll());
+        try(ActivityScenario<?> page=ActivityScenario.launch(new Intent(context,target).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(a.findViewById(toggle)));tapView(view.get());
+            page.onActivity(a->view.set(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply")));tapView(view.get());
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+        }
+        assertEquals(before,context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).getAll());
+        assertEquals(wallet,context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0).getAll());
+        return new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");
+    }
+
+    @Test public void peerNameChangesKeepRelationshipAndPersonIdentitiesStable() throws Exception {
+        PersonId id=RemotePersonRepository.id(peer);
+        feature.store.updateDisplayName(peer.identity,generation,"Updated Sub");
+        assertEquals(id,RemotePersonRepository.id(feature.store.peer(peer.identity,generation)));
+        assertEquals("Updated Sub",new RemotePersonRepository(context,feature).load(id).name);
+        assertEquals(generation,feature.store.peer(peer.identity,generation).generation);
+    }
+
     private ActivityScenario<RemoteContractActivity> open(String section){return ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()).putExtra("section",section));}
     @SuppressWarnings("unchecked") private static Map<String,View> controls(RemoteContractActivity activity){try{java.lang.reflect.Field field=RemoteContractActivity.class.getDeclaredField("controls");field.setAccessible(true);return (Map<String,View>)field.get(activity);}catch(Exception e){throw new AssertionError(e);}}
     private void ready(ActivityScenario<RemoteContractActivity> page,String key)throws Exception {await(()->{AtomicReference<Boolean> value=new AtomicReference<>(false);page.onActivity(a->value.set(controls(a).containsKey(key)));return value.get();});}
     private static android.widget.ScrollView statsScroll(RemoteStatsActivity activity){View view=activity.body;while(view.getParent() instanceof View){view=(View)view.getParent();if(view instanceof android.widget.ScrollView)return (android.widget.ScrollView)view;}throw new AssertionError("Statistics scroll unavailable");}
     private <T extends Activity> void tap(ActivityScenario<T> page,int label)throws Exception {AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(find(a.findViewById(R.id.role_page_body),context.getString(label))));assertNotNull(view.get());tapView(view.get());}
-    private void tapView(View view)throws Exception {android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();AtomicReference<Rect> bounds=new AtomicReference<>();instrument.runOnMainSync(()->view.requestRectangleOnScreen(new Rect(0,0,view.getWidth(),view.getHeight()),true));instrument.waitForIdleSync();instrument.runOnMainSync(()->{Rect r=new Rect();assertTrue(view.getGlobalVisibleRect(r));bounds.set(r);});assertTrue(UiDevice.getInstance(instrument).click(bounds.get().centerX(),bounds.get().centerY()));instrument.waitForIdleSync();}
+    private void tapView(View view)throws Exception {
+        assertNotNull("Native tap target is missing",view);
+        android.app.Instrumentation instrument=InstrumentationRegistry.getInstrumentation();
+        AtomicReference<Rect> bounds=new AtomicReference<>();
+        instrument.runOnMainSync(()->view.requestRectangleOnScreen(new Rect(0,0,view.getWidth(),view.getHeight()),true));
+        instrument.waitForIdleSync();
+        instrument.runOnMainSync(()->{Rect r=new Rect();if(view.getGlobalVisibleRect(r))bounds.set(r);});
+        if(bounds.get()==null){
+            File directory=new File(context.getFilesDir(),"remote-editor-failures");directory.mkdirs();
+            UiDevice device=UiDevice.getInstance(instrument);device.takeScreenshot(new File(directory,"native-tap.png"));
+            device.dumpWindowHierarchy(new File(directory,"native-tap.xml"));
+            fail("Native tap target is not visible: "+view.getClass().getSimpleName());
+        }
+        assertTrue(UiDevice.getInstance(instrument).click(bounds.get().centerX(),bounds.get().centerY()));
+        instrument.waitForIdleSync();
+    }
     private static View find(View root,String text){if(root instanceof TextView&&text.contentEquals(((TextView)root).getText()))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View value=find(((ViewGroup)root).getChildAt(i),text);if(value!=null)return value;}return null;}
     private interface Check{boolean ready()throws Exception;}
     private void await(Check check)throws Exception {long deadline=android.os.SystemClock.uptimeMillis()+15_000;while(!check.ready()&&android.os.SystemClock.uptimeMillis()<deadline)Thread.sleep(50);assertTrue(check.ready());}

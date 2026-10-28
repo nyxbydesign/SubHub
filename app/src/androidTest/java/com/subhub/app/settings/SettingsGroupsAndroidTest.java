@@ -21,8 +21,12 @@ import java.util.*;
 public class SettingsGroupsAndroidTest {
     @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    private Map<String,?> namesBefore,consentBefore;
     @Before
     public void fixture() {
+        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        namesBefore=new HashMap<>(context.getSharedPreferences("subhub_profile_names",0).getAll());
+        consentBefore=new HashMap<>(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
         new SettingsRepository(InstrumentationRegistry.getInstrumentation().getTargetContext()).preferences().edit()
                 .remove(com.subhub.app.security.DeviceRolePreferences.KEY_MODE).commit();
         ControllerPinManager.setPin(
@@ -32,6 +36,11 @@ public class SettingsGroupsAndroidTest {
 
     @After
     public void restore() {
+        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.content.SharedPreferences.Editor names=context.getSharedPreferences("subhub_profile_names",0).edit().clear();
+        for(Map.Entry<String,?> entry:namesBefore.entrySet())names.putString(entry.getKey(),(String)entry.getValue());names.commit();
+        android.content.SharedPreferences.Editor consent=context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).edit().clear();
+        for(Map.Entry<String,?> entry:consentBefore.entrySet())consent.putBoolean(entry.getKey(),(Boolean)entry.getValue());consent.commit();
         ControllerPinManager.enterSubMode();
     }
 
@@ -93,7 +102,7 @@ public class SettingsGroupsAndroidTest {
                 assertTrue(accessibility.isEnabled());
                 assertEquals(1f, accessibility.getAlpha(), .01f);
                 assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
-                assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
+                assertEquals(1f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
             });
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_accessibility_settings))
                     .perform(revealAboveNavigation(), click());
@@ -111,9 +120,48 @@ public class SettingsGroupsAndroidTest {
                 assertFalse(ControllerPinManager.isDomModeActive());
                 assertEquals(1f, a.findViewById(R.id.button_accessibility_settings).getAlpha(), .01f);
                 assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
-                assertEquals(.45f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
+                assertEquals(1f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
             });
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29) public void namesAndLocalFeatureChoicesPersistWithoutUnlockingDom() throws Exception {
+        ControllerPinManager.enterSubMode();
+        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"profile_name:sub"))).perform(revealAboveNavigation(),
+                    androidx.test.espresso.action.ViewActions.replaceText("Fixture Sub"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"sub_feature:censor"))).perform(revealAboveNavigation(),click());
+            assertEquals("Fixture Sub",com.subhub.app.people.ProfileNames.get(context,false));
+            assertFalse(com.subhub.app.security.SubFeaturePolicy.chosen(context,"censor"));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            page.recreate();
+            page.onActivity(a->{
+                assertFalse(((android.widget.CompoundButton)a.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor")).isChecked());
+                assertEquals("Fixture Sub",((android.widget.EditText)a.findViewById(android.R.id.content).findViewWithTag("profile_name:sub")).getText().toString());
+                a.findViewById(android.R.id.content).scrollTo(0,0);
+            });
+            capture(page,"settings-sub");
+        }
+    }
+    @Test public void hardcoreConsentIsLocalAndDoesNotRequireAControllerUnlock() throws Exception {
+        ControllerPinManager.enterSubMode();
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_hardcore_mode)).perform(revealAboveNavigation(),click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.hardcore_consent_title))
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(android.R.string.cancel)).perform(click());
+            assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(InstrumentationRegistry.getInstrumentation().getTargetContext()));
+        }
+    }
+    @androidx.annotation.RequiresApi(29)
+    private void capture(ActivityScenario<GlobalSettingsActivity> page,String name) throws Exception {
+        java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);
+        page.onActivity(a->{android.view.View root=a.getWindow().getDecorView();root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);root.invalidate();});
+        assertTrue(frame.await(5,java.util.concurrent.TimeUnit.SECONDS));
+        java.io.File directory=new java.io.File(InstrumentationRegistry.getInstrumentation().getTargetContext().getFilesDir(),"ui-v3-captures");directory.mkdirs();
+        assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(new java.io.File(directory,name+".png")));
     }
 
     private static void returnFromAndroidSettings(UiDevice device) {

@@ -80,8 +80,8 @@ public final class PopupStormSettings {
     private final String detectionMode;
     private final int avoidPadding;
 
-    private PopupStormSettings(SharedPreferences preferences) {
-        enabled = preferences.getBoolean(K_ENABLED, false);
+    private PopupStormSettings(SharedPreferences preferences, boolean allowed) {
+        enabled = allowed && preferences.getBoolean(K_ENABLED, false);
         acknowledged = preferences.getBoolean(K_ACK, false);
         Set<String> stored = preferences.getStringSet(K_FOLDERS, Collections.emptySet());
         folders = Collections.unmodifiableList(new ArrayList<>(stored == null
@@ -124,7 +124,7 @@ public final class PopupStormSettings {
     }
 
     public static PopupStormSettings load(Context context) {
-        return new PopupStormSettings(preferences(context));
+        return new PopupStormSettings(preferences(context), com.subhub.app.security.SubFeaturePolicy.allowed(context, "popup"));
     }
 
     public boolean isEnabled() { return enabled; }

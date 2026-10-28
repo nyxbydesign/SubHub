@@ -7,7 +7,9 @@ import com.subhub.app.people.*;
 import com.subhub.app.security.ControllerPinManager;
 
 public final class RemoteUi implements ConnectionUi {
+    private static Application application;
     public static void install(Application app) {
+        application = app;
         ControllerPinManager.initialize(app);
         RemoteFeature feature=RemoteFeature.get(app);RemotePersonRepository repository=new RemotePersonRepository(app,feature);
         com.subhub.app.activity.ActivitySources.install(feature.activity);feature.activity.install();
@@ -28,11 +30,20 @@ public final class RemoteUi implements ConnectionUi {
         }
         open(activity,id,RemoteConnectionActivity.class);
     }
-    public void openStats(Activity activity,PersonId id){open(activity,id,RemoteStatsActivity.class);}
+    public void openStats(Activity activity,PersonId id){open(activity,id,com.subhub.app.stats.StatsActivity.class);}
     @Override public void bindSessionDuration(Activity activity,android.widget.LinearLayout parent,PersonSnapshot person){
         if(!person.id.isLocal())new RemoteDurationControls(activity,parent,person).bind();
     }
-    public void editSection(Activity activity,PersonId id,String section){activity.startActivity(new Intent(activity,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section",section));}
+    @Override public boolean canEditSection(PersonId id, String section) {
+        try { RemoteFeature feature = RemoteFeature.get((android.content.Context) application);
+            RemoteStore.Peer peer = new RemotePersonRepository(application, feature).peer(id);
+            return RemoteFeaturePolicy.remoteAllowed(feature.store, peer, section);
+        } catch (RuntimeException unavailable) { return false; }
+    }
+    public void editSection(Activity activity,PersonId id,String section){
+        if (!canEditSection(id, section)) return;
+        activity.startActivity(new Intent(activity,PersonRoutes.sectionActivity(section)).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()));
+    }
     public void endSession(Activity activity,PersonId id,String expected) {
         if(!id.isLocal())activity.startActivity(new Intent(activity,RemoteEndActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("expectedSession",expected));
     }

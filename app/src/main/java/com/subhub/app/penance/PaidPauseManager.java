@@ -40,7 +40,7 @@ public final class PaidPauseManager {
     }
 
     public boolean isEnabled() {
-        return preferences.getBoolean(KEY_ENABLED, false);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet") && preferences.getBoolean(KEY_ENABLED, false);
     }
 
     public int getPriceCents() {

@@ -80,6 +80,15 @@ public final class RemoteConfigurationWriter {
             for(String name:RemoteConfiguration.selected(doc))if(!previous.contains(name) && !selectable.contains(name)) {
                 store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"An app is unavailable; reload the app list");return true;
             }
+            synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            String prior = preferences(SettingsRepository.PREFERENCES_NAME).getString("remote_active_configuration",
+                    store.metadata(peer.identity, peer.generation, "initial_configuration", ""));
+            try {
+                RemoteFeaturePolicy.requireAllowed(context, doc, prior.isEmpty() ? null : new JSONObject(prior));
+            } catch (SecurityException denied) {
+                store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Feature disabled by Sub");
+                return true;
+            }
             Map<String,Map<String,Object>> writes=writes(doc,prepared,selectable);
             JSONObject saved=new JSONObject().put("peer",peer.identity).put("generation",peer.generation).put("command",command.id).put("before",snapshot(writes));
             writeJournal(saved);
@@ -99,6 +108,7 @@ public final class RemoteConfigurationWriter {
                 if(result==null || result.state!=RemoteStore.CommandState.APPLIED)
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Configuration could not be saved");
                 return true;
+            }
             }
         }
     }

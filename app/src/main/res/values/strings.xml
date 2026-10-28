@@ -604,7 +604,7 @@
     <string name="help_popup_storm">Popup Storm Safety</string>
     <string name="help_body_started">1. Unlock Dom mode and open People.\n2. Choose This device, then Contract to set apps, duration and feature rules.\n3. Complete Android permission setup in Settings.\n4. Return to the device profile and tap Start session.\n5. Switch to Sub mode for the read-only Contract and permitted session actions.</string>
     <string name="help_body_perms">Display over other apps lets SubHub draw censors and safety controls. Accessibility powers App Mode, foreground-app assignment, visible-text geometry, taps, scrolling, and daily limits. Android 13+ notification access keeps protection status visible. Screen Capture is optional and Android asks for MediaProjection approval every session. Hardcore requests Device Admin separately; ordinary censoring never needs it.</string>
-    <string name="help_body_dom_sub">Dom configures a selected device through People → Profile → Contract and ends its session from the profile. Sub can view the contract and statistics, start a local session, and use permitted Wallet actions. Sub has no End session control. Settings contains local security, permissions and recovery. Switching roles preserves settings and the active session.</string>
+    <string name="help_body_dom_sub">Dom configures a selected device through People → Profile → Contract and ends its session from the profile. Sub can view the contract and statistics, start a local session, and use permitted Wallet actions. Sub has no End session control. Settings contains names, local security, permissions and recovery. Sub can disable Censor, Limits, Tributes, Whispers or Popup Storm in Allowed features. Disabled sections cannot run or be changed by a Dom, including queued updates. Hardcore overrides those choices only after the Sub enables it locally; turning Hardcore off restores the choices. Switching roles preserves settings and the active session.</string>
     <string name="help_body_service_timers">Choose a duration in the device’s Contract before starting a session. Start session opens the local start flow. Dom can use End session on the device profile to release an active session. After reboot, an active lock can resume App Mode when Android allows it. Screen Capture needs fresh Android approval.</string>
     <string name="help_body_app_assignment">Dom → People → This device → Contract → Apps has one include/exclude list. Every enabled service feature uses it: Censor, Limits, Subliminal Messaging and Popup Storm. Excluded apps do not participate. The list does not turn features on or change app-specific daily allowances. Existing selections migrate to one combined list; new installations start empty.</string>
     <string name="help_body_subliminal">Enable Subliminal Messaging and choose its phrases, opacity and timing in Contract → Atmosphere. It uses the same included-app list as the other service features. Accessibility shows one faint, touch-through message at a random safe position and removes it smoothly. Messages do not appear in SubHub, the keyboard, Android Settings or excluded apps. Only aggregate impression counts are stored; message history and screen content are not.</string>
@@ -1155,4 +1155,14 @@
     <string name="limits_waiting_service">Waiting for accessibility service</string>
     <string name="limits_less_than_minute">&lt;1m</string>
     <string name="limits_apps_unavailable">Could not load apps</string>
+    <string name="profile_names_title">Names</string>
+    <string name="profile_dom_name">Dom name</string>
+    <string name="profile_sub_name">Sub name</string>
+    <string name="profile_configured_by_name">Configured by %1$s</string>
+    <string name="sub_features_title">Allowed features</string>
+    <string name="sub_features_help">Disabled features cannot run or be changed by a Dom.</string>
+    <string name="sub_features_hardcore">Hardcore currently overrides these choices. They apply again when you turn Hardcore off.</string>
+    <string name="sub_feature_disabled">Disabled by Sub</string>
+    <string name="sub_feature_whispers">Whispers</string>
+    <string name="stats_remote_history_private">Session history stays on the Sub device.</string>
 </resources>

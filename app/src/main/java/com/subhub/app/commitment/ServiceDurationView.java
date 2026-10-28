@@ -29,12 +29,19 @@ public final class ServiceDurationView extends LinearLayout {
     private final View range;
     private long selected = PERMANENT, savedMin = HOUR, savedMax = 24 * HOUR;
     private boolean updating, editing = true;
+    private java.util.function.BooleanSupplier authority;
 
     public ServiceDurationView(Context context, AttributeSet attributes) {
+        this(context, attributes, context, () -> com.subhub.app.security.ControllerPinManager.canEditConfiguration()
+                && com.subhub.app.people.People.isLocalConfigurationAllowed());
+    }
+
+    public ServiceDurationView(Context context, AttributeSet attributes, Context source, java.util.function.BooleanSupplier authority) {
         super(context, attributes);
+        this.authority = authority;
         setOrientation(VERTICAL);
         preferences =
-                context.getApplicationContext()
+                source.getApplicationContext()
                         .getSharedPreferences("subhub_service_duration_ui", Context.MODE_PRIVATE);
         LayoutInflater.from(context).inflate(R.layout.view_service_duration_selection, this, true);
         int[] ids = {
@@ -162,8 +169,7 @@ public final class ServiceDurationView extends LinearLayout {
     }
 
     private boolean canEdit() {
-        return editing && com.subhub.app.security.ControllerPinManager.canEditConfiguration()
-                && com.subhub.app.people.People.isLocalConfigurationAllowed();
+        return editing && authority.getAsBoolean();
     }
 
     @Override protected void dispatchRestoreInstanceState(android.util.SparseArray<android.os.Parcelable> state) {
