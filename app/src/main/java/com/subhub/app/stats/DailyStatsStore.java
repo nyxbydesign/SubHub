@@ -41,6 +41,18 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
     public synchronized String since() {
         try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM metadata WHERE name='since'", null)) { return c.moveToFirst() ? c.getString(0) : LocalDate.now().toString(); }
     }
+
+    /** Collection coverage is distinct from the earliest imported historical record. */
+    public synchronized String collectionStartedDay() {
+        String wall = metadata(getReadableDatabase(), "collection_started_ms");
+        if (wall == null) wall = metadata(getReadableDatabase(), "legacy_cutoff_ms");
+        if (wall == null) return null;
+        try {
+            String zone = metadata(getReadableDatabase(), "legacy_zone");
+            return Instant.ofEpochMilli(Long.parseLong(wall))
+                    .atZone(zone == null ? ZoneId.systemDefault() : ZoneId.of(zone)).toLocalDate().toString();
+        } catch (RuntimeException invalid) { return null; }
+    }
     public synchronized Map<String, Map<String, Long>> days(String first, String last) {
         Map<String, Map<String, Long>> result = new LinkedHashMap<>();
         try (Cursor c = getReadableDatabase().rawQuery("SELECT day,metric,value FROM daily WHERE day>=? AND day<=? ORDER BY day", new String[]{first,last})) {

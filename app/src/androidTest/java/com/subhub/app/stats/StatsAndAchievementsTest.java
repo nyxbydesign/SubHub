@@ -73,7 +73,7 @@ public final class StatsAndAchievementsTest {
     }
 
     @Test
-    public void legacyAchievementDatesAreBackfilledOnceToUpdateDay() {
+    public void legacyAchievementDatesStayUnknownWithoutEvidence() {
         Context context = ApplicationProvider.getApplicationContext();
         context.getSharedPreferences("betablocker_achievements", Context.MODE_PRIVATE)
                 .edit().clear().putStringSet("unlocked",
@@ -82,7 +82,7 @@ public final class StatsAndAchievementsTest {
         AchievementManager manager = new AchievementManager(context);
         long expected = LocalDate.of(2026, 8, 27).atStartOfDay(ZoneId.systemDefault())
                 .toInstant().toEpochMilli();
-        assertEquals(expected, manager.getUnlockedAt("first_block"));
+        assertEquals(0L, manager.getUnlockedAt("first_block"));
 
         context.getSharedPreferences("betablocker_achievements", Context.MODE_PRIVATE)
                 .edit().putLong("unlocked_at.first_block", expected + 1234L).commit();
