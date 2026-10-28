@@ -41,45 +41,85 @@ public final class AchievementManager {
     private final Context context;
     private final SharedPreferences preferences;
     private final Set<String> unlocked;
+    private final AchievementRole role;
+    private final boolean workspaceBound;
+    private final List<Achievement> catalog;
+    private DomStatsSnapshot domStats;
 
     public AchievementManager(Context context) {
+        this(context, AchievementRole.SUB, false);
+    }
+
+    public static AchievementManager forWorkspace(Context context) {
+        return new AchievementManager(context, AchievementRole.current(context), true);
+    }
+
+    private AchievementManager(Context context, AchievementRole role, boolean workspaceBound) {
         this.context = context.getApplicationContext();
+        this.role = role;
+        this.workspaceBound = workspaceBound;
+        catalog = role == AchievementRole.DOM ? DomAchievementCatalog.all() : ACHIEVEMENTS;
         preferences = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         Set<String> stored = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
         unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
         backfillLegacyUnlockDates();
     }
 
-    public List<Achievement> all() { return ACHIEVEMENTS; }
-    public boolean isUnlocked(String id) { return unlocked.contains(id); }
+    public AchievementRole getRole() { return role; }
+    public boolean isAccessible() {
+        return workspaceBound ? role.accessible(context)
+                : com.subhub.app.security.DeviceRolePreferences.supportsSub(context);
+    }
+    public List<Achievement> all() { return isAccessible() ? catalog : Collections.emptyList(); }
+    public boolean isUnlocked(String id) { return isAccessible() && role.owns(id) && unlocked.contains(id); }
     public long getUnlockedAt(String id) {
         if (!isUnlocked(id)) return 0L;
         return preferences.getLong(KEY_UNLOCKED_AT_PREFIX + id, legacyUnlockTimestamp());
     }
     public int getUnlockedCount() {
         int count = 0;
-        for (Achievement value : ACHIEVEMENTS) if (unlocked.contains(value.id)) count++;
+        for (Achievement value : all()) if (unlocked.contains(value.id)) count++;
         return count;
     }
-    public int getTotalCount() { return ACHIEVEMENTS.size(); }
+    public int getTotalCount() { return all().size(); }
 
     public Progress progress(Achievement value, StatsSnapshot stats) {
+        if (!isAccessible() || !catalog.contains(value)) return new Progress(0, 0, false, false);
+        if (role == AchievementRole.DOM) return new Progress(
+                domStats == null ? 0 : DomAchievementCatalog.current(value.id, domStats),
+                DomAchievementCatalog.target(value.id), isUnlocked(value.id),
+                DomAchievementCatalog.known(value.id, domStats));
         long current = current(value.id, stats);
         long target = target(value.id);
         return new Progress(current, target, isUnlocked(value.id));
     }
 
     public List<Achievement> checkAchievements(StatsSnapshot stats) {
+        if (role != AchievementRole.SUB || !isAccessible()) return Collections.emptyList();
+        return unlock(value -> qualifies(value.id, stats));
+    }
+
+    public List<Achievement> checkDomAchievements(DomStatsSnapshot stats) {
+        if (role != AchievementRole.DOM || !isAccessible()) return Collections.emptyList();
+        domStats = java.util.Objects.requireNonNull(stats);
+        return unlock(value -> DomAchievementCatalog.known(value.id, stats)
+                && DomAchievementCatalog.current(value.id, stats) >= DomAchievementCatalog.target(value.id));
+    }
+
+    public String progressCurrency() { return domStats == null ? "EUR" : domStats.leadingPaidCurrency(); }
+
+    private List<Achievement> unlock(java.util.function.Predicate<Achievement> qualifies) {
         synchronized (UNLOCK_LOCK) {
+            if (!isAccessible()) return Collections.emptyList();
             Set<String> current = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
             if (current != null) unlocked.addAll(current);
             List<Achievement> newlyUnlocked = new ArrayList<>();
-            for (Achievement value : ACHIEVEMENTS) {
-                if (unlocked.contains(value.id) || !qualifies(value.id, stats)) continue;
+            for (Achievement value : catalog) {
+                if (unlocked.contains(value.id) || !qualifies.test(value)) continue;
                 unlocked.add(value.id);
                 newlyUnlocked.add(value);
             }
-            if (!newlyUnlocked.isEmpty()) {
+            if (!newlyUnlocked.isEmpty() && isAccessible()) {
                 Set<String> pending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
                 Set<String> updatedPending = new LinkedHashSet<>(
                         pending == null ? Collections.emptySet() : pending);
@@ -101,7 +141,9 @@ public final class AchievementManager {
         if (unlocked.isEmpty()) return;
         SharedPreferences.Editor editor = null;
         long timestamp = legacyUnlockTimestamp();
-        for (String id : unlocked) {
+        for (Achievement value : catalog) {
+            String id = value.id;
+            if (!unlocked.contains(id)) continue;
             String key = KEY_UNLOCKED_AT_PREFIX + id;
             if (preferences.contains(key)) continue;
             if (editor == null) editor = preferences.edit();
@@ -117,12 +159,15 @@ public final class AchievementManager {
 
     public List<Achievement> takePendingNotifications() {
         synchronized (UNLOCK_LOCK) {
+            if (!isAccessible()) return Collections.emptyList();
             Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
             Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
             if (pending.isEmpty()) return Collections.emptyList();
             List<Achievement> result = new ArrayList<>();
-            for (Achievement value : ACHIEVEMENTS) if (pending.contains(value.id)) result.add(value);
-            preferences.edit().remove(KEY_PENDING).apply();
+            for (Achievement value : catalog) if (pending.remove(value.id)) result.add(value);
+            SharedPreferences.Editor editor = preferences.edit();
+            if (pending.isEmpty()) editor.remove(KEY_PENDING); else editor.putStringSet(KEY_PENDING, pending);
+            editor.apply();
             return result;
 
         }
@@ -228,6 +273,7 @@ public final class AchievementManager {
     }
 
     static long target(String id) {
+        if (id.startsWith("dom_")) return DomAchievementCatalog.target(id);
         switch (id) {
             case "first_block": case "first_session": case "first_custom_phrase":
             case "export_first": case "color_picker": return 1;
@@ -369,6 +415,7 @@ public final class AchievementManager {
             this.category = category; this.badgeArtRes = badgeArtRes; this.hidden = hidden;
         }
         public String getId() { return id; }
+        public AchievementRole getRole() { return id.startsWith("dom_") ? AchievementRole.DOM : AchievementRole.SUB; }
         public int getName() { return name; }
         public int getDescription() { return description; }
         public String getIcon() { return icon; }
@@ -391,13 +438,19 @@ public final class AchievementManager {
 
     public static final class Progress {
         private final long current; private final long target; private final boolean unlocked;
+        private final boolean known;
         Progress(long current, long target, boolean unlocked) {
+            this(current, target, unlocked, true);
+        }
+        Progress(long current, long target, boolean unlocked, boolean known) {
             this.current = unlocked && target > 0 ? target : current;
             this.target = target; this.unlocked = unlocked;
+            this.known = known || unlocked;
         }
         public long getCurrent() { return current; }
         public long getTarget() { return target; }
         public boolean isUnlocked() { return unlocked; }
+        public boolean isKnown() { return known; }
         public boolean isCountable() { return target > 0; }
         public int percent() {
             return target <= 0 ? (unlocked ? 100 : 0)
