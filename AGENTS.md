@@ -118,8 +118,13 @@ When preferences are authoritative, fence persistence, scheduling, and network s
 during framework view-state restoration, then render from those preferences. Native
 recreation regressions must cover both directions when saved widgets and stored values differ.
 Gate Android instrumentation tests that require newer platform APIs with
-`@SdkSuppress(minSdkVersion = ...)`, not `@RequiresApi`. The latter describes production
-API contracts rather than runtime test eligibility and fails Android lint's `UseSdkSuppress` check.
+`@SdkSuppress(minSdkVersion = ...)`, not `@RequiresApi`. This applies to helpers in
+`androidTest` as well as test methods. Add an explicit SDK guard around a helper's newer
+API call where needed; lint rejects `@RequiresApi` anywhere in test sources.
+RemoteFeature uses multiple concurrent session workers. A fixture holding invitation creation
+pending across recreation must verify the worker count and gate every worker before submitting
+that creation. Verify the accepted future is still pending and release all fixture gates in
+`finally`; one blocked submitted task does not serialize the pool.
 Keep debug manifest Activities and Services instantiable at the minimum SDK: guard their entry
 points and annotate API-specific helpers, not the whole component. A component-wide `@RequiresApi`
 also raises its manifest requirement, even when its entry point contains a runtime SDK guard.
