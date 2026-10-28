@@ -42,7 +42,7 @@ jobs:
           test -f "$apk"
           mkdir -p dist
           cp "$apk" "dist/SubHub-${version}-universal-debug.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SubHub-universal-debug
           path: dist/*.apk
