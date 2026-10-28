@@ -97,7 +97,9 @@ public final class FeatureEditorSession {
                     activity.getWindow().getDecorView().post(()->decorate(activity));
                 } else if(event==Lifecycle.Event.ON_DESTROY){
                     PAGES.remove(activity);attached.pages--;
-                    if(attached.pages==0&&!activity.isChangingConfigurations())DRAFTS.remove(attached.context.token);
+                    if(attached.pages==0&&!activity.isChangingConfigurations()) {
+                        DRAFTS.remove(attached.context.token);attached.context.closeCache();
+                    }
                 }
             });
             return true;
@@ -243,7 +245,7 @@ public final class FeatureEditorSession {
     public int addArtwork(String group,List<Uri> uris){
         int count=0;for(Uri uri:uris){File temporary=null;try{
             requireAuthority();if(!RemoteFeaturePolicy.remoteAllowed(feature.store,peer,group))break;
-            temporary=File.createTempFile("artwork-",".part",context.getCacheDir());
+            temporary=com.subhub.app.storage.DisposableCache.temporary(context.getCacheDir(),"artwork-");
             try(InputStream input=context.getContentResolver().openInputStream(uri);OutputStream output=new FileOutputStream(temporary)){
                 if(input==null)throw new IOException("Image unavailable");byte[] buffer=new byte[8192];long length=0;int read;
                 while((read=input.read(buffer))!=-1){length+=read;if(length>RemoteAssets.MAX_ASSET_BYTES)throw new IOException("Image is too large");output.write(buffer,0,read);}
@@ -253,7 +255,7 @@ public final class FeatureEditorSession {
             synchronized(this){if(document.getJSONObject("contract").getJSONArray("assets").length()>=512)break;
                 document.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/"+group+"/"+UUID.randomUUID()+".png").put("hash",hash).put("length",temporary.length()));artworkChanged();}
             count++;
-        }catch(Exception unavailable){/* The caller displays the successfully imported count. */}finally{if(temporary!=null)temporary.delete();}}
+        }catch(Exception unavailable){/* The caller displays the successfully imported count. */}finally{com.subhub.app.storage.DisposableCache.releaseTemporary(temporary);}}
         return count;
     }
     private static void put(SharedPreferences.Editor edit,String key,Object value,ConfigurationSettingCatalog.Kind kind)throws JSONException{
@@ -264,10 +266,24 @@ public final class FeatureEditorSession {
     }
     private static final class DraftContext extends ContextWrapper {
         private final FeatureEditorSession owner;private final String token;
+        private com.subhub.app.storage.DisposableCache.EditorLease cache;private boolean closed;
         DraftContext(Context source,FeatureEditorSession owner,String token){super(source);this.owner=owner;this.token=token;}
         @Override public Context getApplicationContext(){return this;}
         @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(owner.stores){return owner.stores.computeIfAbsent(name,unused->new DraftPreferences());}}
-        private File directory(String name){File folder=new File(super.getCacheDir(),"remote-editor/"+token+"/"+name);if(!folder.isDirectory()&&!folder.mkdirs())throw new IllegalStateException("Editor storage unavailable");return folder;}
+        private synchronized File directory(String name) {
+            if(closed)throw new IllegalStateException("Editor is closed");
+            try {
+                if(cache==null)cache=com.subhub.app.storage.DisposableCache.editor(super.getCacheDir(),token);
+                File folder=new File(cache.directory,name);
+                if(java.nio.file.Files.isSymbolicLink(folder.toPath()) || (!folder.isDirectory()&&!folder.mkdirs()))
+                    throw new IOException("Editor storage unavailable");
+                return folder;
+            }catch(IOException unavailable){throw new IllegalStateException("Editor storage unavailable",unavailable);}
+        }
+        private synchronized void closeCache() {
+            closed=true;
+            if(cache!=null)try{cache.close();}catch(IOException deferred){android.util.Log.w("StorageCache","Editor cleanup deferred");}
+        }
         @Override public File getFilesDir(){return directory("files");}
         @Override public File getNoBackupFilesDir(){return directory("private");}
         @Override public File getCacheDir(){return directory("cache");}

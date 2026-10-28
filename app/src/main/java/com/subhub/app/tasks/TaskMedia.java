@@ -17,7 +17,7 @@ public final class TaskMedia {
         if ("audio/x-wav".equals(mime)) mime = "audio/wav";
         // Validate the declared type before opening an arbitrary provider stream.
         new TaskAttachment("0000000000000000000000000000000000000000000000000000000000000000", mime, 1);
-        File temp = File.createTempFile("task-import-", ".part", context.getCacheDir());
+        File temp = com.subhub.app.storage.DisposableCache.temporary(context.getCacheDir(), "task-import-");
         try {
             long length = 0;
             try (InputStream input = context.getContentResolver().openInputStream(uri);
@@ -45,7 +45,7 @@ public final class TaskMedia {
                 assets.finish(result.hash);
             }
             return result;
-        } finally { if (!temp.delete() && temp.exists()) temp.deleteOnExit(); }
+        } finally { com.subhub.app.storage.DisposableCache.releaseTemporary(temp); }
     }
     static void requireHeader(File file, String mime) throws IOException {
         byte[] bytes = new byte[16]; int n;

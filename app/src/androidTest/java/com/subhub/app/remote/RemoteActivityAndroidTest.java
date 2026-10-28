@@ -250,7 +250,7 @@ public class RemoteActivityAndroidTest {
     @Test public void sourceAndReceiptTablesUpgradeWithoutChangingExistingPeerRows()throws Exception {
         RemoteStore legacy=database();String name=databases.get(databases.size()-1);
         SQLiteDatabase db=legacy.getWritableDatabase();db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'DOM','ACTIVE')",new Object[]{SUB,generation,"Kept peer"});
-        db.execSQL("DROP TABLE activity_receipts");db.execSQL("DROP TABLE activity_source");db.execSQL("DROP TABLE activity_state");db.setVersion(2);legacy.close();
+        db.execSQL("DROP TABLE activity_receipts");db.execSQL("DROP TABLE activity_source");db.execSQL("DROP TABLE activity_state");db.execSQL("DROP TABLE payload_maintenance");db.setVersion(2);legacy.close();
         RemoteStore upgraded=new RemoteStore(context,name);
         try{assertEquals("Kept peer",upgraded.peer(SUB,generation).name);assertEquals(0,count(upgraded,"activity_receipts"));assertEquals(0,count(upgraded,"activity_source"));}
         finally{upgraded.close();}

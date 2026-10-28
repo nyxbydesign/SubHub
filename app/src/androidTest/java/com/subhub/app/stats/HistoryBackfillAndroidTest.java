@@ -210,6 +210,119 @@ public final class HistoryBackfillAndroidTest {
         assertEquals(manager.getUnlockedAt("first_block"),new AchievementManager(context).getUnlockedAt("first_block"));
     }
 
+    @Test public void mixedStoredPayloadsPreserveLocalAndPairedHistoryWithoutAdvancingSync() throws Exception {
+        try (RemoteStore store = new RemoteStore(context)) {
+            SQLiteDatabase db = store.getWritableDatabase();
+            String peer = String.join("", Collections.nCopies(64, "c"));
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Synthetic','DOM','ACTIVE')", new Object[]{peer});
+            JSONObject first = tribute("tribute_text", 250, "EUR"), second = tribute("tribute_blob", 450, "USD");
+            for (JSONObject event : Arrays.asList(first, second))
+                db.execSQL("INSERT INTO activity_source(event_id,source_key,body,observed) VALUES(?,?,?,?)",
+                        new Object[]{event.getString("id"), event.getString("id"), event.toString(), WALL});
+            JSONObject day = new JSONObject().put("schema", 1).put("day", DAY).put("zone", "UTC")
+                    .put("metrics", new JSONObject().put("service_ms", 60000).put("sessions", 1)
+                            .put("paid_EUR", 0).put("paid_USD", 0).put("censors", 0).put("limits_ms", 0)
+                            .put("limit_stops", 0).put("whispers", 0).put("popups", 0).put("photos", 0).put("videos", 0));
+            JSONObject runtime = new JSONObject().put("schema", 1).put("device", "Synthetic history fixture");
+            for (String key : new String[]{"observedAt", "sessionStart", "sessionEnd", "appliedRevision"}) runtime.put(key, 0);
+            for (String key : new String[]{"serviceActive", "screenCapture", "recognitionActive", "accessibilityBound",
+                    "accessibilityEnabled", "overlayPermission", "notifications", "armed", "paused"}) runtime.put(key, false);
+            JSONObject consent = new JSONObject();
+            for (String feature : SubFeaturePolicy.FEATURES) consent.put(feature, true);
+            runtime.put("featureConsent", consent);
+            putMirror(db, peer, "DAILY", DAY, day);
+            putMirror(db, peer, "RUNTIME", "current", runtime);
+            putMirror(db, peer, "EVENTS", first.getString("id"), first);
+            putMirror(db, peer, "EVENTS", "tribute_remote", tribute("tribute_remote", 700, "USD"));
+            db.execSQL("INSERT INTO outgoing(peer,generation,stream,next_seq,acked,offered) VALUES(?,'current','DAILY',11,5,8)", new Object[]{peer});
+            db.execSQL("INSERT INTO incoming(peer,generation,stream,through_seq) VALUES(?,'current','EVENTS',9)", new Object[]{peer});
+
+            LocalRetainedStatistics plain = LocalRetainedStatistics.load(context);
+            DomDailyStatsSource source = new DomDailyStatsSource(context);
+            DailyStatsPanel.DailyData plainDays = source.load(store, DAY, DAY, plain);
+            assertEquals(Long.valueOf(250), plain.assessed.get("EUR"));
+            assertEquals(Long.valueOf(450), plain.assessed.get("USD"));
+            assertEquals(Long.valueOf(250), plainDays.days.get(DAY).get("assessed_EUR"));
+            assertEquals(Long.valueOf(1150), plainDays.days.get(DAY).get("assessed_USD"));
+            assertEquals(Long.valueOf(-1), plainDays.days.get(DAY).get("service_ms"));
+            DailyStatsPanel.DailyData plainPeerDays = source.load(store, DAY, DAY);
+            assertEquals(Long.valueOf(60000), plainPeerDays.days.get(DAY).get("service_ms"));
+
+            Object encoded = com.subhub.app.storage.StoredPayloads.bind(second.toString());
+            assertTrue("The history accessor must read an actual compressed BLOB", encoded instanceof byte[]);
+            db.execSQL("UPDATE activity_source SET body=? WHERE event_id='tribute_blob'", new Object[]{encoded});
+            for (String stream : Arrays.asList("DAILY", "EVENTS", "RUNTIME")) {
+                try (Cursor cursor = db.rawQuery("SELECT item,body FROM remote_objects WHERE stream=? ORDER BY item", new String[]{stream})) {
+                    while (cursor.moveToNext()) {
+                        String text = cursor.getString(1);
+                        byte[] compressed = com.subhub.app.storage.PayloadCodec.compressIfUseful(text);
+                        assertNotNull("Compressed mirror fixture: " + stream, compressed);
+                        db.execSQL("UPDATE remote_objects SET body=? WHERE stream=? AND item=?",
+                                new Object[]{compressed, stream, cursor.getString(0)});
+                    }
+                }
+            }
+            try (Cursor types = db.rawQuery("SELECT typeof(body) FROM activity_source ORDER BY id", null)) {
+                assertTrue(types.moveToNext()); assertEquals("text", types.getString(0));
+                assertTrue(types.moveToNext()); assertEquals("blob", types.getString(0)); assertFalse(types.moveToNext());
+            }
+            String before = storageWitness(db);
+            List<String> read = new ArrayList<>();
+            store.readRetainedLocalStatistics(event -> read.add(event.toString()));
+            assertEquals(Arrays.asList(first.toString(), second.toString()), read);
+            LocalRetainedStatistics mixed = LocalRetainedStatistics.load(context);
+            assertEquals(plain.assessed, mixed.assessed); assertEquals(plain.activityCopies, mixed.activityCopies);
+            assertEquals(plain.history.days(), mixed.history.days());
+            assertEquals(plainDays.days, source.load(store, DAY, DAY, mixed).days);
+            assertEquals(plainPeerDays.days, source.load(store, DAY, DAY).days);
+            assertEquals(before, storageWitness(db));
+
+            consent.put("wallet", false);
+            putMirror(db, peer, "RUNTIME", "current", runtime);
+            String withdrawn = storageWitness(db);
+            DailyStatsPanel.DailyData hidden = source.load(store, DAY, DAY, mixed);
+            assertEquals(Long.valueOf(450), hidden.days.get(DAY).get("assessed_USD"));
+            assertEquals(Long.valueOf(-1), hidden.days.get(DAY).get("service_ms"));
+            assertEquals(withdrawn, storageWitness(db));
+            db.execSQL("UPDATE peers SET state='REVOKED'");
+            assertEquals(Long.valueOf(450), source.load(store, DAY, DAY, mixed).days.get(DAY).get("assessed_USD"));
+            assertEquals(withdrawn, storageWitness(db));
+            assertEquals("", rows(db, "outbox"));
+            assertEquals("", rows(db, "payload_maintenance"));
+            assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(DeviceRolePreferences.KEY_MODE, "DOM_ONLY").commit());
+            try { store.readRetainedLocalStatistics(event -> fail("Dom-only workspace read local Sub facts")); fail("Local Sub access admitted"); }
+            catch (SecurityException expected) { }
+        }
+    }
+
+    private static JSONObject tribute(String id, long amount, String currency) throws Exception {
+        return new JSONObject().put("schema", 1).put("id", id).put("kind", "TRIBUTE_TRIGGERED")
+                .put("observedAt", WALL).put("day", DAY).put("zone", "UTC").put("packageName", "")
+                .put("amountCents", amount).put("currency", currency).put("reason", "NEW_DETECTION")
+                .put("limitMinutes", 0).put("configuration", "");
+    }
+    private static void putMirror(SQLiteDatabase db, String peer, String stream, String key, JSONObject body) {
+        db.execSQL("INSERT OR REPLACE INTO remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,'current',?,?,7,?,0,?)",
+                new Object[]{peer, stream, key, body.toString(), WALL});
+    }
+    private static String storageWitness(SQLiteDatabase db) {
+        StringBuilder witness = new StringBuilder();
+        for (String table : Arrays.asList("activity_source", "remote_objects", "outgoing", "incoming", "outbox", "payload_maintenance")) {
+            witness.append(table).append(':');
+            try (Cursor rows = db.rawQuery("SELECT * FROM " + table + " ORDER BY rowid", null)) {
+                while (rows.moveToNext()) {
+                    for (int i = 0; i < rows.getColumnCount(); i++) {
+                        witness.append(rows.getType(i)).append('=');
+                        witness.append(rows.getType(i) == Cursor.FIELD_TYPE_BLOB
+                                ? android.util.Base64.encodeToString(rows.getBlob(i), android.util.Base64.NO_WRAP) : rows.getString(i)).append('|');
+                    }
+                    witness.append('\n');
+                }
+            }
+        }
+        return witness.toString();
+    }
+
     @Test public void historicalCalendarCrossesYearBoundaryAndRestoresSelection() throws Exception {
         session();
         android.os.Bundle state = new android.os.Bundle();

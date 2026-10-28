@@ -130,7 +130,10 @@ public final class StatsRefreshAndroidTest {
             page.onActivity(activity -> {
                 assertSame(title.get(), preview.get().getChildAt(0)); assertSame(badges.get(), preview.get().getChildAt(2));
             });
-            assertTrue(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit().putInt("sessions_count", 1).commit());
+            int retainedSessions = LocalRetainedStatistics.load(context).stats.getSessions();
+            assertTrue(retainedSessions < Integer.MAX_VALUE);
+            assertTrue(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit()
+                    .putInt("sessions_count", retainedSessions + 1).commit());
             HomeAchievementPreview updated = HomeAchievementPreview.load(context, new StatsRepository(context).load());
             assertNotEquals(initial.fingerprint, updated.fingerprint);
             page.onActivity(activity -> preview.get().render(updated));

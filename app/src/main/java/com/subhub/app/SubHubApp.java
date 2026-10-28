@@ -21,6 +21,12 @@ public final class SubHubApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        Thread cacheCleanup = new Thread(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            try { com.subhub.app.storage.DisposableCache.startup(getCacheDir(), System.currentTimeMillis()); }
+            catch (java.io.IOException | RuntimeException deferred) { android.util.Log.w("StorageCache", "Cache cleanup deferred"); }
+        }, "subhub-cache-cleanup");
+        cacheCleanup.start();
         com.subhub.app.settings.AllAppsScopeObserver.install(this);
         com.subhub.app.stats.DailyDurationRecorder.install(this);
         com.subhub.app.capture.export.ExportJobStore.recoverProcess(this);

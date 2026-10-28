@@ -241,6 +241,27 @@ public class RemoteEditorAndroidTest {
         assertTrue(saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("wallet")
                 .getBoolean("rule_"+com.subhub.app.penance.PenanceInfraction.WATCHED_APP_OPEN.preferenceKey()+"_enabled"));
     }
+    @Test public void editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets() throws Exception {
+        byte[] original={17,23,42};String hash=RemoteProtocol.sha256(original);RemoteAssets assets=feature.contracts.assets(peer);
+        assets.reserve(hash,original.length);assets.append(hash,0,original);assets.finish(hash);
+        AtomicReference<File> cacheRoot=new AtomicReference<>(),derived=new AtomicReference<>();
+        try(ActivityScenario<com.subhub.app.settings.SettingsActivity> page=ActivityScenario.launch(new Intent(context,com.subhub.app.settings.SettingsActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
+            page.onActivity(activity->{try {
+                Context draft=com.subhub.app.configuration.FeatureEditorSession.context(activity);
+                File files=draft.getFilesDir();cacheRoot.set(files.getParentFile());File file=new File(files,"storage-derived.bin");
+                try(OutputStream out=new FileOutputStream(file)){out.write(new byte[]{1,2,3});}derived.set(file);
+            }catch(IOException failure){throw new AssertionError(failure);}});
+            assertTrue(derived.get().isFile());page.recreate();
+            page.onActivity(activity->{try {
+                assertEquals(cacheRoot.get(),com.subhub.app.configuration.FeatureEditorSession.context(activity).getFilesDir().getParentFile());
+                com.subhub.app.storage.DisposableCache.startup(context.getCacheDir(),System.currentTimeMillis());assertTrue(derived.get().isFile());
+            }catch(IOException failure){throw new AssertionError(failure);}});
+        }
+        await(()->!cacheRoot.get().exists());assertTrue(assets.isComplete(hash));
+        try(InputStream input=assets.open(hash)){byte[] bytes=new byte[original.length];assertEquals(original.length,input.read(bytes));assertArrayEquals(original,bytes);}
+    }
+
     private JSONObject nativeToggle(Class<?> target,int toggle) throws Exception {
         Map<String,?> before=new HashMap<>(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).getAll());
         Map<String,?> wallet=new HashMap<>(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0).getAll());
