@@ -8,6 +8,11 @@
     <string name="tasks_completion">Completion</string>
     <string name="tasks_attachment_heading">Attachment</string>
     <string name="tasks_submission_heading">Completion request</string>
+    <string name="tasks_attachments_title">Attachments</string>
+    <plurals name="tasks_proof_attachment_count">
+        <item quantity="one">%d attachment</item>
+        <item quantity="other">%d attachments</item>
+    </plurals>
     <string name="tasks_view_all">View tasks</string>
     <string name="tasks_due">Due %1$s</string>
     <string name="tasks_starts">Starts %1$s</string>
