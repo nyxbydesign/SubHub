@@ -1,5 +1,7 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.storage.StoredPayloads;
+
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -145,20 +147,20 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                 if(foreground!=null)RemoteActivityStore.writeState(db,"foreground",foreground);
                 boolean exists;String priorPeer;String priorBody;
                 try (Cursor old = db.rawQuery("SELECT peer,body FROM activity_source WHERE source_key=?", new String[]{key})) {
-                    exists = old.moveToFirst();priorPeer = exists ? old.getString(0) : null;priorBody = exists ? old.getString(1) : null;
+                    exists = old.moveToFirst();priorPeer = exists ? old.getString(0) : null;priorBody = exists ? StoredPayloads.read(old,1) : null;
                 }
                 boolean permitted = captured != null && activeSource(captured)
                         && event.observedAt >= Long.parseLong(store.metadata(captured.identity, captured.generation, "activity_started_at", "0"));
                 if (!exists) {
                     ContentValues row = new ContentValues();row.put("event_id", event.id);row.put("source_key", key);
-                    row.put("body", encoded);row.put("observed", event.observedAt);
+                    StoredPayloads.put(row,"body",encoded);row.put("observed", event.observedAt);
                     if (permitted) { row.put("peer", captured.identity);row.put("generation", captured.generation); }
                     db.insertOrThrow("activity_source", null, row);modified = true;
                 } else if (permitted && priorPeer == null && key.startsWith("tribute:")) {
                     ActivityEvent old = RemoteActivityWire.decode(new JSONObject(priorBody));
                     if (old.observedAt != event.observedAt || old.amountCents != event.amountCents || !old.reason.equals(event.reason)
                             || !old.currency.equals(event.currency)) throw new SecurityException("Ledger identity changed");
-                    ContentValues row = new ContentValues();row.put("peer", captured.identity);row.put("generation", captured.generation);row.put("body", encoded);
+                    ContentValues row = new ContentValues();row.put("peer", captured.identity);row.put("generation", captured.generation);StoredPayloads.put(row,"body",encoded);
                     db.update("activity_source", row, "source_key=? AND peer IS NULL", new String[]{key});modified = true;
                 }
                 if (permitted) published = publishPending(db, captured);
@@ -180,7 +182,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         try (Cursor rows = db.rawQuery("SELECT event_id,body FROM activity_source WHERE peer=? AND generation=? AND published=0 ORDER BY id LIMIT 256",
                 new String[]{peer.identity, peer.generation})) {
             while (rows.moveToNext()) {
-                JSONObject body = new JSONObject(rows.getString(1));ActivityEvent event = RemoteActivityWire.decode(body);
+                JSONObject body = new JSONObject(StoredPayloads.read(rows,1));ActivityEvent event = RemoteActivityWire.decode(body);
                 store.publish(peer.identity, peer.generation, RemoteProtocol.Stream.EVENTS, event.id, body, false, event.observedAt);
                 db.execSQL("UPDATE activity_source SET published=1 WHERE event_id=?", new Object[]{event.id});published = true;
             }
@@ -237,7 +239,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             while (rows.moveToNext()) {
                 if (entries.size() == limit) { more = true;break; }
                 RemoteStore.Peer peer = store.peer(rows.getString(2), rows.getString(3));
-                entries.add(entry(peer, rows.getString(1), rows.getString(4), rows.getLong(5), rows.getInt(6) == 0));last = rows.getLong(0);
+                entries.add(entry(peer, rows.getString(1), StoredPayloads.read(rows,4), rows.getLong(5), rows.getInt(6) == 0));last = rows.getLong(0);
             }
         }
         return new Page(entries, more ? Long.toString(last) : null, requested);
@@ -265,12 +267,12 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             while (rows.moveToNext()) {
                 if (entries.size() == limit) { more = true; break; }
                 if (rows.getInt(7) == 0) {
-                    ActivityEvent event = RemoteActivityWire.decode(new JSONObject(rows.getString(4)));
+                    ActivityEvent event = RemoteActivityWire.decode(new JSONObject(StoredPayloads.read(rows,4)));
                     entries.add(new ActivityEntry("local:" + rows.getString(1), PersonId.LOCAL,
                             context.getString(R.string.role_this_device), clean(Build.MODEL), event,
                             rows.getLong(5), false, localLabel(event.packageName)));
                 } else entries.add(entry(store.peer(rows.getString(2), rows.getString(3)), rows.getString(1),
-                        rows.getString(4), rows.getLong(5), rows.getInt(6) == 0));
+                        StoredPayloads.read(rows,4), rows.getLong(5), rows.getInt(6) == 0));
                 next = "combined:" + rows.getLong(8) + ":" + rows.getInt(7) + ":" + rows.getLong(0);
             }
         }
@@ -282,7 +284,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         try(Cursor rows=store.getReadableDatabase().rawQuery("SELECT id,event_id,body,observed FROM activity_source WHERE id<? ORDER BY id DESC LIMIT "+(limit+1),new String[]{Long.toString(boundary)})){
             while(rows.moveToNext()){
                 if(entries.size()==limit){more=true;break;}
-                ActivityEvent event=RemoteActivityWire.decode(new JSONObject(rows.getString(2)));
+                ActivityEvent event=RemoteActivityWire.decode(new JSONObject(StoredPayloads.read(rows,2)));
                 entries.add(new ActivityEntry("local:"+rows.getString(1),PersonId.LOCAL,context.getString(R.string.role_this_device),clean(Build.MODEL),event,rows.getLong(3),false,localLabel(event.packageName)));last=rows.getLong(0);
             }
         }
@@ -324,7 +326,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                     checkKey(key);
                     try (Cursor row = db.rawQuery("SELECT a.peer,a.generation,a.body,a.received FROM " + JOIN + " WHERE " + ELIGIBLE + " AND a.entry_key=? AND a.is_read=0", new String[]{key})) {
                         if (!row.moveToFirst()) continue;
-                        cancel.add(entry(store.peer(row.getString(0), row.getString(1)), key, row.getString(2), row.getLong(3), false));
+                        cancel.add(entry(store.peer(row.getString(0), row.getString(1)), key, StoredPayloads.read(row,2), row.getLong(3), false));
                         db.execSQL("UPDATE activity_receipts SET is_read=1 WHERE entry_key=?", new Object[]{key});
                     }
                 }
@@ -359,7 +361,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                     + JOIN + " WHERE " + ELIGIBLE + " AND a.is_read=0 AND a.notified=0 ORDER BY a.id LIMIT 100", null)) {
                 while (rows.moveToNext()) {
                     count++;RemoteStore.Peer peer = store.peer(rows.getString(1), rows.getString(2));
-                    ActivityEntry entry = entry(peer, rows.getString(0), rows.getString(3), rows.getLong(4), true);
+                    ActivityEntry entry = entry(peer, rows.getString(0), StoredPayloads.read(rows,3), rows.getLong(4), true);
                     if (DeviceRolePreferences.supportsDom(context) && notifications.show(context, entry)) {
                         store.getWritableDatabase().execSQL("UPDATE activity_receipts SET notified=1 WHERE entry_key=?", new Object[]{entry.key});progress = true;
                     }

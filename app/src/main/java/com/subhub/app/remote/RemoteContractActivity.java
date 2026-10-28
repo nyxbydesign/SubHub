@@ -160,12 +160,12 @@ public final class RemoteContractActivity extends RemotePage {
         if(!mayEdit()||draft==null){notice(R.string.remote_reload);return;}android.net.Uri uri=data.getData();String group=artGroup;
         if(!"censor".equals(group)&&!"popup".equals(group)){notice(R.string.remote_reload);return;}
         authorize(()->work(()->{if(!mayEdit())throw new SecurityException();
-            File temporary=File.createTempFile("peer-import-",".part",getCacheDir());
+            File temporary=com.subhub.app.storage.DisposableCache.temporary(getCacheDir(),"peer-import-");
             try{try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(temporary)){if(in==null)throw new IOException();byte[] buffer=new byte[8192];long total=0;int count;while((count=in.read(buffer))!=-1){total+=count;if(total>RemoteAssets.MAX_ASSET_BYTES)throw new IOException();out.write(buffer,0,count);}}
                 android.graphics.BitmapFactory.Options check=bounds();android.graphics.BitmapFactory.decodeFile(temporary.getPath(),check);if(check.outWidth<=0||check.outHeight<=0)throw new IOException();
                 String hash=RemoteAssets.digest(temporary);try(InputStream in=new FileInputStream(temporary)){RemoteContracts.ingest(feature.contracts.assets(peer),hash,temporary.length(),in);}
                 return new JSONObject().put("path","assets/"+group+"/"+UUID.randomUUID()+".png").put("hash",hash).put("length",temporary.length());
-            }finally{temporary.delete();}
+            }finally{com.subhub.app.storage.DisposableCache.releaseTemporary(temporary);}
         },asset->{if(asset instanceof JSONObject){try{draft.getJSONObject("contract").getJSONArray("assets").put(asset);}catch(JSONException invalid){notice(R.string.remote_reload);}}render();}));
     }
     private static android.graphics.BitmapFactory.Options bounds(){android.graphics.BitmapFactory.Options value=new android.graphics.BitmapFactory.Options();value.inJustDecodeBounds=true;return value;}

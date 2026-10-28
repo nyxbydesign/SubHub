@@ -1,5 +1,7 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.storage.StoredPayloads;
+
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -43,7 +45,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
 
     public RemoteStore(Context context) { this(context, "remote_sync_v1.db"); }
     public RemoteStore(Context context, String databaseName) {
-        super(context.getApplicationContext(), databaseName, null, 3);
+        super(context.getApplicationContext(), databaseName, null, 4);
         this.context=context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
@@ -55,7 +57,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             throw new SecurityException("Local Sub statistics unavailable");
         try (Cursor rows = getReadableDatabase().rawQuery("SELECT body FROM activity_source ORDER BY id", null)) {
             while (rows.moveToNext()) {
-                org.json.JSONObject value = new org.json.JSONObject(rows.getString(0));
+                org.json.JSONObject value = new org.json.JSONObject(StoredPayloads.read(rows,0));
                 RemoteActivityWire.decode(value);
                 accept.accept(value);
             }
@@ -85,19 +87,32 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 + "PRIMARY KEY(peer,generation,id))");
         createMetadata(db);
         RemoteActivityStore.create(db);
+        StoredPayloads.createProgress(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 1 || oldVersion > 2 || newVersion != 3) throw new IllegalStateException("Unsupported remote database version");
+        if (oldVersion < 1 || oldVersion > 3 || newVersion != 4) throw new IllegalStateException("Unsupported remote database version");
         if (oldVersion == 1) {
             db.execSQL("ALTER TABLE peers ADD COLUMN route TEXT NOT NULL DEFAULT ''");
             db.execSQL("ALTER TABLE invites ADD COLUMN candidate_name TEXT NOT NULL DEFAULT ''");
             createMetadata(db);
         }
-        RemoteActivityStore.create(db);
+        if (oldVersion < 3) RemoteActivityStore.create(db);
+        StoredPayloads.createProgress(db);
     }
 
     private static void createMetadata(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE remote_metadata(peer TEXT NOT NULL,generation TEXT NOT NULL,name TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(peer,generation,name))");
+    }
+
+    /** Optional idle-worker maintenance. Old text stays readable without an opening-time rewrite. */
+    public synchronized int compactStoredPayloads(int maximumRows) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Payload maintenance must run off the main thread");
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            int visited = StoredPayloads.compressBatch(db, maximumRows);
+            db.setTransactionSuccessful(); return visited;
+        } finally { db.endTransaction(); }
     }
 
     public synchronized List<Peer> peers(boolean includeArchived) {
@@ -290,7 +305,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             String encoded = deleted ? "{}" : RemoteProtocol.canonical(body);
             String[] itemArgs = {identity,generation,stream.name(),key};
             try (Cursor c = db.rawQuery("SELECT seq,body,deleted,observed FROM local_objects WHERE peer=? AND generation=? AND stream=? AND item=?", itemArgs)) {
-                if (c.moveToFirst() && encoded.equals(c.getString(1)) && deleted == (c.getInt(2) != 0)
+                if (c.moveToFirst() && encoded.equals(StoredPayloads.read(c,1)) && deleted == (c.getInt(2) != 0)
                         && (stream != RemoteProtocol.Stream.RUNTIME || observedAt == c.getLong(3))) {
                     db.setTransactionSuccessful(); return c.getLong(0);
                 }
@@ -325,9 +340,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
             try (Cursor c = db.rawQuery("SELECT seq,item,body,deleted,observed FROM outbox WHERE peer=? AND generation=? AND stream=? AND seq>? ORDER BY seq LIMIT "
                     + RemoteProtocol.MAX_BATCH_RECORDS, new String[]{identity,generation,stream.name(),Long.toString(after)})) {
                 while (c.moveToNext()) {
-                    int size = c.getString(2).getBytes(StandardCharsets.UTF_8).length;
+                    String body = StoredPayloads.read(c,2);
+                    int size = body.getBytes(StandardCharsets.UTF_8).length;
                     if (!changes.isEmpty() && bytes + size > 512 * 1024) break;
-                    changes.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)!=0,c.getLong(4)));
+                    changes.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),body,c.getInt(3)!=0,c.getLong(4)));
                     through = c.getLong(0); bytes += size;
                 }
             }
@@ -390,7 +406,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     public synchronized List<RemoteProtocol.Change> mirror(String identity, String generation, RemoteProtocol.Stream stream) {
         List<RemoteProtocol.Change> result = new ArrayList<>();
         try (Cursor c = getReadableDatabase().rawQuery("SELECT seq,item,body,deleted,observed FROM remote_objects WHERE peer=? AND generation=? AND stream=? ORDER BY seq",streamArgs(identity,generation,stream))) {
-            while (c.moveToNext()) result.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)!=0,c.getLong(4)));
+            while (c.moveToNext()) result.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),StoredPayloads.read(c,2),c.getInt(3)!=0,c.getLong(4)));
         }
         return result;
     }
@@ -398,7 +414,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     public synchronized JSONObject mirrored(String identity, String generation, RemoteProtocol.Stream stream, String key) {
         try (Cursor c = getReadableDatabase().rawQuery("SELECT body,deleted FROM remote_objects WHERE peer=? AND generation=? AND stream=? AND item=?",new String[]{identity,generation,stream.name(),key})) {
             if (!c.moveToFirst() || c.getInt(1)!=0) return null;
-            try { return new JSONObject(c.getString(0)); }
+            try { return new JSONObject(StoredPayloads.read(c,0)); }
             catch (JSONException invalid) { throw new IllegalStateException("Invalid local mirror",invalid); }
         }
     }
@@ -482,7 +498,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     public synchronized List<RemoteProtocol.Change> published(String identity,String generation,RemoteProtocol.Stream stream) {
         List<RemoteProtocol.Change> result=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,item,body,deleted,observed FROM local_objects WHERE peer=? AND generation=? AND stream=? ORDER BY seq",streamArgs(identity,generation,stream))) {
-            while(c.moveToNext())result.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),c.getString(2),c.getInt(3)!=0,c.getLong(4)));
+            while(c.moveToNext())result.add(new RemoteProtocol.Change(c.getLong(0),c.getString(1),StoredPayloads.read(c,2),c.getInt(3)!=0,c.getLong(4)));
         }
         return result;
     }
@@ -590,9 +606,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
         putMetadata(identity,generation,"last_command_reason",result.optString("reason",""));
     }
 
-    private static Command readCommand(Cursor c){return new Command(c.getString(0),c.getLong(1),CommandState.valueOf(c.getString(2)),c.getString(3));}
+    private static Command readCommand(Cursor c){return new Command(c.getString(0),c.getLong(1),CommandState.valueOf(c.getString(2)),StoredPayloads.read(c,3));}
     private static void insertCommand(SQLiteDatabase db,String peer,String generation,String id,long revision,CommandState state,String body) {
-        db.execSQL("INSERT INTO commands(peer,generation,id,revision,status,body) VALUES(?,?,?,?,?,?)",new Object[]{peer,generation,id,revision,state.name(),body});
+        db.execSQL("INSERT INTO commands(peer,generation,id,revision,status,body) VALUES(?,?,?,?,?,?)",new Object[]{peer,generation,id,revision,state.name(),StoredPayloads.bind(body)});
     }
 
     private static void putPending(SQLiteDatabase db,String identity,String generation,String name,RemoteProtocol.Role role) {
@@ -622,7 +638,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     private static void putObject(SQLiteDatabase db,String table,String identity,String generation,RemoteProtocol.Stream stream,RemoteProtocol.Change change) {
         ContentValues v = new ContentValues();
         v.put("peer",identity);v.put("generation",generation);v.put("stream",stream.name());v.put("item",change.key);
-        v.put("seq",change.sequence);v.put("body",change.body);v.put("deleted",change.deleted ? 1 : 0);v.put("observed",change.observedAt);
+        v.put("seq",change.sequence);StoredPayloads.put(v,"body",change.body);v.put("deleted",change.deleted ? 1 : 0);v.put("observed",change.observedAt);
         if (db.insertWithOnConflict(table,null,v,SQLiteDatabase.CONFLICT_REPLACE) == -1) {
             throw new android.database.sqlite.SQLiteException("Could not persist sync record");
         }
