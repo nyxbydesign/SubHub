@@ -17,7 +17,7 @@ public final class HomeAchievementPreview {
         this.next = next;
         this.progress = progress;
         fingerprint =
-                manager.getUnlockedCount()
+                manager.getRole() + ":" + manager.getUnlockedCount()
                         + ":"
                         + (next == null
                                 ? "complete"
@@ -29,8 +29,22 @@ public final class HomeAchievementPreview {
     }
 
     public static HomeAchievementPreview load(Context app, StatsSnapshot stats) {
-        AchievementManager manager = new AchievementManager(app.getApplicationContext());
-        manager.checkAchievements(stats);
+        AchievementManager manager = AchievementManager.forWorkspace(app.getApplicationContext());
+        if (manager.getRole() == AchievementRole.DOM)
+            manager.checkDomAchievements(new DomStatsRepository(app).load());
+        else manager.checkAchievements(stats);
+        return from(manager, stats);
+    }
+
+    static HomeAchievementPreview loadDom(Context app, DomStatsSnapshot stats) {
+        AchievementManager manager = AchievementManager.forWorkspace(app);
+        if (manager.getRole() != AchievementRole.DOM || !manager.isAccessible())
+            throw new SecurityException("Dom achievements unavailable");
+        manager.checkDomAchievements(stats);
+        return from(manager, null);
+    }
+
+    private static HomeAchievementPreview from(AchievementManager manager, StatsSnapshot stats) {
         for (AchievementManager.Achievement candidate : manager.all()) {
             if (manager.isUnlocked(candidate.getId()) || candidate.isHidden()) continue;
             AchievementManager.Progress progress = manager.progress(candidate, stats);

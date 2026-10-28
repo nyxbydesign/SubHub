@@ -33,8 +33,9 @@ public final class AchievementPreviewView extends LinearLayout {
         });
     }
 
-    private void render(HomeAchievementPreview preview) {
+    void render(HomeAchievementPreview preview) {
         removeAllViews();
+        if (!preview.achievements.isAccessible()) return;
         PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
         PersonUi.text(this, getContext().getString(R.string.achievements_progress_compact,
                 preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()), false);
@@ -63,12 +64,26 @@ public final class AchievementPreviewView extends LinearLayout {
         }
         if (preview.next == null) PersonUi.text(this, getContext().getString(R.string.achievements_all_complete), false);
         else PersonUi.text(this, getContext().getString(R.string.achievements_next_fmt,
-                getContext().getString(preview.next.getName()), preview.progress.getCurrent() + " / "
-                        + preview.progress.getTarget()), false);
+                getContext().getString(preview.next.getName()), formatProgress(preview)), false);
         ProgressBar progress = new ProgressBar(getContext(), null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
+        if (preview.next != null && !preview.progress.isKnown()) progress.setVisibility(GONE);
         progress.setProgress(preview.next == null ? 100 : preview.progress.percent());
         progress.setProgressTintList(ColorStateList.valueOf(getContext().getColor(R.color.accent_text)));
         addView(progress, new LayoutParams(-1, PersonUi.dp(getContext(), 6)));
+    }
+
+    private String formatProgress(HomeAchievementPreview preview) {
+        if (!preview.progress.isKnown()) return getContext().getString(R.string.dom_progress_unavailable);
+        long current = preview.progress.getCurrent(), target = preview.progress.getTarget();
+        if ("dom_tribute".equals(preview.next.getCategory())) {
+            String currency = preview.achievements.progressCurrency();
+            return com.subhub.app.penance.WalletCurrency.format(currency, current) + " / "
+                    + com.subhub.app.penance.WalletCurrency.format(currency, target);
+        }
+        if ("dom_time".equals(preview.next.getCategory()))
+            return StatsSnapshot.formatDuration(current) + " / " + StatsSnapshot.formatDuration(target);
+        return java.text.NumberFormat.getIntegerInstance().format(current) + " / "
+                + java.text.NumberFormat.getIntegerInstance().format(target);
     }
 }

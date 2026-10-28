@@ -42,9 +42,9 @@ public final class AchievementGroupOrderTest {
                 ids(groups.get("appearance")));
         assertEquals(List.of("first_custom_phrase", "phrase_library"),
                 ids(groups.get("phrases")));
-        assertEquals(List.of("pack_curator"), ids(groups.get("packs")));
+        assertFalse(groups.containsKey("packs"));
         assertTrue(categories.indexOf("appearance") < categories.indexOf("phrases"));
-        assertTrue(categories.indexOf("phrases") < categories.indexOf("packs"));
+        assertTrue(categories.indexOf("phrases") < categories.indexOf("export"));
         assertTrue(categories.indexOf("wallet_setup") < categories.indexOf("wallet_payments"));
         for (AchievementManager.Achievement achievement : catalog) {
             assertTrue(groups.get(AchievementsActivity.displayCategory(achievement))
