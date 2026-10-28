@@ -129,6 +129,29 @@ public final class StatsSnapshot {
     public long getPopupImpressions() { return popupImpressions; }
     public long getCurrentSessionPopupImpressions() { return currentSessionPopupImpressions; }
 
+    StatsSnapshot withRetained(RetainedStatistics history) {
+        return new StatsSnapshot(Math.max(totalBlocks, history.total("censors")),
+                Math.max(totalSessionSeconds, history.sessionSeconds()),
+                (int) Math.min(Integer.MAX_VALUE, Math.max(sessions, history.total("sessions"))),
+                currentStreak, lastSessionDate, Math.max(totalProtectedSeconds, history.sessionSeconds()),
+                currentSessionBlocks, (int) Math.min(Integer.MAX_VALUE, Math.max(peakSessionBlocks, history.peak())),
+                Math.max(longestSessionSeconds, history.longest()), browserSessions, browserPages,
+                Math.max(exportedImages, history.total("photos")), customPhrases,
+                censorStyleChanges, borderColorChanged, censorStylesTried, borderEffectsTried,
+                union(activeDates, history.activityDates()), allCategoryCensors, currentSessionSeconds,
+                Math.max(subliminalImpressions, history.total("whispers")), currentSessionSubliminals,
+                Math.max(limitedAppMillis, history.total("limits_ms")), currentSessionLimitedAppMillis,
+                Math.max(limitInterventions, history.total("limit_stops")), currentSessionLimitInterventions,
+                Math.max(tributeEvents, history.total("tributes")), currentSessionTributeEvents,
+                Math.max(tributeCents, history.total("assessed_EUR")), currentSessionTributeCents,
+                tamperEvents, currentSessionTamperEvents,
+                Math.max(popupImpressions, history.total("popups")), currentSessionPopupImpressions);
+    }
+
+    private static Set<String> union(Set<String> first, Set<String> second) {
+        Set<String> result = new LinkedHashSet<>(first); result.addAll(second); return result;
+    }
+
     /** Discrete feature events, excluding durations and payment value. */
     public long getActivityEvents() {
         return totalBlocks + limitInterventions + tributeEvents + subliminalImpressions

@@ -31,6 +31,25 @@ public final class ExportJobStore extends SQLiteOpenHelper {
         this.context = context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
+
+    /** Metadata-only history; reading statistics never recovers jobs or opens their media. */
+    public List<SavedStatistic> retainedStatistics() {
+        List<SavedStatistic> result = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT job,id,kind,saved_at,saved_zone FROM items WHERE state='SAVED'", null)) {
+            while (cursor.moveToNext()) result.add(new SavedStatistic(cursor.getString(0) + ":" + cursor.getLong(1),
+                    cursor.getString(2), cursor.getLong(3), cursor.getString(4)));
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    public static final class SavedStatistic {
+        public final String id, kind, zone;
+        public final long savedAt;
+        private SavedStatistic(String id, String kind, long savedAt, String zone) {
+            this.id = id; this.kind = kind; this.savedAt = savedAt; this.zone = zone;
+        }
+    }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE jobs(id TEXT PRIMARY KEY, created INTEGER NOT NULL, config TEXT NOT NULL, quality TEXT NOT NULL, detect_every INTEGER NOT NULL, mute INTEGER NOT NULL, delete_originals INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE items(id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, output TEXT, message TEXT NOT NULL DEFAULT '', progress INTEGER NOT NULL DEFAULT 0, saved_at INTEGER NOT NULL DEFAULT 0, saved_zone TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '')");

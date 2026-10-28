@@ -24,12 +24,31 @@ final class DomDailyStatsSource implements DailyStatsPanel.Source {
 
     @Override public DailyStatsPanel.DailyData load(String first, String last) throws Exception {
         requireAccess();
-        try (RemoteStore store = new RemoteStore(context)) { return load(store, first, last); }
+        LocalRetainedStatistics local = com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
+                ? LocalRetainedStatistics.load(context) : null;
+        try (RemoteStore store = new RemoteStore(context)) { return load(store, first, last, local); }
     }
 
     DailyStatsPanel.DailyData load(RemoteStore store, String first, String last) throws Exception {
+        return load(store, first, last, null);
+    }
+
+    DailyStatsPanel.DailyData load(RemoteStore store, String first, String last, LocalRetainedStatistics local) throws Exception {
+        List<DomDailySnapshot.History> histories = histories(store, local);
+        if (local != null) {
+            histories.removeIf(history -> history.identity.identity.equals("local"));
+            histories.add(new DomDailySnapshot.History(local.aggregate(context, System.currentTimeMillis()),
+                    com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet"), local.range(first, last)));
+        }
+        DomDailySnapshot snapshot = DomDailySnapshot.aggregate(histories, first, last);
+        return new DailyStatsPanel.DailyData(snapshot.since, snapshot.days);
+    }
+
+    List<DomDailySnapshot.History> histories(RemoteStore store, LocalRetainedStatistics local) throws Exception {
         requireAccess();
         List<DomDailySnapshot.History> histories = new ArrayList<>();
+        if (local != null) histories.add(new DomDailySnapshot.History(local.aggregate(context, System.currentTimeMillis()),
+                com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet"), local.history.days()));
         synchronized (store) {
             android.database.sqlite.SQLiteDatabase database = store.getReadableDatabase();
             database.beginTransactionNonExclusive();
@@ -53,17 +72,30 @@ final class DomDailyStatsSource implements DailyStatsPanel.Source {
                         }
                         days.put(day, metrics);
                     }
+                    RetainedStatistics retained = new RetainedStatistics(java.time.ZoneId.systemDefault(), System.currentTimeMillis(), days);
+                    for (RemoteProtocol.Change event : store.mirror(peer.identity, peer.generation, RemoteProtocol.Stream.EVENTS)) {
+                        if (event.deleted) continue;
+                        JSONObject value = new JSONObject(event.body);
+                        if (local == null || !local.activityCopies.contains(LocalRetainedStatistics.activityIdentity(value)))
+                            LocalRetainedStatistics.activity(retained, value, System.currentTimeMillis());
+                    }
+                    Map<String, Map<String, Long>> projected = new LinkedHashMap<>();
+                    for (Map.Entry<String, Map<String, Long>> day : retained.days().entrySet()) {
+                        Map<String, Long> metrics = new LinkedHashMap<>(day.getValue());
+                        if (!days.containsKey(day.getKey()))
+                            for (String metric : DomDailySnapshot.METRICS) metrics.putIfAbsent(metric, -1L);
+                        projected.put(day.getKey(), metrics);
+                    }
                     JSONObject runtime = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.RUNTIME, "current");
                     JSONObject consent = RemoteTelemetry.validRuntime(runtime) ? runtime.optJSONObject("featureConsent") : null;
                     boolean wallet = consent != null && Boolean.TRUE.equals(consent.opt("wallet"));
                     DomStatsSnapshot.Sub identity = new DomStatsSnapshot.Sub(peer.identity, peer.generation,
                             store.additionOrder(peer.identity, peer.generation), 0, 0, null, null);
-                    histories.add(new DomDailySnapshot.History(identity, wallet, days));
+                    histories.add(new DomDailySnapshot.History(identity, wallet, projected));
                 }
-                DomDailySnapshot snapshot = DomDailySnapshot.aggregate(histories, first, last);
                 requireAccess();
                 database.setTransactionSuccessful();
-                return new DailyStatsPanel.DailyData(snapshot.since, snapshot.days);
+                return histories;
             } finally { database.endTransaction(); }
         }
     }

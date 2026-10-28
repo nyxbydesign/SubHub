@@ -73,6 +73,11 @@ public final class CommitmentManager {
         return true;
     }
 
+    /** Statistics may observe expiry without releasing a pact or running its cleanup effects. */
+    public static boolean observedActive(Context context) {
+        return remaining(preferences(context), context) > 0;
+    }
+
     public static long remainingMillis(Context context) {
         return isActive(context)
                 ? Math.max(0L, remaining(preferences(context), context))

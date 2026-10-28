@@ -72,6 +72,12 @@ public final class PaidPauseManager {
         return true;
     }
 
+    /** A history read must not call finish(), re-arm capture or cancel payment state. */
+    public boolean observedActive() {
+        return preferences.getLong(KEY_ACTIVE_UNTIL, 0L) > System.currentTimeMillis()
+                && PenanceManager.observedEnabled(context);
+    }
+
     public long remainingMillis() {
         return isActive() ? Math.max(0L,
                 preferences.getLong(KEY_ACTIVE_UNTIL, 0L) - System.currentTimeMillis()) : 0L;
