@@ -200,7 +200,7 @@ public final class RoleExperienceAndroidTest {
             MainActivity home = resumed(MainActivity.class);
             capture(home, "dom-overview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_activity, R.id.nav_stats, R.id.nav_settings);
                 assertFalse(home.findViewById(R.id.home_service_widget).isShown());
                 assertTrue(home.findViewById(R.id.button_edit_lock).isShown());
                 assertFits(home.getWindow().getDecorView());

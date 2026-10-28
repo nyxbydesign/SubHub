@@ -44,8 +44,14 @@ public final class DailyStatsPanel extends LinearLayout {
         R.string.daily_paid_eur,
         R.string.daily_paid_usd
     };
-    public interface Source { DailyData load(String first, String last) throws Exception; }
+    public interface Source {
+        DailyData load(String first, String last) throws Exception;
+        default boolean accessible() { return true; }
+        default boolean combined() { return false; }
+    }
     private final Source source;
+    private final String[] metrics;
+    private final int[] labels;
     private final boolean compact;
     private int range = 30, metric, month = LocalDate.now().getMonthValue();
     private LocalDate selected = LocalDate.now();
@@ -65,6 +71,12 @@ public final class DailyStatsPanel extends LinearLayout {
     public DailyStatsPanel(Context context, boolean compact, Bundle state, Source source) {
         super(context);
         this.source = source;
+        metrics = source != null && source.combined() ? DomDailySnapshot.METRICS : METRICS;
+        labels = source != null && source.combined() ? new int[] {
+                R.string.dom_stats_time, R.string.dom_stats_sessions,
+                R.string.daily_assessed_eur, R.string.daily_assessed_usd,
+                R.string.daily_paid_eur, R.string.daily_paid_usd
+        } : LABELS;
         this.compact = compact;
         if (compact) range = 7;
         uiData = com.subhub.app.util.AsyncUiScope.forContext(context);
@@ -93,7 +105,7 @@ public final class DailyStatsPanel extends LinearLayout {
         if (state == null) return;
         int requested = state.getInt("daily_range", compact ? 7 : 30);
         range = requested == 7 || requested == 30 || requested == 365 ? requested : 30;
-        metric = Math.max(0, Math.min(METRICS.length - 1, state.getInt("daily_metric", 0)));
+        metric = Math.max(0, Math.min(metrics.length - 1, state.getInt("daily_metric", 0)));
         month =
                 Math.max(
                         1,
@@ -127,6 +139,7 @@ public final class DailyStatsPanel extends LinearLayout {
                             store.since(), store.days(first.toString(), today.toString()));
                 },
                 loaded -> {
+                    if (source != null && !source.accessible()) { removeAllViews(); return; }
                     since = loaded.since;
                     data = loaded.days;
                     render(today, first);
@@ -195,10 +208,10 @@ public final class DailyStatsPanel extends LinearLayout {
             choice.setBackgroundResource(
                     range == count ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
         }
-        String[] labels = new String[LABELS.length];
-        for (int i = 0; i < labels.length; i++) labels[i] = getContext().getString(LABELS[i]);
+        String[] optionsText = new String[labels.length];
+        for (int i = 0; i < optionsText.length; i++) optionsText[i] = getContext().getString(labels[i]);
         Spinner filter = new Spinner(getContext());
-        ArrayAdapter<String> options = new ArrayAdapter<>(getContext(), R.layout.view_form_spinner_value, labels);
+        ArrayAdapter<String> options = new ArrayAdapter<>(getContext(), R.layout.view_form_spinner_value, optionsText);
         options.setDropDownViewResource(R.layout.view_form_spinner_option);
         filter.setAdapter(options);
         filter.setSelection(metric);
@@ -219,12 +232,12 @@ public final class DailyStatsPanel extends LinearLayout {
         List<Long> trend = new ArrayList<>();
         LocalDate recorded = LocalDate.parse(since);
         for (LocalDate day = first; !day.isAfter(today); day = day.plusDays(1)) {
-            long v = value(day, METRICS[metric]);
+            long v = value(day, metrics[metric]);
             if (v < 0) complete = false;
             else total = total > Long.MAX_VALUE - v ? Long.MAX_VALUE : total + v;
             if (!day.isBefore(recorded)) trend.add(v);
         }
-        label(this, format(METRICS[metric], complete ? total : -1), 32, false).setTypeface(null, Typeface.BOLD);
+        label(this, format(metrics[metric], complete ? total : -1), 32, false).setTypeface(null, Typeface.BOLD);
         label(
                 this,
                 getContext()
@@ -313,7 +326,7 @@ public final class DailyStatsPanel extends LinearLayout {
                         this,
                         pretty(selected)
                                 + " · "
-                                + format(METRICS[metric], value(selected, METRICS[metric])),
+                                + format(metrics[metric], value(selected, metrics[metric])),
                         16,
                         false);
         detail.setTypeface(null, Typeface.BOLD);
@@ -350,12 +363,12 @@ public final class DailyStatsPanel extends LinearLayout {
         }
         long maximum = 1;
         for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1))
-            maximum = Math.max(maximum, value(d, METRICS[metric]));
+            maximum = Math.max(maximum, value(d, metrics[metric]));
         for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
             final LocalDate chosen = d;
-            long amount = value(d, METRICS[metric]);
+            long amount = value(d, metrics[metric]);
             boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(LocalDate.now())
-                    && (source == null || data.containsKey(d.toString()));
+                    && (source == null || data.containsKey(d.toString())) && amount >= 0;
             TextView day = new TextView(getContext());
             day.setText(Integer.toString(d.getDayOfMonth()));
             com.subhub.app.util.UiIdentity.textSize(day, R.dimen.ui_text_body);
@@ -376,9 +389,9 @@ public final class DailyStatsPanel extends LinearLayout {
                     d
                             + ": "
                             + (known
-                                    ? getContext().getString(LABELS[metric])
+                                    ? getContext().getString(labels[metric])
                                             + " "
-                                            + format(METRICS[metric], amount)
+                                            + format(metrics[metric], amount)
                                     : getContext().getString(R.string.daily_no_history)));
             if (known && !week)
                 day.setOnClickListener(

@@ -33,6 +33,8 @@ public final class AchievementPreviewView extends LinearLayout {
         });
     }
 
+    public void load(AsyncUiScope data, String key) { load(data, key, null); }
+
     void render(HomeAchievementPreview preview) {
         removeAllViews();
         if (!preview.achievements.isAccessible()) return;
