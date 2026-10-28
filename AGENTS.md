@@ -94,6 +94,11 @@ Source-based instrumentation inventories must accept fully qualified eligibility
 
 Remote transport fixtures with an isolated Context must complete `LegacyPackMigration.recoverAndMigrate(context)` and assert `RemoteFeature.recoveryReady()` before testing session cancellation or background expiry. Migration readiness belongs to that Context's files and preference stores; readiness from the application Context does not qualify the isolated fixture.
 
+For `MainActivity` instrumentation, launch with `Intent.ACTION_MAIN`. Home normalizes its
+intent to that action; `ActivityScenario` compares the launch and activity intents and otherwise
+ignores valid lifecycle events. Preserve the mismatch log and correct only the fixture; do not
+change Home behavior, widen the timeout or reset the guest to resolve this observer failure.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
