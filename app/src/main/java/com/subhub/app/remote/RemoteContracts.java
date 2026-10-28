@@ -64,14 +64,14 @@ public final class RemoteContracts {
         }
         index=0;
         for(String source:com.subhub.app.popup.PopupContractAssets.selected(context,512-refs.length())) {
-            File temporary=File.createTempFile("peer-artwork-",".part",context.getCacheDir());
+            File temporary=com.subhub.app.storage.DisposableCache.temporary(context.getCacheDir(),"peer-artwork-");
             try {
                 try(InputStream input=com.subhub.app.popup.PopupContractAssets.open(context,source);OutputStream output=new FileOutputStream(temporary)) {
                     byte[] buffer=new byte[8192];long length=0;int count;while((count=input.read(buffer))!=-1){length+=count;if(length>RemoteAssets.MAX_ASSET_BYTES)throw new IOException("Artwork exceeds the transfer limit");output.write(buffer,0,count);}
                 }
                 String hash=RemoteAssets.digest(temporary);try(InputStream input=new FileInputStream(temporary)){ingest(blobs,hash,temporary.length(),input);}
                 refs.put(reference("assets/popup/image-"+(index++)+".png",hash,temporary.length()));
-            } finally{temporary.delete();}
+            } finally{com.subhub.app.storage.DisposableCache.releaseTemporary(temporary);}
         }
         AppModeManager apps=new AppModeManager(context);Set<String> selected=apps.getSelectedPackages();JSONObject allowances=new JSONObject();
         for(Map.Entry<String,Integer> allowance:new AppTimerManager(context).loadAllowances(selected).entrySet())allowances.put(allowance.getKey(),allowance.getValue());
