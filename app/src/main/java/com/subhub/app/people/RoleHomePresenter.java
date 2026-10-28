@@ -223,6 +223,16 @@ public final class RoleHomePresenter {
         domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(domPeople, activity.getString(R.string.role_loading), false);
         com.subhub.app.activity.ActivityPreview.add(domBody, null, 5, data, "home-activity-preview");
+        LinearLayout progress = PersonUi.card(domBody);
+        progress.setTag("home_dom_progress");
+        PersonUi.row(progress, R.drawable.ic_nav_stats, activity.getString(R.string.role_stats), null, () -> {
+            if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                activity.startActivity(new Intent(activity, StatsActivity.class));
+        }).setTag("home_dom_statistics");
+        PersonUi.row(progress, R.drawable.ic_nav_stats, activity.getString(R.string.achievements_title), null, () -> {
+            if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                activity.startActivity(new Intent(activity, com.subhub.app.stats.AchievementsActivity.class));
+        }).setTag("home_dom_achievements");
     }
 
     static List<PersonSnapshot> recentAdditions(List<PersonSnapshot> people, PersonSnapshot favorite) {

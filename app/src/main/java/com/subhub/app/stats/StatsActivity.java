@@ -16,6 +16,8 @@ import java.util.*;
 public final class StatsActivity extends PreferencePage {
     private DailyStatsPanel daily;
     private RemoteStatsSource remote;
+    private AchievementRole workspace;
+    private DomStatsPanel dom;
     private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refreshRemote = new Runnable() {
         @Override public void run() {
@@ -35,6 +37,17 @@ public final class StatsActivity extends PreferencePage {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        workspace = AchievementRole.current(this);
+        if (!workspace.accessible(this)) { finish(); return; }
+        if (workspace == AchievementRole.DOM
+                && !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID)) {
+            page(R.string.role_stats);
+            dom = new DomStatsPanel(this);
+            page.addView(dom, new LinearLayout.LayoutParams(-1, -2));
+            com.subhub.app.util.SubHubNavigation.attachToPage(this, page,
+                    com.subhub.app.util.SubHubNavigation.Screen.HOME);
+            return;
+        }
         if (!com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
             try { remote = new RemoteStatsSource(this, com.subhub.app.people.PersonRoutes.requireId(getIntent())); }
             catch (RuntimeException unavailable) { finish(); return; }
@@ -83,6 +96,17 @@ public final class StatsActivity extends PreferencePage {
     @Override
     protected void onResume() {
         super.onResume();
+        if (workspace == null || !workspace.accessible(this)) { finish(); return; }
+        if (dom != null) {
+            dom.setVisibility(android.view.View.VISIBLE);
+            com.subhub.app.util.SubHubNavigation.bind(this, findViewById(android.R.id.content),
+                    com.subhub.app.util.SubHubNavigation.Screen.HOME);
+            com.subhub.app.security.ControllerEditMode.renderButton(this,
+                    com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+            com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content))
+                    .setVisibility(android.view.View.VISIBLE);
+            return;
+        }
         if (remote != null) {
             try { remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
             remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
@@ -137,6 +161,7 @@ public final class StatsActivity extends PreferencePage {
     }
 
     @Override protected void onPause() {
+        if (dom != null) dom.setVisibility(android.view.View.INVISIBLE);
         remoteClock.removeCallbacks(refreshRemote);
         super.onPause();
     }
@@ -145,7 +170,8 @@ public final class StatsActivity extends PreferencePage {
         if (remote != null) { bindRemoteTotals(); return; }
         StatsRepository repository = new StatsRepository(this);
         StatsSnapshot stats = repository.load();
-        achievements.load(data, "stats-achievement-preview", stats);
+        if (workspace == AchievementRole.SUB) achievements.load(data, "stats-achievement-preview", stats);
+        else achievements.setVisibility(android.view.View.GONE);
         lifetimeTime.setText(duration(stats.getTotalProtectedSeconds()));
         lifetimeCensors.setText(number(stats.getTotalBlocks()));
         lifetimeSessions.setText(number(stats.getSessions()));
