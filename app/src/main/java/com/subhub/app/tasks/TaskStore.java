@@ -83,8 +83,21 @@ public final class TaskStore extends SQLiteOpenHelper {
         db.insertWithOnConflict("projections", null, row, SQLiteDatabase.CONFLICT_REPLACE);
     }
     private static void effects(SQLiteDatabase db, String scope, TaskAction action, TaskEngine engine, boolean notifyDom) throws JSONException {
-        if (notifyDom && (action.kind == TaskAction.Kind.SUBMIT || action.kind == TaskAction.Kind.OUTSIDE))
-            effect(db, scope, action.id, "notification", action.json());
+        if (action.cancellation()) {
+            List<String> retired = new ArrayList<>();
+            try (Cursor rows = db.rawQuery("SELECT id,body FROM effects WHERE scope=? AND done=0", new String[]{scope})) {
+                while (rows.moveToNext()) {
+                    TaskAction pending = TaskAction.parse(new JSONObject(rows.getString(1)));
+                    if (engine.cancelled(pending.taskId, pending.date)) retired.add(rows.getString(0));
+                }
+            }
+            for (String id : retired) db.execSQL("UPDATE effects SET done=1 WHERE scope=? AND id=?", new Object[]{scope, id});
+        }
+        if (notifyDom && (action.kind == TaskAction.Kind.SUBMIT || action.kind == TaskAction.Kind.OUTSIDE)) {
+            TaskEngine.Occurrence current = engine.occurrence(action.taskId, action.date, action.at);
+            if (current.status == TaskEngine.Status.PENDING && current.submission != null && current.submission.id.equals(action.id))
+                effect(db, scope, action.id, "notification", action.json());
+        }
         if (action.date != null) {
             TaskEngine.Occurrence occurrence = engine.occurrence(action.taskId, action.date, action.at);
             if (occurrence.failed() && occurrence.task.failureTribute)

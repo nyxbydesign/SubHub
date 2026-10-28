@@ -17,4 +17,21 @@
     <string name="dom_activity_not_shared">Remote activity is not shared.</string>
     <string name="tasks_timezone">Sub timezone: %1$s</string>
     <string name="tasks_timezone_unavailable">Sub timezone unavailable or stale. Sync with the Sub before creating a task.</string>
+    <plurals name="tasks_active_count">
+        <item quantity="one">%d active task</item>
+        <item quantity="other">%d active tasks</item>
+    </plurals>
+    <string name="tasks_media_loading">Loading attachment</string>
+    <string name="tasks_media_offline">Attachment not downloaded. Sync and retry.</string>
+    <string name="tasks_media_play">Play</string>
+    <string name="tasks_media_pause">Pause</string>
+    <string name="tasks_media_seek">Seek within attachment</string>
+    <string name="tasks_media_position">%1$s / %2$s</string>
+    <string name="tasks_cancel_task">Cancel task</string>
+    <string name="tasks_cancel_occurrence">This occurrence</string>
+    <string name="tasks_cancel_series">Entire series</string>
+    <string name="tasks_keep_task">Keep task</string>
+    <string name="tasks_cancel_confirm">Cancel “%1$s”?</string>
+    <string name="tasks_cancelled">Cancelled</string>
+    <string name="tasks_cancel_update">Update both devices to cancel tasks.</string>
 </resources>

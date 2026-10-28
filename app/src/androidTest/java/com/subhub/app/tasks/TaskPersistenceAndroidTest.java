@@ -77,6 +77,28 @@ public class TaskPersistenceAndroidTest {
         assertEquals("failure", store.pending(sub).get(0).kind);
         assertEquals(TaskEngine.Status.DENIED, store.load(sub).occurrence(task.id, date, start).status);
     }
+    @Test public void cancellationAtomicallyRetiresProofAndFailureEffectsAndKeepsOtherDates() throws Exception {
+        definitionDelivered();
+        store.append(sub, action("proof", TaskAction.Kind.OUTSIDE, "", ""), false, false);
+        store.receive(dom, store.outgoing(sub, 0), false, true);
+        store.append(dom, action("deny", TaskAction.Kind.DENY, "", "proof"), true, false);
+        assertEquals(2, store.pending(dom).size());
+        TaskAction cancel = action("cancel", TaskAction.Kind.CANCEL_ONCE, "", "");
+        store.append(dom, cancel, true, false); assertTrue(store.pending(dom).isEmpty());
+        JSONArray rows = store.outgoing(dom, 1); assertEquals(2, rows.length());
+        store.receive(sub, rows, true, false); store.receive(sub, rows, true, false);
+        assertTrue(store.pending(sub).isEmpty());
+        store.close(); store = new TaskStore(context);
+        for (String scope : List.of(dom, sub)) {
+            assertEquals(TaskEngine.Status.CANCELLED, store.load(scope).occurrence(task.id, date, start).status);
+            assertEquals(TaskEngine.Status.ACTIVE, store.load(scope).occurrence(task.id, date.plusDays(1), start + 86400000).status);
+            assertFalse(store.load(scope).seriesCancelled(task.id)); assertTrue(store.pending(scope).isEmpty());
+        }
+        store.append(sub, new TaskAction("late-timeout", task.id, TaskAction.Kind.TIMEOUT, date,
+                start + 3600000, "", "", List.of(), null), false, false);
+        assertTrue(store.pending(sub).isEmpty());
+    }
+
     @Test public void conflictingReplayGapAndWrongWriterLeaveCursorAndProjectionUnchanged() throws Exception {
         definitionDelivered();
         TaskAction request = action("proof", TaskAction.Kind.SUBMIT, "Finished", "");

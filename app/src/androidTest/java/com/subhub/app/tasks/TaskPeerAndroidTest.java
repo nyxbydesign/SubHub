@@ -30,6 +30,7 @@ public class TaskPeerAndroidTest {
     private TaskDefinition task;
     private long start;
     private boolean oldTasks;
+    private boolean cancelSupport = true;
     @Before public void setup() throws Exception {
         runtime = TaskRuntime.get(context); store = RemoteFeature.get(context).store;
         oldTasks = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getBoolean("tasks", true);
@@ -84,6 +85,29 @@ public class TaskPeerAndroidTest {
                 .filter(n -> ("tasks:" + domScope + ":outside").equals(n.getTag())).count();
         assertEquals(1, notifications);
     }
+    @Test public void offlineCancellationWinsLateProofAndLegacyPeerNeverReceivesUnknownActions() throws Exception {
+        create(); session(true, new AtomicInteger());
+        assertEquals("1", store.metadata(domPeer.identity, generation, "tasks_cancel_version", "0"));
+        TaskAction proof = new TaskAction("offline-proof", task.id, TaskAction.Kind.OUTSIDE,
+                task.firstStart.toLocalDate(), System.currentTimeMillis(), "", "", List.of(), null);
+        runtime.store.append(subScope, proof, false, false);
+        TaskAction cancel = new TaskAction("cancel", task.id, TaskAction.Kind.CANCEL_ONCE,
+                proof.date, System.currentTimeMillis(), "", "", List.of(), null);
+        runtime.store.append(domScope, cancel, true, false);
+        cancelSupport = false; session(true, new AtomicInteger());
+        assertEquals("0", store.metadata(domPeer.identity, generation, "tasks_cancel_version", "unexpected"));
+        assertEquals(TaskEngine.Status.PENDING, runtime.store.load(subScope).occurrence(task.id, proof.date, proof.at).status);
+        assertEquals(1, runtime.store.outgoing(domScope, runtime.store.received(subScope)).length());
+        cancelSupport = true; session(true, new AtomicInteger()); session(true, new AtomicInteger());
+        for (String scope : List.of(domScope, subScope)) {
+            TaskEngine engine = runtime.store.load(scope);
+            assertEquals(TaskEngine.Status.CANCELLED, engine.occurrence(task.id, proof.date, proof.at).status);
+            assertNull(engine.occurrence(task.id, proof.date, proof.at).submission);
+        }
+        assertTrue(runtime.store.pending(domScope).isEmpty()); assertTrue(runtime.store.pending(subScope).isEmpty());
+        assertEquals(0, TaskEngine.activeCount(runtime.store.load(domScope).recorded(System.currentTimeMillis())));
+    }
+
     @Test public void localOptoutStopsActionAndAssetTrafficWithoutAdvancingReceiptThenResumes() throws Exception {
         create(); context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
         session(true, new AtomicInteger());
@@ -251,6 +275,7 @@ public class TaskPeerAndroidTest {
     private RemoteSession.Hooks hooks(boolean support, AtomicInteger calls) {
         return new RemoteSession.Hooks() {
             @Override public int tasksVersion() { return support ? 1 : 0; }
+            @Override public int taskCancelVersion() { return support && cancelSupport ? 1 : 0; }
             @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 calls.incrementAndGet(); TaskPeer.exchange(context, connection, peer, deadline);
             }

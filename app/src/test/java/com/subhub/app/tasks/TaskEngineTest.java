@@ -419,6 +419,8 @@ public class TaskEngineTest {
                     engine.apply(action("timeout", task, TIMEOUT, task.end(DATE).toEpochMilli()), false);
                 } else if (expected == SKIPPED) {
                     engine.apply(action("skip-disabled", task, SKIP, task.end(DATE).toEpochMilli()), false);
+                } else if (expected == CANCELLED) {
+                    engine.apply(action("cancelled", task, CANCEL_ONCE, start), true);
                 }
                 TaskEngine.Occurrence occurrence = replay(engine).occurrence(task.id, DATE, now);
                 boolean failed = expected == DENIED || expected == TIMED_OUT;
@@ -446,4 +448,76 @@ public class TaskEngineTest {
         assertEquals(2, replayed.json().getJSONArray("actions").length());
         assertEquals(PENDING, replayed.occurrence(task.id, DATE, at).status);
     }
+    @Test public void activeCountUsesCurrentProjectionAndDistinctOccurrenceIdentity() throws Exception {
+        TaskEngine engine = new TaskEngine();
+        java.util.List<TaskEngine.Occurrence> rows = new java.util.ArrayList<>();
+        long at = definition(true, false).start(DATE).toEpochMilli() + 1000;
+        for (String name : java.util.List.of("active", "pending", "accepted", "denied", "refused", "failed", "skipped", "cancelled", "scheduled")) {
+            TaskDefinition base = definition(true, false);
+            TaskDefinition task = new TaskDefinition(name, name, "", "scheduled".equals(name)
+                    ? DATE.plusDays(1).atTime(9, 0) : base.firstStart, base.zone, base.durationMillis, base.weekdays, true, false, null);
+            TaskAction first = new TaskAction("create-" + name, task.id, CREATE, null,
+                    task.start(task.firstStart.toLocalDate()).toEpochMilli() - 1000, "", "", java.util.List.of(), task);
+            assertTrue(engine.apply(first, true)); assertFalse(engine.apply(first, true));
+            if (java.util.Set.of("pending", "accepted", "denied").contains(name)) {
+                TaskAction request = action(name + "-proof", task, OUTSIDE, at);
+                assertTrue(engine.apply(request, false));
+                if (!"pending".equals(name)) engine.apply(action(name + "-review", task,
+                        "accepted".equals(name) ? ACCEPT : DENY, DATE, at + 1, request.id), true);
+            } else if ("refused".equals(name)) engine.apply(action(name + "-refusal", task, REFUSE_ONCE, at), false);
+            else if ("failed".equals(name) || "skipped".equals(name)) engine.apply(action(name + "-expiry", task,
+                    "failed".equals(name) ? TIMEOUT : SKIP, task.end(DATE).toEpochMilli()), false);
+            else if ("cancelled".equals(name)) engine.apply(action(name + "-cancel", task, CANCEL_ONCE, at), true);
+            rows.add(engine.occurrence(task.id, task.firstStart.toLocalDate(), at));
+        }
+        rows.add(rows.get(0));
+        assertEquals(1, TaskEngine.activeCount(rows));
+        TaskEngine restored = replay(engine);
+        rows.clear();
+        for (TaskDefinition task : restored.definitions()) rows.add(restored.occurrence(task.id, task.firstStart.toLocalDate(), at));
+        assertEquals(1, TaskEngine.activeCount(rows));
+    }
+
+    @Test public void occurrenceAndSeriesCancellationRetainAuditAndSurviveReplay() throws Exception {
+        TaskDefinition task = definition(true, true); TaskEngine engine = engine(task);
+        TaskAction one = action("cancel-one", task, CANCEL_ONCE, DATE, task.start(DATE).toEpochMilli() + 1, "");
+        assertTrue(engine.apply(one, true)); assertFalse(engine.apply(one, true));
+        assertEquals(CANCELLED, engine.occurrence(task.id, DATE, one.at).status);
+        assertFalse(engine.occurrence(task.id, DATE, one.at).failed());
+        LocalDate next = DATE.plusDays(1);
+        assertEquals(ACTIVE, engine.occurrence(task.id, next, task.start(next).toEpochMilli()).status);
+        assertTrue(engine.apply(action("cancel-series", task, CANCEL_SERIES, next, task.start(next).toEpochMilli(), ""), true));
+        TaskEngine restored = replay(engine);
+        assertTrue(restored.seriesCancelled(task.id));
+        assertEquals(CANCELLED, restored.occurrence(task.id, next.plusDays(4), task.start(next.plusDays(4)).toEpochMilli()).status);
+        assertEquals(3, restored.json().getJSONArray("actions").length());
+    }
+
+    @Test public void cancellationDominatesOfflineProofExpiryAndStaleReviewInEitherArrivalOrder() throws Exception {
+        TaskDefinition task = definition(true, true); long at = task.start(DATE).toEpochMilli() + 1000;
+        TaskAction proof = action("offline-proof", task, OUTSIDE, at);
+        TaskAction cancel = action("dom-cancel", task, CANCEL_SERIES, at + 1);
+        for (boolean proofFirst : new boolean[]{false, true}) {
+            TaskEngine engine = engine(task);
+            if (proofFirst) engine.apply(proof, false);
+            engine.apply(cancel, true);
+            if (!proofFirst) engine.apply(proof, false);
+            engine.apply(action("offline-timeout", task, TIMEOUT, task.end(DATE).toEpochMilli()), false);
+            engine.apply(action("stale-review", task, DENY, DATE, at + 2, proof.id), true);
+            TaskEngine restored = replay(engine); TaskEngine.Occurrence row = restored.occurrence(task.id, DATE, at + 3);
+            assertEquals(CANCELLED, row.status); assertNull(row.submission); assertFalse(row.failed());
+            assertEquals(0, TaskEngine.activeCount(java.util.List.of(row)));
+            assertEquals(5, restored.json().getJSONArray("actions").length());
+        }
+    }
+
+    @Test public void cancellationRequiresDomAndConflictingRetryCannotRewriteIt() throws Exception {
+        TaskDefinition task = definition(true, false); TaskEngine engine = engine(task);
+        TaskAction cancel = action("cancel", task, CANCEL_ONCE, task.start(DATE).toEpochMilli() + 1);
+        assertThrows(SecurityException.class, () -> engine.apply(cancel, false));
+        assertTrue(engine.apply(cancel, true)); assertFalse(engine.apply(cancel, true));
+        assertThrows(SecurityException.class, () -> engine.apply(action("cancel", task, CANCEL_ONCE, cancel.at + 1), true));
+        assertEquals(CANCELLED, replay(engine).occurrence(task.id, DATE, cancel.at).status);
+    }
+
 }

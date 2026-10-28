@@ -463,6 +463,108 @@ public final class TasksAndroidTest {
         awaitTag(page, "task_detail:" + occurrenceId(task));
     }
 
+    @Test public void profileGroupsTasksImmediatelyAfterContractAndKeepsItsNativeRoute() throws Exception {
+        try (ActivityScenario<com.subhub.app.people.PersonActivity> page = ActivityScenario.launch(
+                new Intent(context, com.subhub.app.people.PersonActivity.class)
+                        .putExtra(PersonRoutes.EXTRA_PERSON_ID, "local"))) {
+            awaitTag(page, "person_tab:tasks");
+            page.onActivity(activity -> {
+                ViewGroup group = activity.findViewById(android.R.id.content).findViewWithTag("person_destinations");
+                View contract = group.findViewWithTag("person_tab:contracts");
+                View tasks = group.findViewWithTag("person_tab:tasks");
+                assertSame(group, tasks.getParent()); assertSame(group, contract.getParent());
+                assertEquals(group.indexOfChild(contract) + 1, group.indexOfChild(tasks));
+            });
+            Intents.init();
+            try {
+                tap("person_tab:tasks");
+                Intents.intended(IntentMatchers.hasComponent(TasksActivity.class.getName()));
+            } finally { Intents.release(); }
+        }
+    }
+
+    @Test public void homeActiveCountTracksZeroSingularPluralAndReplayedTerminalOutcomes() throws Exception {
+        com.subhub.app.onboarding.OnboardingState.complete(context);
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<com.subhub.app.MainActivity> page = ActivityScenario.launch(
+                new Intent(context, com.subhub.app.MainActivity.class).setAction(Intent.ACTION_MAIN)
+                        .putExtra(com.subhub.app.MainActivity.EXTRA_SUPPRESS_PERMISSION_READINESS, true))) {
+            awaitHomeCount(page, 0);
+            TaskDefinition first = seed("count first", false); awaitHomeCount(page, 1);
+            TaskDefinition second = seed("count second", true); awaitHomeCount(page, 2);
+            capture("home-task-count");
+            TaskAction proof = new TaskAction(UUID.randomUUID().toString(), first.id, TaskAction.Kind.OUTSIDE,
+                    first.firstStart.toLocalDate(), System.currentTimeMillis(), "", "", List.of(), null);
+            store.append(scope, proof, false, false); store.append(scope, proof, false, false);
+            awaitHomeCount(page, 1);
+            TaskAction cancel = new TaskAction(UUID.randomUUID().toString(), second.id, TaskAction.Kind.CANCEL_SERIES,
+                    second.firstStart.toLocalDate(), System.currentTimeMillis(), "", "", List.of(), null);
+            store.append(scope, cancel, true, false); store.append(scope, cancel, true, false);
+            awaitHomeCount(page, 0); page.recreate(); awaitHomeCount(page, 0);
+        }
+    }
+
+    private void awaitHomeCount(ActivityScenario<? extends Activity> page, int count) throws Exception {
+        await(() -> {
+            AtomicBoolean found = new AtomicBoolean();
+            page.onActivity(activity -> found.set(containsText(
+                    activity.findViewById(android.R.id.content).findViewWithTag("home_tasks"),
+                    context.getResources().getQuantityString(R.plurals.tasks_active_count, count, count))));
+            return found.get();
+        });
+    }
+
+    @Test public void domCancellationRequiresConfirmationRetainsAuditAndStopsPendingEffects() throws Exception {
+        TaskDefinition task = seed("cancel recurring", true);
+        ControllerPinManager.enterSubMode();
+        repository.act(task.id, task.firstStart.toLocalDate(), TaskAction.Kind.OUTSIDE, "", List.of(), "");
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            openTask(page, task); String tag = "cancel_task:" + occurrenceId(task);
+            awaitTag(page, tag); tap(tag);
+            onView(withText(R.string.tasks_keep_task)).perform(click());
+            assertEquals(TaskEngine.Status.PENDING, row(task).status);
+            tap(tag); onView(withText(R.string.tasks_cancel_series)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button1)).perform(click());
+            await(() -> row(task).status == TaskEngine.Status.CANCELLED);
+            assertTrue(store.load(scope).seriesCancelled(task.id));
+            assertFalse(row(task).failed()); assertNull(row(task).submission);
+            int before = store.load(scope).json().getJSONArray("actions").length();
+            repository.cancel(task.id, task.firstStart.toLocalDate(), true);
+            assertEquals(before, store.load(scope).json().getJSONArray("actions").length());
+            try (TaskStore reopened = new TaskStore(context)) {
+                assertTrue(reopened.load(scope).seriesCancelled(task.id));
+                assertEquals(TaskEngine.Status.CANCELLED, reopened.load(scope)
+                        .occurrence(task.id, task.firstStart.toLocalDate().plusDays(7), System.currentTimeMillis()).status);
+            }
+            try (Cursor pending = store.getReadableDatabase().rawQuery(
+                    "SELECT COUNT(*) FROM effects WHERE scope=? AND done=0", new String[]{scope})) {
+                assertTrue(pending.moveToFirst()); assertEquals(0, pending.getInt(0));
+            }
+            for (StatusBarNotification notification : context.getSystemService(NotificationManager.class).getActiveNotifications())
+                assertFalse(notification.getTag() != null && notification.getTag().startsWith("tasks:" + scope + ":"));
+            ControllerPinManager.enterSubMode();
+            assertThrows(SecurityException.class, () -> repository.cancel(task.id, task.firstStart.toLocalDate(), true));
+        }
+    }
+
+    @Test public void domCanArchiveOnlyOneOccurrenceAndArchiveWhileTasksAreDisabled() throws Exception {
+        TaskDefinition task = seed("cancel once", true);
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            openTask(page, task); String tag = "cancel_task:" + occurrenceId(task);
+            awaitTag(page, tag); tap(tag);
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button1)).perform(click());
+            await(() -> row(task).status == TaskEngine.Status.CANCELLED);
+            assertFalse(store.load(scope).seriesCancelled(task.id));
+            assertEquals(TaskEngine.Status.SCHEDULED, store.load(scope).occurrence(task.id,
+                    task.firstStart.toLocalDate().plusDays(1), System.currentTimeMillis()).status);
+            context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
+            repository.cancel(task.id, task.firstStart.toLocalDate().plusDays(1), false);
+            assertEquals(TaskEngine.Status.CANCELLED, store.load(scope).occurrence(task.id,
+                    task.firstStart.toLocalDate().plusDays(1), System.currentTimeMillis()).status);
+        }
+    }
+
     private void capture(String name) throws Exception {
         instrumentation.waitForIdleSync();
         java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
@@ -552,6 +654,7 @@ public final class TasksAndroidTest {
         return result.get();
     }
     private static boolean containsText(View view, String text) {
+        if (view == null) return false;
         if (view instanceof android.widget.TextView && text.contentEquals(((android.widget.TextView) view).getText())) return true;
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;

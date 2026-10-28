@@ -13,6 +13,7 @@ import java.util.List;
 public final class RemoteSession {
     public interface Hooks {
         default int tasksVersion() { return 0; }
+        default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default String displayName(RemoteStore.Peer peer) { return ""; }
         default void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos)throws Exception {}
@@ -44,7 +45,10 @@ public final class RemoteSession {
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer));
-        if (hooks.tasksVersion() == 1) hello.put("tasksVersion", 1);
+        if (hooks.tasksVersion() == 1) {
+            hello.put("tasksVersion", 1);
+            if (hooks.taskCancelVersion() == 1) hello.put("taskCancelVersion", 1);
+        }
         send(connection,hello,deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
@@ -53,6 +57,8 @@ public final class RemoteSession {
         }
         requireType(response,"hello_ack",peer);
         store.putMetadata(peer.identity,peer.generation,"tasks_version",tasksVersion(response)==1 && hooks.tasksVersion()==1 ? "1" : "0");
+        store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
+                tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
         receiveDisplayName(response, peer);
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1);
@@ -76,6 +82,9 @@ public final class RemoteSession {
         boolean tasks = tasksVersion(hello)==1 && hooks.tasksVersion()==1;
         store.putMetadata(peer.identity,peer.generation,"tasks_version",tasks ? "1" : "0");
         if (tasks) ready.put("tasksVersion",1);
+        boolean cancellation = tasks && cancelVersion(hello)==1 && hooks.taskCancelVersion()==1;
+        store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",cancellation ? "1" : "0");
+        if (cancellation) ready.put("taskCancelVersion",1);
         send(connection,ready,deadlineNanos);
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos,activity,tasks);
@@ -111,6 +120,13 @@ public final class RemoteSession {
         if(!frame.has("activityVersion"))return 0;
         long version=RemoteProtocol.integer(frame,"activityVersion");
         if(version<=0)throw new SecurityException("Invalid activity capability");return version;
+    }
+
+    private static long cancelVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("taskCancelVersion")) return 0;
+        long value = RemoteProtocol.integer(frame, "taskCancelVersion");
+        if (value <= 0) throw new SecurityException("Invalid task cancellation capability");
+        return value;
     }
 
     private static long tasksVersion(JSONObject frame) throws JSONException {

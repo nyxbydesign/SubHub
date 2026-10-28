@@ -2,7 +2,7 @@
 
 Open **Tasks** in the bottom navigation. In the Dom workspace, choose a Sub profile to see its active, pending and scheduled tasks. Select a task card for instructions, attachments, completion requests and review. Back returns from a form to the task, then to its list. The Sub workspace opens its own Tasks list.
 
-Open a Sub profile and choose **Tasks**. A Sub can also open Tasks from Home.
+Open a Sub profile and choose **Tasks** in the Contract group. A Sub can also open Tasks from Home, where the subtitle shows the number of currently active occurrences. Pending reviews and completed, failed, refused, skipped or cancelled occurrences are excluded. Repeated delivery does not increase the count.
 
 A Dom creates a task with a title, instructions, a start time, duration, and optionally one image, audio track or video. Select weekdays from Monday through Sunday for a recurring task; leave them unselected for a single task.
 
@@ -10,11 +10,19 @@ Recurring tasks keep their chosen local time and time zone when either device ch
 
 New tasks use the target Sub device timezone received over the authenticated Tasks connection. The timezone is read-only; sync with the Sub if it is unavailable or more than 30 minutes old. The Dom device timezone is never used for a remote Sub. Existing tasks retain their recorded timezone when either device travels or changes timezone, preserving deadlines, weekday repeats and occurrence identities. New tasks use the latest confirmed Sub timezone. Local tasks use this device timezone.
 
+Instruction attachments appear at the bottom of the task detail. Images fit within the page; audio and video have inline play, pause and seek controls. Playback stops when leaving the page, switching roles or losing access. Missing or incomplete media can be retried after syncing. Completion attachments keep their separate viewer.
+
 ## Completion and refusal
 
 During an active task, the Sub can request completion with text and up to five media attachments, or request review outside the app without proof. Both requests remain pending until the Dom explicitly accepts or denies them. A timely pending request does not expire while awaiting review. Denial ends that occurrence.
 
 If the author enables refusal, the Sub can refuse an occurrence before its deadline. A recurring task also offers refusal of the entire series. A refusal does not count as failure or create a tribute. Refusing a series stops future occurrences and survives reconnects; previously submitted work still receives its explicit review.
+
+## Cancellation
+
+The Dom can cancel a single occurrence or an entire recurring series from the task detail after confirmation. Cancellation archives the task outcome while retaining its audit history, ends pending completion review and prevents new timeout or failure effects. A series stays cancelled after reconnect; a late offline proof or review cannot reopen it. Cancellation does not create a failure tribute or reverse an already recorded tribute.
+
+Both devices must advertise cancellation support. If an older paired device lacks it, update both devices before cancelling. A device with cancellation history pauses Tasks exchange with an older peer until support is restored; existing non-Tasks sync continues. The Sub can keep Tasks disabled while the Dom archives tasks locally; the cancellation transfers when Tasks is enabled again.
 
 ## Failure tributes
 

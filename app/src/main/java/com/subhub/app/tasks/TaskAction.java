@@ -7,7 +7,7 @@ import java.util.*;
 
 /** An immutable user action has its own retry identity and references one stable occurrence. */
 public final class TaskAction {
-    public enum Kind { CREATE, SUBMIT, OUTSIDE, ACCEPT, DENY, REFUSE_ONCE, REFUSE_SERIES, TIMEOUT, SKIP }
+    public enum Kind { CREATE, SUBMIT, OUTSIDE, ACCEPT, DENY, REFUSE_ONCE, REFUSE_SERIES, TIMEOUT, SKIP, CANCEL_ONCE, CANCEL_SERIES }
     public final String id, taskId, text, submissionId;
     public final Kind kind;
     public final LocalDate date;
@@ -34,7 +34,8 @@ public final class TaskAction {
         this.kind = kind; this.date = date; this.at = at; this.text = text; this.submissionId = submissionId;
         this.attachments = Collections.unmodifiableList(new ArrayList<>(attachments)); this.definition = definition;
     }
-    public boolean domAction() { return kind == Kind.CREATE || kind == Kind.ACCEPT || kind == Kind.DENY; }
+    public boolean domAction() { return kind == Kind.CREATE || kind == Kind.ACCEPT || kind == Kind.DENY || cancellation(); }
+    public boolean cancellation() { return kind == Kind.CANCEL_ONCE || kind == Kind.CANCEL_SERIES; }
     public JSONObject json() throws JSONException {
         JSONArray media = new JSONArray(); for (TaskAttachment attachment : attachments) media.put(attachment.json());
         return new JSONObject().put("id", id).put("task", taskId).put("kind", kind.name())
