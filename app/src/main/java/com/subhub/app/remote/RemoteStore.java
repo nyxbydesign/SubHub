@@ -11,6 +11,7 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
@@ -259,6 +260,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         try {
             Peer peer = active(db, identity, generation);
             if (stream.writer != peer.localRole) throw new SecurityException("Not this stream's authority");
+            PeerDataPolicy.require(stream);
             String encoded = deleted ? "{}" : RemoteProtocol.canonical(body);
             String[] itemArgs = {identity,generation,stream.name(),key};
             try (Cursor c = db.rawQuery("SELECT seq,body,deleted,observed FROM local_objects WHERE peer=? AND generation=? AND stream=? AND item=?", itemArgs)) {
@@ -291,6 +293,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
             try (Cursor c = db.rawQuery("SELECT acked FROM outgoing WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,generation,stream))) {
                 c.moveToFirst(); after = c.getLong(0);
             }
+            if (!PeerDataPolicy.permits(stream)) {
+                db.setTransactionSuccessful();
+                return new RemoteProtocol.Batch(generation, stream, after, after, Collections.emptyList());
+            }
             List<RemoteProtocol.Change> changes = new ArrayList<>();
             long through = after;
             int bytes = 0;
@@ -311,6 +317,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     public synchronized void acknowledge(String identity, RemoteProtocol.Ack ack) {
+        PeerDataPolicy.require(ack.stream);
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try {
             active(db,identity,ack.generation);
@@ -328,6 +335,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     public synchronized RemoteProtocol.Ack receive(String identity, RemoteProtocol.Batch batch) {
+        PeerDataPolicy.require(batch.stream);
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         RemoteProtocol.Ack ack;Peer receivedPeer=null;
         try {
@@ -399,7 +407,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
             try(Cursor c=getReadableDatabase().rawQuery("SELECT next_seq FROM outgoing WHERE peer=? AND generation=? AND stream=?",streamArgs(identity,generation,stream))) {
                 if(c.moveToFirst())head=c.getLong(0);
             }
-            result.put(stream.name(),stream==RemoteProtocol.Stream.CONTRACTS||"true".equals(metadata(identity,generation,"unavailable_"+stream.name(),""))?-1:head);
+            result.put(stream.name(),stream==RemoteProtocol.Stream.CONTRACTS||!PeerDataPolicy.permits(stream)||"true".equals(metadata(identity,generation,"unavailable_"+stream.name(),""))?-1:head);
         }
         return result;
     }

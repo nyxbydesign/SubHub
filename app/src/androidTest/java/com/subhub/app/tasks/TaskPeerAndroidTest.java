@@ -116,6 +116,69 @@ public class TaskPeerAndroidTest {
         assertThrows(SecurityException.class, () -> runtime.sweep(new TaskRepository.Target(domScope, domPeer)));
         assertEquals(0, runtime.store.received(subScope));
     }
+    @Test public void irohTasksProofMediaAndReviewWorkWithoutMonitoringStreams() throws Exception {
+        byte[] domSeed = new byte[32], subSeed = new byte[32];
+        new java.security.SecureRandom().nextBytes(domSeed); new java.security.SecureRandom().nextBytes(subSeed);
+        ExecutorService serving = Executors.newSingleThreadExecutor();
+        try (PeerTransport domTransport = IrohPeerTransport.open(context, domSeed, new String[0], 10_000);
+                PeerTransport subTransport = IrohPeerTransport.open(context, subSeed, new String[0], 10_000)) {
+            store.getWritableDatabase().execSQL("DELETE FROM peers WHERE generation=?", new Object[]{generation});
+            domId = domTransport.localIdentity(); subId = subTransport.localIdentity();
+            store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'DOM','ACTIVE','')", new Object[]{subId, generation, "Synthetic Sub"});
+            store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'SUB','ACTIVE','')", new Object[]{domId, generation, "Synthetic Dom"});
+            domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
+            domScope = subId + "_" + generation; subScope = domId + "_" + generation;
+            create(); AtomicInteger calls = new AtomicInteger();
+            irohSession(domTransport, subTransport, serving, calls);
+            byte[] image = android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", android.util.Base64.DEFAULT);
+            TaskAttachment proof = new TaskAttachment(RemoteProtocol.sha256(image), "image/gif", image.length);
+            RemoteAssets source = runtime.assets(subScope); source.reserve(proof.hash, proof.length);
+            source.append(proof.hash, 0, image); source.finish(proof.hash);
+            TaskAction submitted = new TaskAction("iroh-proof", task.id, TaskAction.Kind.SUBMIT, task.firstStart.toLocalDate(),
+                    System.currentTimeMillis(), "Completed", "", List.of(proof), null);
+            runtime.store.append(subScope, submitted, false, false);
+            irohSession(domTransport, subTransport, serving, calls);
+            TaskEngine.Occurrence pending = runtime.store.load(domScope).occurrence(task.id, submitted.date, submitted.at);
+            assertEquals(TaskEngine.Status.PENDING, pending.status); assertEquals(submitted.id, pending.submission.id);
+            assertTrue(runtime.assets(domScope).isComplete(proof.hash));
+            assertEquals(proof.hash, RemoteAssets.digest(runtime.assets(domScope).finish(proof.hash)));
+            runtime.store.append(domScope, new TaskAction("iroh-accept", task.id, TaskAction.Kind.ACCEPT, submitted.date,
+                    System.currentTimeMillis(), "", submitted.id, List.of(), null), true, false);
+            irohSession(domTransport, subTransport, serving, calls); irohSession(domTransport, subTransport, serving, calls);
+            assertEquals(TaskEngine.Status.ACCEPTED, runtime.store.load(subScope).occurrence(task.id, submitted.date, submitted.at).status);
+            assertEquals(8, calls.get());
+            for (RemoteProtocol.Stream stream : new RemoteProtocol.Stream[]{RemoteProtocol.Stream.STATS, RemoteProtocol.Stream.DAILY,
+                    RemoteProtocol.Stream.APP_USAGE, RemoteProtocol.Stream.RUNTIME, RemoteProtocol.Stream.EVENTS}) {
+                assertThrows(SecurityException.class, () -> store.publish(domId, generation, stream, "forbidden", new JSONObject(), false, 1));
+                RemoteProtocol.Batch batch = new RemoteProtocol.Batch(generation, stream, 0, 1,
+                        List.of(new RemoteProtocol.Change(1, "forbidden", "{}", false, 1)));
+                assertThrows(SecurityException.class, () -> store.receive(subId, batch));
+                assertThrows(SecurityException.class, () -> store.acknowledge(domId, new RemoteProtocol.Ack(batch)));
+                assertTrue(store.published(domId, generation, stream).isEmpty());
+                assertTrue(store.mirror(subId, generation, stream).isEmpty());
+                JSONObject heads = store.outgoingHeads(domId, generation);
+                if (stream == RemoteProtocol.Stream.EVENTS) assertFalse(heads.has(stream.name()));
+                else assertEquals(-1, heads.getLong(stream.name()));
+            }
+        } finally {
+            Arrays.fill(domSeed, (byte) 0); Arrays.fill(subSeed, (byte) 0);
+            serving.shutdownNow(); assertTrue(serving.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+    private void irohSession(PeerTransport domTransport, PeerTransport subTransport, ExecutorService server, AtomicInteger calls) throws Exception {
+        Future<?> incoming = server.submit(() -> {
+            try (PeerTransport.Connection connection = subTransport.accept(10_000)) {
+                JSONObject hello = RemoteProtocol.read(connection.input());
+                assertEquals(domId, connection.authenticatedPeerIdentity());
+                assertFalse(hello.has("activityVersion")); assertEquals(1, hello.getInt("tasksVersion"));
+                new RemoteSession(store, subTransport, hooks(true, calls)).incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(25));
+            } catch (Exception failure) { throw new RuntimeException(failure); }
+        });
+        try (PeerTransport.Connection connection = domTransport.connect(subId, subTransport.inviteRoute(), 10_000)) {
+            new RemoteSession(store, domTransport, hooks(true, calls)).outgoing(connection, domPeer, System.nanoTime() + TimeUnit.SECONDS.toNanos(25));
+        }
+        incoming.get(30, TimeUnit.SECONDS);
+    }
     private void session(boolean bothSupportTasks, AtomicInteger calls) throws Exception {
         ExecutorService server = Executors.newSingleThreadExecutor();
         try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
