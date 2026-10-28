@@ -347,6 +347,7 @@ public final class LocalContractDetails extends ContextWrapper {
                 return getString(R.string.penance_rule_tap_title);
             case WATCHED_APP_OPEN:
                 return getString(R.string.penance_rule_app_open_title);
+            case TASK_FAILURE: return getString(R.string.tasks_tribute_rule);
             case TAMPER_ATTEMPT:
                 return getString(R.string.penance_rule_tamper_title);
             default:

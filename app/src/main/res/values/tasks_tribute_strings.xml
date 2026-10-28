@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tasks_tribute_rule">Task failure</string>
+    <string name="tasks_tribute_rule_enabled">Task failure tribute</string>
+    <string name="tasks_tribute_rule_cents">Task failure cost</string>
+    <string name="tasks_tribute_rule_help">Adds one local tribute for denied proof or timeout when enabled for that task. Permitted refusals are excluded. Existing spending caps apply.</string>
+</resources>

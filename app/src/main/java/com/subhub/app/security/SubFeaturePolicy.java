@@ -31,7 +31,11 @@ public final class SubFeaturePolicy {
         requireFeature(feature);
         synchronized (LOCK) {
             if (!DeviceRolePreferences.supportsSub(context)) return false;
-            if (!preferences(context).edit().putBoolean(feature, allowed).commit()) return false;
+            boolean wasAllowed = allowed(context, feature);
+            SharedPreferences.Editor edit = preferences(context).edit().putBoolean(feature, allowed);
+            if ("tasks".equals(feature) && allowed && !wasAllowed)
+                edit.putLong("tasks_resume_after", System.currentTimeMillis());
+            if (!edit.commit()) return false;
             changed(context);
             return true;
         }
@@ -51,6 +55,6 @@ public final class SubFeaturePolicy {
     }
     private static SharedPreferences preferences(Context context) { return context.getSharedPreferences(STORE, 0); }
     private static void requireFeature(String feature) {
-        if (!FEATURES.contains(feature)) throw new IllegalArgumentException("Unknown feature");
+        if (!FEATURES.contains(feature) && !"tasks".equals(feature)) throw new IllegalArgumentException("Unknown feature");
     }
 }

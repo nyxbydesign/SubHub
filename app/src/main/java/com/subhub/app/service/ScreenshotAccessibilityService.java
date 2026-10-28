@@ -5683,15 +5683,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         foregroundLimitHandoff.observed(packageName);
         if (!productQualificationRoute) captureEpoch.invalidate();
         activeApplicationWindowId.set(-1);
-        String activityPreviousPackage = foregroundPackage;
         foregroundPackage = packageName;
         com.subhub.app.appmode.ForegroundAppState.update(packageName);
         foregroundSinceMillis = now;
         if (!productQualificationRoute) resetTextSnapshots();
         AppModeManager mode = new AppModeManager(this);
         boolean selectedActivityApp = mode.getIncludedPackages().contains(packageName);
-        if (!productQualificationRoute && !CensorLabCensorSession.isActive())
-            com.subhub.app.remote.RemoteActivityRecorder.foreground(activityPreviousPackage, packageName, selectedActivityApp, now);
         if (!CensorLabCensorSession.isActive() && selectedActivityApp) {
             int charged = penance.recordInfraction(
                     PenanceInfraction.WATCHED_APP_OPEN, 1, now);
@@ -5844,10 +5841,6 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             stats.recordLimitIntervention();
         }
-        if (!productQualificationRoute) com.subhub.app.remote.RemoteActivityRecorder.limit(blockedPackage,
-                status == AppTimerManager.LimitStatus.PER_APP,
-                status == AppTimerManager.LimitStatus.PER_APP ? timers.allowanceMinutes(blockedPackage) : timers.loadSettings().totalMinutes,
-                selected, nowMillis);
         Log.i(TAG, "Daily app limit enforced for " + blockedPackage + " (" + status + ")");
         if (performGlobalAction(GLOBAL_ACTION_HOME)) {
             // A Home request is not an observed app exit; stale roots must not create another entry.
