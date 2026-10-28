@@ -231,6 +231,10 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public int tasksVersion() { return 1; }
+            @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                com.subhub.app.tasks.TaskPeer.exchange(context, connection, peer, deadline);
+            }
             @Override public String displayName(RemoteStore.Peer peer) {
                 return com.subhub.app.people.ProfileNames.get(context, peer.localRole == RemoteProtocol.Role.DOM);
             }
@@ -254,7 +258,7 @@ public final class RemoteFeature {
                     boolean available=true;try{telemetry.prepare(peer);store.putMetadata(peer.identity,peer.generation,"stats_error","");}
                     catch(Exception unavailable){available=false;store.putMetadata(peer.identity,peer.generation,"stats_error","Statistics could not be refreshed");}
                     for(RemoteProtocol.Stream stream:new RemoteProtocol.Stream[]{RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE,RemoteProtocol.Stream.APP_CATALOG,RemoteProtocol.Stream.RUNTIME})
-                        store.putMetadata(peer.identity,peer.generation,"unavailable_"+stream.name(),Boolean.toString(!available));
+                        store.putMetadata(peer.identity,peer.generation,"unavailable_"+stream.name(),Boolean.toString(!available || !PeerDataPolicy.permits(stream)));
                 }
                 try{contracts.prepare(peer);store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","false");}
                 catch(Exception unavailable){store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","true");store.putMetadata(peer.identity,peer.generation,"contract_error","Contract data could not be refreshed");}

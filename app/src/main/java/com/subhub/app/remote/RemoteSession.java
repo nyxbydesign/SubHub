@@ -12,6 +12,8 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default int tasksVersion() { return 0; }
+        default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default String displayName(RemoteStore.Peer peer) { return ""; }
         default void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos)throws Exception {}
         void prepare(RemoteStore.Peer peer) throws Exception;
@@ -41,16 +43,20 @@ public final class RemoteSession {
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
-        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer)),deadlineNanos);
+        JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("displayName",hooks.displayName(peer));
+        if (hooks.tasksVersion() == 1) hello.put("tasksVersion", 1);
+        send(connection,hello,deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
             requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
+        store.putMetadata(peer.identity,peer.generation,"tasks_version",tasksVersion(response)==1 && hooks.tasksVersion()==1 ? "1" : "0");
         receiveDisplayName(response, peer);
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==1);
+        activityVersion(response);
+        exchange(connection,peer,deadlineNanos,false,tasksVersion(response)==1 && hooks.tasksVersion()==1);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -66,10 +72,13 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
-        boolean activity=activityVersion(hello)==1;if(activity)ready.put("activityVersion",1);
+        activityVersion(hello);boolean activity=false;
+        boolean tasks = tasksVersion(hello)==1 && hooks.tasksVersion()==1;
+        store.putMetadata(peer.identity,peer.generation,"tasks_version",tasks ? "1" : "0");
+        if (tasks) ready.put("tasksVersion",1);
         send(connection,ready,deadlineNanos);
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
-        exchange(connection,peer,deadlineNanos,activity);
+        exchange(connection,peer,deadlineNanos,activity,tasks);
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
@@ -104,17 +113,26 @@ public final class RemoteSession {
         if(version<=0)throw new SecurityException("Invalid activity capability");return version;
     }
 
-    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity) throws Exception {
+    private static long tasksVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("tasksVersion")) return 0;
+        long value = RemoteProtocol.integer(frame,"tasksVersion");
+        if (value <= 0) throw new SecurityException("Invalid Tasks capability");
+        return value;
+    }
+
+    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
             push(connection,peer,deadline,activity);
             pull(connection,peer,deadline,activity);
+            if (tasks) hooks.tasks(connection,peer,deadline);
             send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
             pull(connection,peer,deadline,activity);
             hooks.prepare(peer);
             push(connection,peer,deadline,activity);
+            if (tasks) hooks.tasks(connection,peer,deadline);
             requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());
@@ -127,7 +145,7 @@ public final class RemoteSession {
                 RemoteProtocol.Stream.COMMAND_RESULT,RemoteProtocol.Stream.RUNTIME,RemoteProtocol.Stream.BASELINE,
                 RemoteProtocol.Stream.EVENTS,RemoteProtocol.Stream.STATS,RemoteProtocol.Stream.APP_CATALOG,
                 RemoteProtocol.Stream.DAILY,RemoteProtocol.Stream.APP_USAGE}) {
-            if(stream.writer!=peer.localRole) continue;
+            if(stream.writer!=peer.localRole || !PeerDataPolicy.permits(stream)) continue;
             if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
             while(batches<MAX_BATCHES) {
                 checkActive(peer);

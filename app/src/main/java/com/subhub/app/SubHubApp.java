@@ -68,6 +68,7 @@ public final class SubHubApp extends Application {
         LocaleHelper.applySaved(this);
         com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(this);
         com.subhub.app.remote.RemoteUi.install(this);
+        com.subhub.app.tasks.TaskRuntime.get(this).install(this);
         new UpdateStateStore(this).cleanupInstalled(BuildConfig.VERSION_CODE);
         UpdateScheduler.synchronize(this);
         HardcoreReadinessNotificationManager.refresh(this);

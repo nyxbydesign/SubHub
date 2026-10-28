@@ -310,7 +310,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         displayWalletSections();
         if (connection != null) connection.refresh();
-        View[] editable = { binding.ruleDetectionEnabled,
+        View[] editable = { binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount, binding.ruleDetectionEnabled,
                 binding.ruleDetectionAmount, binding.detectionBatch, binding.ruleDwellEnabled,
                 binding.ruleDwellAmount, binding.dwellSeconds,
                 binding.ruleTapEnabled, binding.ruleTapAmount,
@@ -345,6 +345,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount);
         populateRule(PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        populateRule(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         populateRule(PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
@@ -372,6 +373,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void syncRuleInputStates() {
+        syncRuleInputState(binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         syncRuleInputState(binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
         syncRuleInputState(binding.ruleDwellEnabled, binding.ruleDwellAmount,
@@ -408,6 +410,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.dwellSeconds);
         attachRuleToggle(PenanceInfraction.CENSORED_TAP, binding.ruleTapEnabled, binding.ruleTapAmount);
         attachRuleToggle(PenanceInfraction.WATCHED_APP_OPEN, binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        attachRuleToggle(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         binding.paidPauseEnabled.setOnCheckedChangeListener((button, checked) -> {
@@ -422,7 +425,7 @@ public final class PenanceActivity extends AppCompatActivity {
             syncPaidPauseInputs();
             scheduleRulesSave();
         });
-        EditText[] inputs = {binding.ruleDetectionAmount, binding.detectionBatch,
+        EditText[] inputs = {binding.ruleTaskFailureAmount, binding.ruleDetectionAmount, binding.detectionBatch,
                 binding.ruleDwellAmount, binding.ruleTapAmount, binding.ruleAppOpenAmount,
                 binding.ruleTamperAmount, binding.tamperCooldownMinutes,
                 binding.dailyCap, binding.weeklyCap, binding.mercyMinutes,
@@ -514,6 +517,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount)
                 || !readRule(rules, PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount)
+                || !readRule(rules, PenanceInfraction.TASK_FAILURE,
+                binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount)
                 || !readRule(rules, PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount)) {
             if (showInvalid) toast(R.string.penance_rules_invalid);
@@ -892,6 +897,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private String infractionLabel(PenanceInfraction infraction) {
+        if (infraction == PenanceInfraction.TASK_FAILURE) return getString(R.string.tasks_tribute_rule);
         if (infraction == PenanceInfraction.PAID_PAUSE) {
             return getString(R.string.paid_pause_history_label);
         }

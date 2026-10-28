@@ -35,7 +35,9 @@ public final class RemoteContracts {
         }
         String applied=store.metadata(peer.identity,peer.generation,"applied_configuration","");
         JSONObject current=new JSONObject(applied.isEmpty()?store.metadata(peer.identity,peer.generation,"initial_configuration",""):applied);
-        store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",current,false,System.currentTimeMillis());
+        JSONObject wire = com.subhub.app.tasks.TaskContractFields.forPeer(current,
+                "1".equals(store.metadata(peer.identity,peer.generation,"tasks_version","0")), false);
+        store.publish(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active",wire,false,System.currentTimeMillis());
         process(peer);writer.prunePrepared();
     }
 

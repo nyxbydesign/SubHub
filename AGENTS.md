@@ -56,6 +56,8 @@ the connection state. For pixel assertions, exclude fixture window transitions a
 a new hardware-frame commit where supported; UI idle and a fixed sleep alone do not
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
+Give native evidence writers candidate-specific log paths and refuse to overwrite an existing log.
+When reusing a helper, qualify its output paths before starting the workload.
 
 For native taps on scrolling pages with floating navigation, use
 `NativeUiActions.revealAboveNavigation()` before clicking. Espresso `scrollTo()` alone can
@@ -91,6 +93,13 @@ exports and shutdown observers, and reconcile actual closure separately.
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
+For media teardown, hide the MediaController and detach it with
+`VideoView.setMediaController(null)` before stopping playback. Do not pass null to
+`MediaController.setMediaPlayer`: Android immediately queries that control. Verify pause,
+role changes and local revocation while media is actually playing.
+After a failed SharedPreferences `commit()`, receipt values may already be visible in memory.
+Require a successful persistence acknowledgement before marking the corresponding durable effect
+complete; `contains()` alone does not establish that the ledger and receipt reached disk.
 Checked widget state can also be restored after `onCreate` and invoke change listeners.
 When preferences are authoritative, fence persistence, scheduling, and network side effects
 during framework view-state restoration, then render from those preferences. Native
