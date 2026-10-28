@@ -12,6 +12,8 @@ import java.util.*;
 /** Application-only app discovery; never builds rows or retains a settings page. */
 public final class InstalledAppCatalog {
     public static Set<String> packageNames(Context app) {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(app);
+        if (remote != null) return new LinkedHashSet<>(remote.catalog().keySet());
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         Set<String> names = new LinkedHashSet<>();
         for (ResolveInfo info : app.getPackageManager().queryIntentActivities(launcher, PackageManager.MATCH_ALL))
@@ -20,6 +22,14 @@ public final class InstalledAppCatalog {
         return names;
     }
     public static List<Entry> load(Context app) throws InterruptedException {
+        com.subhub.app.configuration.FeatureEditorSession remote = com.subhub.app.configuration.FeatureEditorSession.scope(app);
+        if (remote != null) {
+            List<Entry> result = new ArrayList<>();
+            for (Map.Entry<String,String> entry : remote.catalog().entrySet())
+                result.add(new Entry(entry.getValue(), entry.getKey(), app.getDrawable(com.subhub.app.R.drawable.ic_settings_apps)));
+            result.sort((a,b) -> Collator.getInstance().compare(a.label,b.label));
+            return Collections.unmodifiableList(result);
+        }
         PackageManager packages = app.getPackageManager();
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         @SuppressWarnings("deprecation")

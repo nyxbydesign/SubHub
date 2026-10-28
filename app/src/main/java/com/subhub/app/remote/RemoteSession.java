@@ -12,6 +12,7 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default String displayName(RemoteStore.Peer peer) { return ""; }
         default void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos)throws Exception {}
         void prepare(RemoteStore.Peer peer) throws Exception;
         void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception;
@@ -40,13 +41,14 @@ public final class RemoteSession {
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
-        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1),deadlineNanos);
+        send(connection,message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer)),deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
             requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
+        receiveDisplayName(response, peer);
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos,activityVersion(response)==1);
     }
@@ -61,7 +63,8 @@ public final class RemoteSession {
         }
         requirePeer(connection,peer);requireType(hello,"hello",peer);
         store.setRoute(identity,generation,hello.getString("route"));
-        JSONObject ready=message("hello_ack",peer);
+        receiveDisplayName(hello, peer);
+        JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
         boolean activity=activityVersion(hello)==1;if(activity)ready.put("activityVersion",1);
         send(connection,ready,deadlineNanos);
@@ -85,6 +88,14 @@ public final class RemoteSession {
     private void terminalDrain(PeerTransport.Connection connection,String type,RemoteStore.Peer peer,long deadline)throws Exception {
         // A QUIC connection close can overtake buffered stream bytes. Keep the reply alive until its receipt.
         try{requireType(read(connection,deadline),type,peer);}catch(IOException closedAfterReply){/* The terminal application state is already committed. */}
+    }
+
+    private void receiveDisplayName(JSONObject frame, RemoteStore.Peer peer) throws JSONException {
+        if (!frame.has("displayName")) return;
+        Object raw = frame.get("displayName");
+        if (!(raw instanceof String) || ((String) raw).length() > com.subhub.app.people.ProfileNames.MAX_LENGTH)
+            throw new JSONException("Invalid display name");
+        store.updateDisplayName(peer.identity, peer.generation, (String) raw);
     }
 
     private static long activityVersion(JSONObject frame)throws JSONException {

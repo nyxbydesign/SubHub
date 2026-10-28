@@ -44,6 +44,8 @@ public final class DailyStatsPanel extends LinearLayout {
         R.string.daily_paid_eur,
         R.string.daily_paid_usd
     };
+    public interface Source { DailyData load(String first, String last) throws Exception; }
+    private final Source source;
     private final boolean compact;
     private int range = 30, metric, month = LocalDate.now().getMonthValue();
     private LocalDate selected = LocalDate.now();
@@ -58,7 +60,11 @@ public final class DailyStatsPanel extends LinearLayout {
     }
 
     public DailyStatsPanel(Context context, boolean compact, Bundle state) {
+        this(context, compact, state, null);
+    }
+    public DailyStatsPanel(Context context, boolean compact, Bundle state, Source source) {
         super(context);
+        this.source = source;
         this.compact = compact;
         if (compact) range = 7;
         uiData = com.subhub.app.util.AsyncUiScope.forContext(context);
@@ -114,6 +120,7 @@ public final class DailyStatsPanel extends LinearLayout {
         uiData.load(
                 taskKey,
                 () -> {
+                    if (source != null) return source.load(first.toString(), today.toString());
                     DailyStatsStore store = DailyStatsStore.get(app);
                     DailyStatsStore.awaitWrites();
                     return new DailyData(
@@ -208,14 +215,16 @@ public final class DailyStatsPanel extends LinearLayout {
         });
         filter.setId(R.id.daily_metric_filter);
         long total = 0;
+        boolean complete = true;
         List<Long> trend = new ArrayList<>();
         LocalDate recorded = LocalDate.parse(since);
         for (LocalDate day = first; !day.isAfter(today); day = day.plusDays(1)) {
             long v = value(day, METRICS[metric]);
-            total = total > Long.MAX_VALUE - v ? Long.MAX_VALUE : total + v;
+            if (v < 0) complete = false;
+            else total = total > Long.MAX_VALUE - v ? Long.MAX_VALUE : total + v;
             if (!day.isBefore(recorded)) trend.add(v);
         }
-        label(this, format(METRICS[metric], total), 32, false).setTypeface(null, Typeface.BOLD);
+        label(this, format(METRICS[metric], complete ? total : -1), 32, false).setTypeface(null, Typeface.BOLD);
         label(
                 this,
                 getContext()
@@ -345,7 +354,8 @@ public final class DailyStatsPanel extends LinearLayout {
         for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
             final LocalDate chosen = d;
             long amount = value(d, METRICS[metric]);
-            boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(LocalDate.now());
+            boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(LocalDate.now())
+                    && (source == null || data.containsKey(d.toString()));
             TextView day = new TextView(getContext());
             day.setText(Integer.toString(d.getDayOfMonth()));
             com.subhub.app.util.UiIdentity.textSize(day, R.dimen.ui_text_body);
@@ -393,10 +403,11 @@ public final class DailyStatsPanel extends LinearLayout {
 
     private long value(LocalDate day, String metric) {
         Map<String, Long> row = data.get(day.toString());
-        return row == null ? 0 : row.getOrDefault(metric, 0L);
+        return row == null ? source == null ? 0 : -1 : row.getOrDefault(metric, 0L);
     }
 
     private String format(String metric, long value) {
+        if (value < 0) return getContext().getString(R.string.role_unknown_data);
         if (metric.endsWith("_ms"))
             return value > 0 && value < 60000
                     ? getContext().getString(R.string.stats_seconds_value, (value + 999) / 1000)
@@ -441,11 +452,11 @@ public final class DailyStatsPanel extends LinearLayout {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private static final class DailyData {
+    public static final class DailyData {
         final String since;
         final Map<String, Map<String, Long>> days;
 
-        DailyData(String since, Map<String, Map<String, Long>> days) {
+        public DailyData(String since, Map<String, Map<String, Long>> days) {
             this.since = since;
             this.days = days;
         }

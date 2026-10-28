@@ -15,6 +15,16 @@ import java.util.*;
 /** Current service, lifetime totals, dated activity and recorded sessions share one page. */
 public final class StatsActivity extends PreferencePage {
     private DailyStatsPanel daily;
+    private RemoteStatsSource remote;
+    private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refreshRemote = new Runnable() {
+        @Override public void run() {
+            if (remote == null || isFinishing()) return;
+            try { remote.requireAccess(); bindTotals(); }
+            catch (RuntimeException unavailable) { finish(); return; }
+            remoteClock.postDelayed(this, 2000);
+        }
+    };
     private LinearLayout totalsDetails, sessionList, currentSession, allowances;
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
     private AchievementPreviewView achievements;
@@ -25,6 +35,10 @@ public final class StatsActivity extends PreferencePage {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (!com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            try { remote = new RemoteStatsSource(this, com.subhub.app.people.PersonRoutes.requireId(getIntent())); }
+            catch (RuntimeException unavailable) { finish(); return; }
+        }
         if (state != null) {
             sessionLimit = Math.max(3, Math.min(30, state.getInt("stats_session_limit", 3)));
         }
@@ -43,7 +57,7 @@ public final class StatsActivity extends PreferencePage {
         lifetimeTime = metric(numbers, R.string.stats_time);
         lifetimeCensors = metric(numbers, R.string.stats_censors);
         lifetimeSessions = metric(numbers, R.string.stats_sessions);
-        daily = new DailyStatsPanel(this, false, state);
+        daily = new DailyStatsPanel(this, false, state, remote);
         page.addView(daily, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams activityParams =
                 (LinearLayout.LayoutParams) daily.getLayoutParams();
@@ -69,6 +83,11 @@ public final class StatsActivity extends PreferencePage {
     @Override
     protected void onResume() {
         super.onResume();
+        if (remote != null) {
+            try { remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
+            remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
+        }
+        if (isFinishing()) return;
         com.subhub.app.util.SubHubNavigation.bind(this, findViewById(android.R.id.content),
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
         boolean dom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
@@ -80,6 +99,14 @@ public final class StatsActivity extends PreferencePage {
                 dom ? android.view.View.VISIBLE : android.view.View.GONE);
         com.subhub.app.util.PrimaryHeader.bind(root, 0, R.string.role_stats,
                 dom ? R.string.role_this_device : 0);
+        if (remote != null) {
+            try {
+                com.subhub.app.people.PersonSnapshot person = remote.person();
+                com.subhub.app.util.PrimaryHeader.subtitle(root).setText(person.name + " · " + com.subhub.app.people.ProfileViews.targetDiscriminator(this, person));
+                com.subhub.app.util.PrimaryHeader.subtitle(root).setVisibility(android.view.View.VISIBLE);
+                android.view.View nav = root.findViewById(R.id.bottom_navigation); if (nav != null) nav.setVisibility(android.view.View.GONE);
+            } catch (Exception unavailable) { finish(); return; }
+        } else if (dom) com.subhub.app.util.PrimaryHeader.subtitle(root).setText(com.subhub.app.people.ProfileNames.get(this, false));
         if (firstResume) {
             firstResume = false;
             return;
@@ -92,7 +119,7 @@ public final class StatsActivity extends PreferencePage {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
-        daily.save(state);
+        if (daily != null) daily.save(state);
         state.putInt("stats_session_limit", sessionLimit);
         super.onSaveInstanceState(state);
     }
@@ -109,7 +136,13 @@ public final class StatsActivity extends PreferencePage {
         return value;
     }
 
+    @Override protected void onPause() {
+        remoteClock.removeCallbacks(refreshRemote);
+        super.onPause();
+    }
+
     private void bindTotals() {
+        if (remote != null) { bindRemoteTotals(); return; }
         StatsRepository repository = new StatsRepository(this);
         StatsSnapshot stats = repository.load();
         achievements.load(data, "stats-achievement-preview", stats);
@@ -164,7 +197,51 @@ public final class StatsActivity extends PreferencePage {
         }
     }
 
+    private void bindRemoteTotals() {
+        org.json.JSONObject stats = remote.summary();
+        achievements.setVisibility(android.view.View.GONE);
+        lifetimeTime.setText(remoteMetric(stats,"protectedSeconds",true));
+        lifetimeCensors.setText(remoteMetric(stats,"censors",false));
+        lifetimeSessions.setText(remoteMetric(stats,"sessions",false));
+        totalsDetails.removeAllViews(); heading(totalsDetails,R.string.profile_stats_feature_totals);
+        try {
+            com.subhub.app.people.PersonSnapshot person = remote.person();
+            text(totalsDetails,getString(R.string.role_last_synced,person.lastSyncedAt <= 0 ? getString(R.string.role_unknown_data)
+                    : DateFormat.getDateTimeInstance().format(new Date(person.lastSyncedAt))),13,true);
+            if (person.sync.stats != com.subhub.app.people.PersonSnapshot.Freshness.CURRENT)
+                text(totalsDetails,getString(R.string.role_stale_data),13,true);
+            currentSession.removeAllViews();currentSession.setVisibility(person.serviceActive?android.view.View.VISIBLE:android.view.View.GONE);
+            if(person.serviceActive){heading(currentSession,R.string.profile_stats_current_session);
+                row(currentSession,R.string.stats_time,remoteMetric(stats,"currentSeconds",true));
+                row(currentSession,R.string.stats_censors,remoteMetric(stats,"currentCensors",false));
+                row(currentSession,R.string.stats_limit_stops,remoteMetric(stats,"currentLimitStops",false));
+                row(currentSession,R.string.stats_tributes,remoteMetric(stats,"currentTributes",false));}
+        } catch (Exception unavailable) { currentSession.setVisibility(android.view.View.GONE); }
+        row(totalsDetails,R.string.statistics_longest,getString(R.string.role_unknown_data));
+        row(totalsDetails,R.string.statistics_current_streak,getString(R.string.role_unknown_data));
+        row(totalsDetails,R.string.stats_limited_app_time,stats==null?getString(R.string.role_unknown_data):duration(stats.optLong("limitMillis")/1000));
+        row(totalsDetails,R.string.stats_limit_stops,remoteMetric(stats,"limitStops",false));
+        row(totalsDetails,R.string.stats_whispers,remoteMetric(stats,"whispers",false));
+        row(totalsDetails,R.string.stats_popups,remoteMetric(stats,"popups",false));
+        row(totalsDetails,R.string.stats_tributes,remoteMetric(stats,"tributes",false));
+        for(String currency:new String[]{"EUR","USD"}){
+            text(totalsDetails,currency,13,true).setTypeface(null,Typeface.BOLD);
+            row(totalsDetails,R.string.stats_assessed,stats==null?getString(R.string.role_unknown_data):WalletCurrency.format(currency,stats.optLong("assessed"+currency)));
+            row(totalsDetails,R.string.stats_paid,stats==null?getString(R.string.role_unknown_data):WalletCurrency.format(currency,stats.optLong("paid"+currency)));
+        }
+    }
+    private String remoteMetric(org.json.JSONObject stats,String key,boolean time) {
+        if(stats==null||!stats.has(key))return getString(R.string.role_unknown_data);
+        return time?duration(stats.optLong(key)):number(stats.optLong(key));
+    }
+
     private void bindAllowances() {
+        if (remote != null) {
+            data.load("stats-app-allowances",remote::person,person->{allowances.removeAllViews();com.subhub.app.people.PersonUi.allowances(allowances,person);},failure->{
+                allowances.removeAllViews();text(allowances,getString(R.string.role_unknown_data),13,true);
+            });
+            return;
+        }
         android.content.Context app = getApplicationContext();
         com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(app);
         data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
@@ -179,6 +256,7 @@ public final class StatsActivity extends PreferencePage {
     private void bindSessions() {
         sessionList.removeAllViews();
         heading(sessionList, R.string.stats_recent_sessions);
+        if (remote != null) { text(sessionList,getString(R.string.stats_remote_history_private),13,true);return; }
         List<StatsRepository.SessionEntry> entries =
                 new ArrayList<>(new StatsRepository(this).getSessionHistory());
         Collections.reverse(entries);

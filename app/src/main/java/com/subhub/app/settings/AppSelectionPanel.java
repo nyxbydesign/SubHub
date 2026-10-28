@@ -27,6 +27,7 @@ public final class AppSelectionPanel extends LinearLayout {
     private List<InstalledAppCatalog.Entry> entries;
     private IncludedAppsAdapter adapter;
     private AppModeManager apps;
+    private Context source;
     private AsyncUiScope jobs;
     private BooleanSupplier editable;
     private Runnable changed;
@@ -83,9 +84,13 @@ public final class AppSelectionPanel extends LinearLayout {
     }
 
     public void bind(AppCompatActivity activity, BooleanSupplier editable, Runnable changed) {
+        bind(activity, activity.getApplicationContext(), editable, changed);
+    }
+    public void bind(AppCompatActivity activity, Context source, BooleanSupplier editable, Runnable changed) {
+        this.source = source.getApplicationContext();
         this.editable = editable;
         this.changed = changed;
-        apps = new AppModeManager(activity);
+        apps = new AppModeManager(source);
         jobs = AsyncUiScope.forPage(activity);
         refresh();
     }
@@ -102,7 +107,7 @@ public final class AppSelectionPanel extends LinearLayout {
 
     public void load() {
         if (jobs == null || entries != null || jobs.isPending("included-app-selector")) return;
-        Context app = getContext().getApplicationContext();
+        Context app = source;
         jobs.load("included-app-selector", () -> InstalledAppCatalog.load(app), loaded -> {
             entries = loaded;
             loading.setVisibility(GONE);

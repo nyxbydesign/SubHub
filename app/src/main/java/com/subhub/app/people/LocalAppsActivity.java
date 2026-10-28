@@ -1,5 +1,7 @@
 package com.subhub.app.people;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.widget.LinearLayout;
@@ -15,24 +17,26 @@ public final class LocalAppsActivity extends RolePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (!FeatureEditorSession.attach(this, "apps", state)) return;
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
         if (!mayEdit()) { finish(); return; }
         page(R.string.person_apps_title, SubHubNavigation.Screen.PEOPLE, true);
         secondaryBack(this::finish);
-        PersonUi.text(body, getString(R.string.role_this_device), false).setId(R.id.person_editor_target);
+        PersonUi.text(body, FeatureEditorSession.targetName(this), false).setId(R.id.person_editor_target);
         selection = new AppSelectionPanel(this);
         selection.setId(R.id.person_apps_panel);
         selection.setTag("person_apps:" + personId.value());
         body.addView(selection, new LinearLayout.LayoutParams(-1, -2));
-        selection.bind(this, this::mayEdit, () -> {});
+        selection.bind(this, FeatureEditorSession.context(this), this::mayEdit, () -> {});
+        FeatureEditorSession.bind(this, findViewById(android.R.id.content), "apps", () -> true);
         InputFocusPolicy.openActivityForReading(this);
     }
 
     private boolean mayEdit() {
         try {
             return personId != null && personId.equals(PersonRoutes.requireId(getIntent()))
-                    && PersonRoutes.canEditLocal(this, personId);
+                    && FeatureEditorSession.canEdit(this, "apps");
         } catch (IllegalArgumentException invalid) { return false; }
     }
 
@@ -47,4 +51,9 @@ public final class LocalAppsActivity extends RolePage {
         if (!mayEdit()) { selection.refresh(); finish(); return; }
         selection.reload();
     }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        super.onSaveInstanceState(state);
+    }
+
 }

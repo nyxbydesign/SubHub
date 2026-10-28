@@ -30,19 +30,19 @@ public final class FeatureModuleManager {
     }
 
     public boolean isCensorEnabled() {
-        return preferences.getBoolean(KEY_CENSOR_ENABLED, true);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "censor") && preferences.getBoolean(KEY_CENSOR_ENABLED, true);
     }
 
     public boolean isLimitsEnabled() {
-        return true;
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits");
     }
 
     public boolean isWalletEnabled() {
-        return true;
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet");
     }
 
     public boolean isSubliminalEnabled() {
-        return preferences.getBoolean(KEY_SUBLIMINAL_ENABLED, false);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "subliminal") && preferences.getBoolean(KEY_SUBLIMINAL_ENABLED, false);
     }
 
     public void setCensorEnabled(boolean enabled) {
@@ -57,7 +57,7 @@ public final class FeatureModuleManager {
         return isCensorEnabled()
                 || new com.subhub.app.appmode.AppTimerManager(context).loadSettings().anyEnabled()
                 || new com.subhub.app.penance.PenanceManager(context).isEnabled() || isSubliminalEnabled()
-                || preferences.getBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, false);
+                || com.subhub.app.popup.PopupStormSettings.load(context).isEnabled();
     }
 
     public void save(boolean censor, boolean limits, boolean wallet, boolean subliminal) {

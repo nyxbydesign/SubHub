@@ -95,6 +95,14 @@ public final class RemoteStore extends SQLiteOpenHelper {
         return peers;
     }
 
+    synchronized void updateDisplayName(String identity, String generation, String name) {
+        name = com.subhub.app.people.ProfileNames.clean(name);
+        if (name.isEmpty()) return;
+        active(getWritableDatabase(), identity, generation);
+        getWritableDatabase().execSQL("UPDATE peers SET name=? WHERE peer=? AND generation=?",
+                new Object[]{name, identity, generation});
+    }
+
     public synchronized Peer peer(String identity, String generation) {
         RemoteProtocol.peerId(identity); RemoteProtocol.identifier(generation);
         return peer(getReadableDatabase(), identity, generation);

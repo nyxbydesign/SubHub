@@ -66,6 +66,10 @@ public final class RemoteTelemetry {
                 .put("notifications",Build.VERSION.SDK_INT<33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED)
                 .put("armed",apps.isArmed()).put("paused",new PaidPauseManager(context).isActive()).put("sessionStart",session.getLong("active_session_start_ms",0))
                 .put("sessionEnd",main.getLong("commitment_ends_at",0)).put("appliedRevision",Long.parseLong(store.metadata(peer.identity,peer.generation,"applied_revision","0")));
+        JSONObject consent = new JSONObject();
+        for (String key : com.subhub.app.security.SubFeaturePolicy.FEATURES)
+            consent.put(key, com.subhub.app.security.SubFeaturePolicy.allowed(context, key));
+        runtime.put("featureConsent", consent);
         publish(peer,RemoteProtocol.Stream.RUNTIME,"current",runtime);
     }
     public static boolean validSummary(JSONObject value) {
@@ -78,6 +82,12 @@ public final class RemoteTelemetry {
         try{if(value==null || RemoteProtocol.integer(value,"schema")!=1 || !(value.get("device") instanceof String))return false;
             for(String key:new String[]{"observedAt","sessionStart","sessionEnd","appliedRevision"})if(RemoteProtocol.integer(value,key)<0)return false;
             for(String key:new String[]{"serviceActive","screenCapture","recognitionActive","accessibilityBound","accessibilityEnabled","overlayPermission","notifications","armed","paused"})if(!(value.get(key) instanceof Boolean))return false;
+            if (value.has("featureConsent")) {
+                JSONObject consent = value.getJSONObject("featureConsent");
+                if (consent.length() != com.subhub.app.security.SubFeaturePolicy.FEATURES.size()) return false;
+                for (String key : com.subhub.app.security.SubFeaturePolicy.FEATURES)
+                    if (!(consent.get(key) instanceof Boolean)) return false;
+            }
             if(value.has("endSessionSupported") && !(value.get("endSessionSupported") instanceof Boolean))return false;
             if(value.has("sessionIdentity") && (!(value.get("sessionIdentity") instanceof String) || !value.getString("sessionIdentity").matches("([0-9a-f]{64})?")))return false;
             return true;

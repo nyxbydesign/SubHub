@@ -50,7 +50,9 @@ public final class ContractActivity extends RolePage {
         LinearLayout identity = PersonUi.card(body);
         identity.setBackgroundResource(R.drawable.bg_home_composition_person);
         identity.setTag("person_contract_identity");
-        ContractHeader.add(identity, person, getString(R.string.role_configured_by_dom), data);
+        String dom = People.keyholder().assignedDomName();
+        if (dom.isEmpty()) dom = ProfileNames.get(this, true);
+        ContractHeader.add(identity, person, getString(R.string.profile_configured_by_name, dom), data);
         PersonUi.text(identity, ProfileViews.targetDiscriminator(this, person), false);
         if (person.sync.hasPendingConfiguration()) PersonUi.text(identity, getString(R.string.role_changes_pending), false);
         if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(identity,
@@ -123,7 +125,8 @@ public final class ContractActivity extends RolePage {
         detail.setTag("contract_details:" + value.key);
         detail.setBackgroundResource(R.drawable.bg_home_composition_stat);
         detail.setPadding(PersonUi.dp(this, 12), PersonUi.dp(this, 4), PersonUi.dp(this, 12), PersonUi.dp(this, 8));
-        for (String block : value.details.split("\\n\\s*\\n")) {
+        if ("apps".equals(value.key)) ContractAppList.add(detail, value.details);
+        else for (String block : value.details.split("\\n\\s*\\n")) {
             SpannableString copyText = new SpannableString(block);
             int firstLine = "apps".equals(value.key) ? -1 : block.indexOf('\n');
             if (firstLine > 0) copyText.setSpan(new StyleSpan(Typeface.BOLD), 0, firstLine, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);

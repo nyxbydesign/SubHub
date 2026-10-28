@@ -1,5 +1,7 @@
 package com.subhub.app.penance;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -71,11 +73,16 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "wallet", savedInstanceState)) return;
         binding = ActivityPenanceBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
                 R.string.penance_title, 0);
-        manager = new PenanceManager(this);
+        manager = new PenanceManager(FeatureEditorSession.context(this));
+        if (FeatureEditorSession.remote(this)) {
+            bindRemoteRules();
+            return;
+        }
         paypalCredentials = new PayPalCredentialStore(this);
         paypalClient = new PayPalOrdersClient(this);
         if (savedInstanceState != null) {
@@ -107,7 +114,7 @@ public final class PenanceActivity extends AppCompatActivity {
         binding.buttonSettle.setOnClickListener(view -> {
                     if (!paypalCredentials.hasCredentials()
                             && !validExternalUrl(manager.getPayPalLink())
-                            && ControllerPinManager.canEditConfiguration()) {
+                            && FeatureEditorSession.canEdit(this, "wallet")) {
                         openWalletEditor("paypal");
                     } else beginCheckout();
                 });
@@ -137,6 +144,7 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
         if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
         showConnectionIfRequested();
@@ -148,11 +156,27 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
         applyEditState();
         connection.onResume();
         showConnectionIfRequested();
         timer.removeCallbacks(tick);
         timer.post(tick);
+    }
+
+    private void bindRemoteRules() {
+        binding.walletOverview.setVisibility(View.GONE);
+        binding.walletEditor.setVisibility(View.VISIBLE);
+        View rules = binding.ruleConfigCard, pause = binding.paidPauseConfigCard;
+        android.view.ViewGroup container = (android.view.ViewGroup) binding.walletEditor;
+        if (rules.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) rules.getParent()).removeView(rules);
+        if (pause.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) pause.getParent()).removeView(pause);
+        container.removeAllViews();
+        rules.setVisibility(View.VISIBLE); pause.setVisibility(View.VISIBLE);
+        container.addView(rules); container.addView(pause);
+        populateRules(); attachRuleMathListeners(); renderRuleMathPreview();
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        FeatureEditorSession.bind(this, binding.getRoot(), "wallet", () -> saveRules(true));
     }
 
     private void arrangeWalletSections() {
@@ -205,9 +229,9 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void openWalletEditor(String key) {
-        if (!key.isEmpty() && !ControllerPinManager.canEditConfiguration()) return;
+        if (!key.isEmpty() && !FeatureEditorSession.canEdit(this, "wallet")) return;
         if (expandedWalletSection.isEmpty()) overviewScroll = binding.walletScroll.getScrollY();
-        if (ControllerPinManager.canEditConfiguration()) commitRules(false);
+        if (FeatureEditorSession.canEdit(this, "wallet")) commitRules(false);
         View focused = getCurrentFocus();
         if (focused != null) {
             ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
@@ -224,7 +248,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void displayWalletSections() {
-        boolean dom = ControllerPinManager.canEditConfiguration();
+        boolean dom = FeatureEditorSession.canEdit(this, "wallet");
         if (!dom) expandedWalletSection = "";
         boolean overview = expandedWalletSection.isEmpty();
         binding.walletOverview.setVisibility(overview ? View.VISIBLE : View.GONE);
@@ -242,7 +266,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 overview ? R.drawable.ic_nav_money : 0,
                 overview ? R.string.penance_title : walletTitles.get(expandedWalletSection),
                 0);
-        PrimaryHeader.subtitle(binding.getRoot()).setText(R.string.role_this_device);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(com.subhub.app.people.ProfileNames.get(this, false));
         PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
                 ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         if (editorBack != null) editorBack.setEnabled(!overview);
@@ -251,11 +275,12 @@ public final class PenanceActivity extends AppCompatActivity {
     private void showConnectionIfRequested() {
         if (!getIntent().getBooleanExtra(EXTRA_SHOW_CONNECTION, false)) return;
         getIntent().removeExtra(EXTRA_SHOW_CONNECTION);
-        if (ControllerPinManager.canEditConfiguration()) openWalletEditor("paypal");
+        if (FeatureEditorSession.canEdit(this, "wallet")) openWalletEditor("paypal");
     }
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
         state.putString("wallet_section", expandedWalletSection);
         state.putInt("wallet_overview_scroll", overviewScroll);
         state.putBoolean("wallet_history_expanded", historyExpanded);
@@ -270,17 +295,17 @@ public final class PenanceActivity extends AppCompatActivity {
         if (ControllerPinManager.isDomModeActive()) {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);
-            ControllerEditMode.enterSubMode(this);
+            FeatureEditorSession.leaveEditor(this);
         } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
         if (binding == null) return;
-        boolean editing = ControllerPinManager.canEditConfiguration();
+        boolean editing = FeatureEditorSession.canEdit(this, "wallet");
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setVisibility(editing ? View.VISIBLE : View.GONE);
-        PrimaryHeader.subtitle(binding.getRoot()).setText(R.string.role_this_device);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(com.subhub.app.people.ProfileNames.get(this, false));
         PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
                 ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
         displayWalletSections();
@@ -304,7 +329,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onPause() {
         ruleSaveHandler.removeCallbacks(persistRules);
-        if (ControllerPinManager.canEditConfiguration()) saveRules(false);
+        if (FeatureEditorSession.canEdit(this, "wallet")) saveRules(false);
         timer.removeCallbacks(tick);
         super.onPause();
     }
@@ -330,7 +355,7 @@ public final class PenanceActivity extends AppCompatActivity {
         binding.detectionBatch.setText(String.valueOf(manager.getDetectionBatch()));
         binding.tamperCooldownMinutes.setText(
                 String.valueOf(manager.getTamperCooldownMinutes()));
-        PaidPauseManager paidPause = new PaidPauseManager(this);
+        PaidPauseManager paidPause = new PaidPauseManager(FeatureEditorSession.context(this));
         binding.paidPauseEnabled.setChecked(paidPause.isEnabled());
         binding.paidPauseAmount.setText(decimalEuros(paidPause.getPriceCents()));
         binding.paidPauseMinutes.setText(String.valueOf(paidPause.getDurationMinutes()));
@@ -361,14 +386,14 @@ public final class PenanceActivity extends AppCompatActivity {
     private void syncPaidPauseInputs() {
         if (binding == null) return;
         boolean enabled = binding.paidPauseEnabled.isChecked();
-        boolean editable = enabled && ControllerPinManager.canEditConfiguration();
+        boolean editable = enabled && FeatureEditorSession.canEdit(this, "wallet");
         binding.paidPauseAmount.setEnabled(editable);
         binding.paidPauseMinutes.setEnabled(editable);
     }
 
     private void syncRuleInputState(CompoundButton toggle, EditText amount, View... dependents) {
         boolean ruleEnabled = toggle.isChecked();
-        boolean editable = ruleEnabled && ControllerPinManager.canEditConfiguration();
+        boolean editable = ruleEnabled && FeatureEditorSession.canEdit(this, "wallet");
         amount.setEnabled(editable);
         if (dependents == null) return;
         for (View dependent : dependents) {
@@ -386,12 +411,12 @@ public final class PenanceActivity extends AppCompatActivity {
         attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         binding.paidPauseEnabled.setOnCheckedChangeListener((button, checked) -> {
-            if (!populatingRules && !ControllerPinManager.canEditConfiguration()) {
+            if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
                 populateRules();
                 return;
             }
             if (!populatingRules && !checked) {
-                PaidPauseManager pause = new PaidPauseManager(this);
+                PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
                 pause.configure(false, pause.getPriceCents(), pause.getDurationMinutes());
             }
             syncPaidPauseInputs();
@@ -418,7 +443,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private void attachRuleToggle(PenanceInfraction rule, CompoundButton toggle, EditText amount, View... dependents) {
         toggle.setOnCheckedChangeListener((button, checked) -> {
-            if (!populatingRules && !ControllerPinManager.canEditConfiguration()) {
+            if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
                 populateRules();
                 return;
             }
@@ -430,14 +455,14 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void scheduleRulesSave() {
-        if (populatingRules || !ControllerPinManager.canEditConfiguration()) return;
+        if (populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return;
         dirtyRules = true;
         ruleSaveHandler.removeCallbacks(persistRules);
         ruleSaveHandler.postDelayed(persistRules, 450L);
     }
 
     private void commitRules(boolean restoreIfInvalid) {
-        if (populatingRules || !ControllerPinManager.canEditConfiguration()) return;
+        if (populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return;
         ruleSaveHandler.removeCallbacks(persistRules);
         if (!saveRules(restoreIfInvalid) && restoreIfInvalid) {
             populateRules();
@@ -478,7 +503,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private boolean saveRules(boolean showInvalid) {
-        if (binding == null || populatingRules || !ControllerPinManager.canEditConfiguration()) return false;
+        if (binding == null || populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return false;
         if (!dirtyRules) return true;
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
         if (!readRule(rules, PenanceInfraction.NEW_DETECTION,
@@ -529,10 +554,10 @@ public final class PenanceActivity extends AppCompatActivity {
         }
         manager.configure(enabled, rules, daily, weekly, mercy, dwell, detectionBatch,
                 tamperCooldown);
-        new PaidPauseManager(this).configure(binding.paidPauseEnabled.isChecked(),
+        new PaidPauseManager(FeatureEditorSession.context(this)).configure(binding.paidPauseEnabled.isChecked(),
                 pausePrice, pauseMinutes);
         dirtyRules = false;
-        HardcoreAutoPayManager.schedule(this);
+        if (!FeatureEditorSession.remote(this)) HardcoreAutoPayManager.schedule(this);
         render();
         return true;
     }
@@ -553,7 +578,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void beginCheckout(boolean paidPauseOnly) {
-        if (paidPauseOnly && !new PaidPauseManager(this).canPurchase()) {
+        if (paidPauseOnly && !new PaidPauseManager(FeatureEditorSession.context(this)).canPurchase()) {
             toast(R.string.paid_pause_unavailable);
             return;
         }
@@ -723,7 +748,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private boolean canProcessSettlement(String settlementId) {
         return !manager.isPaidPauseSettlement(settlementId)
-                || new PaidPauseManager(this).canPurchase();
+                || new PaidPauseManager(FeatureEditorSession.context(this)).canPurchase();
     }
 
     private void handlePayPalReturn(Intent intent) {
@@ -766,6 +791,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void render() {
+        if (FeatureEditorSession.remote(this)) { renderRuleMathPreview(); return; }
         if (binding == null) return;
         if (!expandedWalletSection.isEmpty()) {
             if ("rules".equals(expandedWalletSection)) renderRuleMathPreview();
@@ -791,7 +817,7 @@ public final class PenanceActivity extends AppCompatActivity {
                     ? R.string.penance_payment_ready
                     : linkReady ? R.string.penance_payment_link_ready
                     : R.string.penance_payment_unavailable);
-        boolean setupNeeded = !paymentAvailable && ControllerPinManager.canEditConfiguration();
+        boolean setupNeeded = !paymentAvailable && FeatureEditorSession.canEdit(this, "wallet");
         binding.buttonSettle.setText(
                 setupNeeded
                         ? getString(R.string.wallet_setup_paypal)
@@ -842,7 +868,7 @@ public final class PenanceActivity extends AppCompatActivity {
                                 R.string.wallet_rules_caps_summary,
                                 enabled,
                                 manager.money(manager.getDailyCapCents())));
-        PaidPauseManager pause = new PaidPauseManager(this);
+        PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
         walletActions
                 .get("pause")
                 .summary()

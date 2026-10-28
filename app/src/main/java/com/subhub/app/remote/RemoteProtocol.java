@@ -244,7 +244,7 @@ public final class RemoteProtocol {
         if (integer(json, "version") != VERSION) throw new JSONException("Unsupported protocol version");
     }
 
-    static long integer(JSONObject object, String key) throws JSONException {
+    public static long integer(JSONObject object, String key) throws JSONException {
         Object value = object.get(key);
         if (!(value instanceof Integer || value instanceof Long)) throw new JSONException("Expected integer");
         return ((Number) value).longValue();

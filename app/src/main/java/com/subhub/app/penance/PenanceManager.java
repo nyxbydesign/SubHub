@@ -143,6 +143,7 @@ public final class PenanceManager {
     }
 
     public boolean isInfractionEnabled(PenanceInfraction infraction) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet")) return false;
         String key = ruleEnabledKey(infraction);
         if (preferences.contains(key)) {
             return preferences.getBoolean(key, infraction.enabledByDefault());

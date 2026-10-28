@@ -133,6 +133,61 @@ public class RemoteConfigurationAndroidTest {
         main().edit().putBoolean("module_censor_enabled",true).commit();assertNull(contracts.localApplied());
         assertEquals("credential",main().getString("paypal_secret_fixture",""));
     }
+    @Test public void queuedFeatureChangeIsRejectedWhenSubOptsOutBeforeDeliveryAndReplayStaysRejected() throws Exception {
+        seed();
+        JSONObject doc=configuration();doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").put("censor_intensity", 73);
+        RemoteStore.Command queued=deliver(doc);
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"censor",false));
+        Map<String,?> before=new HashMap<>(main().getAll());
+        assertTrue(writer().apply(sub.peer(DOM,generation),queued,assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.REJECTED,sub.command(DOM,generation,queued.id).state);
+        assertEquals(before,main().getAll());
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"censor",true));
+        assertTrue(writer().apply(sub.peer(DOM,generation),sub.stageCommand(DOM,generation,new JSONObject(queued.body)),assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.REJECTED,sub.command(DOM,generation,queued.id).state);
+        assertFalse(main().contains("censor_intensity"));
+    }
+    @Test public void optedOutRuntimeFeaturesStayOffWithoutReplacingSavedRulesOrCredentials() throws Exception {
+        main().edit().putBoolean("module_censor_enabled",true).putBoolean("module_subliminal_enabled",true)
+                .putBoolean("popup_storm_enabled",true).putBoolean("app_timer_per_app_enabled",true)
+                .putBoolean("app_timer_total_enabled",true).commit();
+        SharedPreferences wallet=context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0);
+        wallet.edit().putBoolean(com.subhub.app.penance.PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED,true).commit();
+        new com.subhub.app.penance.PenanceManager(context).configure(true,400,1000,5000,5);
+        for(String key:com.subhub.app.security.SubFeaturePolicy.FEATURES)assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,key,false));
+        com.subhub.app.settings.FeatureModuleManager modules=new com.subhub.app.settings.FeatureModuleManager(context);
+        assertFalse(modules.isCensorEnabled());assertFalse(modules.isLimitsEnabled());assertFalse(modules.isWalletEnabled());assertFalse(modules.isSubliminalEnabled());
+        assertFalse(new com.subhub.app.appmode.AppTimerManager(context).loadSettings().anyEnabled());
+        assertFalse(new com.subhub.app.penance.PenanceManager(context).isEnabled());
+        assertFalse(com.subhub.app.popup.PopupStormSettings.load(context).isEnabled());
+        assertTrue(main().getBoolean("module_censor_enabled",false));assertTrue(main().getBoolean("popup_storm_enabled",false));
+        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
+    }
+    @Test public void remoteSnapshotsCannotContainLocalConsentOrHardcoreAuthority() throws Exception {
+        JSONObject doc=configuration();
+        doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("hardcore_locally_consented",true);
+        assertThrows(IllegalArgumentException.class,()->RemoteConfiguration.active(doc));
+        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
+    }
+
+    @Test public void optingOutOfOneFeatureStillAllowsAnUnrelatedDurationChange() throws Exception {
+        seed();JSONObject doc=configuration();doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("module_censor_enabled",true);
+        doc.getJSONObject("service").put("hidden",true);
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"censor",false));
+        RemoteStore.Command command=deliver(doc);assertTrue(writer().apply(sub.peer(DOM,generation),command,assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.APPLIED,sub.command(DOM,generation,command.id).state);
+        assertTrue(context.getSharedPreferences(RemoteConfiguration.DURATION_PREFS,0).getBoolean("hidden",false));
+        assertTrue(main().getBoolean("module_censor_enabled",false));
+        assertFalse(new com.subhub.app.settings.FeatureModuleManager(context).isCensorEnabled());
+    }
+    @Test public void disabledLimitsAlsoRefuseChangesToIndividualAllowances() throws Exception {
+        JSONObject doc=configuration();doc.getJSONObject("apps").getJSONObject("allowances").put("com.android.settings",73);
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"limits",false));
+        RemoteStore.Command command=deliver(doc);assertTrue(writer().apply(sub.peer(DOM,generation),command,assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.REJECTED,sub.command(DOM,generation,command.id).state);
+        assertFalse(main().contains("app_timer_allowance_minutes:com.android.settings"));
+    }
+
     private RemoteConfigurationWriter writer(){return new RemoteConfigurationWriter(context,sub,(name,editor)->editor.commit(),new File(root,"writer"));}
     private RemoteStore.Command deliver(JSONObject doc) throws Exception {
         RemoteStore.Command queued=dom.queueConfiguration(SUB,generation,0,0,doc);RemoteProtocol.Batch batch=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONFIGURATION);

@@ -35,7 +35,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private DeviceRoleView role;
-    private LinearLayout privacy, permissions, localPermissions;
+    private LinearLayout privacy, permissions, localPermissions, featureChoices;
     private View permissionsHeading;
     private HardcoreModeManager hardcore;
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
@@ -67,6 +67,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> toggleController());
         if (restoreSubAfterHardcore && !hardcoreAwaitingAndroid) finishHardcoreFlow();
         else applyState();
+        com.subhub.app.util.InputFocusPolicy.openActivityForReading(this);
     }
 
     @Override protected void onSaveInstanceState(Bundle output) {
@@ -81,29 +82,35 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         detach(header);
         body.removeAllViews();
         body.addView(header);
+        LinearLayout names = PersonUi.card(body);
+        names.setTag("settings_profile_names");
+        PersonUi.text(names, getString(R.string.profile_names_title), true);
+        if (DeviceRolePreferences.supportsDom(this)) nameField(names, true);
+        if (DeviceRolePreferences.supportsSub(this)) nameField(names, false);
+        LinearLayout device = PersonUi.card(body);
         role = new DeviceRoleView(this, () -> {
             recreate();
         });
-        body.addView(role, new LinearLayout.LayoutParams(-1, -2));
-        action(body, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
+        device.addView(role, new LinearLayout.LayoutParams(-1, -2));
+        action(device, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
                 .setId(R.id.settings_connections_security);
 
+        featureChoices = PersonUi.card(body);
+        featureChoices.setTag("settings_feature_choices");
         heading(body, R.string.device_settings_privacy, "privacy");
-        privacy = PersonUi.column(this);
-        body.addView(privacy, new LinearLayout.LayoutParams(-1, -2));
+        privacy = PersonUi.card(body);
         com.subhub.app.privacy.PrivacyControls.bind(this, privacy, this::applyState);
 
         heading(body, R.string.device_settings_permissions, "permissions");
         permissionsHeading = body.findViewWithTag("settings:permissions");
         detach(binding.hardcoreCard);
-        binding.hardcoreCard.setBackground(null);
-        binding.hardcoreCard.setPadding(0, dp(12), 0, dp(8));
+        binding.hardcoreCard.setBackgroundResource(R.drawable.bg_card);
+        binding.hardcoreCard.setPadding(dp(16), dp(12), dp(16), dp(12));
         binding.hardcoreCard.getChildAt(0).setVisibility(View.GONE);
         binding.switchHardcoreMode.setOnCheckedChangeListener((control, enabled) -> {
             if (!updatingHardcore) requestHardcoreChange(enabled);
         });
-        permissions = PersonUi.column(this);
-        body.addView(permissions, new LinearLayout.LayoutParams(-1, -2));
+        permissions = PersonUi.card(body);
         action(permissions, R.string.settings_notifications,
                 () -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                         .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())));
@@ -122,9 +129,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                 () -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
 
         heading(body, R.string.device_settings_help, "help");
-        LinearLayout help = PersonUi.column(this);
+        LinearLayout help = PersonUi.card(body);
         help.setTag("settings_help_actions");
-        body.addView(help, new LinearLayout.LayoutParams(-1, -2));
         detach(binding.buttonHelp);
         help.addView(binding.buttonHelp, new LinearLayout.LayoutParams(-1, -2));
         binding.buttonHelp.setOnClickListener(view -> startActivity(new Intent(this, HelpActivity.class)));
@@ -138,6 +144,29 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonDiagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticsActivity.class)));
         PersonUi.text(help, getString(R.string.settings_build_summary, com.subhub.app.BuildConfig.VERSION_NAME,
                 com.subhub.app.BuildConfig.BUILD_DATE), false).setTag("settings_build_info");
+    }
+
+    private void nameField(LinearLayout parent, boolean dom) {
+        int label = dom ? R.string.profile_dom_name : R.string.profile_sub_name;
+        PersonUi.text(parent, getString(label), false);
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setTag(dom ? "profile_name:dom" : "profile_name:sub");
+        input.setContentDescription(getString(label));
+        input.setSingleLine(true);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(com.subhub.app.people.ProfileNames.MAX_LENGTH)});
+        input.setText(com.subhub.app.people.ProfileNames.chosen(this, dom));
+        input.setHint(com.subhub.app.people.ProfileNames.get(this, dom));
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        input.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            public void afterTextChanged(android.text.Editable value) {
+                if (com.subhub.app.people.ProfileNames.set(GlobalSettingsActivity.this, dom, value.toString()))
+                    com.subhub.app.remote.RemoteFeature.get(GlobalSettingsActivity.this).changed();
+            }
+        });
+        parent.addView(input, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void openConnectionOrKeyholder() {
@@ -212,6 +241,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         ((TextView) findViewById(R.id.settings_connections_security)).setText(
                 hasAssignedConnection() ? R.string.role_connection : R.string.keyholder_home_title);
         boolean local = DeviceRolePreferences.supportsSub(this);
+        boolean sub = local && !DeviceRolePreferences.isDomWorkspace(this);
+        featureChoices.setVisibility(sub ? View.VISIBLE : View.GONE);
+        com.subhub.app.security.SubFeatureControls.bind(this, featureChoices);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);
         if (local && !DeviceRolePreferences.isDomWorkspace(this)) {
@@ -239,25 +271,17 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void requestHardcoreChange(boolean enabled) {
         refreshHardcoreState();
         if (!DeviceRolePreferences.supportsSub(this) || DeviceRolePreferences.isDomWorkspace(this)) return;
-        boolean wasUnlocked = ControllerPinManager.isDomModeActive();
-        ControllerPinGate.authenticate(this, () -> {
-            restoreSubAfterHardcore = !wasUnlocked;
-            applyState();
-            if (!ControllerPinManager.canEditConfiguration()) {
-                ControllerPinGate.notifyLocked(this);
-                finishHardcoreFlow();
-                return;
-            }
             androidx.appcompat.app.AlertDialog.Builder dialog = com.subhub.app.util.ThemedDialogs.builder(this)
                     .setTitle(enabled ? R.string.hardcore_consent_title : R.string.hardcore_release_title)
                     .setMessage(enabled ? R.string.hardcore_consent_body : R.string.hardcore_release_body)
                     .setNegativeButton(android.R.string.cancel, (which, ignored) -> finishHardcoreFlow())
                     .setOnCancelListener(ignored -> finishHardcoreFlow())
                     .setPositiveButton(enabled ? R.string.hardcore_consent_enable : R.string.hardcore_release, (which, ignored) -> {
-                        if (!ControllerPinManager.canEditConfiguration() || !DeviceRolePreferences.supportsSub(this)) {
-                            ControllerPinGate.notifyLocked(this); finishHardcoreFlow(); return;
+                        if (!DeviceRolePreferences.supportsSub(this) || DeviceRolePreferences.isDomWorkspace(this)) {
+                            finishHardcoreFlow(); return;
                         }
                         if (enabled) {
+                            if (!com.subhub.app.security.SubFeaturePolicy.consentHardcore(this, true)) { finishHardcoreFlow(); return; }
                             hardcore.beginActivation();
                             hardcoreAwaitingAndroid = true;
                             if (new AppModeManager(this).isAccessibilityEnabled()) hardcoreActivation.launch(hardcore.activationIntent());
@@ -268,19 +292,21 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                         }
                     });
             dialog.show();
-        }, false);
     }
     private void finishHardcoreFlow() {
         if (restoreSubAfterHardcore) ControllerPinManager.enterSubMode();
         restoreSubAfterHardcore = false;
         hardcoreAwaitingAndroid = false;
+        if (!hardcore.isEnabled()) com.subhub.app.security.SubFeaturePolicy.consentHardcore(this, false);
+        com.subhub.app.security.SubFeaturePolicy.changed(this);
+        com.subhub.app.remote.RemoteFeature.get(this).changed();
         if (!isFinishing() && !isDestroyed()) applyState();
     }
     private void refreshHardcoreState() {
         updatingHardcore = true;
         try {
             binding.switchHardcoreMode.setChecked(hardcore.isEnabled() || hardcore.isRequested());
-            ControllerPinGate.markLocked(binding.switchHardcoreMode);
+            binding.switchHardcoreMode.setEnabled(true);
             int status = hardcore.isRequested() && !new AppModeManager(this).isAccessibilityEnabled()
                     ? R.string.hardcore_status_accessibility : hardcore.isRequested() && !hardcore.isGuardReady()
                     ? R.string.hardcore_status_pending : 0;

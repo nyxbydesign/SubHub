@@ -1,5 +1,7 @@
 package com.subhub.app.appmode;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -81,26 +83,21 @@ public final class AppModeActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "limits", savedInstanceState)) return;
         binding = ActivityAppModeBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits, R.string.app_mode_title, R.string.role_this_device);
-        manager = new AppModeManager(this);
-        timers = new AppTimerManager(this);
+        manager = new AppModeManager(FeatureEditorSession.context(this));
+        timers = new AppTimerManager(FeatureEditorSession.context(this));
         appData = AsyncUiScope.forPage(this);
         if (savedInstanceState != null) {
             restoredDrafts = savedInstanceState.getBundle("allowance_drafts");
             dirtyTimers = savedInstanceState.getBoolean("timer_drafts_dirty", false);
         }
-        binding.limitsManageApps.setOnClickListener(
-                view ->
-                        ControllerPinGate.require(
-                                this,
-                                () -> {
-                                    if (com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
-                                        com.subhub.app.people.PersonRoutes.editSection(this,
-                                                com.subhub.app.people.PersonId.LOCAL, "apps");
-                                },
-                                false));
+        binding.limitsManageApps.setOnClickListener(view -> {
+            if (FeatureEditorSession.canEdit(this, "apps")) startActivity(FeatureEditorSession.child(this,
+                    com.subhub.app.people.LocalAppsActivity.class));
+        });
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
         AppTimerManager.Settings timerSettings = timers.loadSettings();
         binding.perAppLimitEnabled.setChecked(timerSettings.perAppEnabled);
@@ -142,14 +139,15 @@ public final class AppModeActivity extends AppCompatActivity {
         renderTimerControls();
         renderTimerUsage();
         applyEditState();
+        FeatureEditorSession.bind(this, binding.getRoot(), "limits", () -> save(true));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         if (manager == null) return;
-        if (!editingAllowed() || !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
-            ControllerEditMode.enterSubMode(this);
+        if (!editingAllowed()) {
+            FeatureEditorSession.leaveEditor(this);
             return;
         }
         failedPackages = null;
@@ -170,7 +168,7 @@ public final class AppModeActivity extends AppCompatActivity {
 
     private void toggleEditSession() {
         if (ControllerPinManager.isSessionUnlocked()) {
-            ControllerEditMode.enterSubMode(this);
+            FeatureEditorSession.leaveEditor(this);
         } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
@@ -190,8 +188,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private boolean editingAllowed() {
-        return ControllerPinManager.canEditConfiguration()
-                && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent());
+        return FeatureEditorSession.canEdit(this, "limits");
     }
 
     private boolean rejectUnassignedLimit() {
@@ -281,6 +278,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private void promptForAccessibility() {
+        if (FeatureEditorSession.remote(this)) return;
         if (populatingTimers || !editingAllowed() || accessibilityEnabled()) return;
         Toast.makeText(this, R.string.app_mode_enable_prompt, Toast.LENGTH_LONG).show();
         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
@@ -324,7 +322,7 @@ public final class AppModeActivity extends AppCompatActivity {
             binding.perAppAllowancesList.removeAllViews();
             message(R.string.limits_loading_apps);
         }
-        android.content.Context app = getApplicationContext();
+        android.content.Context app = FeatureEditorSession.context(this);
         appData.load(
                 "limits-apps",
                 () -> loadApps(app, requested),
@@ -398,9 +396,11 @@ public final class AppModeActivity extends AppCompatActivity {
         List<AppInfo> models = new ArrayList<>();
         for (String name : included) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-            String label = name;
+            String label = com.subhub.app.configuration.FeatureEditorSession.remote(app)
+                    ? com.subhub.app.configuration.FeatureEditorSession.scope(app).appLabel(name) : name;
             android.graphics.drawable.Drawable icon = packages.getDefaultActivityIcon();
             try {
+                if (FeatureEditorSession.remote(app)) throw new PackageManager.NameNotFoundException(name);
                 ApplicationInfo info = packages.getApplicationInfo(name, 0);
                 CharSequence display = packages.getApplicationLabel(info);
                 if (display != null) label = display.toString();
@@ -435,8 +435,25 @@ public final class AppModeActivity extends AppCompatActivity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private void renderRemoteUsage() {
+        com.subhub.app.people.PersonSnapshot person = FeatureEditorSession.scope(this).person();
+        binding.limitsTodayAmount.setText(R.string.role_unknown_data);
+        binding.timerUsageStatus.setText(person == null ? getString(R.string.role_unknown_data) : person.serviceLabel);
+        binding.limitsTodayScope.setText(getString(R.string.limits_today_scope, manager.getIncludedPackages().size()));
+        binding.limitsCombinedUsage.setText(R.string.role_unknown_data);
+        binding.limitsCombinedProgress.setVisibility(View.GONE);
+        java.util.Map<String,com.subhub.app.people.PersonSnapshot.Allowance> values = new java.util.HashMap<>();
+        if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);
+        for (java.util.Map.Entry<String,AppLimitRow> row : appRows.entrySet()) {
+            com.subhub.app.people.PersonSnapshot.Allowance value = values.get(row.getKey());
+            String usage = value == null || value.usedMillis < 0 ? getString(R.string.role_unknown_data) : getString(R.string.limits_usage_only, formatUsage(value.usedMillis));
+            row.getValue().renderUsage(usage, 0, false);
+        }
+    }
+
     private void renderTimerUsage() {
         if (binding == null || timers == null || manager == null) return;
+        if (FeatureEditorSession.remote(this)) { renderRemoteUsage(); return; }
         long now = System.currentTimeMillis();
         Set<String> included = manager.getIncludedPackages();
         Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(included, now);
@@ -536,6 +553,7 @@ public final class AppModeActivity extends AppCompatActivity {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
         Bundle drafts = restoredDrafts == null ? new Bundle() : new Bundle(restoredDrafts);
         for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet())
             drafts.putString(entry.getKey(), entry.getValue().getText().toString());

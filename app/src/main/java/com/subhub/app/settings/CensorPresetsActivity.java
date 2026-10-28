@@ -1,5 +1,7 @@
 package com.subhub.app.settings;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.InputFilter;
@@ -33,9 +35,10 @@ public final class CensorPresetsActivity extends PreferencePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        store = new CensorLookStore(this);
-        target = getIntent().getBooleanExtra(EXTRA_EXPORT, false)
-                ? ExportSettings.preferences(this) : new SettingsRepository(this).preferences();
+        if (!FeatureEditorSession.attach(this, "censor", state)) return;
+        store = new CensorLookStore(FeatureEditorSession.context(this));
+        target = !FeatureEditorSession.remote(this) && getIntent().getBooleanExtra(EXTRA_EXPORT, false)
+                ? ExportSettings.preferences(this) : new SettingsRepository(FeatureEditorSession.context(this)).preferences();
         scrollPosition = state == null ? 0 : state.getInt("preset_scroll", 0);
     }
 
@@ -70,16 +73,17 @@ public final class CensorPresetsActivity extends PreferencePage {
         } catch (IllegalStateException unreadable) { fieldHelp(page, unreadable.getMessage()); }
         android.widget.ScrollView scroll = (android.widget.ScrollView) page.getParent();
         scroll.post(() -> scroll.scrollTo(0, scrollPosition));
+        FeatureEditorSession.decorate(this);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
         if (page != null && page.getParent() instanceof android.widget.ScrollView)
             state.putInt("preset_scroll", ((android.widget.ScrollView) page.getParent()).getScrollY());
     }
 
-    private boolean editing() { return ControllerPinManager.canEditConfiguration()
-            && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()); }
+    private boolean editing() { return FeatureEditorSession.canEdit(this, "censor"); }
 
     private void addGrid(List<CensorLook> looks, boolean saved) {
         SelectionGrid grid = new SelectionGrid(this, null);

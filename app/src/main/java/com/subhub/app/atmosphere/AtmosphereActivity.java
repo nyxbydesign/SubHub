@@ -1,5 +1,7 @@
 package com.subhub.app.atmosphere;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity;
@@ -21,13 +23,14 @@ public final class AtmosphereActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (!FeatureEditorSession.attach(this, "atmosphere", state)) return;
         binding = ActivityAtmosphereBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_atmosphere,
                 R.string.atmosphere_title, R.string.role_this_device);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(android.view.View.VISIBLE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
-        PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> ControllerEditMode.enterSubMode(this));
+        PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> FeatureEditorSession.leaveEditor(this));
         binding.whispersCard.setOnClickListener(view -> open(SubliminalSettingsActivity.class));
         binding.buttonWhispers.setOnClickListener(view -> open(SubliminalSettingsActivity.class));
         binding.popupStormCard.setOnClickListener(view -> open(PopupStormActivity.class));
@@ -36,21 +39,32 @@ public final class AtmosphereActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (!ControllerPinManager.canEditConfiguration() || !PersonRoutes.isLocalTarget(getIntent())) {
-            ControllerEditMode.enterSubMode(this);
+        if (!FeatureEditorSession.canEdit(this, "atmosphere")) {
+            FeatureEditorSession.leaveEditor(this);
             return;
         }
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
-        binding.whispersStatus.setText(new FeatureModuleManager(this).isSubliminalEnabled()
+        binding.whispersStatus.setText(new FeatureModuleManager(FeatureEditorSession.context(this)).isSubliminalEnabled()
                 ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
-        binding.popupStormStatus.setText(PopupStormSettings.load(this).isEnabled()
+        binding.popupStormStatus.setText(PopupStormSettings.load(FeatureEditorSession.context(this)).isEnabled()
                 ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
+        binding.whispersCard.setEnabled(FeatureEditorSession.canEdit(this, "subliminal"));
+        binding.buttonWhispers.setEnabled(FeatureEditorSession.canEdit(this, "subliminal"));
+        binding.popupStormCard.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
+        binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
+        FeatureEditorSession.decorate(this);
     }
 
     private void open(Class<? extends android.app.Activity> destination) {
-        if (!ControllerPinManager.canEditConfiguration() || !PersonRoutes.isLocalTarget(getIntent())) return;
-        startActivity(new Intent(this, destination).putExtra(PersonRoutes.EXTRA_PERSON_ID,
-                com.subhub.app.people.PersonId.LOCAL.value()));
+        if (!FeatureEditorSession.canEdit(this, "atmosphere")) return;
+        String section = destination == SubliminalSettingsActivity.class ? "subliminal" : "popup";
+        if (!FeatureEditorSession.canEdit(this, section)) return;
+        startActivity(FeatureEditorSession.child(this, destination));
     }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        super.onSaveInstanceState(state);
+    }
+
 }

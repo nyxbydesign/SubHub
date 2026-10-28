@@ -32,6 +32,10 @@ public final class RemoteContractActivity extends RemotePage {
     }
     private void restoreInputs(){if(restoreControls==null)return;for(Map.Entry<String,android.view.View> control:controls.entrySet()){String key=control.getKey();if(!restoreControls.containsKey(key))continue;android.view.View value=control.getValue();if(value instanceof EditText)((EditText)value).setText(restoreControls.getString(key));else if(value instanceof CompoundButton)((CompoundButton)value).setChecked(restoreControls.getBoolean(key));else if(value instanceof Spinner)((Spinner)value).setSelection(restoreControls.getInt(key));}restoreControls=null;}
 
+    @Override protected boolean mayEdit() {
+        return super.mayEdit() && RemoteFeaturePolicy.remoteAllowed(feature.store, peer, section);
+    }
+
     private void load() {
         body.removeAllViews();collect.clear();controls.clear();text(body,getString(R.string.role_loading),false);
         work(()->{JSONObject doc=feature.contracts.current(peer);if(doc==null)throw new IOException("No baseline");

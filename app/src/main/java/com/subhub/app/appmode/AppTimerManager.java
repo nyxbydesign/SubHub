@@ -99,6 +99,8 @@ public final class AppTimerManager {
     }
 
     public Settings loadSettings() {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits"))
+            return new Settings(false, DEFAULT_PER_APP_MINUTES, false, DEFAULT_TOTAL_MINUTES);
         return new Settings(
                 settingsPreferences.getBoolean(KEY_PER_APP_ENABLED, false),
                 sanitizeMinutes(settingsPreferences.getInt(
