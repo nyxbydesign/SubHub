@@ -35,6 +35,7 @@ public final class StatsActivity extends PreferencePage {
     private LinearLayout totalsDetails, sessionList, currentSession, allowances;
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
     private AchievementPreviewView achievements;
+    private LocalRetainedStatistics localFacts;
     private boolean firstResume = true;
     private int sessionLimit = 3;
     private com.subhub.app.util.AsyncUiScope data;
@@ -162,6 +163,7 @@ public final class StatsActivity extends PreferencePage {
     @Override protected void onPause() {
         if (workspace == AchievementRole.DOM && page != null) page.setVisibility(android.view.View.INVISIBLE);
         if (data != null) data.cancel("dom-statistics");
+        if (data != null) data.cancel("local-statistics");
         remoteClock.removeCallbacks(refreshRemote);
         super.onPause();
     }
@@ -169,10 +171,38 @@ public final class StatsActivity extends PreferencePage {
     private void bindTotals() {
         if (domOverview) { bindDomTotals(); return; }
         if (remote != null) { bindRemoteTotals(); return; }
-        StatsRepository repository = new StatsRepository(this);
-        StatsSnapshot stats = repository.load();
-        if (workspace == AchievementRole.SUB) achievements.load(data, "stats-achievement-preview", stats);
-        else achievements.setVisibility(android.view.View.GONE);
+        if (data.isPending("local-statistics")) return;
+        android.content.Context app = getApplicationContext();
+        data.load("local-statistics", () -> {
+            LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
+            HomeAchievementPreview preview = null;
+            if (workspace == AchievementRole.SUB) preview = HomeAchievementPreview.loadLocal(app, facts);
+            else HistoricalAchievementBackfill.local(app, new AchievementManager(app), facts);
+            return new LocalOverview(facts, preview);
+        }, loaded -> {
+            if (!workspace.accessible(this)) { finish(); return; }
+            localFacts = loaded.facts;
+            if (loaded.achievements != null) achievements.render(loaded.achievements);
+            else achievements.setVisibility(android.view.View.GONE);
+            bindLocalTotals(loaded.facts);
+            bindSessions();
+        }, failure -> {
+            lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
+            totalsDetails.removeAllViews(); text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+        });
+    }
+
+    private static final class LocalOverview {
+        final LocalRetainedStatistics facts;
+        final HomeAchievementPreview achievements;
+        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements) {
+            this.facts = facts; this.achievements = achievements;
+        }
+    }
+
+    private void bindLocalTotals(LocalRetainedStatistics facts) {
+        StatsRepository repository = facts.repository;
+        StatsSnapshot stats = facts.stats;
         lifetimeTime.setText(duration(stats.getTotalProtectedSeconds()));
         lifetimeCensors.setText(number(stats.getTotalBlocks()));
         lifetimeSessions.setText(number(stats.getSessions()));
@@ -193,17 +223,16 @@ public final class StatsActivity extends PreferencePage {
         row(totalsDetails, R.string.stats_popups, number(stats.getPopupImpressions()));
         row(totalsDetails, R.string.daily_photos, number(stats.getExportedImages()));
         row(totalsDetails, R.string.stats_tributes, number(stats.getTributeEvents()));
-        PenanceManager wallet = new PenanceManager(this);
         for (String currency : new String[] {"EUR", "USD"}) {
             text(totalsDetails, currency, 13, true).setTypeface(null, Typeface.BOLD);
             row(
                     totalsDetails,
                     R.string.stats_assessed,
-                    WalletCurrency.format(currency, repository.tributeCents(currency, false)));
+                    WalletCurrency.format(currency, facts.assessed.get(currency)));
             row(
                     totalsDetails,
                     R.string.stats_paid,
-                    WalletCurrency.format(currency, wallet.getTotalPaidCents(currency)));
+                    WalletCurrency.format(currency, facts.paid.get(currency)));
         }
     }
 
@@ -211,8 +240,8 @@ public final class StatsActivity extends PreferencePage {
         if (data.isPending("dom-statistics")) return;
         android.content.Context app = getApplicationContext();
         data.load("dom-statistics", () -> {
-            DomStatsSnapshot value = new DomStatsRepository(app).load();
-            return new DomOverview(value, HomeAchievementPreview.loadDom(app, value));
+            DomStatsRepository.Loaded value = new DomStatsRepository(app).loadWithHistory();
+            return new DomOverview(value.stats, HomeAchievementPreview.loadDom(app, value));
         }, loaded -> {
             if (!workspace.accessible(this)) { page.setVisibility(android.view.View.INVISIBLE); finish(); return; }
             DomStatsSnapshot value = loaded.stats;
@@ -271,7 +300,7 @@ public final class StatsActivity extends PreferencePage {
 
     private void bindCurrent(StatsRepository repository, StatsSnapshot stats) {
         currentSession.removeAllViews();
-        boolean active = repository.sessionStamp() != null;
+        boolean active = repository.observedSessionActive();
         currentSession.setVisibility(active ? android.view.View.VISIBLE : android.view.View.GONE);
         if (!active) return;
         heading(currentSession, R.string.profile_stats_current_session);
@@ -347,8 +376,8 @@ public final class StatsActivity extends PreferencePage {
         sessionList.removeAllViews();
         heading(sessionList, R.string.stats_recent_sessions);
         if (remote != null || domOverview) { text(sessionList,getString(R.string.stats_remote_history_private),13,true);return; }
-        List<StatsRepository.SessionEntry> entries =
-                new ArrayList<>(new StatsRepository(this).getSessionHistory());
+        if (localFacts == null) { text(sessionList, getString(R.string.role_loading), 13, true); return; }
+        List<StatsRepository.SessionEntry> entries = new ArrayList<>(localFacts.history.sessions());
         Collections.reverse(entries);
         entries.removeIf(
                 e ->

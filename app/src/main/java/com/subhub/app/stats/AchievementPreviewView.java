@@ -87,7 +87,7 @@ public final class AchievementPreviewView extends LinearLayout {
     private String formatProgress(HomeAchievementPreview preview) {
         if (!preview.progress.isKnown()) return getContext().getString(R.string.dom_progress_unavailable);
         long current = preview.progress.getCurrent(), target = preview.progress.getTarget();
-        if ("dom_tribute".equals(preview.next.getCategory())) {
+        if ("dom_tribute".equals(preview.next.getCategory()) || preview.next.getId().startsWith("wallet_paid_")) {
             String currency = preview.achievements.progressCurrency();
             return com.subhub.app.penance.WalletCurrency.format(currency, current) + " / "
                     + com.subhub.app.penance.WalletCurrency.format(currency, target);

@@ -47,6 +47,20 @@ public final class RemoteStore extends SQLiteOpenHelper {
         this.context=context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
+
+    /** Local retained facts have no pairing prerequisite and are never marked read or re-published. */
+    public synchronized void readRetainedLocalStatistics(java.util.function.Consumer<org.json.JSONObject> accept)
+            throws org.json.JSONException {
+        if (!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))
+            throw new SecurityException("Local Sub statistics unavailable");
+        try (Cursor rows = getReadableDatabase().rawQuery("SELECT body FROM activity_source ORDER BY id", null)) {
+            while (rows.moveToNext()) {
+                org.json.JSONObject value = new org.json.JSONObject(rows.getString(0));
+                RemoteActivityWire.decode(value);
+                accept.accept(value);
+            }
+        }
+    }
     @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE peers(peer TEXT NOT NULL,generation TEXT NOT NULL,name TEXT NOT NULL,"

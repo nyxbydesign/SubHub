@@ -64,35 +64,47 @@ public final class AchievementsActivity extends AppCompatActivity {
         if (!manager.isAccessible()) { finish(); return; }
         com.subhub.app.util.SubHubNavigation.bind(this, binding.getRoot(),
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
-        if (manager.getRole() == AchievementRole.DOM) {
-            binding.getRoot().setVisibility(View.INVISIBLE);
-            stats = null;
-            AchievementManager captured = manager;
-            android.content.Context app = getApplicationContext();
-            com.subhub.app.util.AsyncUiScope.forPage(this).load("dom-achievement-catalog", () -> {
-                captured.checkDomAchievements(new DomStatsRepository(app).load());
-                return captured;
-            }, loaded -> {
-                if (manager != loaded || !loaded.isAccessible()) { finish(); return; }
-                loaded.takePendingNotifications();
-                rebuild();
-                binding.getRoot().setVisibility(View.VISIBLE);
-            }, failure -> { if (!manager.isAccessible()) finish(); else {
-                rebuild(); binding.getRoot().setVisibility(View.VISIBLE);
-            }});
-        } else {
-            binding.getRoot().setVisibility(View.VISIBLE);
-            stats = new StatsRepository(this).load();
-            manager.checkAchievements(stats);
+        binding.getRoot().setVisibility(View.INVISIBLE);
+        stats = null;
+        AchievementManager captured = manager;
+        android.content.Context app = getApplicationContext();
+        com.subhub.app.util.AsyncUiScope.forPage(this).load("workspace-achievement-catalog", () -> {
+            if (captured.getRole() == AchievementRole.DOM) {
+                DomStatsRepository.Loaded aggregate = new DomStatsRepository(app).loadWithHistory();
+                HistoricalAchievementBackfill.dom(app, captured, aggregate);
+                captured.checkDomAchievements(aggregate.stats);
+                return new Catalog(captured, null);
+            }
+            LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
+            HistoricalAchievementBackfill.local(app, captured, facts);
+            captured.checkRetainedAchievements(facts.stats);
+            return new Catalog(captured, facts.stats);
+        }, loaded -> {
+            if (manager != loaded.manager || !loaded.manager.isAccessible()) { finish(); return; }
+            stats = loaded.stats;
             manager.takePendingNotifications();
             rebuild();
-        }
+            binding.getRoot().setVisibility(View.VISIBLE);
+        }, failure -> {
+            if (!captured.isAccessible()) { finish(); return; }
+            binding.achievementList.removeAllViews(); binding.achievementBadgeStrip.removeAllViews();
+            binding.achievementProgress.setText(R.string.role_unknown_data);
+            binding.achievementNextName.setText(R.string.role_person_unavailable);
+            binding.achievementOverallProgress.setProgress(0); binding.achievementNextProgress.setProgress(0);
+            binding.getRoot().setVisibility(View.VISIBLE);
+        });
+    }
+
+    private static final class Catalog {
+        final AchievementManager manager;
+        final StatsSnapshot stats;
+        Catalog(AchievementManager manager, StatsSnapshot stats) { this.manager = manager; this.stats = stats; }
     }
 
     @Override protected void onPause() {
         if (detailDialog != null) { detailDialog.dismiss(); detailDialog = null; }
+        com.subhub.app.util.AsyncUiScope.forPage(this).cancel("workspace-achievement-catalog");
         if (manager != null && manager.getRole() == AchievementRole.DOM) {
-            com.subhub.app.util.AsyncUiScope.forPage(this).cancel("dom-achievement-catalog");
             binding.getRoot().setVisibility(View.INVISIBLE);
         }
         super.onPause();
@@ -334,7 +346,7 @@ public final class AchievementsActivity extends AppCompatActivity {
         description.setLayoutParams(descriptionParams);
         content.addView(description);
 
-        if (unlocked) {
+        if (unlocked && manager.getUnlockedAt(achievement.getId()) > 0) {
             TextView date = text(getString(R.string.achievement_unlocked_on,
                     formatUnlockDate(manager.getUnlockedAt(achievement.getId()))), 10,
                     R.color.text_muted, false);
@@ -418,7 +430,7 @@ public final class AchievementsActivity extends AppCompatActivity {
                 : getString(R.string.achievement_progress_detail,
                         formatProgress(achievement, progress)));
         TextView dateView = content.findViewById(R.id.achievement_detail_date);
-        if (unlocked) {
+        if (unlocked && manager.getUnlockedAt(achievement.getId()) > 0) {
             dateView.setText(getString(R.string.achievement_unlocked_on,
                     formatUnlockDate(manager.getUnlockedAt(achievement.getId()))));
         } else {
@@ -465,19 +477,11 @@ public final class AchievementsActivity extends AppCompatActivity {
             return compactDuration(progress.getCurrent()) + " / "
                     + compactDuration(progress.getTarget());
         }
-        if ("dom_tribute".equals(category)) return
+        if ("dom_tribute".equals(category) || achievement.getId().startsWith("wallet_paid_")) return
                 com.subhub.app.penance.WalletCurrency.format(manager.progressCurrency(), progress.getCurrent())
                 + " / " + com.subhub.app.penance.WalletCurrency.format(manager.progressCurrency(), progress.getTarget());
-        if (achievement.getId().startsWith("wallet_paid_")) {
-            return formatEuros(progress.getCurrent()) + " / "
-                    + formatEuros(progress.getTarget());
-        }
         return String.format(Locale.getDefault(), "%,d / %,d",
                 progress.getCurrent(), progress.getTarget());
-    }
-
-    private String formatEuros(long cents) {
-        return String.format(Locale.getDefault(), "€%,.2f", Math.max(0L, cents) / 100.0);
     }
 
     private String compactDuration(long seconds) {

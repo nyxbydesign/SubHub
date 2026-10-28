@@ -55,6 +55,22 @@ public final class AppModeManager {
         return getSelectedPackages();
     }
 
+    /** Observe the effective saved scope without applying the legacy selection migration. */
+    public static Set<String> observedIncludedPackages(Context context) {
+        SharedPreferences saved = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        Set<String> selected;
+        if (saved.contains(KEY_INCLUDED_PACKAGES))
+            selected = saved.getStringSet(KEY_INCLUDED_PACKAGES, Collections.emptySet());
+        else {
+            Set<String> censor = saved.getStringSet("app_mode_selected_packages", Collections.emptySet());
+            selected = LegacyAppSelection.merge(false, censor,
+                    saved.getStringSet("app_timer_selected_packages", censor),
+                    saved.getStringSet("subliminal_selected_packages", Collections.emptySet()), Collections.emptySet());
+        }
+        return AppModePolicy.sanitizePackages(saved.getBoolean(KEY_ALL_APPS, false)
+                ? saved.getStringSet(KEY_ALL_APPS_PACKAGES, selected) : selected);
+    }
+
     public Set<String> getSelectedPackages() {
         migrateAppSelection();
         return AppModePolicy.sanitizePackages(preferences.getStringSet(

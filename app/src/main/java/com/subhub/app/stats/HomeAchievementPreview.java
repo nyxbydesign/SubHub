@@ -30,24 +30,38 @@ public final class HomeAchievementPreview {
 
     public static HomeAchievementPreview load(Context app, StatsSnapshot stats) {
         AchievementManager manager = AchievementManager.forWorkspace(app.getApplicationContext());
-        if (manager.getRole() == AchievementRole.DOM)
-            manager.checkDomAchievements(new DomStatsRepository(app).load());
-        else {
-            if (stats == null) stats = new StatsRepository(app).load();
-            manager.checkAchievements(stats);
+        try {
+            if (manager.getRole() == AchievementRole.DOM) {
+                DomStatsRepository.Loaded aggregate = new DomStatsRepository(app).loadWithHistory();
+                HistoricalAchievementBackfill.dom(app, manager, aggregate);
+                manager.checkDomAchievements(aggregate.stats);
+            } else return loadLocal(app, LocalRetainedStatistics.load(app));
+        } catch (Exception unavailable) {
+            throw new IllegalStateException("Achievement history unavailable", unavailable);
         }
         return from(manager, stats);
     }
 
-    static HomeAchievementPreview loadDom(Context app, DomStatsSnapshot stats) {
+    static HomeAchievementPreview loadLocal(Context app, LocalRetainedStatistics facts) {
+        AchievementManager manager = AchievementManager.forWorkspace(app);
+        if (manager.getRole() != AchievementRole.SUB || !manager.isAccessible())
+            throw new SecurityException("Sub achievements unavailable");
+        HistoricalAchievementBackfill.local(app, manager, facts);
+        manager.checkRetainedAchievements(facts.stats);
+        return from(manager, facts.stats);
+    }
+
+    static HomeAchievementPreview loadDom(Context app, DomStatsRepository.Loaded stats) {
         AchievementManager manager = AchievementManager.forWorkspace(app);
         if (manager.getRole() != AchievementRole.DOM || !manager.isAccessible())
             throw new SecurityException("Dom achievements unavailable");
-        manager.checkDomAchievements(stats);
+        try { HistoricalAchievementBackfill.dom(app, manager, stats); }
+        catch (Exception unavailable) { throw new IllegalStateException("Achievement history unavailable", unavailable); }
+        manager.checkDomAchievements(stats.stats);
         return from(manager, null);
     }
 
-    private static HomeAchievementPreview from(AchievementManager manager, StatsSnapshot stats) {
+    static HomeAchievementPreview from(AchievementManager manager, StatsSnapshot stats) {
         for (AchievementManager.Achievement candidate : manager.all()) {
             if (manager.isUnlocked(candidate.getId()) || candidate.isHidden()) continue;
             AchievementManager.Progress progress = manager.progress(candidate, stats);

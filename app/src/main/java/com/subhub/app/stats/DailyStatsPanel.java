@@ -54,6 +54,7 @@ public final class DailyStatsPanel extends LinearLayout {
     private final int[] labels;
     private final boolean compact;
     private int range = 30, metric, month = LocalDate.now().getMonthValue();
+    private int year = LocalDate.now().getYear();
     private LocalDate selected = LocalDate.now();
     private long rendered;
     private Map<String, Map<String, Long>> data = Collections.emptyMap();
@@ -71,7 +72,7 @@ public final class DailyStatsPanel extends LinearLayout {
     }
     public DailyStatsPanel(Context context, boolean compact, Bundle state, Source source) {
         super(context);
-        this.source = source;
+        this.source = source == null ? new LocalDailyStatsSource(context) : source;
         metrics = source != null && source.combined() ? DomDailySnapshot.METRICS : METRICS;
         labels = source != null && source.combined() ? new int[] {
                 R.string.dom_stats_time, R.string.dom_stats_sessions,
@@ -94,6 +95,7 @@ public final class DailyStatsPanel extends LinearLayout {
         state.putInt("daily_range", range);
         state.putInt("daily_metric", metric);
         state.putInt("daily_month", month);
+        state.putInt("daily_year", year);
         state.putString("daily_selected", selected.toString());
     }
 
@@ -107,11 +109,12 @@ public final class DailyStatsPanel extends LinearLayout {
         int requested = state.getInt("daily_range", compact ? 7 : 30);
         range = requested == 7 || requested == 30 || requested == 365 ? requested : 30;
         metric = Math.max(0, Math.min(metrics.length - 1, state.getInt("daily_metric", 0)));
+        year = Math.max(1, Math.min(LocalDate.now().getYear(), state.getInt("daily_year", year)));
         month =
                 Math.max(
                         1,
                         Math.min(
-                                LocalDate.now().getMonthValue(),
+                                year == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12,
                                 state.getInt("daily_month", month)));
         try {
             selected =
@@ -128,22 +131,16 @@ public final class DailyStatsPanel extends LinearLayout {
     public void refresh() {
         rendered = android.os.SystemClock.elapsedRealtime();
         LocalDate today = LocalDate.now();
-        LocalDate first = range == 365 ? today.withDayOfYear(1) : today.minusDays(range - 1);
-        Context app = getContext().getApplicationContext();
+        LocalDate first = range == 365 ? LocalDate.of(year, 1, 1) : today.minusDays(range - 1);
+        LocalDate end = range == 365 && year < today.getYear() ? LocalDate.of(year, 12, 31) : today;
         uiData.load(
                 taskKey,
-                () -> {
-                    if (source != null) return source.load(first.toString(), today.toString());
-                    DailyStatsStore store = DailyStatsStore.get(app);
-                    DailyStatsStore.awaitWrites();
-                    return new DailyData(
-                            store.since(), store.days(first.toString(), today.toString()));
-                },
+                () -> source.load(first.toString(), end.toString()),
                 loaded -> {
-                    if (source != null && !source.accessible()) { renderedInput = null; removeAllViews(); return; }
+                    if (!source.accessible()) { renderedInput = null; removeAllViews(); return; }
                     since = loaded.since;
                     data = loaded.days;
-                    render(today, first);
+                    render(today, first, end);
                 },
                 failure -> {
                     renderedInput = null;
@@ -152,11 +149,11 @@ public final class DailyStatsPanel extends LinearLayout {
                 });
     }
 
-    private void render(LocalDate today, LocalDate first) {
+    private void render(LocalDate today, LocalDate first, LocalDate end) {
         Map<String, Map<String, Long>> values = new TreeMap<>();
         for (Map.Entry<String, Map<String, Long>> day : data.entrySet())
             values.put(day.getKey(), new TreeMap<>(day.getValue()));
-        List<Object> input = Arrays.asList(today, first, range, metric, month, selected, since, values);
+        List<Object> input = Arrays.asList(today, first, end, range, metric, year, month, selected, since, values);
         if (input.equals(renderedInput) && getChildCount() > 0) return;
         renderedInput = input;
         removeAllViews();
@@ -205,6 +202,7 @@ public final class DailyStatsPanel extends LinearLayout {
                             () -> {
                                 range = count;
                                 month = today.getMonthValue();
+                                year = today.getYear();
                                 selected = today;
                                 refresh();
                             });
@@ -239,7 +237,7 @@ public final class DailyStatsPanel extends LinearLayout {
         boolean complete = true;
         List<Long> trend = new ArrayList<>();
         LocalDate recorded = LocalDate.parse(since);
-        for (LocalDate day = first; !day.isAfter(today); day = day.plusDays(1)) {
+        for (LocalDate day = first; !day.isAfter(end); day = day.plusDays(1)) {
             long v = value(day, metrics[metric]);
             if (v < 0) complete = false;
             else total = total > Long.MAX_VALUE - v ? Long.MAX_VALUE : total + v;
@@ -248,7 +246,7 @@ public final class DailyStatsPanel extends LinearLayout {
         label(this, format(metrics[metric], complete ? total : -1), 32, false).setTypeface(null, Typeface.BOLD);
         label(
                 this,
-                getContext()
+                range == 365 && year < today.getYear() ? Integer.toString(year) : getContext()
                         .getString(
                                 range == 7
                                         ? R.string.stats_period_week
@@ -264,10 +262,10 @@ public final class DailyStatsPanel extends LinearLayout {
             addView(axis, new LayoutParams(-1, -2));
             TextView start = label(axis, pretty(graphStart), 11, true);
             start.setLayoutParams(new LayoutParams(0, -2, 1));
-            if (!graphStart.equals(today)) {
-                TextView end = label(axis, pretty(today), 11, true);
-                end.setGravity(Gravity.END);
-                end.setLayoutParams(new LayoutParams(0, -2, 1));
+            if (!graphStart.equals(end)) {
+                TextView endLabel = label(axis, pretty(end), 11, true);
+                endLabel.setGravity(Gravity.END);
+                endLabel.setLayoutParams(new LayoutParams(0, -2, 1));
             }
         } else
             label(this, getContext().getString(R.string.stats_no_activity_period), 14, true)
@@ -279,7 +277,7 @@ public final class DailyStatsPanel extends LinearLayout {
                     getContext().getString(R.string.stats_history_from, pretty(recorded)),
                     12,
                     true);
-        LocalDate calendarStart = first, calendarEnd = today;
+        LocalDate calendarStart = first, calendarEnd = end;
         if (range == 365) {
             LinearLayout navigation = new LinearLayout(getContext());
             navigation.setGravity(Gravity.CENTER_VERTICAL);
@@ -289,16 +287,16 @@ public final class DailyStatsPanel extends LinearLayout {
                             navigation,
                             "‹",
                             () -> {
-                                month--;
-                                selected = today.withMonth(month).withDayOfMonth(1);
+                                java.time.YearMonth chosen = java.time.YearMonth.of(year, month).minusMonths(1);
+                                year = chosen.getYear(); month = chosen.getMonthValue(); selected = chosen.atDay(1);
                                 refresh();
                             });
-            previous.setEnabled(month > 1);
+            previous.setEnabled(java.time.YearMonth.of(year, month).isAfter(java.time.YearMonth.from(LocalDate.parse(since))));
             previous.setContentDescription(getContext().getString(R.string.stats_previous_month));
             TextView name =
                     label(
                             navigation,
-                            today.withMonth(month)
+                            LocalDate.of(year, month, 1)
                                     .format(
                                             DateTimeFormatter.ofPattern(
                                                     "MMMM yyyy", Locale.getDefault())),
@@ -311,13 +309,13 @@ public final class DailyStatsPanel extends LinearLayout {
                             navigation,
                             "›",
                             () -> {
-                                month++;
-                                selected = today.withMonth(month).withDayOfMonth(1);
+                                java.time.YearMonth chosen = java.time.YearMonth.of(year, month).plusMonths(1);
+                                year = chosen.getYear(); month = chosen.getMonthValue(); selected = chosen.atDay(1);
                                 refresh();
                             });
-            next.setEnabled(month < today.getMonthValue());
+            next.setEnabled(java.time.YearMonth.of(year, month).isBefore(java.time.YearMonth.from(today)));
             next.setContentDescription(getContext().getString(R.string.stats_next_month));
-            calendarStart = today.withMonth(month).withDayOfMonth(1);
+            calendarStart = LocalDate.of(year, month, 1);
             calendarEnd = calendarStart.withDayOfMonth(calendarStart.lengthOfMonth());
             if (calendarEnd.isAfter(today)) calendarEnd = today;
         }
@@ -376,7 +374,7 @@ public final class DailyStatsPanel extends LinearLayout {
             final LocalDate chosen = d;
             long amount = value(d, metrics[metric]);
             boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(LocalDate.now())
-                    && (source == null || data.containsKey(d.toString())) && amount >= 0;
+                    && data.containsKey(d.toString()) && amount >= 0;
             TextView day = new TextView(getContext());
             day.setText(Integer.toString(d.getDayOfMonth()));
             com.subhub.app.util.UiIdentity.textSize(day, R.dimen.ui_text_body);
@@ -424,7 +422,7 @@ public final class DailyStatsPanel extends LinearLayout {
 
     private long value(LocalDate day, String metric) {
         Map<String, Long> row = data.get(day.toString());
-        return row == null ? source == null ? 0 : -1 : row.getOrDefault(metric, 0L);
+        return row == null ? -1 : row.getOrDefault(metric, 0L);
     }
 
     private String format(String metric, long value) {

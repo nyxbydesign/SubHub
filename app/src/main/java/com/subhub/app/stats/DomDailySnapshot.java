@@ -50,6 +50,7 @@ final class DomDailySnapshot {
                         break;
                     }
                     long value = values.getOrDefault(metric, 0L);
+                    if (value == -1) { known = false; break; }
                     if (value < 0) throw new IllegalArgumentException("Negative daily metric");
                     total = DomStatsSnapshot.add(total, value);
                 }
