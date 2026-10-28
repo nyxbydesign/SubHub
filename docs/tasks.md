@@ -10,7 +10,7 @@ Recurring tasks keep their chosen local time and time zone when either device ch
 
 New tasks use the target Sub device timezone received over the authenticated Tasks connection. The timezone is read-only; sync with the Sub if it is unavailable or more than 30 minutes old. The Dom device timezone is never used for a remote Sub. Existing tasks retain their recorded timezone when either device travels or changes timezone, preserving deadlines, weekday repeats and occurrence identities. New tasks use the latest confirmed Sub timezone. Local tasks use this device timezone.
 
-Instruction attachments appear at the bottom of the task detail. Images fit within the page; audio and video have inline play, pause and seek controls. Playback stops when leaving the page, switching roles or losing access. Missing or incomplete media can be retried after syncing. Completion attachments keep their separate viewer.
+Task detail shows the description and status, the instruction attachment, then the completion request. A request with one proof attachment embeds it below the proof text. Multiple proof attachments open a dedicated Attachments page; Back returns to the task detail. Images fit within the page; inline audio and video have play, pause and seek controls. Playback stops when leaving the page, switching roles or losing access. Missing or incomplete media can be retried after syncing.
 
 ## Completion and refusal
 

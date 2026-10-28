@@ -22,7 +22,11 @@ public final class RemoteUi implements ConnectionUi {
         People.installLocalProjection(repository::localProjection);People.installConnectionUi(new RemoteUi());feature.installLifecycle(app);
     }
     @Override public void openPairing(Activity activity){openPairing(activity,ControllerPinManager.isDomModeActive());}
-    public void openPairing(Activity activity,boolean asDom){activity.startActivity(new Intent(activity,PairingActivity.class).putExtra("asDom",asDom));}
+    public void openPairing(Activity activity,boolean asDom){
+        Intent intent=new Intent(activity,PairingActivity.class).putExtra("asDom",asDom);
+        if(asDom)activity.startActivityForResult(intent.putExtra(PairingActivity.EXTRA_DIRECT_INVITATION,true),0x5348);
+        else activity.startActivity(intent);
+    }
     @Override public void openConnection(Activity activity,PersonId id){
         if(id.isLocal()) {
             for(RemoteStore.Peer peer:RemoteFeature.get(activity).store.peers(false))if(peer.localRole==RemoteProtocol.Role.SUB){open(activity,RemotePersonRepository.id(peer),RemoteConnectionActivity.class);return;}

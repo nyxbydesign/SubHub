@@ -12,8 +12,17 @@ import com.subhub.app.security.AuthenticatorActivity;
 
 /** A link selects an identity; only explicit, authenticated approval creates a relationship. */
 public final class PairingActivity extends RemotePage {
+    static final String EXTRA_DIRECT_INVITATION="com.subhub.app.remote.DIRECT_INVITATION";
+    private boolean directInvitation() {
+        ComponentName caller=getCallingActivity();
+        return requiresDom()&&getIntent().getBooleanExtra(EXTRA_DIRECT_INVITATION,false)
+                &&caller!=null&&getPackageName().equals(caller.getPackageName());
+    }
     private final Handler clock=new Handler(Looper.getMainLooper());
-    private LinearLayout candidates;private PairingInvite invitation;private EditText link;private boolean creating;private String linkedGeneration;
+    private LinearLayout candidates;private PairingInvite invitation;private EditText link;private String linkedGeneration;
+    private InvitationCreation creation;
+    private java.util.concurrent.CompletableFuture<PairingInvite> observedCreation;
+    private boolean restoringInvitation;
     private final Runnable poll=new Runnable(){public void run(){renderCandidates();clock.postDelayed(this,2000);}};
     @Override protected boolean requiresDom(){return getIntent().getBooleanExtra("asDom",false)&&getIntent().getData()==null;}
     @Override protected void onCreate(Bundle state) {
@@ -21,7 +30,11 @@ public final class PairingActivity extends RemotePage {
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         boolean asDom=getIntent().getBooleanExtra("asDom",false) && getIntent().getData()==null;
         if(asDom?!com.subhub.app.security.DeviceRolePreferences.supportsDom(this):!com.subhub.app.security.DeviceRolePreferences.supportsSub(this)){finish();return;}
-        if(asDom)PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
+        if(asDom) {
+            creation=new androidx.lifecycle.ViewModelProvider(this).get(InvitationCreation.class);
+            if(directInvitation())text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+            else PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
+        }
         else {
             link=input(body,R.string.remote_invite_input,getIntent().getData()==null?"":getIntent().getData().toString());
             link.setSaveEnabled(false);
@@ -33,29 +46,70 @@ public final class PairingActivity extends RemotePage {
             PersonUi.action(body,R.string.remote_approve,()->authorizeEnrollment(this::confirm),true);
         }
         candidates=PersonUi.column(this);body.addView(candidates);
-        if(asDom && state!=null && state.containsKey("invitationId")) {
-            String id=state.getString("invitationId");
-            work(()->feature.restoreInvitation(id),restored->{if(restored!=null){invitation=restored;renderInvite();}else notice(R.string.remote_expired);});
+        if(asDom && creation.request==null && state!=null && state.containsKey("invitationId")) {
+            String id=state.getString("invitationId"); restoringInvitation=true;
+            work(()->feature.restoreInvitation(id),restored->{
+                restoringInvitation=false;
+                creation.request=java.util.concurrent.CompletableFuture.completedFuture(restored);
+                observeCreation();
+            },()->{restoringInvitation=false;creation.request=java.util.concurrent.CompletableFuture.completedFuture(null);invitationFailure(R.string.remote_failure);});
         }
     }
     @Override protected void onSaveInstanceState(Bundle state){
-        if(invitation!=null)state.putString("invitationId",invitation.id);
+        PairingInvite saved=invitation;
+        if(saved==null&&creation!=null&&creation.request!=null&&!creation.request.isCompletedExceptionally())
+            saved=creation.request.getNow(null);
+        if(saved!=null)state.putString("invitationId",saved.id);
         super.onSaveInstanceState(state);
+    }
+    /** Retain one accepted creation across rotation; only its identifier enters saved state. */
+    public static final class InvitationCreation extends androidx.lifecycle.ViewModel {
+        java.util.concurrent.CompletableFuture<PairingInvite> request;
+        public InvitationCreation() { }
     }
     private void createInvitation() {
         authorize(()->{
-            if(creating)return;
-            creating=true;
-            feature.createInvite().whenComplete((value,error)->runOnUiThread(()->{
-                if(isDestroyed()||isFinishing())return;
-                creating=false;
-                if(error!=null){notice(R.string.remote_failure);return;}
-                invitation=value;
-                renderInvite();
-            }));
+            if(isFinishing()||isDestroyed()||!requiresDom()
+                    ||!com.subhub.app.security.ControllerPinManager.isDomModeActive())return;
+            if(creation.request==null) {
+                body.removeAllViews();
+                text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+                candidates=PersonUi.column(this);body.addView(candidates);
+                creation.request=feature.createInvite();
+            }
+            observeCreation();
         });
     }
-    @Override protected void onResume(){super.onResume();clock.post(poll);}
+    private void observeCreation() {
+        InvitationCreation captured=creation;
+        java.util.concurrent.CompletableFuture<PairingInvite> request=captured.request;
+        if(request==null||observedCreation==request)return;
+        observedCreation=request;
+        java.lang.ref.WeakReference<PairingActivity> weak=new java.lang.ref.WeakReference<>(this);
+        request.whenComplete((value,error)->{
+            PairingActivity page=weak.get();if(page==null)return;
+            page.runOnUiThread(()->{
+                if(page.isDestroyed()||page.isFinishing()||page.creation!=captured||captured.request!=request)return;
+                if(!page.requiresDom()||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                        ||!com.subhub.app.security.DeviceRolePreferences.supportsDom(page)){page.finish();return;}
+                if(error!=null||value==null){page.invitationFailure(error==null?R.string.remote_expired:R.string.remote_failure);return;}
+                page.invitation=value;page.renderInvite();
+            });
+        });
+    }
+    private void invitationFailure(int message) {
+        body.removeAllViews();text(body,getString(message),false);
+        button(body,R.string.role_retry,()->{creation.request=null;observedCreation=null;createInvitation();});
+        candidates=PersonUi.column(this);body.addView(candidates);
+    }
+    @Override protected void onResume(){
+        super.onResume();if(isFinishing())return;
+        if(requiresDom()&&invitation==null&&!restoringInvitation) {
+            if(creation.request!=null)observeCreation();
+            else if(directInvitation())createInvitation();
+        }
+        clock.post(poll);
+    }
     @Override protected void onPause(){clock.removeCallbacks(poll);super.onPause();}
     private void renderInvite() {
         PairingInvite shown=invitation;

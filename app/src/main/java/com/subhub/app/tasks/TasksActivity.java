@@ -57,7 +57,7 @@ public final class TasksActivity extends RolePage {
     private PersonId person;
     private boolean primary;
     private boolean resumed;
-    private TaskAttachmentView inlineMedia;
+    private final List<TaskAttachmentView> inlineMedia = new ArrayList<>();
     private List<Object> inlineSignature;
     private final Handler clock = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -155,6 +155,7 @@ public final class TasksActivity extends RolePage {
         primary = person.isLocal();
         model.closeForm();
         model.selected = "";
+        model.proofAttachments = false;
         render();
         scrollTop();
     }
@@ -162,6 +163,7 @@ public final class TasksActivity extends RolePage {
     private void navigateBack() {
         if (model == null || model.busy) return;
         if (!model.form.isEmpty()) { model.closeForm(); render(); scrollTop(); }
+        else if (model.proofAttachments) { model.proofAttachments = false; render(); scrollTop(); }
         else if (!model.selected.isEmpty()) { model.selected = ""; render(); scrollTop(); }
         else finish();
     }
@@ -195,8 +197,9 @@ public final class TasksActivity extends RolePage {
         if (!resumed || isFinishing() || !samePerson()) return;
         Snapshot state = model.snapshot;
         List<Object> signature = inlineSignature(state);
-        if (inlineMedia != null && !inlineMedia.isClosed() && !model.busy && model.failure == null
-                && signature != null && signature.equals(inlineSignature) && inlineAuthorized()) return;
+        if (!inlineMedia.isEmpty() && inlineMedia.stream().noneMatch(TaskAttachmentView::isClosed)
+                && !model.busy && model.failure == null && signature != null
+                && signature.equals(inlineSignature) && inlineAuthorized()) return;
         closeInlineMedia();
         body.removeAllViews();
         title("create".equals(model.form) ? R.string.tasks_new
@@ -275,7 +278,9 @@ public final class TasksActivity extends RolePage {
             if (selected == null) {
                 model.selected = "";
                 render();
-            } else detail(state, selected);
+            } else if (model.proofAttachments && state.allowed && selected.submission != null
+                    && selected.submission.attachments.size() > 1) proofAttachments(selected);
+            else { model.proofAttachments = false; detail(state, selected); }
             return;
         }
         LinearLayout summary = PersonUi.card(body);
@@ -345,6 +350,7 @@ public final class TasksActivity extends RolePage {
             PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, timing, () -> {
                 if (model.busy || model.loading) return;
                 model.selected = occurrence.id;
+                model.proofAttachments = false;
                 render(); scrollTop();
             }).setTag("task_open:" + occurrence.id);
             TasksUi.badge(card, getString(statusLabel(occurrence.status)));
@@ -357,14 +363,30 @@ public final class TasksActivity extends RolePage {
         details(card, occurrence);
         if (state.refused.contains(occurrence.task.id))
             PersonUi.text(card, getString(R.string.tasks_series_refused), false);
+        if (state.allowed && occurrence.task.attachment != null && inlineAuthorized()) {
+            LinearLayout media = PersonUi.card(body);
+            media.setTag("task_definition_media:" + occurrence.id);
+            PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
+            embed(media, occurrence.task.attachment, state.dom);
+        }
         if (occurrence.submission != null) {
             LinearLayout submission = PersonUi.card(body);
+            submission.setTag("task_submission:" + occurrence.id);
             PersonUi.text(submission, getString(R.string.tasks_submission_heading), true);
             if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
                 PersonUi.text(submission, getString(R.string.tasks_outside_pending), false);
             else {
                 if (!occurrence.submission.text.isEmpty()) PersonUi.text(submission, occurrence.submission.text, false);
-                for (TaskAttachment attachment : occurrence.submission.attachments) attachment(submission, attachment);
+                List<TaskAttachment> attachments = occurrence.submission.attachments;
+                if (state.allowed && attachments.size() == 1 && inlineAuthorized())
+                    embed(submission, attachments.get(0), state.dom);
+                else if (state.allowed && attachments.size() > 1)
+                    PersonUi.row(submission, R.drawable.ic_nav_tasks,
+                            getResources().getQuantityString(R.plurals.tasks_proof_attachment_count,
+                                    attachments.size(), attachments.size()), "",
+                            () -> { if (model.busy || model.loading || !inlineAuthorized()) return;
+                                model.proofAttachments = true; render(); scrollTop(); })
+                            .setTag("task_proof_attachments:" + occurrence.id);
             }
         }
         LinearLayout actions = PersonUi.card(body);
@@ -396,19 +418,27 @@ public final class TasksActivity extends RolePage {
             else PersonUi.text(actions, getString(R.string.tasks_cancel_update), false);
         }
         if (actions.getChildCount() == 0) body.removeView(actions);
-        if (state.allowed && occurrence.task.attachment != null && inlineAuthorized()) {
-            LinearLayout media = PersonUi.card(body);
-            PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
-            inlineMedia = new TaskAttachmentView(this, data, repository, occurrence.task.attachment,
-                    model.scope, state.dom, this::inlineAuthorized, this::refresh);
-            media.addView(inlineMedia, new LinearLayout.LayoutParams(-1, -2));
-            inlineSignature = inlineSignature(state);
-        }
+        if (!inlineMedia.isEmpty()) inlineSignature = inlineSignature(state);
+    }
+
+    private void embed(LinearLayout parent, TaskAttachment attachment, boolean dom) {
+        TaskAttachmentView media = new TaskAttachmentView(this, data, repository, attachment,
+                model.scope, dom, this::inlineAuthorized, this::refresh);
+        inlineMedia.add(media);
+        parent.addView(media, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void proofAttachments(TaskEngine.Occurrence occurrence) {
+        title(R.string.tasks_attachments_title);
+        LinearLayout page = PersonUi.card(body);
+        page.setTag("task_proof_page:" + occurrence.id);
+        PersonUi.text(page, occurrence.task.title, true);
+        for (TaskAttachment media : occurrence.submission.attachments) attachment(page, media);
     }
 
     private void confirmCancellation(TaskEngine.Occurrence occurrence) {
         if (model.busy || !model.dom || !ControllerPinManager.isDomModeActive()) return;
-        if (inlineMedia != null) inlineMedia.pause();
+        for (TaskAttachmentView media : inlineMedia) media.pause();
         boolean[] series = {false};
         androidx.appcompat.app.AlertDialog.Builder dialog = new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(R.string.tasks_cancel_task)
@@ -433,15 +463,18 @@ public final class TasksActivity extends RolePage {
     }
 
     private List<Object> inlineSignature(Snapshot state) {
-        if (state == null || !state.valid || !state.allowed || !model.form.isEmpty() || model.selected.isEmpty()) return null;
+        if (state == null || !state.valid || !state.allowed || !model.form.isEmpty()
+                || model.proofAttachments || model.selected.isEmpty()) return null;
         TaskEngine.Occurrence row = state.find(model.selected);
-        if (row == null || row.task.attachment == null) return null;
+        if (row == null || row.task.attachment == null
+                && (row.submission == null || row.submission.attachments.size() != 1)) return null;
         return java.util.Arrays.asList(model.scope, state.dom, state.canCancel, state.canCreate, model.selected, row.status,
                 row.submission == null ? "" : row.submission.id, state.refused.contains(row.task.id), model.message);
     }
 
     private void closeInlineMedia() {
-        if (inlineMedia != null) { inlineMedia.close(); inlineMedia = null; }
+        for (TaskAttachmentView media : inlineMedia) media.close();
+        inlineMedia.clear();
         inlineSignature = null;
     }
 
@@ -764,7 +797,7 @@ public final class TasksActivity extends RolePage {
         private Snapshot snapshot;
         private Exception failure;
         private String person, scope = "", form = "", formToken = "", selected = "";
-        private boolean dom, busy, history, loading;
+        private boolean dom, busy, history, loading, proofAttachments;
         private int message;
         private long readSequence;
         private Bundle draft = new Bundle();
@@ -777,7 +810,7 @@ public final class TasksActivity extends RolePage {
             form = value; formToken = UUID.randomUUID().toString(); draft = new Bundle();
             failure = null; message = 0;
         }
-        private void closeForm() { form = ""; formToken = ""; draft = new Bundle(); picker = null; }
+        private void closeForm() { form = ""; formToken = ""; draft = new Bundle(); picker = null; proofAttachments = false; }
         private void bind(Snapshot next) {
             if (!scope.equals(next.scope) || dom != next.dom) {
                 if (!form.isEmpty()) message = R.string.tasks_changed;
@@ -843,6 +876,7 @@ public final class TasksActivity extends RolePage {
             form = state.getString("tasks.form", ""); formToken = state.getString("tasks.token", "");
             history = state.getBoolean("tasks.history");
             selected = state.getString("tasks.selected", "");
+            proofAttachments = state.getBoolean("tasks.proofAttachments");
             Bundle saved = state.getBundle("tasks.draft"); if (saved != null) draft = saved;
             if (state.getBoolean("tasks.picker")) picker = new Picker(scope, dom, form, formToken);
         }
@@ -851,6 +885,7 @@ public final class TasksActivity extends RolePage {
             state.putString("tasks.form", form); state.putString("tasks.token", formToken); state.putBundle("tasks.draft", draft);
             state.putBoolean("tasks.history", history); state.putBoolean("tasks.picker", picker != null);
             state.putString("tasks.selected", selected);
+            state.putBoolean("tasks.proofAttachments", proofAttachments);
         }
         @Override protected void onCleared() {
             closed = true; changed = null; worker.shutdown(); main.removeCallbacksAndMessages(null);

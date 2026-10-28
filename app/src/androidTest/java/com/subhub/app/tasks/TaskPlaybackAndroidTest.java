@@ -27,6 +27,7 @@ public class TaskPlaybackAndroidTest {
     private TaskAttachment attachment;
     private TaskDefinition definition;
     private boolean ownsFixture;
+    private final List<File> createdMedia = new ArrayList<>();
     @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private Map<String, ?> consent;
     @Before public void setup() throws Exception {
@@ -42,32 +43,48 @@ public class TaskPlaybackAndroidTest {
         if (!ownsFixture) return;
         for (String table : new String[]{"projections", "journal", "receipts", "cursors", "effects"})
             runtime.store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE scope='local'");
-        if (attachment != null) {
-            File root = new File(context.getFilesDir(), "tasks-media/local");
-            for (String suffix : List.of("blob", "size", "part")) {
-                File file = new File(root, attachment.hash + "." + suffix);
-                assertFalse(java.nio.file.Files.isSymbolicLink(file.toPath()));
-                assertTrue(!file.exists() || file.delete());
-            }
+        File mediaRoot = new File(context.getFilesDir().getCanonicalFile(), "tasks-media/local");
+        for (File file : createdMedia) {
+            assertEquals(mediaRoot, file.getParentFile());
+            assertFalse(java.nio.file.Files.isSymbolicLink(file.toPath()));
+            assertTrue(!file.exists() || file.delete());
         }
         SharedPreferenceTestRestore.restore(context.getSharedPreferences(SubFeaturePolicy.STORE, 0), consent);
     }
-    private void seed(byte[] bytes, String mime) throws Exception {
-        attachment = new TaskAttachment(RemoteProtocol.sha256(bytes), mime, bytes.length);
-        RemoteAssets assets = runtime.assets("local"); assets.reserve(attachment.hash, bytes.length);
-        long offset = 0;
-        while (offset < bytes.length) {
-            int end = Math.min(bytes.length, (int) offset + RemoteAssets.CHUNK_BYTES);
-            offset = assets.append(attachment.hash, offset, Arrays.copyOfRange(bytes, (int) offset, end));
+    private TaskAttachment storeMedia(byte[] bytes, String mime) throws Exception {
+        TaskAttachment media = new TaskAttachment(RemoteProtocol.sha256(bytes), mime, bytes.length);
+        File root = new File(context.getFilesDir().getCanonicalFile(), "tasks-media/local");
+        for (String suffix : List.of("blob", "size", "part")) {
+            File file = new File(root, media.hash + "." + suffix);
+            assertFalse(java.nio.file.Files.isSymbolicLink(file.toPath()));
+            if (!file.exists()) createdMedia.add(file);
         }
-        TaskMedia.requireHeader(assets.finish(attachment.hash), mime);
-        LocalDateTime start = LocalDateTime.ofInstant(Instant.now().minusSeconds(120), ZoneOffset.UTC).withSecond(0).withNano(0);
-        TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), "Synthetic playback", "", start,
-                ZoneId.of("UTC"), 3_600_000, Set.of(), false, false, attachment);
-        definition = task;
-        runtime.store.append("local", new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE, null,
-                System.currentTimeMillis(), "", "", List.of(), task), true, false);
+        RemoteAssets assets = runtime.assets("local"); assets.reserve(media.hash, bytes.length);
+        if (!assets.isComplete(media.hash)) {
+            long offset = assets.offset(media.hash);
+            while (offset < bytes.length) {
+                int end = Math.min(bytes.length, (int) offset + RemoteAssets.CHUNK_BYTES);
+                offset = assets.append(media.hash, offset, Arrays.copyOfRange(bytes, (int) offset, end));
+            }
+        }
+        TaskMedia.requireHeader(assets.finish(media.hash), mime);
+        return media;
     }
+    private void seed(byte[] bytes, String mime) throws Exception {
+        attachment = storeMedia(bytes, mime); seedDefinition(attachment);
+    }
+    private void seedDefinition(TaskAttachment media) throws Exception {
+        LocalDateTime start = LocalDateTime.ofInstant(Instant.now().minusSeconds(120), ZoneOffset.UTC).withSecond(0).withNano(0);
+        definition = new TaskDefinition(UUID.randomUUID().toString(), "Synthetic playback", "Synthetic task description", start,
+                ZoneId.of("UTC"), 3_600_000, Set.of(), false, false, media);
+        runtime.store.append("local", new TaskAction(UUID.randomUUID().toString(), definition.id, TaskAction.Kind.CREATE, null,
+                System.currentTimeMillis(), "", "", List.of(), definition), true, false);
+    }
+    private void submitProof(List<TaskAttachment> media) throws Exception {
+        runtime.store.append("local", new TaskAction(UUID.randomUUID().toString(), definition.id, TaskAction.Kind.SUBMIT,
+                definition.firstStart.toLocalDate(), System.currentTimeMillis(), "Synthetic completion text", "", media, null), false, false);
+    }
+    private String occurrence() { return definition.occurrenceId(definition.firstStart.toLocalDate()); }
     private ActivityScenario<TaskMediaActivity> launch() throws Exception {
         return ActivityScenario.launch(new Intent(context, TaskMediaActivity.class).setAction(Intent.ACTION_MAIN)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, "local").putExtra(TaskMediaActivity.EXTRA_SCOPE, "local")
@@ -113,7 +130,7 @@ public class TaskPlaybackAndroidTest {
             page.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("task_media_player")));
         }
     }
-    @Test public void inlineImageRendersAtTheBottomAndOptoutRemovesItsPixels() throws Exception {
+    @Test public void inlineImageFollowsDescriptionAndOptoutRemovesItsPixels() throws Exception {
         seed(android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", android.util.Base64.DEFAULT), "image/gif");
         try (ActivityScenario<TasksActivity> page = inline()) {
             awaitInline(page, "task_inline_image");
@@ -121,7 +138,9 @@ public class TaskPlaybackAndroidTest {
                 android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
                 android.view.View image = body.findViewWithTag("task_inline_image");
                 assertTrue(image.getHeight() <= Math.round(activity.getResources().getDisplayMetrics().heightPixels * .4f));
-                assertNotNull(((android.view.ViewGroup) body.getChildAt(body.getChildCount() - 1)).findViewWithTag("task_inline_image"));
+                android.view.View description = body.findViewWithTag("task_detail:" + occurrence());
+                android.view.View media = body.findViewWithTag("task_definition_media:" + occurrence());
+                assertEquals(body.indexOfChild(description) + 1, body.indexOfChild(media));
             });
             context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
             await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
@@ -166,6 +185,114 @@ public class TaskPlaybackAndroidTest {
             await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
                     activity.findViewById(android.R.id.content).findViewWithTag("task_inline_player") == null)); return gone.get(); });
         }
+    }
+
+    @Test public void singleProofImageIsInlineAfterDefinitionAndTextAndCancellationClosesIt() throws Exception {
+        seed(android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", 0), "image/gif");
+        submitProof(List.of(attachment));
+        java.util.concurrent.atomic.AtomicReference<TaskAttachmentView> proof = new java.util.concurrent.atomic.AtomicReference<>();
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            await(() -> {
+                AtomicBoolean ready = new AtomicBoolean(); page.onActivity(activity -> {
+                    android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
+                    android.view.ViewGroup submission = body.findViewWithTag("task_submission:" + occurrence());
+                    ready.set(submission != null && submission.findViewWithTag("task_inline_image") != null);
+                }); return ready.get();
+            });
+            page.onActivity(activity -> {
+                android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
+                android.view.View detail = body.findViewWithTag("task_detail:" + occurrence());
+                android.view.View media = body.findViewWithTag("task_definition_media:" + occurrence());
+                android.view.ViewGroup submission = body.findViewWithTag("task_submission:" + occurrence());
+                assertEquals(body.indexOfChild(detail) + 1, body.indexOfChild(media));
+                assertEquals(body.indexOfChild(media) + 1, body.indexOfChild(submission));
+                assertNull(submission.findViewWithTag("task_attachment:" + attachment.hash));
+                android.view.View image = submission.findViewWithTag("task_inline_image");
+                proof.set((TaskAttachmentView) image.getParent());
+            });
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("Synthetic completion text"))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation())
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
+            tapInline("cancel_task:" + occurrence());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button1))
+                    .perform(androidx.test.espresso.action.ViewActions.click());
+            await(() -> proof.get().isClosed());
+            await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
+                    activity.findViewById(android.R.id.content).findViewWithTag("task_submission:" + occurrence()) == null)); return gone.get(); });
+        }
+    }
+
+    @Test public void singleProofWavPlaysInlineAndOptoutStopsItsPlayer() throws Exception {
+        attachment = storeMedia(wav(), "audio/wav"); seedDefinition(null); submitProof(List.of(attachment));
+        java.util.concurrent.atomic.AtomicReference<VideoView> player = new java.util.concurrent.atomic.AtomicReference<>();
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_inline_play"); tapInline("task_inline_play"); awaitPlaying(page);
+            page.onActivity(activity -> player.set(activity.findViewById(android.R.id.content).findViewWithTag("task_inline_player")));
+            context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
+            await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
+                    activity.findViewById(android.R.id.content).findViewWithTag("task_inline_player") == null)); return gone.get(); });
+            assertFalse(player.get().isPlaying());
+        }
+    }
+
+    @Test public void singleProofMp4KeepsPrivatePlaybackThroughRefreshAndStopsOnPause() throws Exception {
+        try (InputStream input = InstrumentationRegistry.getInstrumentation().getContext().getAssets().open("tasks/sample.mp4")) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
+            while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
+            attachment = storeMedia(bytes.toByteArray(), "video/mp4");
+        }
+        seedDefinition(null); submitProof(List.of(attachment));
+        try (ActivityScenario<TasksActivity> page = inline()) { checkInlinePlayback(page); }
+    }
+
+    @Test public void missingSingleProofCanRetryInlineWithoutAnOpenAttachmentRow() throws Exception {
+        byte[] bytes = android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", 0);
+        attachment = storeMedia(bytes, "image/gif"); seedDefinition(null); submitProof(List.of(attachment));
+        assertTrue(runtime.assets("local").finish(attachment.hash).delete());
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_inline_error");
+            page.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("task_attachment:" + attachment.hash)));
+            storeMedia(bytes, "image/gif"); tapInline("task_inline_retry"); awaitInline(page, "task_inline_image");
+        }
+    }
+
+    @Test public void multipleProofsUseTheirOwnPageAndBackReturnsThroughTaskDetail() throws Exception {
+        TaskAttachment first = storeMedia(android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", 0), "image/gif");
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888);
+        bitmap.eraseColor(android.graphics.Color.MAGENTA); ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bytes)); bitmap.recycle();
+        TaskAttachment second = storeMedia(bytes.toByteArray(), "image/png"); seedDefinition(null); submitProof(List.of(first, second));
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_proof_attachments:" + occurrence());
+            page.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("task_attachment:" + first.hash)));
+            tapInline("task_proof_attachments:" + occurrence()); awaitInline(page, "task_proof_page:" + occurrence());
+            page.recreate(); awaitInline(page, "task_proof_page:" + occurrence());
+            awaitInline(page, "task_attachment:" + second.hash); tapInline("task_attachment:" + first.hash);
+            awaitResumedMedia(); androidx.test.espresso.Espresso.pressBack();
+            awaitInline(page, "task_proof_page:" + occurrence());
+            androidx.test.espresso.Espresso.pressBack(); awaitInline(page, "task_detail:" + occurrence());
+            androidx.test.espresso.Espresso.pressBack(); awaitInline(page, "task_open:" + occurrence());
+        }
+    }
+
+    private void awaitResumedMedia() throws Exception {
+        await(() -> { AtomicBoolean ready = new AtomicBoolean();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED))
+                    if (activity instanceof TaskMediaActivity && activity.findViewById(android.R.id.content).findViewWithTag("task_media_image") != null)
+                        ready.set(true);
+            }); return ready.get();
+        });
+    }
+    private static byte[] wav() {
+        int samples = 64000; ByteBuffer wav = ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN);
+        wav.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(36 + samples * 2)
+                .put("WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1)
+                .putShort((short) 1).putInt(8000).putInt(16000).putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(samples * 2);
+        for (int i = 0; i < samples; i++) wav.putShort((short) (Math.sin(i * 2 * Math.PI * 440 / 8000) * 300));
+        return wav.array();
     }
 
     private ActivityScenario<TasksActivity> inline() throws Exception {

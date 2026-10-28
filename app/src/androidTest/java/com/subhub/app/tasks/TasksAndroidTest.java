@@ -426,7 +426,15 @@ public final class TasksAndroidTest {
             capture("tasks-submission");
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "task_detail:" + occurrenceId(task));
+            capture("tasks-before-tab-return");
+            page.onActivity(activity -> android.util.Log.i("TasksNavigationWitness", "before tap selected="
+                    + activity.findViewById(R.id.nav_tasks).isSelected() + " dom=" + ControllerPinManager.isDomModeActive()));
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks)).perform(click());
+            capture("tasks-after-tab-return");
+            page.onActivity(activity -> android.util.Log.i("TasksNavigationWitness", "after tap list="
+                    + (activity.findViewById(android.R.id.content).findViewWithTag("task_open:" + occurrenceId(task)) != null)
+                    + " detail=" + (activity.findViewById(android.R.id.content).findViewWithTag("task_detail:" + occurrenceId(task)) != null)
+                    + " dom=" + ControllerPinManager.isDomModeActive()));
             awaitTag(page, "task_open:" + occurrenceId(task));
             onView(withTagValue(is("tasks_send"))).check(doesNotExist());
         }
