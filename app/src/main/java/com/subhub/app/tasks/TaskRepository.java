@@ -79,6 +79,18 @@ public final class TaskRepository {
         result.sort(Comparator.comparingLong((TaskEngine.Occurrence row) -> row.task.start(row.date).toEpochMilli()).reversed());
         return result;
     }
+    public ZoneId schedulingZone() {
+        Target target = target();
+        if (person.isLocal()) return ZoneId.systemDefault();
+        synchronized (remote.store) {
+            Target live = target();
+            String zone = remote.store.metadata(live.peer.identity, live.peer.generation, "tasks_timezone", "");
+            long received;
+            try { received = Long.parseLong(remote.store.metadata(live.peer.identity, live.peer.generation, "tasks_timezone_received", "0")); }
+            catch (NumberFormatException invalid) { received = 0; }
+            return TaskTimezone.require(zone, received, System.currentTimeMillis());
+        }
+    }
     public void create(TaskDefinition definition) throws Exception {
         Target target = target(); requireDom(target);
         long now = System.currentTimeMillis();
@@ -113,6 +125,8 @@ public final class TaskRepository {
                             throw new SecurityException("Conflicting task retry");
                         return;
                     }
+                    if (!schedulingZone().equals(action.definition.zone))
+                        throw new IllegalStateException("Sub timezone changed; reload the schedule");
                 }
                 runtime.store.append(target.scope, action, dom, target.peer == null && !dom);
                 runtime.effects(target); runtime.changed();

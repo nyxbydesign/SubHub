@@ -415,6 +415,7 @@ public final class PenanceManager {
                 preferences.edit().putLong(KEY_LAST_TAMPER_AT, nowMillis).apply();
             }
             HardcoreAutoPayManager.schedule(context);
+            com.subhub.app.remote.RemoteActivityRecorder.tribute(assessed.getId());
             return new SourceDetectionResult(written, amount);
         }
     }

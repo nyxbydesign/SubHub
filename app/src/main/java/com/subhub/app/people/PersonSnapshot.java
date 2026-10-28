@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /** Immutable, presentation-ready data. Connection and data freshness are separate facts. */
@@ -107,8 +108,21 @@ public final class PersonSnapshot {
 
     public static final class Section {
         public final String key, title, summary, details;
+        public final List<App> apps;
         public Section(String key, String title, String summary, String details) {
+            this(key, title, summary, details, Collections.emptyList());
+        }
+        public Section(String key, String title, String summary, String details, List<App> apps) {
             this.key = key; this.title = title; this.summary = summary; this.details = details;
+            this.apps = Collections.unmodifiableList(new ArrayList<>(apps));
+        }
+    }
+
+    public static final class App {
+        public final String packageName, label;
+        public App(String packageName, String label) {
+            this.packageName = Objects.requireNonNull(packageName);
+            this.label = Objects.requireNonNull(label);
         }
     }
 

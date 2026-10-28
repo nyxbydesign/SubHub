@@ -1,10 +1,14 @@
 # Tasks
 
+Open **Tasks** in the bottom navigation. In the Dom workspace, choose a Sub profile to see its active, pending and scheduled tasks. Select a task card for instructions, attachments, completion requests and review. Back returns from a form to the task, then to its list. The Sub workspace opens its own Tasks list.
+
 Open a Sub profile and choose **Tasks**. A Sub can also open Tasks from Home.
 
-A Dom creates a task with a title, instructions, a start time, duration, and optionally one image, audio track or video. Select an IANA time zone, such as `Europe/Berlin`. Select weekdays from Monday through Sunday for a recurring task; leave them unselected for a single task.
+A Dom creates a task with a title, instructions, a start time, duration, and optionally one image, audio track or video. Select weekdays from Monday through Sunday for a recurring task; leave them unselected for a single task.
 
 Recurring tasks keep their chosen local time and time zone when either device changes zones. A spring DST gap moves the start forward by the gap. An autumn overlap uses the earlier offset once. Duration is elapsed time from that resolved start. Each occurrence has a stable identity based on the task and its calendar date in the task's zone.
+
+New tasks use the target Sub device timezone received over the authenticated Tasks connection. The timezone is read-only; sync with the Sub if it is unavailable or more than 30 minutes old. The Dom device timezone is never used for a remote Sub. Existing tasks retain their recorded timezone when either device travels or changes timezone, preserving deadlines, weekday repeats and occurrence identities. New tasks use the latest confirmed Sub timezone. Local tasks use this device timezone.
 
 ## Completion and refusal
 

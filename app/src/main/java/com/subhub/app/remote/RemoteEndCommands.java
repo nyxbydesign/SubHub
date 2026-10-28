@@ -14,7 +14,6 @@ public final class RemoteEndCommands {
     private final Context context;private final RemoteStore store;
     public RemoteEndCommands(Context context,RemoteStore store){this.context=context.getApplicationContext();this.store=store;}
     public String queue(RemoteStore.Peer peer,String expected,long now)throws Exception {
-        PeerDataPolicy.require(RemoteProtocol.Stream.RUNTIME);
         synchronized(store) {
             if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
             requireRole(peer,RemoteProtocol.Role.DOM);token(expected);
@@ -34,7 +33,6 @@ public final class RemoteEndCommands {
         }
     }
     public void process(RemoteStore.Peer supplied,long now)throws Exception {
-        if(!PeerDataPolicy.permits(RemoteProtocol.Stream.RUNTIME))return;
         synchronized(store) {
             RemoteStore.Peer peer=requireRole(supplied,supplied.localRole);
             if(peer.localRole==RemoteProtocol.Role.DOM){receiveResults(peer);return;}

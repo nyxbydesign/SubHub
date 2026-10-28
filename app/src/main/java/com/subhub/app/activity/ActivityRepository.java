@@ -8,6 +8,8 @@ import java.util.Objects;
 
 /** Queries and read acknowledgements always revalidate the current peer relationship. */
 public interface ActivityRepository {
+    default boolean supports(com.subhub.app.people.PersonId person) { return true; }
+    default boolean localOnly() { return false; }
     Page load(String before, int limit) throws Exception;
     Page locate(String entryKey, int limit) throws Exception;
     List<ActivityEntry> recent(com.subhub.app.people.PersonId person, int limit) throws Exception;

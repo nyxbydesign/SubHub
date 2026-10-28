@@ -76,7 +76,8 @@ public final class ActivityPreview {
             setBackgroundResource(R.drawable.bg_card);
             int inset = PersonUi.dp(context, 16);
             setPadding(inset, inset, inset, inset);
-            PersonUi.text(this, context.getString(R.string.dom_activity_recent), true);
+            PersonUi.text(this, context.getString(ActivitySources.repository().localOnly()
+                    ? R.string.dom_activity_recent_local : R.string.dom_activity_recent), true);
             rows = PersonUi.column(context);
             addView(rows, new LayoutParams(-1, -2));
             PersonUi.text(rows, context.getString(R.string.role_loading), false);
@@ -146,9 +147,17 @@ public final class ActivityPreview {
 
         private void refresh() {
             if (!retainAccess() || !listening || !visible()) return;
+            ActivityRepository source = ActivitySources.repository();
+            if (!source.supports(person)) {
+                data.cancel(jobKey);
+                pendingRefresh = false;
+                newest = null;
+                rows.removeAllViews();
+                setVisibility(GONE);
+                return;
+            }
             setVisibility(VISIBLE);
             if (data.isPending(jobKey)) { pendingRefresh = true; return; }
-            ActivityRepository source = ActivitySources.repository();
             PersonId requested = person;
             int count = limit;
             Context app = getContext().getApplicationContext();
@@ -164,6 +173,11 @@ public final class ActivityPreview {
                 continueRefresh();
             }, failure -> {
                 if (!retainAccess() || !listening || !visible()) return;
+                if (source != ActivitySources.repository() || !source.supports(person)) {
+                    pendingRefresh = true;
+                    continueRefresh();
+                    return;
+                }
                 rows.removeAllViews();
                 newest = null;
                 PersonUi.text(rows, getContext().getString(R.string.dom_activity_unavailable), false);

@@ -1,0 +1,20 @@
+<resources>
+    <string name="tasks_overview_empty">No Sub profiles yet</string>
+    <string name="tasks_no_open">No open tasks</string>
+    <string name="tasks_no_history">No task history</string>
+    <string name="tasks_overview_counts">%1$d active · %2$d pending · %3$d scheduled</string>
+    <string name="tasks_section_count">%1$s · %2$d</string>
+    <string name="tasks_schedule">Schedule</string>
+    <string name="tasks_completion">Completion</string>
+    <string name="tasks_attachment_heading">Attachment</string>
+    <string name="tasks_submission_heading">Completion request</string>
+    <string name="tasks_view_all">View tasks</string>
+    <string name="tasks_due">Due %1$s</string>
+    <string name="tasks_starts">Starts %1$s</string>
+    <string name="tasks_profile_unavailable">Tasks unavailable</string>
+    <string name="dom_activity_local_title">Local activity</string>
+    <string name="dom_activity_recent_local">Recent local activity</string>
+    <string name="dom_activity_not_shared">Remote activity is not shared.</string>
+    <string name="tasks_timezone">Sub timezone: %1$s</string>
+    <string name="tasks_timezone_unavailable">Sub timezone unavailable or stale. Sync with the Sub before creating a task.</string>
+</resources>

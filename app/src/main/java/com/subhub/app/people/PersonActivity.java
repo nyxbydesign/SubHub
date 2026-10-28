@@ -166,11 +166,13 @@ public final class PersonActivity extends RolePage {
             LinearLayout destinations = PersonUi.card(body);
             destinations.setTag("person_destinations");
             destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
-            PersonUi.row(destinations, R.drawable.ic_nav_contract, getString(R.string.tasks_title), "", () -> {
+            LinearLayout tasks = PersonUi.card(body);
+            PersonUi.row(tasks, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", () -> {
                 if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
                         .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
             }).setTag("person_tab:tasks");
-            destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+            if (person.can(PersonSnapshot.Capability.VIEW_STATS))
+                destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
             destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
             ActivityPreview.add(body, person.id, 3, data, "person-recent-activity");
         } else {
@@ -269,7 +271,7 @@ public final class PersonActivity extends RolePage {
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
         if (!editable) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && !apps.details.isEmpty()) ContractAppList.add(scope, apps.details);
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps);
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
         LinearLayout features = null;

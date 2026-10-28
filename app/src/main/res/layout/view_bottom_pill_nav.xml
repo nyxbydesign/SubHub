@@ -35,6 +35,13 @@
         <ImageView android:id="@+id/nav_people_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_people" />
         <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_your_subs" />
     </LinearLayout>
+    <LinearLayout android:id="@+id/nav_tasks" style="@style/Widget.SubHub.BottomTab"
+        android:contentDescription="@string/tasks_title" android:visibility="gone">
+        <ImageView android:id="@+id/nav_tasks_icon" style="@style/Widget.SubHub.BottomTabIcon"
+            android:contentDescription="@null" android:src="@drawable/ic_nav_tasks" />
+        <TextView android:id="@+id/nav_tasks_label" style="@style/Widget.SubHub.BottomTabLabel"
+            android:text="@string/tasks_title" />
+    </LinearLayout>
     <LinearLayout android:id="@+id/nav_activity" style="@style/Widget.SubHub.BottomTab"
         android:contentDescription="@string/dom_activity_title" android:visibility="gone">
         <FrameLayout android:layout_width="32dp" android:layout_height="24dp"

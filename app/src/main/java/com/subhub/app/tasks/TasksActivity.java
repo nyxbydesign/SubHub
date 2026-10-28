@@ -55,6 +55,7 @@ public final class TasksActivity extends RolePage {
     private UiState model;
     private TaskRepository repository;
     private PersonId person;
+    private boolean primary;
     private boolean resumed;
     private final Handler clock = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -91,6 +92,8 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        primary = state == null ? !getIntent().hasExtra(PersonRoutes.EXTRA_PERSON_ID)
+                : state.getBoolean("tasks.primary");
         if (!getIntent().hasExtra(PersonRoutes.EXTRA_PERSON_ID))
             getIntent().putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
         try { person = PersonRoutes.requireId(getIntent()); }
@@ -100,12 +103,11 @@ public final class TasksActivity extends RolePage {
         model.app = getApplicationContext();
         if (model.person == null) model.restore(person.value(), state);
         if (!person.value().equals(model.person)) { finish(); return; }
-        page(R.string.tasks_title, SubHubNavigation.Screen.PEOPLE, false);
+        page(R.string.tasks_title, SubHubNavigation.Screen.TASKS, false);
         body.setSaveFromParentEnabled(false);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
-                if (!model.form.isEmpty() && !model.busy) { model.closeForm(); render(); }
-                else if (!model.busy) finish();
+                navigateBack();
             }
         });
         InputFocusPolicy.openActivityForReading(this);
@@ -128,11 +130,48 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        // A selected target never changes underneath an open form or picker.
-        finish();
+        primary = !intent.hasExtra(PersonRoutes.EXTRA_PERSON_ID);
+        if (!intent.hasExtra(PersonRoutes.EXTRA_PERSON_ID))
+            intent.putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
+        PersonId requested;
+        try { requested = PersonRoutes.requireId(intent); }
+        catch (IllegalArgumentException invalid) { finish(); return; }
+        if (!requested.equals(person)) {
+            finish();
+            startActivity(new Intent(this, TasksActivity.class)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, requested.value()));
+            return;
+        }
+        setIntent(intent);
+        showSectionHome();
+        refresh();
+    }
+
+    public void showSectionHome() {
+        if (model == null || model.busy) return;
+        primary = person.isLocal();
+        model.closeForm();
+        model.selected = "";
+        render();
+        scrollTop();
+    }
+
+    private void navigateBack() {
+        if (model == null || model.busy) return;
+        if (!model.form.isEmpty()) { model.closeForm(); render(); scrollTop(); }
+        else if (!model.selected.isEmpty()) { model.selected = ""; render(); scrollTop(); }
+        else finish();
+    }
+
+    private void scrollTop() {
+        if (body != null && body.getParent() instanceof LinearLayout
+                && ((View) body.getParent()).getParent() instanceof android.widget.ScrollView)
+            ((android.widget.ScrollView) ((View) body.getParent()).getParent()).post(() ->
+                    ((android.widget.ScrollView) ((View) body.getParent()).getParent()).scrollTo(0, 0));
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean("tasks.primary", primary);
         if (model != null) model.save(state);
         super.onSaveInstanceState(state);
     }
@@ -153,8 +192,17 @@ public final class TasksActivity extends RolePage {
         if (!resumed || isFinishing() || !samePerson()) return;
         body.removeAllViews();
         Snapshot state = model.snapshot;
-        if (state == null || model.loading) {
-            PersonUi.text(body, getString(R.string.role_loading), false);
+        title("create".equals(model.form) ? R.string.tasks_new
+                : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
+        boolean nested = !primary || !model.form.isEmpty() || !model.selected.isEmpty();
+        TextView back = com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content));
+        back.setVisibility(nested ? View.VISIBLE : View.GONE);
+        back.setOnClickListener(v -> navigateBack());
+        com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content))
+                .setVisibility(nested ? View.GONE : View.VISIBLE);
+        if (state == null) {
+            LinearLayout loading = PersonUi.card(body);
+            PersonUi.text(loading, getString(R.string.role_loading), false);
             return;
         }
         if (state.dom != ControllerPinManager.isDomModeActive()) {
@@ -163,24 +211,25 @@ public final class TasksActivity extends RolePage {
             return;
         }
         if (model.message != 0) {
-            TextView error = PersonUi.text(body, getString(model.message), false);
+            TextView error = PersonUi.text(PersonUi.card(body), getString(model.message), false);
             error.setTag("tasks_error");
             error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         }
         if (model.failure != null) {
-            TextView error = PersonUi.text(body, safeError(model.failure), false);
+            TextView error = PersonUi.text(PersonUi.card(body), safeError(model.failure), false);
             error.setTag("tasks_error");
             error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         }
         if (!state.valid) {
-            PersonUi.text(body, getString(R.string.tasks_unavailable), false);
+            PersonUi.text(PersonUi.card(body), getString(R.string.tasks_unavailable), true);
             action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
             return;
         }
         PersonUi.text(body, state.name, true).setTag("tasks_target");
         if (!person.isLocal() && !state.supported)
             PersonUi.text(body, getString(R.string.tasks_update_devices), false);
-        if (model.busy) PersonUi.text(body, getString(R.string.tasks_working), false);
+        if (model.busy || model.loading) PersonUi.text(body,
+                getString(model.busy ? R.string.tasks_working : R.string.role_loading), false);
         if (!model.form.isEmpty()) {
             if ("create".equals(model.form) && state.canCreate && state.allowed) author();
             else {
@@ -201,7 +250,7 @@ public final class TasksActivity extends RolePage {
             allowed.setChecked(state.chosen);
             allowed.setSaveEnabled(false);
             allowed.setTag("tasks_allowed");
-            allowed.setEnabled(!model.busy);
+            allowed.setEnabled(!model.busy && !model.loading);
             consent.addView(allowed, new LinearLayout.LayoutParams(-1, -2));
             TaskRepository repo = repository;
             allowed.setOnCheckedChangeListener((button, checked) -> mutate(() -> {
@@ -211,20 +260,41 @@ public final class TasksActivity extends RolePage {
                 PersonUi.text(consent, getString(R.string.tasks_hardcore_override), false);
         }
         if (!state.allowed) {
-            PersonUi.text(body, getString(R.string.tasks_disabled), false);
+            PersonUi.text(PersonUi.card(body), getString(R.string.tasks_disabled), false);
             return;
         }
-        if (state.canCreate) action(body, R.string.tasks_create, "tasks_create", () -> {
+        if (!model.selected.isEmpty()) {
+            TaskEngine.Occurrence selected = state.find(model.selected);
+            if (selected == null) {
+                model.selected = "";
+                render();
+            } else detail(state, selected);
+            return;
+        }
+        LinearLayout summary = PersonUi.card(body);
+        summary.setTag("tasks_summary");
+        TasksUi.counts(summary, count(state, TaskEngine.Status.ACTIVE),
+                count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
+        if (state.canCreate && state.zone == null) {
+            PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);
+            action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
+        }
+        if (state.canCreate && state.zone != null) action(body, R.string.tasks_create, "tasks_create", () -> {
             model.openForm("create");
             model.draft.putString("id", UUID.randomUUID().toString());
-            model.draft.putString("start", START.format(LocalDateTime.now().plusHours(1).withSecond(0).withNano(0)));
-            model.draft.putString("zone", ZoneId.systemDefault().getId());
+            model.draft.putString("start", START.format(LocalDateTime.now(state.zone).plusHours(1).withSecond(0).withNano(0)));
+            model.draft.putString("zone", state.zone.getId());
             model.draft.putString("duration", "60");
-            render(); InputFocusPolicy.openActivityForReading(this);
+            render(); scrollTop(); InputFocusPolicy.openActivityForReading(this);
         }, true);
         CheckBox history = check(body, R.string.tasks_show_history, "tasks_history", model.history);
         history.setOnCheckedChangeListener((button, checked) -> { model.history = checked; render(); });
-        if (state.rows.isEmpty()) PersonUi.text(body, getString(R.string.tasks_empty), false);
+        int shown = count(state, TaskEngine.Status.ACTIVE) + count(state, TaskEngine.Status.PENDING)
+                + count(state, TaskEngine.Status.SCHEDULED);
+        if (model.history) shown += count(state, TaskEngine.Status.ACCEPTED) + count(state, TaskEngine.Status.DENIED)
+                + count(state, TaskEngine.Status.TIMED_OUT) + count(state, TaskEngine.Status.REFUSED)
+                + count(state, TaskEngine.Status.SKIPPED);
+        if (shown == 0) TasksUi.empty(body, R.string.tasks_no_open);
         else {
             section(state, R.string.tasks_active, TaskEngine.Status.ACTIVE);
             section(state, R.string.tasks_pending, TaskEngine.Status.PENDING);
@@ -236,58 +306,89 @@ public final class TasksActivity extends RolePage {
         action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
     }
 
+    private static int count(Snapshot state, TaskEngine.Status status) {
+        int count = 0;
+        for (TaskEngine.Occurrence task : state.rows) if (task.status == status
+                && !(state.refused.contains(task.task.id) && (status == TaskEngine.Status.ACTIVE
+                || status == TaskEngine.Status.SCHEDULED))) count++;
+        return count;
+    }
+
     private void section(Snapshot state, int heading, TaskEngine.Status... statuses) {
         Set<TaskEngine.Status> selected = EnumSet.noneOf(TaskEngine.Status.class);
         java.util.Collections.addAll(selected, statuses);
-        PersonUi.text(body, getString(heading), true);
-        int count = 0;
+        List<TaskEngine.Occurrence> visible = new ArrayList<>();
         for (TaskEngine.Occurrence occurrence : state.rows) {
             if (!selected.contains(occurrence.status)) continue;
             if (state.refused.contains(occurrence.task.id) && (occurrence.status == TaskEngine.Status.ACTIVE
                     || occurrence.status == TaskEngine.Status.SCHEDULED)) continue;
-            count++;
+            visible.add(occurrence);
+        }
+        if (visible.isEmpty()) return;
+        PersonUi.text(body, getString(R.string.tasks_section_count, getString(heading), visible.size()), true);
+        for (TaskEngine.Occurrence occurrence : visible) {
             LinearLayout card = PersonUi.card(body);
             card.setTag("task:" + occurrence.id);
-            details(card, occurrence);
-            if (state.refused.contains(occurrence.task.id))
-                PersonUi.text(card, getString(R.string.tasks_series_refused), false);
-            if (occurrence.submission != null) {
-                if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
-                    PersonUi.text(card, getString(R.string.tasks_outside_pending), false);
-                else {
-                    if (!occurrence.submission.text.isEmpty()) PersonUi.text(card, occurrence.submission.text, false);
-                    for (TaskAttachment attachment : occurrence.submission.attachments) attachment(card, attachment);
-                }
-            }
-            if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING && occurrence.submission != null) {
-                action(card, R.string.tasks_accept, "accept:" + occurrence.id,
-                        () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
-                action(card, R.string.tasks_deny, "deny:" + occurrence.id,
-                        () -> act(occurrence, TaskAction.Kind.DENY), false);
-            } else if (!state.dom && !state.refused.contains(occurrence.task.id)) {
-                if (occurrence.status == TaskEngine.Status.ACTIVE) {
-                    action(card, R.string.tasks_request, "request:" + occurrence.id, () -> {
-                        model.openForm(occurrence.id); render(); InputFocusPolicy.openActivityForReading(this);
-                    }, true);
-                    action(card, R.string.tasks_outside, "outside:" + occurrence.id,
-                            () -> act(occurrence, TaskAction.Kind.OUTSIDE), false);
-                    PersonUi.text(card, getString(R.string.tasks_outside_help), false);
-                }
-                if (occurrence.task.allowRefusal && (occurrence.status == TaskEngine.Status.ACTIVE
-                        || occurrence.status == TaskEngine.Status.SCHEDULED)) {
-                    action(card, R.string.tasks_refuse_once, "refuse:" + occurrence.id,
-                            () -> act(occurrence, TaskAction.Kind.REFUSE_ONCE), false);
-                    if (occurrence.task.recurring()) action(card, R.string.tasks_refuse_series,
-                            "refuse_series:" + occurrence.id, () -> act(occurrence, TaskAction.Kind.REFUSE_SERIES), false);
-                }
+            DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+                    .withZone(occurrence.task.zone);
+            String timing = getString(occurrence.status == TaskEngine.Status.SCHEDULED
+                    ? R.string.tasks_starts : R.string.tasks_due,
+                    display.format(occurrence.status == TaskEngine.Status.SCHEDULED
+                            ? occurrence.task.start(occurrence.date) : occurrence.task.end(occurrence.date)));
+            PersonUi.row(card, R.drawable.ic_nav_tasks, occurrence.task.title, timing, () -> {
+                if (model.busy || model.loading) return;
+                model.selected = occurrence.id;
+                render(); scrollTop();
+            }).setTag("task_open:" + occurrence.id);
+            TasksUi.badge(card, getString(statusLabel(occurrence.status)));
+        }
+    }
+
+    private void detail(Snapshot state, TaskEngine.Occurrence occurrence) {
+        LinearLayout card = PersonUi.card(body);
+        card.setTag("task_detail:" + occurrence.id);
+        details(card, occurrence);
+        if (state.refused.contains(occurrence.task.id))
+            PersonUi.text(card, getString(R.string.tasks_series_refused), false);
+        if (occurrence.submission != null) {
+            LinearLayout submission = PersonUi.card(body);
+            PersonUi.text(submission, getString(R.string.tasks_submission_heading), true);
+            if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
+                PersonUi.text(submission, getString(R.string.tasks_outside_pending), false);
+            else {
+                if (!occurrence.submission.text.isEmpty()) PersonUi.text(submission, occurrence.submission.text, false);
+                for (TaskAttachment attachment : occurrence.submission.attachments) attachment(submission, attachment);
             }
         }
-        if (count == 0) PersonUi.text(body, getString(R.string.tasks_empty_group), false);
+        LinearLayout actions = PersonUi.card(body);
+        if (state.canCreate && occurrence.status == TaskEngine.Status.PENDING && occurrence.submission != null) {
+            action(actions, R.string.tasks_accept, "accept:" + occurrence.id,
+                    () -> act(occurrence, TaskAction.Kind.ACCEPT), true);
+            action(actions, R.string.tasks_deny, "deny:" + occurrence.id,
+                    () -> act(occurrence, TaskAction.Kind.DENY), false);
+        } else if (!state.dom && !state.refused.contains(occurrence.task.id)) {
+            if (occurrence.status == TaskEngine.Status.ACTIVE) {
+                action(actions, R.string.tasks_request, "request:" + occurrence.id, () -> {
+                    model.openForm(occurrence.id); render(); scrollTop(); InputFocusPolicy.openActivityForReading(this);
+                }, true);
+                action(actions, R.string.tasks_outside, "outside:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.OUTSIDE), false);
+                PersonUi.text(actions, getString(R.string.tasks_outside_help), false);
+            }
+            if (occurrence.task.allowRefusal && (occurrence.status == TaskEngine.Status.ACTIVE
+                    || occurrence.status == TaskEngine.Status.SCHEDULED)) {
+                action(actions, R.string.tasks_refuse_once, "refuse:" + occurrence.id,
+                        () -> act(occurrence, TaskAction.Kind.REFUSE_ONCE), false);
+                if (occurrence.task.recurring()) action(actions, R.string.tasks_refuse_series,
+                        "refuse_series:" + occurrence.id, () -> act(occurrence, TaskAction.Kind.REFUSE_SERIES), false);
+            }
+        }
+        if (actions.getChildCount() == 0) body.removeView(actions);
     }
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
-        PersonUi.text(card, occurrence.task.title, true);
-        PersonUi.text(card, getString(statusLabel(occurrence.status)), false);
+        PersonUi.text(card, occurrence.task.title, true).setTextSize(24);
+        TasksUi.badge(card, getString(statusLabel(occurrence.status)));
         DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
         PersonUi.text(card, getString(R.string.tasks_window, display.format(occurrence.task.start(occurrence.date)),
                 display.format(occurrence.task.end(occurrence.date)), occurrence.task.zone.getId()), false);
@@ -303,11 +404,21 @@ public final class TasksActivity extends RolePage {
 
     private void author() {
         LinearLayout card = PersonUi.card(body);
-        PersonUi.text(card, getString(R.string.tasks_new), true);
         EditText title = field(card, R.string.tasks_task_title, "title", 160, false);
         EditText instructions = field(card, R.string.tasks_body, "text", 8000, true);
+        card = PersonUi.card(body);
+        PersonUi.text(card, getString(R.string.tasks_schedule), true);
         EditText start = field(card, R.string.tasks_start, "start", 16, false);
-        EditText zone = field(card, R.string.tasks_zone, "zone", 80, false);
+        ZoneId scheduleZone = null;
+        try { scheduleZone = ZoneId.of(model.draft.getString("zone", "")); }
+        catch (Exception invalid) { /* A restored incomplete draft cannot be submitted. */ }
+        boolean zoneReady = scheduleZone != null && scheduleZone.equals(model.snapshot.zone);
+        PersonUi.text(card, zoneReady ? getString(R.string.tasks_timezone, scheduleZone.getId())
+                : getString(R.string.tasks_timezone_unavailable), false).setTag("tasks_timezone");
+        if (!zoneReady) action(card, R.string.tasks_refresh, "tasks_reload_zone", () -> {
+            if (model.snapshot.zone != null) model.draft.putString("zone", model.snapshot.zone.getId());
+            refresh();
+        }, false);
         EditText duration = field(card, R.string.tasks_duration, "duration", 5, false);
         duration.setInputType(InputType.TYPE_CLASS_NUMBER);
         PersonUi.text(card, getString(R.string.tasks_repeat), true);
@@ -327,22 +438,28 @@ public final class TasksActivity extends RolePage {
                 value.setOnCheckedChangeListener((button, checked) -> model.draft.putBoolean("day" + day, checked));
             }
         }
+        card = PersonUi.card(body);
+        PersonUi.text(card, getString(R.string.tasks_completion), true);
         CheckBox refusal = check(card, R.string.tasks_allow_refusal, "tasks_refusal", model.draft.getBoolean("refusal"));
         refusal.setOnCheckedChangeListener((button, checked) -> model.draft.putBoolean("refusal", checked));
         CheckBox tribute = check(card, R.string.tasks_failure_tribute, "tasks_tribute", model.draft.getBoolean("tribute"));
         tribute.setOnCheckedChangeListener((button, checked) -> model.draft.putBoolean("tribute", checked));
         PersonUi.text(card, getString(R.string.tasks_failure_help), false);
-        mediaEditor(card, 1);
-        action(card, R.string.tasks_create, "tasks_save", () -> {
-            title.setError(null); start.setError(null); zone.setError(null); duration.setError(null);
+        LinearLayout media = PersonUi.card(body);
+        PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
+        mediaEditor(media, 1);
+        action(body, R.string.tasks_create, "tasks_save", () -> {
+            title.setError(null); start.setError(null); duration.setError(null);
             if (title.getText().toString().trim().isEmpty()) { InputFocusPolicy.showError(title, getString(R.string.tasks_title_error)); return; }
             LocalDateTime at;
             ZoneId timezone;
             long minutes;
             try {
-                timezone = ZoneId.of(zone.getText().toString().trim());
-                if (!ZoneId.getAvailableZoneIds().contains(timezone.getId())) throw new IllegalArgumentException();
-            } catch (Exception invalid) { InputFocusPolicy.showError(zone, getString(R.string.tasks_zone_error)); return; }
+                timezone = repository.schedulingZone();
+                if (!timezone.getId().equals(model.draft.getString("zone", ""))) throw new IllegalStateException();
+            } catch (Exception invalid) {
+                model.message = R.string.tasks_timezone_unavailable; refresh(); return;
+            }
             try {
                 at = LocalDateTime.parse(start.getText().toString().trim(), START);
                 if (at.atZone(timezone).toInstant().toEpochMilli() <= System.currentTimeMillis()
@@ -361,12 +478,13 @@ public final class TasksActivity extends RolePage {
             TaskRepository repo = repository;
             mutate(() -> { repo.create(definition); return null; }, true);
         }, true);
-        action(card, R.string.tasks_cancel, "tasks_cancel", () -> { model.closeForm(); render(); }, false);
+        action(body, R.string.tasks_cancel, "tasks_cancel", () -> { model.closeForm(); render(); scrollTop(); }, false);
     }
 
     private void proof(TaskEngine.Occurrence occurrence) {
+        details(PersonUi.card(body), occurrence);
         LinearLayout card = PersonUi.card(body);
-        details(card, occurrence);
+        PersonUi.text(card, getString(R.string.tasks_submission_heading), true);
         PersonUi.text(card, getString(R.string.tasks_proof_help), false);
         EditText text = field(card, R.string.tasks_proof, "text", 8000, true);
         mediaEditor(card, 5);
@@ -420,7 +538,7 @@ public final class TasksActivity extends RolePage {
             } catch (Exception invalid) { model.message = R.string.tasks_media_unavailable; render(); }
         });
         row.setTag("task_attachment:" + attachment.hash);
-        row.setEnabled(!model.busy);
+        row.setEnabled(!model.busy && !model.loading);
     }
 
     private void act(TaskEngine.Occurrence occurrence, TaskAction.Kind kind) {
@@ -440,9 +558,9 @@ public final class TasksActivity extends RolePage {
 
     private TextView action(LinearLayout parent, int label, String tag, Runnable click, boolean primary) {
         TextView value = PersonUi.action(parent, label, () -> {
-            if (!model.busy && resumed) click.run();
+            if (!model.busy && !model.loading && resumed) click.run();
         }, primary);
-        value.setTag(tag); value.setEnabled(!model.busy); value.setSaveEnabled(false);
+        value.setTag(tag); value.setEnabled(!model.busy && !model.loading); value.setSaveEnabled(false);
         return value;
     }
 
@@ -451,7 +569,8 @@ public final class TasksActivity extends RolePage {
         if (label != 0) value.setText(label);
         value.setTextColor(getColor(R.color.text_primary));
         value.setMinHeight(PersonUi.dp(this, 48));
-        value.setSaveEnabled(false); value.setTag(tag); value.setChecked(checked); value.setEnabled(!model.busy);
+        value.setSaveEnabled(false); value.setTag(tag); value.setChecked(checked); value.setEnabled(!model.busy && !model.loading);
+        value.setButtonTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
         parent.addView(value, new LinearLayout.LayoutParams(-1, -2));
         return value;
     }
@@ -460,8 +579,12 @@ public final class TasksActivity extends RolePage {
         TextView caption = PersonUi.text(parent, getString(label), false);
         EditText value = new EditText(this);
         value.setId(View.generateViewId()); caption.setLabelFor(value.getId());
-        value.setTag("tasks_" + key); value.setHint(label); value.setSaveEnabled(false);
+        value.setTag("tasks_" + key); value.setSaveEnabled(false);
         value.setTextColor(getColor(R.color.text_primary));
+        value.setTextSize(16);
+        value.setBackgroundResource(R.drawable.bg_input);
+        int inset = PersonUi.dp(this, 12);
+        value.setPadding(inset, inset, inset, inset);
         value.setHintTextColor(getColor(R.color.text_secondary));
         value.setInputType(InputType.TYPE_CLASS_TEXT | (multiline ? InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
@@ -469,14 +592,16 @@ public final class TasksActivity extends RolePage {
         if (multiline) { value.setMinLines(3); value.setGravity(android.view.Gravity.TOP); }
         value.setFilters(new InputFilter[]{new InputFilter.LengthFilter(limit)});
         value.setText(model.draft.getString(key, ""));
-        value.setEnabled(!model.busy);
+        value.setEnabled(!model.busy && !model.loading);
         Bundle draft = model.draft;
         value.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { draft.putString(key, s.toString()); }
             @Override public void afterTextChanged(Editable s) { }
         });
-        parent.addView(value, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
+        size.bottomMargin = PersonUi.dp(this, 12);
+        parent.addView(value, size);
         return value;
     }
 
@@ -531,6 +656,7 @@ public final class TasksActivity extends RolePage {
 
     private static final class Snapshot {
         String scope, name;
+        ZoneId zone;
         boolean valid = true, dom, allowed, chosen, canCreate, canOptOut, supported;
         List<TaskEngine.Occurrence> rows = List.of();
         final Set<String> refused = new HashSet<>();
@@ -542,12 +668,14 @@ public final class TasksActivity extends RolePage {
             Snapshot value = new Snapshot();
             TaskRepository.Target target = repo.target();
             value.scope = target.scope; value.dom = repo.isDom(); value.allowed = repo.allowed();
-            value.name = target.peer == null ? app.getString(R.string.role_local_data) : target.peer.name;
+            value.name = target.peer == null ? com.subhub.app.people.ProfileNames.get(app, false) : target.peer.name;
             value.chosen = SubFeaturePolicy.chosen(app, "tasks");
             value.canOptOut = repo.person.isLocal() && !value.dom && !DeviceRolePreferences.isDomWorkspace(app);
             value.supported = repo.supported();
             value.canCreate = value.supported && value.dom && ControllerPinManager.hasCredentials(app)
                     && (!repo.person.isLocal() || PersonRoutes.canEditLocal(app, repo.person));
+            try { value.zone = repo.schedulingZone(); }
+            catch (IllegalStateException unavailable) { value.zone = null; }
             value.rows = repo.list(System.currentTimeMillis());
             TaskEngine engine = repo.engine();
             for (TaskDefinition definition : engine.definitions()) if (engine.seriesRefused(definition.id)) value.refused.add(definition.id);
@@ -575,7 +703,7 @@ public final class TasksActivity extends RolePage {
         private Runnable changed;
         private Snapshot snapshot;
         private Exception failure;
-        private String person, scope = "", form = "", formToken = "";
+        private String person, scope = "", form = "", formToken = "", selected = "";
         private boolean dom, busy, history, loading;
         private int message;
         private long readSequence;
@@ -594,6 +722,7 @@ public final class TasksActivity extends RolePage {
             if (!scope.equals(next.scope) || dom != next.dom) {
                 if (!form.isEmpty()) message = R.string.tasks_changed;
                 closeForm();
+                selected = "";
             }
             scope = next.scope; dom = next.dom; snapshot = next;
         }
@@ -653,6 +782,7 @@ public final class TasksActivity extends RolePage {
             scope = state.getString("tasks.scope", ""); dom = state.getBoolean("tasks.dom");
             form = state.getString("tasks.form", ""); formToken = state.getString("tasks.token", "");
             history = state.getBoolean("tasks.history");
+            selected = state.getString("tasks.selected", "");
             Bundle saved = state.getBundle("tasks.draft"); if (saved != null) draft = saved;
             if (state.getBoolean("tasks.picker")) picker = new Picker(scope, dom, form, formToken);
         }
@@ -660,6 +790,7 @@ public final class TasksActivity extends RolePage {
             state.putString("tasks.person", person); state.putString("tasks.scope", scope); state.putBoolean("tasks.dom", dom);
             state.putString("tasks.form", form); state.putString("tasks.token", formToken); state.putBundle("tasks.draft", draft);
             state.putBoolean("tasks.history", history); state.putBoolean("tasks.picker", picker != null);
+            state.putString("tasks.selected", selected);
         }
         @Override protected void onCleared() {
             closed = true; changed = null; worker.shutdown(); main.removeCallbacksAndMessages(null);

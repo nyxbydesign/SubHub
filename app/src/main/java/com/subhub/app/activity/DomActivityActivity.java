@@ -89,6 +89,7 @@ public final class DomActivityActivity extends AppCompatActivity {
         state.focusKey = saved == null ? getIntent().getStringExtra(EXTRA_ENTRY_KEY) : saved.getString("activity_focus");
         state.local = saved == null ? getIntent().getBooleanExtra(EXTRA_LOCAL_HISTORY, false)
                 || state.focusKey != null && state.focusKey.startsWith("local:") : saved.getBoolean("activity_local");
+        if (ActivitySources.repository().localOnly()) state.local = true;
         if (state.local && state.cursor == null) state.cursor = "local:MAX";
         getIntent().removeExtra(EXTRA_ENTRY_KEY);
         work = AsyncUiScope.forPage(this);
@@ -98,7 +99,7 @@ public final class DomActivityActivity extends AppCompatActivity {
         retry = findViewById(R.id.dom_activity_retry_action);
         latest = findViewById(R.id.dom_activity_latest_action);
         notifications = findViewById(R.id.dom_activity_notification_action);
-        PrimaryHeader.bind(findViewById(android.R.id.content), 0, R.string.dom_activity_title, 0);
+        PrimaryHeader.bind(findViewById(android.R.id.content), 0, state.local ? R.string.dom_activity_local_title : R.string.dom_activity_title, 0);
         retry.setOnClickListener(view -> refresh(false));
         latest.setOnClickListener(view -> { state.cursor = state.local ? "local:MAX" : null; refresh(true); });
         notifications.setOnClickListener(view -> {
@@ -223,13 +224,27 @@ public final class DomActivityActivity extends AppCompatActivity {
     }
 
     private void updateNotificationAction() {
-        if (notifications != null) notifications.setVisibility(ActivityNotifications.enabled(this) ? View.GONE : View.VISIBLE);
+        if (notifications != null) notifications.setVisibility(ActivitySources.repository().localOnly()
+                || !ActivitySources.repository().supports(null) || ActivityNotifications.enabled(this) ? View.GONE : View.VISIBLE);
     }
 
     private boolean atLatest() { return state.cursor == null || "local:MAX".equals(state.cursor); }
 
     private void refresh(boolean reset) {
         if (!resumed || !mayRead()) return;
+        if (!ActivitySources.repository().supports(null)) {
+            state.entries = Collections.emptyList();
+            rebuildGroups();
+            list.setVisibility(View.INVISIBLE);
+            unread.setVisibility(View.GONE);
+            retry.setVisibility(View.GONE);
+            older.setVisibility(View.GONE);
+            latest.setVisibility(View.GONE);
+            notifications.setVisibility(View.GONE);
+            status.setText(R.string.dom_activity_not_shared);
+            status.setVisibility(View.VISIBLE);
+            return;
+        }
         if (!reset) rememberPosition();
         else { state.position = 0; state.offset = 0; }
         ActivityRepository repository = ActivitySources.repository();

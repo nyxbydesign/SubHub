@@ -7,6 +7,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /** The transport installs a durable repository; observers schedule their own UI work. */
 public final class ActivitySources {
     private static volatile ActivityRepository repository = new ActivityRepository() {
+        public boolean supports(com.subhub.app.people.PersonId person) { return false; }
         public Page load(String before, int limit) { throw new IllegalStateException("Activity unavailable"); }
         public Page locate(String key, int limit) { throw new IllegalStateException("Activity unavailable"); }
         public List<ActivityEntry> recent(com.subhub.app.people.PersonId person, int limit) { throw new IllegalStateException("Activity unavailable"); }
