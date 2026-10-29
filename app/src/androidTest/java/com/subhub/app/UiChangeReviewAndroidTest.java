@@ -67,12 +67,12 @@ public final class UiChangeReviewAndroidTest {
         }
         try (ActivityScenario<OnboardingActivity> page = ActivityScenario.launch(
                 new Intent(context, OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY, true))) {
-            com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, "sub_appearance");
-            settle(); page.onActivity(a -> capture(a, "setup-figure"));
-            com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, "sub_wallet");
-            settle(); page.onActivity(a -> capture(a, "setup-wallet"));
-            com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, "sub_apps");
+            OnboardingTestSupport.goTo(page, "sub_apps");
             settle(); page.onActivity(a -> capture(a, "setup-apps"));
+            OnboardingTestSupport.goTo(page, "dom_wallet");
+            settle(); page.onActivity(a -> capture(a, "setup-wallet"));
+            OnboardingTestSupport.goTo(page, "dom_censor");
+            settle(); page.onActivity(a -> capture(a, "setup-figure"));
         }
         try (ActivityScenario<HelpActivity> page = ActivityScenario.launch(HelpActivity.class)) {
             settle(); page.onActivity(a -> capture(a, "help"));

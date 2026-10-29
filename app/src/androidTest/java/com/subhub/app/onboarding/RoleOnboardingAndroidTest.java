@@ -121,12 +121,20 @@ public final class RoleOnboardingAndroidTest {
             OnboardingTestSupport.choose(page, Mode.SUB_ONLY); assertTrue(ControllerPinManager.setPin(context, "2468"));
             pressBack();
             onView(withTagValue(is("device_role:DOM_ONLY"))).perform(scrollTo(), click());
+            UiDevice.getInstance(instrumentation).waitForIdle();
+            captureAuthWindows(page, "auth-before-cancel");
             onView(withText(android.R.string.cancel)).inRoot(isDialog()).perform(click());
             awaitPickerWindow(page);
             assertEquals(Mode.SUB_ONLY, DeviceRolePreferences.get(context));
             onView(withTagValue(is("device_role:DOM_ONLY"))).perform(scrollTo(), click());
             onView(withHint(R.string.controller_pin_label)).inRoot(isDialog()).perform(replaceText("2468"), closeSoftKeyboard());
+            onView(withHint(R.string.controller_pin_label)).inRoot(isDialog()).check(matches(withText("2468")));
+            UiDevice.getInstance(instrumentation).waitForIdle();
             onView(withText(R.string.controller_pin_unlock)).inRoot(isDialog()).perform(click());
+            long roleDeadline = SystemClock.uptimeMillis() + 5000;
+            while (DeviceRolePreferences.get(context) != Mode.DOM_ONLY && SystemClock.uptimeMillis() < roleDeadline)
+                SystemClock.sleep(25);
+            if (DeviceRolePreferences.get(context) != Mode.DOM_ONLY) captureAuthWindows(page, "auth-submit");
             assertEquals(Mode.DOM_ONLY, DeviceRolePreferences.get(context));
             onView(withId(R.id.tour_next)).perform(click()); assertEquals("dom_security", OnboardingTestSupport.pageId(page));
         }
@@ -141,7 +149,28 @@ public final class RoleOnboardingAndroidTest {
             if (focused.get()) return;
             SystemClock.sleep(25);
         }
+        captureAuthWindows(page, "auth-cancel");
         fail("Role picker window did not regain focus after authentication cancellation");
+    }
+
+    private void captureAuthWindows(ActivityScenario<OnboardingActivity> page, String label) {
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run", "refresh");
+        java.io.File folder = new java.io.File(context.getFilesDir(), "ui-v3/" + run);
+        assertTrue(folder.isDirectory() || folder.mkdirs());
+        try {
+            UiDevice.getInstance(instrumentation).dumpWindowHierarchy(new java.io.File(folder, label + "-window.xml"));
+        } catch (java.io.IOException unavailable) { throw new AssertionError(unavailable); }
+        if (Build.VERSION.SDK_INT >= 29) page.onActivity(activity -> {
+            StringBuilder windows = new StringBuilder();
+            for (View root : android.view.inspector.WindowInspector.getGlobalWindowViews()) {
+                windows.append(root.getClass().getName()).append(" identity=").append(System.identityHashCode(root)).append(" focused=").append(root.hasWindowFocus())
+                        .append(" shown=").append(root.isShown()).append(" title=")
+                        .append(((android.view.WindowManager.LayoutParams) root.getLayoutParams()).getTitle()).append('\n');
+            }
+            try { java.nio.file.Files.write(new java.io.File(folder, label + "-roots.txt").toPath(),
+                    windows.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+            catch (java.io.IOException unavailable) { throw new AssertionError(unavailable); }
+        });
     }
 
     @Test public void pairingActionsUseTheCorrectDirectionAndDomAuthentication() {
@@ -310,8 +339,8 @@ public final class RoleOnboardingAndroidTest {
                 assertEquals(OnboardingFlow.ROLE, OnboardingTestSupport.pageId(page));
                 OnboardingTestSupport.choose(page, Mode.BOTH);
                 assertEquals("sub_connect_dom", OnboardingTestSupport.pageId(page));
-                OnboardingTestSupport.goTo(page, "dom_add_sub", Mode.BOTH);
-                onView(withTagValue(is("onboarding_action:dom_add_sub"))).perform(scrollTo(), click());
+                OnboardingTestSupport.goTo(page, "dom_wallet", Mode.BOTH);
+                onView(withTagValue(is("onboarding_action:dom_add_sub"))).check(doesNotExist());
                 assertTrue(opened.isEmpty()); assertFalse(ControllerPinManager.isDomModeActive());
                 onView(withHint(R.string.controller_pin_label)).check(doesNotExist());
                 onView(withHint(R.string.authenticator_code)).check(doesNotExist());

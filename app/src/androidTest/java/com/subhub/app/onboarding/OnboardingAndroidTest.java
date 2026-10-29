@@ -64,15 +64,12 @@ public class OnboardingAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
-    public void selectedAppsAndStyleSurviveRecreationAndFinishWithoutStartingService() throws Exception {
+    public void selectedAppsAndSavedStyleSurviveRecreationAndFinishWithoutStartingService() throws Exception {
         new FeatureModuleManager(context).save(true, true, true, false);
+        new SettingsRepository(context).saveAppearance(CensorAppearance.Type.BLUR, 71, false, false);
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(OnboardingActivity.class)) {
-            OnboardingTestSupport.goTo(tour, "sub_appearance", DeviceRolePreferences.Mode.SUB_ONLY);
-            onView(withText(R.string.style_blur)).perform(scrollTo(), click()); tour.recreate();
-            onView(withText(R.string.style_blur)).check(matches(isSelected()));
-            capture(tour, "tour-appearance");
-            OnboardingTestSupport.goTo(tour, "sub_wallet", DeviceRolePreferences.Mode.SUB_ONLY);
             OnboardingTestSupport.goTo(tour, "sub_apps", DeviceRolePreferences.Mode.SUB_ONLY);
+            tour.recreate(); assertEquals("sub_apps", OnboardingTestSupport.pageId(tour));
             capture(tour, "tour-apps");
             OnboardingTestSupport.goTo(tour, "device_permissions", DeviceRolePreferences.Mode.SUB_ONLY);
             onView(withId(R.id.tour_next)).check(matches(withText(R.string.tour_finish)));
@@ -91,8 +88,7 @@ public class OnboardingAndroidTest {
         DeviceRolePreferences.Mode role = DeviceRolePreferences.get(context);
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(
                 new Intent(context, OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY, true))) {
-            OnboardingTestSupport.goTo(tour, "sub_appearance", DeviceRolePreferences.Mode.SUB_ONLY);
-            onView(withText(R.string.style_blur)).perform(scrollTo(), click());
+            OnboardingTestSupport.goTo(tour, "dom_censor", DeviceRolePreferences.Mode.DOM_ONLY);
             onView(withId(R.id.tour_skip)).perform(click());
         }
         FeatureModuleManager modules = new FeatureModuleManager(context);
@@ -105,17 +101,16 @@ public class OnboardingAndroidTest {
 
     @Test public void incompleteSetupResumesAfterCredentialsAreConfigured() {
         new FeatureModuleManager(context).save(true, true, true, false);
+        new SettingsRepository(context).saveAppearance(CensorAppearance.Type.BLUR, 71, false, false);
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(OnboardingActivity.class)) {
-            OnboardingTestSupport.goTo(tour, "sub_appearance", DeviceRolePreferences.Mode.SUB_ONLY);
-            onView(withText(R.string.style_blur)).perform(scrollTo(), click());
+            OnboardingTestSupport.goTo(tour, "sub_apps", DeviceRolePreferences.Mode.SUB_ONLY);
         }
         assertTrue(ControllerPinManager.setPin(context, "2468")); assertTrue(OnboardingState.shouldStart(context));
         try (ActivityScenario<OnboardingActivity> resumed = ActivityScenario.launch(OnboardingActivity.class)) {
-            assertEquals("sub_appearance", OnboardingTestSupport.pageId(resumed));
+            assertEquals("sub_apps", OnboardingTestSupport.pageId(resumed));
             List<OnboardingPage> flow = OnboardingFlow.pages(DeviceRolePreferences.Mode.SUB_ONLY);
             onView(withId(R.id.tour_progress)).check(matches(withText(context.getString(R.string.tour_progress,
-                    OnboardingFlow.index(flow, "sub_appearance"), flow.size()))));
-            onView(withText(R.string.style_blur)).perform(scrollTo()).check(matches(isSelected()));
+                    OnboardingFlow.index(flow, "sub_apps"), flow.size()))));
             onView(withId(R.id.tour_skip)).perform(click());
         }
         assertTrue(new FeatureModuleManager(context).isWalletEnabled());

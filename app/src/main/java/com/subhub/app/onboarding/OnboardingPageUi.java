@@ -7,6 +7,7 @@ import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import com.subhub.app.R;
+import com.subhub.app.settings.CensorPreviewView;
 
 /** Shared native type, spacing and artwork keep the three walkthroughs visually coherent. */
 public final class OnboardingPageUi {
@@ -24,12 +25,19 @@ public final class OnboardingPageUi {
         if (spec.kind != OnboardingPage.Kind.APPEARANCE && spec.kind != OnboardingPage.Kind.APPS
                 && spec.kind != OnboardingPage.Kind.WALLET) {
             View graphic;
-            if (spec.scene == OnboardingPage.Scene.LOCAL_FEATURES) {
+            if (spec.scene == OnboardingPage.Scene.CENSOR_SETTINGS) {
+                CensorPreviewView preview = new CensorPreviewView(context, null);
+                preview.setPhonePreview(true);
+                preview.setTag("onboarding_graphic:CENSOR_SETTINGS");
+                preview.setId(R.id.onboarding_graphic);
+                graphic = preview;
+            } else if (spec.scene == OnboardingPage.Scene.LOCAL_FEATURES) {
                 graphic = new SetupFeaturePreviewView(context);
                 graphic.setTag("setup-feature-overview");
                 graphic.setId(R.id.onboarding_graphic);
             } else graphic = new OnboardingGraphic(context, spec.scene);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,
+                    spec.scene == OnboardingPage.Scene.CENSOR_SETTINGS ? dp(context, 200) : -2);
             params.topMargin = dp(context, 8); params.bottomMargin = dp(context, 14);
             parent.addView(graphic, params);
         }
