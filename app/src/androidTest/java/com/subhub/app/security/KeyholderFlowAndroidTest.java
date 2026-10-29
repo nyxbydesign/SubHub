@@ -44,8 +44,7 @@ public final class KeyholderFlowAndroidTest {
                 .putBoolean("in_progress", true).putInt("draft_flow_version", 2)
                 .putInt("draft_step", 4).commit();
         try (ActivityScenario<OnboardingActivity> page = ActivityScenario.launch(OnboardingActivity.class)) {
-            page.onActivity(a -> assertEquals(a.getString(R.string.keyholder_home_title),
-                    ((TextView) a.findViewById(R.id.tour_step_title)).getText().toString()));
+            page.onActivity(a -> assertNotNull(a.findViewById(R.id.keyholder_pin_change_button)));
             onView(withId(R.id.keyholder_pin_change_button)).perform(scrollTo(), click());
             enterPin("5729");
             assertTrue(ControllerPinManager.isConfigured(context));
@@ -67,7 +66,7 @@ public final class KeyholderFlowAndroidTest {
         provider.state = KeyholderProvider.State.READY;
         try (ActivityScenario<OnboardingActivity> page = ActivityScenario.launch(OnboardingActivity.class)) {
             page.onActivity(a -> assertNull(a.findViewById(R.id.keyholder_pin_change_button)));
-            onView(withId(R.id.tour_next)).perform(click());
+            com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, "device_permissions");
             onView(withId(R.id.tour_next)).perform(click());
             assertEquals(com.subhub.app.settings.CensorAppearance.Type.GLITCH, settings.loadAppearance().getType());
             assertFalse(ControllerPinManager.isConfigured(context));

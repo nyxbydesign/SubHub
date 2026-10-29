@@ -152,7 +152,7 @@ public final class DeviceRoleAndroidTest {
             assertFalse(ControllerPinManager.isDomModeActive());
             onView(withId(R.id.tour_next)).perform(click());
             page.onActivity(a -> {
-                assertEquals(a.getString(R.string.keyholder_home_title), ((TextView) a.findViewById(R.id.tour_step_title)).getText().toString());
+                assertEquals(a.getString(R.string.dom_onboarding_security_title), ((TextView) a.findViewById(R.id.tour_step_title)).getText().toString());
                 assertNotNull(a.findViewById(R.id.keyholder_pin_change_button));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("setup-app-card"));
                 assertNull(a.findViewById(android.R.id.content).findViewWithTag("setup-feature-overview"));
@@ -170,13 +170,13 @@ public final class DeviceRoleAndroidTest {
                 .putInt("draft_step", 2).putInt("draft_flow_version", 2)
                 .putBoolean("draft_appearance_changed", true).putString("draft_style", CensorAppearance.Type.BLUR.getPreferenceValue()).commit();
         try (ActivityScenario<OnboardingActivity> page = ActivityScenario.launch(OnboardingActivity.class)) {
-            page.onActivity(a -> assertEquals(a.getString(R.string.keyholder_home_title),
+            page.onActivity(a -> assertEquals(a.getString(R.string.dom_onboarding_security_title),
                     ((TextView) a.findViewById(R.id.tour_step_title)).getText().toString()));
             onView(withId(R.id.keyholder_pin_change_button)).perform(scrollTo(), click());
             onView(withHint(R.string.controller_pin_label)).inRoot(isDialog()).perform(replaceText("5729"), closeSoftKeyboard());
             onView(withHint(R.string.controller_pin_confirm_label)).inRoot(isDialog()).perform(replaceText("5729"), closeSoftKeyboard());
             onView(withText(R.string.controller_pin_set)).inRoot(isDialog()).perform(click());
-            onView(withId(R.id.tour_next)).perform(click());
+            com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, "device_permissions", DeviceRolePreferences.Mode.DOM_ONLY);
             onView(withText(R.string.tour_accessibility_title)).check(doesNotExist());
             onView(withText(R.string.tour_overlay_title)).check(doesNotExist());
             onView(withId(R.id.tour_next)).perform(click());

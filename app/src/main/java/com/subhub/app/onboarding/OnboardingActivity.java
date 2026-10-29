@@ -8,201 +8,254 @@ import android.os.*;
 import android.provider.Settings;
 import android.view.*;
 import android.widget.*;
-
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.people.People;
 import com.subhub.app.security.*;
 import com.subhub.app.settings.*;
 import com.subhub.app.util.*;
+import java.util.List;
 
-/**
- * Guided setup with resumable drafts; replay previews never overwrite saved feature/style choices.
- */
+/** Role-specific setup resumes stable page IDs; replay preserves saved role and feature choices. */
 public final class OnboardingActivity extends PreferencePage {
     public static final String REPLAY = "replay";
-    private static final int STEPS = 6;
     private int step;
-    private boolean replay, censor, limits, wallet, appearanceChanged;
+    private boolean replay, roleChosen, censor, limits, wallet, appearanceChanged, appearanceAuthorized;
     private CensorAppearance.Type style;
+    private DeviceRolePreferences.Mode selectedRole;
+    private List<OnboardingPage> flow;
     private LinearLayout body;
     private boolean resumeRefresh;
     private SetupWalletRulesView walletRules;
     private Bundle walletDraft;
-    private final ActivityResultLauncher<String> notifications =
-            registerForActivityResult(
-                    new ActivityResultContracts.RequestPermission(), ignored -> render());
+    private com.subhub.app.settings.AppSelectionPanel appSelection;
+    private final ActivityResultLauncher<String> notifications = registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(), ignored -> render(true));
 
-    @Override
-    protected void onCreate(Bundle state) {
+    @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         replay = getIntent().getBooleanExtra(REPLAY, false);
         FeatureModuleManager modules = new FeatureModuleManager(this);
-        censor = modules.isCensorEnabled();
-        limits = true;
-        wallet = true;
+        censor = modules.isCensorEnabled(); limits = modules.isLimitsEnabled(); wallet = modules.isWalletEnabled();
         style = new SettingsRepository(this).loadAppearance().getType();
+        selectedRole = DeviceRolePreferences.get(this);
+        flow = OnboardingFlow.pages(selectedRole);
+        SharedPreferences draft = getSharedPreferences("subhub_onboarding", 0);
         if (!replay && state == null && OnboardingState.inProgress(this)) {
-            android.content.SharedPreferences draft = getSharedPreferences("subhub_onboarding", 0);
-            step = draft.getInt("draft_step", 0);
-            if (draft.getInt("draft_flow_version", 1) < 2) {
-                // Resume an older wizard on the equivalent page in the new six-step flow.
-                int[] migratedSteps = {0, 3, 1, 4, 5, 5};
-                step = migratedSteps[Math.max(0, Math.min(5, step))];
+            int version = draft.getInt("draft_flow_version", 1);
+            String id = version < OnboardingFlow.VERSION
+                    ? OnboardingFlow.legacyPage(flow, version, draft.getInt("draft_step", 0))
+                    : draft.getString("draft_page", OnboardingFlow.ROLE);
+            roleChosen = version < OnboardingFlow.VERSION ? !OnboardingFlow.ROLE.equals(id)
+                    : draft.getBoolean("draft_role_chosen", false);
+            if (version >= OnboardingFlow.VERSION && !selectedRole.name().equals(draft.getString("draft_role", ""))) {
+                id = OnboardingFlow.ROLE; roleChosen = false;
             }
-            step = Math.max(0, Math.min(STEPS - 1, step));
+            step = roleChosen ? OnboardingFlow.index(flow, id) : 0;
             walletDraft = SetupWalletRulesView.readDraft(draft);
             censor = draft.getBoolean("draft_censor", censor);
-
-
-            style =
-                    CensorAppearance.Type.fromPreference(
-                            draft.getString("draft_style", style.getPreferenceValue()));
+            style = CensorAppearance.Type.fromPreference(draft.getString("draft_style", style.getPreferenceValue()));
             appearanceChanged = draft.getBoolean("draft_appearance_changed", false);
+            appearanceAuthorized = draft.getBoolean("draft_appearance_authorized", version < OnboardingFlow.VERSION
+                    && appearanceChanged && localSetupAllowed());
         }
-        if (!replay) OnboardingState.begin(this);
+        if (!replay && !OnboardingState.completed(this)) OnboardingState.begin(this);
         if (state != null) {
-            step = Math.max(0, Math.min(STEPS - 1, state.getInt("step")));
-            censor = state.getBoolean("censor");
-
-
-            style = CensorAppearance.Type.fromPreference(state.getString("style"));
-            appearanceChanged = state.getBoolean("appearance_changed");
-            walletDraft = state.getBundle("wallet_rules");
+            String role = state.getString("role", selectedRole.name());
+            try { if (replay) selectedRole = DeviceRolePreferences.Mode.valueOf(role); }
+            catch (IllegalArgumentException invalid) { selectedRole = DeviceRolePreferences.get(this); }
+            flow = OnboardingFlow.pages(selectedRole);
+            roleChosen = state.getBoolean("role_chosen") && (replay || selectedRole.name().equals(role));
+            step = roleChosen ? OnboardingFlow.index(flow, state.getString("page", OnboardingFlow.ROLE)) : 0;
+            censor = state.getBoolean("censor", censor);
+            style = CensorAppearance.Type.fromPreference(state.getString("style", style.getPreferenceValue()));
+            appearanceChanged = state.getBoolean("appearance_changed"); walletDraft = state.getBundle("wallet_rules");
+            appearanceAuthorized = state.getBoolean("appearance_authorized");
         }
-        getOnBackPressedDispatcher()
-                .addCallback(
-                        this,
-                        new androidx.activity.OnBackPressedCallback(true) {
-                            @Override
-                            public void handleOnBackPressed() {
-                                back();
-                            }
-                        });
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { back(); }
+        });
         render();
     }
 
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
-        if (resumeRefresh && body != null && step >= 4) render();
+        if (resumeRefresh && body != null) {
+            if (!replay && selectedRole != DeviceRolePreferences.get(this)) {
+                selectedRole = DeviceRolePreferences.get(this); flow = OnboardingFlow.pages(selectedRole);
+                step = 0; roleChosen = false;
+            }
+            render(true);
+        }
         if (appSelection != null) appSelection.reload();
         resumeRefresh = false;
     }
-
-    @Override
-    protected void onPause() {
-        saveDraft();
-        resumeRefresh = true;
-        super.onPause();
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle state) {
+    @Override protected void onPause() { saveDraft(); resumeRefresh = true; super.onPause(); }
+    @Override protected void onSaveInstanceState(Bundle state) {
         captureWalletDraft();
-        state.putInt("step", step);
-        state.putBoolean("censor", censor);
-        state.putBoolean("limits", limits);
-        state.putBoolean("wallet", wallet);
-        state.putString("style", style.getPreferenceValue());
-        state.putBoolean("appearance_changed", appearanceChanged);
-        state.putBundle("wallet_rules", walletDraft);
+        state.putString("role", selectedRole.name()); state.putBoolean("role_chosen", roleChosen);
+        state.putString("page", OnboardingFlow.pageId(flow, step));
+        state.putBoolean("censor", censor); state.putString("style", style.getPreferenceValue());
+        state.putBoolean("appearance_changed", appearanceChanged); state.putBundle("wallet_rules", walletDraft);
+        state.putBoolean("appearance_authorized", appearanceAuthorized);
         super.onSaveInstanceState(state);
     }
 
     private void back() {
-        if (step > 0) {
-            step = domOnly() && step == 4 ? 0 : step - 1;
-            render();
-        } else finishSetup();
+        captureWalletDraft();
+        if (step > 0) { step--; render(); }
+        else finish();
     }
 
-    private void render() {
+    private void render() { render(false); }
+    private void render(boolean preserveScroll) {
         if (isFinishing() || isDestroyed()) return;
-        if ((!localSetupAllowed() || domOnly()) && step > 0 && step < 4) step = 4;
-        saveDraft();
-        walletRules = null;
-        appSelection = null;
-        setContentView(R.layout.activity_onboarding);
-        page = findViewById(R.id.tour_content);
-        body = page;
+        ScrollView prior = findViewById(R.id.tour_scroll);
+        int scroll = preserveScroll && prior != null ? prior.getScrollY() : 0;
+        step = Math.max(0, Math.min(flow.size(), step));
+        saveDraft(); walletRules = null; appSelection = null;
+        setContentView(R.layout.activity_onboarding); page = findViewById(R.id.tour_content); body = page;
         PrimaryHeader.bindSecondary(findViewById(android.R.id.content), R.string.tour_title, false);
-        PrimaryHeader.backButton(findViewById(android.R.id.content))
-                .setOnClickListener(v -> back());
-        int count = domOnly() ? 3 : STEPS;
-        int current = domOnly() ? step == 0 ? 0 : step - 3 : step;
-        ((TextView) findViewById(R.id.tour_progress))
-                .setText(getString(R.string.tour_progress, current + 1, count));
+        findViewById(R.id.header_role_badge).setVisibility(View.GONE);
+        PrimaryHeader.backButton(findViewById(android.R.id.content)).setOnClickListener(v -> back());
         LinearLayout progress = findViewById(R.id.tour_steps);
-        for (int i = 0; i < count; i++) {
-            View segment = new View(this);
-            segment.setBackgroundResource(
-                    i <= current ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(5), 1);
-            p.setMargins(dp(3), 0, dp(3), 0);
-            progress.addView(segment, p);
+        TextView count = findViewById(R.id.tour_progress);
+        ((View) progress.getParent()).setVisibility(step == 0 ? View.GONE : View.VISIBLE);
+        if (step > 0) {
+            count.setText(getString(R.string.tour_progress, step, flow.size()));
+            for (int i = 0; i < flow.size(); i++) {
+                View segment = new View(this);
+                segment.setBackgroundResource(i < step ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(4), 1);
+                params.setMargins(dp(2), 0, dp(2), 0); progress.addView(segment, params);
+            }
         }
-        int[] titles = {
-            R.string.tour_welcome,
-            R.string.tour_choose_style,
-            R.string.tour_wallet_rules,
-            R.string.tour_select_apps,
-            R.string.keyholder_home_title,
-            R.string.tour_permissions
-        };
-        TextView title = text(body, getString(titles[step]), 26, false);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setId(R.id.tour_step_title);
-        if (step == 0) welcome();
-        else if (step == 1) appearance();
-        else if (step == 2) walletRules();
-        else if (step == 3) features();
-        else if (step == 4) keyholder();
-        else permissions();
+        if (step == 0) chooseRole(); else showPage(flow.get(step - 1));
         Button next = findViewById(R.id.tour_next);
-        next.setBackgroundResource(R.drawable.bg_primary_button);
-        next.setTextColor(getColor(R.color.text_primary));
-        next.setText(
-                step == 0
-                        ? R.string.tour_get_started
-                        : step == STEPS - 1 ? R.string.tour_finish : R.string.tour_next);
-        next.setOnClickListener(
-                v -> {
-                    if (walletRules != null && !walletRules.applyRules()) return;
-                    captureWalletDraft();
-                    if (step == STEPS - 1) finishSetup();
-                    else {
-                        if (domOnly() && step == 4 && !ControllerPinManager.isConfigured(this)) {
-                            Toast.makeText(this, R.string.device_role_pin_setup_required, Toast.LENGTH_LONG).show();
-                            return;
-                        }
-                        step = domOnly() && step == 0 ? 4 : step + 1;
-                        render();
-                    }
-                });
-        findViewById(R.id.tour_skip).setOnClickListener(v -> finishSetup());
+        next.setBackgroundResource(R.drawable.bg_primary_button); next.setTextColor(getColor(R.color.text_primary));
+        next.setText(step == flow.size() ? R.string.tour_finish : R.string.tour_next);
+        next.setEnabled(step > 0 || roleChosen);
+        next.setOnClickListener(v -> next());
+        View skip = findViewById(R.id.tour_skip); skip.setVisibility(step == 0 ? View.GONE : View.VISIBLE);
+        skip.setOnClickListener(v -> finishSetup());
+        InputFocusPolicy.openActivityForReading(this);
+        ScrollView current = findViewById(R.id.tour_scroll);
+        current.post(() -> { if (!isFinishing()) current.scrollTo(0, scroll); });
     }
 
-    private void welcome() {
-        body.addView(new DeviceRoleView(this, () -> {
-            if (domOnly()) { appearanceChanged = false; walletDraft = null; }
-            render();
-        }), new LinearLayout.LayoutParams(-1, -2));
-        if (!domOnly()) {
-            SetupFeaturePreviewView features = new SetupFeaturePreviewView(this);
-            features.setTag("setup-feature-overview");
-            body.addView(features, new LinearLayout.LayoutParams(-1, -2));
+    private void chooseRole() {
+        body.setTag("onboarding_page:role");
+        TextView title = OnboardingPageUi.text(body, getString(R.string.onboarding_choose_role), 28, false);
+        title.setId(R.id.tour_step_title); title.setTypeface(null, android.graphics.Typeface.BOLD);
+        androidx.core.view.ViewCompat.setAccessibilityHeading(title, true);
+        LinearLayout.LayoutParams heading = (LinearLayout.LayoutParams) title.getLayoutParams();
+        heading.bottomMargin = dp(20); title.setLayoutParams(heading);
+        body.addView(new OnboardingRolePickerView(this, roleChosen ? selectedRole : null, this::requestRole),
+                new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void requestRole(DeviceRolePreferences.Mode role) {
+        if (replay || role == DeviceRolePreferences.get(this)) { choose(role); return; }
+        if (!localRoleAuthority()) { blockedRoleNotice(); return; }
+        if (role == DeviceRolePreferences.Mode.DOM_ONLY && DeviceRolePreferences.hasSubProtection(this)) {
+            notice(getString(R.string.device_role_end_session)); return;
+        }
+        Runnable apply = () -> {
+            if (localRoleAuthority() && DeviceRolePreferences.set(this, role)) choose(role);
+            else notice(getString(R.string.device_role_change_unavailable));
+        };
+        if (OnboardingState.isPristine(this)) apply.run();
+        else if (!ControllerPinManager.hasCredentials(this))
+            ControllerPinGate.setupLocalPin(this, () -> render(true));
+        else ControllerPinGate.authenticate(this, apply, false);
+    }
+
+    private void choose(DeviceRolePreferences.Mode role) {
+        captureWalletDraft(); selectedRole = role; roleChosen = true;
+        flow = OnboardingFlow.pages(role); step = 0; render();
+    }
+
+    private boolean localRoleAuthority() {
+        try { return People.keyholder().state() == KeyholderProvider.State.NONE && People.isLocalConfigurationAllowed(); }
+        catch (RuntimeException unavailable) { return false; }
+    }
+
+    private void blockedRoleNotice() {
+        int message = R.string.device_role_managed;
+        try {
+            KeyholderProvider.State state = People.keyholder().state();
+            if (state == KeyholderProvider.State.UNAVAILABLE) message = R.string.device_role_unavailable;
+            else if (state == KeyholderProvider.State.PENDING) message = R.string.keyholder_pairing_in_progress;
+        } catch (RuntimeException unavailable) { message = R.string.device_role_unavailable; }
+        notice(getString(message));
+    }
+
+    private void showPage(OnboardingPage spec) {
+        OnboardingPageUi.render(body, spec);
+        switch (spec.kind) {
+            case APPEARANCE: appearance(); break;
+            case WALLET: walletRules(); break;
+            case APPS: features(); break;
+            case SECURITY: security(); break;
+            case PERMISSIONS: permissions(); break;
+            default: break;
+        }
+        if (spec.action != OnboardingPage.Action.NONE)
+            button(body, getString(spec.actionLabel), () -> performAction(spec.action))
+                    .setTag("onboarding_action:" + spec.id);
+    }
+
+    private void next() {
+        if (step == 0 && !roleChosen) return;
+        if (walletRules != null && !walletRules.applyRules()) return;
+        captureWalletDraft();
+        if (step == flow.size()) finishSetup(); else { step++; render(); }
+    }
+
+    private void performAction(OnboardingPage.Action action) {
+        saveDraft();
+        if (action == OnboardingPage.Action.HARDCORE) {
+            if (!DeviceRolePreferences.supportsSub(this) || DeviceRolePreferences.isDomWorkspace(this)) {
+                notice(getString(R.string.onboarding_hardcore_sub_only)); return;
+            }
+            startActivity(new Intent(this, GlobalSettingsActivity.class).putExtra("settings_group", "permissions"));
+        } else {
+            boolean dom = action == OnboardingPage.Action.PAIR_SUB;
+            if (dom && !DeviceRolePreferences.supportsDom(this) || !dom && !DeviceRolePreferences.supportsSub(this)) {
+                notice(getString(R.string.onboarding_replay_action)); return;
+            }
+            if (dom && !localRoleAuthority()) { blockedRoleNotice(); return; }
+            Runnable open = () -> {
+                if (dom && !localRoleAuthority()) { blockedRoleNotice(); return; }
+                if (dom && !DeviceRolePreferences.supportsDom(this) || !dom && !DeviceRolePreferences.supportsSub(this)) return;
+                if (People.connectionUi() != null) People.connectionUi().openPairing(this, dom);
+                else notice(getString(R.string.role_pairing_unavailable));
+            };
+            if (dom && !ControllerPinManager.hasCredentials(this) && !ControllerPinManager.allowsUnkeyedAccess(this)) {
+                for (int i = 0; i < flow.size(); i++) if (flow.get(i).kind == OnboardingPage.Kind.SECURITY) { step = i + 1; break; }
+                render(); notice(getString(R.string.device_role_pin_setup_required)); return;
+            }
+            if (dom) ControllerPinGate.unlock(this, open, false); else open.run();
         }
     }
 
-    private boolean domOnly() {
-        return DeviceRolePreferences.get(this) == DeviceRolePreferences.Mode.DOM_ONLY;
-    }
+    private boolean domOnly() { return selectedRole == DeviceRolePreferences.Mode.DOM_ONLY; }
 
-    private com.subhub.app.settings.AppSelectionPanel appSelection;
+    private void security() {
+        LinearLayout local = card(body); local.setId(R.id.keyholder_setup_local);
+        if (!localRoleAuthority()) {
+            text(local, getString(R.string.keyholder_remote_control), 17, false);
+            text(local, getString(R.string.keyholder_remote_help), 14, true); return;
+        }
+        boolean pin = ControllerPinManager.isConfigured(this);
+        text(local, getString(pin ? R.string.onboarding_security_ready : R.string.onboarding_security_body), 15, false);
+        button(local, getString(pin ? R.string.keyholder_pin_change : R.string.controller_pin_set),
+                () -> ControllerPinGate.setupLocalPin(this, () -> render(true)))
+                .setId(R.id.keyholder_pin_change_button);
+    }
 
     private void features() {
         LinearLayout apps = card(body);
@@ -212,16 +265,26 @@ public final class OnboardingActivity extends PreferencePage {
         apps.addView(appSelection, new LinearLayout.LayoutParams(-1, -1));
         appSelection.fillAvailableHeight();
         appSelection.bind(this,
-                () -> localSetupAllowed() && (ControllerPinManager.isDomModeActive()
-                        || !replay && !ControllerPinManager.hasCredentials(this)),
+                this::editableSetup,
                 this::saveDraft);
         appSelection.load();
+        ScrollView scroll = findViewById(R.id.tour_scroll);
+        apps.post(() -> {
+            if (apps.getParent() != body || !apps.isAttachedToWindow()) return;
+            View list = apps.findViewById(R.id.app_list);
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) apps.getLayoutParams();
+            int available = scroll.getHeight() - apps.getTop() - body.getPaddingBottom() - params.bottomMargin;
+            int controls = appSelection.getHeight() - list.getHeight() + apps.getPaddingTop() + apps.getPaddingBottom();
+            // On short screens the page scrolls rather than reducing app choices to a single row.
+            params.height = Math.max(available, controls + dp(168));
+            params.weight = 0;
+            apps.setLayoutParams(params);
+        });
     }
 
     private void walletRules() {
         walletRules = new SetupWalletRulesView(this, walletDraft,
-                () -> localSetupAllowed() && (ControllerPinManager.isDomModeActive()
-                        || !replay && !ControllerPinManager.hasCredentials(this)));
+                this::editableSetup);
         body.addView(walletRules, new LinearLayout.LayoutParams(-1, -2));
         ScrollView scroll = findViewById(R.id.tour_scroll);
         scroll.post(() -> {
@@ -262,6 +325,7 @@ public final class OnboardingActivity extends PreferencePage {
                             () -> {
                                 style = chosen;
                                 appearanceChanged = true;
+                                appearanceAuthorized = editableSetup();
                                 render();
                             });
             pick.setSelected(style == chosen);
@@ -273,19 +337,15 @@ public final class OnboardingActivity extends PreferencePage {
         }
     }
 
-    private void keyholder() {
-        body.addView(new KeyholderSetupView(this), new LinearLayout.LayoutParams(-1, -2));
-    }
-
     private void permissions() {
-        boolean runtime = !domOnly() && (censor || limits);
+        boolean runtime = DeviceRolePreferences.supportsSub(this) && !domOnly() && (censor || limits);
         if (runtime)
             permission(
                     R.string.tour_accessibility_title,
                     R.string.tour_accessibility_help,
                     new AppModeManager(this).isAccessibilityEnabled(),
                     () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        if (!domOnly() && censor)
+        if (DeviceRolePreferences.supportsSub(this) && !domOnly() && censor)
             permission(
                     R.string.tour_overlay_title,
                     R.string.tour_overlay_help,
@@ -315,30 +375,7 @@ public final class OnboardingActivity extends PreferencePage {
         text(c, getString(reason), 14, true);
         button(c, getString(ready ? R.string.tour_allowed : R.string.tour_allow), open)
                 .setEnabled(!ready);
-    }
-
-    private LinearLayout explain(LinearLayout parent, int resource, int title, int explanation) {
-        LinearLayout c = card(parent);
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        c.addView(header, new LinearLayout.LayoutParams(-1, -2));
-        icon(header, resource);
-        TextView t = text(header, getString(title), 17, false);
-        t.setTypeface(null, android.graphics.Typeface.BOLD);
-        t.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
-        text(c, getString(explanation), 14, true);
-        return c;
-    }
-
-    private void icon(LinearLayout parent, int resource) {
-        ImageView image = new ImageView(this);
-        image.setImageResource(resource);
-        image.setBackgroundResource(R.drawable.bg_header_icon);
-        image.setPadding(dp(8), dp(8), dp(8), dp(8));
-        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(36), dp(36));
-        p.setMarginEnd(dp(10));
-        parent.addView(image, p);
+        c.getChildAt(c.getChildCount() - 1).setTag("onboarding_permission:" + getResources().getResourceEntryName(name));
     }
 
     private void preview(LinearLayout parent, CensorAppearance.Type type, int height) {
@@ -354,56 +391,40 @@ public final class OnboardingActivity extends PreferencePage {
 
     private void saveDraft() {
         captureWalletDraft();
-        if (!replay && OnboardingState.inProgress(this))
-            getSharedPreferences("subhub_onboarding", 0)
-                    .edit()
-                    .putInt("draft_step", step)
-                    .putInt("draft_flow_version", 2)
-                    .putString("draft_wallet_rules", SetupWalletRulesView.encodeDraft(walletDraft))
-                    .putBoolean("draft_censor", censor)
-                    .putBoolean("draft_limits", limits)
-                    .putBoolean("draft_wallet", wallet)
-                    .putString("draft_style", style.getPreferenceValue())
-                    .putBoolean("draft_appearance_changed", appearanceChanged)
-                    .apply();
+        if (!replay && OnboardingState.inProgress(this)) getSharedPreferences("subhub_onboarding", 0).edit()
+                .putInt("draft_step", step).putInt("draft_flow_version", OnboardingFlow.VERSION)
+                .putString("draft_page", OnboardingFlow.pageId(flow, step))
+                .putString("draft_role", selectedRole.name()).putBoolean("draft_role_chosen", roleChosen)
+                .putString("draft_wallet_rules", SetupWalletRulesView.encodeDraft(walletDraft))
+                .putBoolean("draft_censor", censor).putBoolean("draft_limits", limits).putBoolean("draft_wallet", wallet)
+                .putString("draft_style", style.getPreferenceValue()).putBoolean("draft_appearance_changed", appearanceChanged)
+                .putBoolean("draft_appearance_authorized", appearanceAuthorized).apply();
     }
-
-    private void captureWalletDraft() {
-        if (walletRules != null) walletDraft = walletRules.snapshot();
+    private void captureWalletDraft() { if (walletRules != null) walletDraft = walletRules.snapshot(); }
+    private boolean editableSetup() {
+        return !replay && localSetupAllowed() && (ControllerPinManager.isDomModeActive()
+                || !ControllerPinManager.hasCredentials(this));
     }
-
     private boolean localSetupAllowed() {
-        try {
-            return DeviceRolePreferences.supportsSub(this)
-                    && com.subhub.app.people.People.keyholder().state() == KeyholderProvider.State.NONE
-                    && com.subhub.app.people.People.isLocalConfigurationAllowed();
-        } catch (RuntimeException unavailable) { return false; }
+        try { return DeviceRolePreferences.supportsSub(this)
+                && People.keyholder().state() == KeyholderProvider.State.NONE && People.isLocalConfigurationAllowed(); }
+        catch (RuntimeException unavailable) { return false; }
     }
-
     private void finishSetup() {
-        if (domOnly() && !ControllerPinManager.isConfigured(this)) {
-            step = 4;
-            render();
-            Toast.makeText(this, R.string.device_role_pin_setup_required, Toast.LENGTH_LONG).show();
-            return;
+        if (!replay && DeviceRolePreferences.get(this) == DeviceRolePreferences.Mode.DOM_ONLY
+                && !ControllerPinManager.isConfigured(this)) {
+            for (int i = 0; i < flow.size(); i++) if (flow.get(i).kind == OnboardingPage.Kind.SECURITY) { step = i + 1; break; }
+            render(); notice(getString(R.string.device_role_pin_setup_required)); return;
         }
         if (!replay) {
-
-            if (appearanceChanged && localSetupAllowed()) {
-                SettingsRepository settings = new SettingsRepository(this);
-                CensorAppearance old = settings.loadAppearance();
-                settings.saveAppearance(
-                        style, old.getIntensity(), old.isShowBorder(), old.isShowText());
+            if (appearanceChanged && appearanceAuthorized && localSetupAllowed()) {
+                SettingsRepository settings = new SettingsRepository(this); CensorAppearance old = settings.loadAppearance();
+                settings.saveAppearance(style, old.getIntensity(), old.isShowBorder(), old.isShowText());
             }
-            if (!ControllerPinManager.hasCredentials(this))
-                ControllerPinManager.useWithoutKeyholder(this);
-            OnboardingState.complete(this);
-            ControllerPinManager.enterSubMode();
+            if (!ControllerPinManager.hasCredentials(this)) ControllerPinManager.useWithoutKeyholder(this);
+            OnboardingState.complete(this); ControllerPinManager.enterSubMode();
         }
-        startActivity(
-                new Intent(this, MainActivity.class)
-                        .setAction(Intent.ACTION_MAIN)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        startActivity(new Intent(this, MainActivity.class).setAction(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
         finish();
     }
 }
