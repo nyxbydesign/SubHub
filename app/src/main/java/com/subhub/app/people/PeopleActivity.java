@@ -21,6 +21,7 @@ public final class PeopleActivity extends RolePage {
     @Override protected void refresh() {
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
         body.removeAllViews();
+        PeopleSections.add(this, body, false);
         PersonUi.action(body, R.string.role_add_sub, () -> {
             if (!mayManagePeople()) return;
             ConnectionUi ui = People.connectionUi();

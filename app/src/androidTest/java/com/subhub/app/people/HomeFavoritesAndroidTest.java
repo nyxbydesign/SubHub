@@ -347,7 +347,8 @@ public final class HomeFavoritesAndroidTest {
             assertEquals(beforeActivity, activityReads.get());
             scenario.onActivity(activity -> {
                 assertFalse(ControllerPinManager.isDomModeActive());
-                for (int id : new int[] {R.id.nav_people, R.id.nav_activity, R.id.nav_stats}) assertTrue(activity.findViewById(id).isShown());
+                for (int id : new int[] {R.id.nav_people, R.id.nav_stats}) assertTrue(activity.findViewById(id).isShown());
+                assertFalse(activity.findViewById(R.id.nav_activity).isShown());
                 for (int id : new int[] {R.id.nav_contract, R.id.home_service_widget, R.id.global_notice_host})
                     assertFalse(activity.findViewById(id).isShown());
                 assertNull(activity.findViewById(R.id.home_dom_overview).findViewWithTag("activity_preview:all"));

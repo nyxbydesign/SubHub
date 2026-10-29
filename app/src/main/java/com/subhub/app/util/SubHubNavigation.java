@@ -31,7 +31,7 @@ import java.util.List;
 /** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
-    public enum Screen { HOME, PEOPLE, TASKS, ACTIVITY, CONTRACT, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public enum Screen { HOME, PEOPLE, CONTRACT, TASKS, ACTIVITY, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -81,12 +81,12 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_people), domMode);
         setVisible(root.findViewById(R.id.nav_tasks), true);
         boolean activityAvailable = com.subhub.app.activity.ActivitySources.repository().supports(null);
-        setVisible(root.findViewById(R.id.nav_activity), domMode && activityAvailable);
+        setVisible(root.findViewById(R.id.nav_activity), false);
         setVisible(root.findViewById(R.id.nav_contract), !domMode);
         setVisible(root.findViewById(R.id.nav_stats), true);
         setVisible(root.findViewById(R.id.nav_settings), true);
         Screen selected = active;
-        if (active == Screen.ACTIVITY && (!domMode || !activityAvailable)) selected = Screen.HOME;
+        if (active == Screen.ACTIVITY) selected = domMode ? Screen.PEOPLE : Screen.HOME;
         if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
                 || active == Screen.ATMOSPHERE || domMode && active == Screen.CONTRACT) {
             selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
@@ -119,7 +119,7 @@ public final class SubHubNavigation {
     }
 
     private static void bindActivityUnread(Activity activity, View root, boolean domMode) {
-        View tab = root.findViewById(R.id.nav_activity);
+        View tab = root.findViewById(R.id.nav_people);
         if (tab == null || !(activity instanceof androidx.lifecycle.LifecycleOwner)) return;
         ActivityUnread binding = (ActivityUnread) tab.getTag(R.id.nav_activity);
         if (binding == null) {
@@ -199,7 +199,7 @@ public final class SubHubNavigation {
             boolean show = allowed() && unread > 0;
             View indicator = tab.findViewById(R.id.nav_activity_unread);
             indicator.setVisibility(show ? View.VISIBLE : View.GONE);
-            String label = tab.getResources().getString(R.string.dom_activity_title);
+            String label = tab.getResources().getString(R.string.role_your_subs);
             CharSequence description = show ? label + ", "
                     + tab.getResources().getString(R.string.dom_activity_unread_count, unread) : label;
             tab.setContentDescription(description);

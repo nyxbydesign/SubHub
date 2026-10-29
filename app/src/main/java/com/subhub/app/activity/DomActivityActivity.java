@@ -78,6 +78,7 @@ public final class DomActivityActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         setContentView(R.layout.activity_dom_activity);
+        com.subhub.app.people.PeopleSections.add(this, findViewById(R.id.people_section_container), true);
         state = new ViewModelProvider(this).get(FeedState.class);
         if (saved != null) {
             state.cursor = saved.getString("activity_cursor");
