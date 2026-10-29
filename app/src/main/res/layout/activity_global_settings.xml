@@ -22,7 +22,9 @@
             android:paddingEnd="@dimen/page_margin"
             android:paddingBottom="@dimen/bottom_nav_clearance">
 
-            <include layout="@layout/view_primary_header" />
+            <include layout="@layout/view_primary_header"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="@dimen/primary_header_content_gap" />
 
             <TextView
                 android:id="@+id/settings_group_protection"

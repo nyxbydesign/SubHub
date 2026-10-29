@@ -263,7 +263,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         com.subhub.app.privacy.PrivacyControls.bind(this, privacy, this::applyState);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.GONE);
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
-        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_tab_settings, R.string.global_settings_title, 0);
+        PrimaryHeader.bindPrimary(binding.getRoot(), R.drawable.ic_tab_settings, R.string.global_settings_title, 0);
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.SETTINGS);
         if (requestedGroup != null) {
             String target = "appearance".equals(requestedGroup) || "pacts".equals(requestedGroup) ? "privacy" : requestedGroup;

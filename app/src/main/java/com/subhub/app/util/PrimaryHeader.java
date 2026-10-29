@@ -17,6 +17,16 @@ public final class PrimaryHeader {
 
     public static void bind(View root, @DrawableRes int iconRes, @StringRes int titleRes,
             @StringRes int subtitleRes) {
+        bind(root, iconRes, titleRes, subtitleRes, false);
+    }
+
+    public static void bindPrimary(View root, @DrawableRes int iconRes, @StringRes int titleRes,
+            @StringRes int subtitleRes) {
+        bind(root, iconRes, titleRes, subtitleRes, true);
+    }
+
+    private static void bind(View root, @DrawableRes int iconRes, @StringRes int titleRes,
+            @StringRes int subtitleRes, boolean keepIcon) {
         ImageView icon = root.findViewById(R.id.primary_header_icon);
         TextView title = root.findViewById(R.id.primary_header_title);
         TextView subtitle = root.findViewById(R.id.primary_header_subtitle);
@@ -24,13 +34,17 @@ public final class PrimaryHeader {
         icon.setContentDescription(null);
         icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         ViewCompat.setAccessibilityHeading(title, true);
+        if (keepIcon && iconRes != 0 && android.os.Build.VERSION.SDK_INT >= 29) {
+            title.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_BALANCED);
+            title.setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_FULL);
+        }
         title.setText(titleRes);
         TextView role = root.findViewById(R.id.header_role_badge);
         if (role != null) role.setText(com.subhub.app.security.ControllerPinManager.isDomModeActive()
                 ? R.string.role_dom : R.string.role_sub);
         subtitle.setText(subtitleRes == 0 ? "" : root.getResources().getString(subtitleRes));
         subtitle.setVisibility(subtitleRes == 0 ? View.GONE : View.VISIBLE);
-        fitHeader(root, icon, title, iconRes != 0);
+        fitHeader(root, icon, title, iconRes != 0, keepIcon);
     }
 
     public static void bindSecondary(View root, @StringRes int titleRes,
@@ -40,7 +54,7 @@ public final class PrimaryHeader {
         bind(root, 0, titleRes, 0);
     }
 
-    private static void fitHeader(View root, ImageView icon, TextView title, boolean hasIcon) {
+    private static void fitHeader(View root, ImageView icon, TextView title, boolean hasIcon, boolean keepIcon) {
         TextView control = editLockButton(root);
         ViewGroup header = (ViewGroup) view(root);
         float density = root.getResources().getDisplayMetrics().density;
@@ -77,11 +91,27 @@ public final class PrimaryHeader {
                 badge.getPaint().measureText(badge.getText().toString()))
                 + badge.getPaddingLeft() + badge.getPaddingRight() + Math.round(8 * density);
         boolean showIcon = hasIcon
-                && title.getPaint().measureText(title.getText().toString()) <= textWidth;
+                && (keepIcon || title.getPaint().measureText(title.getText().toString()) <= textWidth);
         icon.setVisibility(showIcon ? View.VISIBLE : View.GONE);
         bodyParams.setMarginStart(showIcon || backWidth > 0 ? Math.round(11 * density) : 0);
         View body = root.findViewById(R.id.primary_header_copy);
         body.setLayoutParams(bodyParams);
+    }
+
+    @DrawableRes public static int icon(SubHubNavigation.Screen screen) {
+        switch (screen) {
+            case PEOPLE: return R.drawable.ic_nav_people;
+            case CONTRACT: return R.drawable.ic_nav_contract;
+            case TASKS: return R.drawable.ic_nav_tasks;
+            case ACTIVITY: return R.drawable.ic_shell_activity;
+            case STATS: return R.drawable.ic_nav_stats;
+            case CENSOR: return R.drawable.ic_nav_censor;
+            case LIMITS: return R.drawable.ic_nav_limits;
+            case MONEY: return R.drawable.ic_nav_money;
+            case ATMOSPHERE: return R.drawable.ic_atmosphere;
+            case SETTINGS: return R.drawable.ic_tab_settings;
+            default: return R.drawable.ic_tab_home;
+        }
     }
 
     public static View view(View root) {

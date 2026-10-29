@@ -28,7 +28,7 @@ public abstract class RolePage extends AppCompatActivity {
         setContentView(R.layout.activity_role_page);
         body = findViewById(R.id.role_page_body);
         data = AsyncUiScope.forPage(this);
-        PrimaryHeader.bind(findViewById(android.R.id.content), 0, title, 0);
+        PrimaryHeader.bindPrimary(findViewById(android.R.id.content), headerIcon(), title, 0);
     }
 
     @Override protected void onResume() {
@@ -38,7 +38,7 @@ public abstract class RolePage extends AppCompatActivity {
             ControllerEditMode.enterSubMode(this);
             return;
         }
-        PrimaryHeader.bind(findViewById(android.R.id.content), 0, pageTitle, 0);
+        PrimaryHeader.bindPrimary(findViewById(android.R.id.content), headerIcon(), pageTitle, 0);
         TextView role = PrimaryHeader.editLockButton(findViewById(android.R.id.content));
         ControllerEditMode.renderButton(this, role);
         role.setOnClickListener(v -> {
@@ -55,7 +55,12 @@ public abstract class RolePage extends AppCompatActivity {
 
     protected final void title(int title) {
         pageTitle = title;
-        PrimaryHeader.bind(findViewById(android.R.id.content), 0, title, 0);
+        PrimaryHeader.bindPrimary(findViewById(android.R.id.content), headerIcon(), title, 0);
+    }
+
+    private int headerIcon() {
+        return PrimaryHeader.backButton(findViewById(android.R.id.content)).getVisibility() == View.VISIBLE
+                ? 0 : PrimaryHeader.icon(screen);
     }
 
     protected abstract void refresh();

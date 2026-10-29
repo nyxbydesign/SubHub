@@ -5,7 +5,9 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
         android:orientation="vertical" android:paddingTop="@dimen/primary_header_top"
         android:paddingStart="@dimen/page_margin" android:paddingEnd="@dimen/page_margin">
-        <include layout="@layout/view_primary_header" />
+        <include layout="@layout/view_primary_header"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="@dimen/primary_header_content_gap" />
         <LinearLayout android:id="@+id/people_section_container" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:orientation="vertical" />
         <FrameLayout android:id="@+id/people_panes" android:layout_width="match_parent"

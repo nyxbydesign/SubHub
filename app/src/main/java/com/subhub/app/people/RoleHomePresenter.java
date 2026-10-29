@@ -60,7 +60,9 @@ public final class RoleHomePresenter {
         relationship.setId(R.id.home_assigned_dom);
         relationship.setVisibility(View.GONE);
         LinearLayout content = (LinearLayout) service.getParent();
-        content.addView(relationship, content.indexOfChild(service), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams relationshipParams = new LinearLayout.LayoutParams(-1, -2);
+        relationshipParams.topMargin = activity.getResources().getDimensionPixelSize(R.dimen.primary_header_content_gap);
+        content.addView(relationship, content.indexOfChild(service), relationshipParams);
         View status = activity.findViewById(R.id.protection_status_row);
         ((android.view.ViewGroup) status.getParent()).removeView(status);
         ((LinearLayout) service).addView(status, 0, new LinearLayout.LayoutParams(-1, -2));

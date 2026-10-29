@@ -145,7 +145,8 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         rosterScroll.setVisibility(activitySelected ? android.view.View.GONE : android.view.View.VISIBLE);
         feed.view().setVisibility(activitySelected ? android.view.View.VISIBLE : android.view.View.GONE);
         PeopleSections.select(sections, activitySelected);
-        com.subhub.app.util.PrimaryHeader.bind(findViewById(android.R.id.content), 0,
+        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
+                activitySelected ? R.drawable.ic_shell_activity : R.drawable.ic_nav_people,
                 activitySelected ? feed.title() : R.string.role_people, 0);
         if (!activitySelected) rosterScroll.post(() -> rosterScroll.scrollTo(0, rosterPosition));
     }
