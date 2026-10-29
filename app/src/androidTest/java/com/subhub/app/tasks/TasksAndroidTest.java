@@ -218,6 +218,10 @@ public final class TasksAndroidTest {
             TaskAction last = TaskAction.parse(actions.getJSONObject(actions.length() - 1));
             assertEquals(TaskAction.Kind.ACCEPT, last.kind);
             assertEquals(submitted.id, last.submissionId);
+            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_accepted);
+            page.recreate();
+            assertSubmissionVerdict(page, id, submitted.id, R.string.tasks_accepted);
+            capture("submission-approved");
         }
     }
 
@@ -237,6 +241,10 @@ public final class TasksAndroidTest {
             await(() -> row(task).status == TaskEngine.Status.DENIED);
             JSONArray actions = store.load(scope).json().getJSONArray("actions");
             assertEquals(submission, TaskAction.parse(actions.getJSONObject(actions.length() - 1)).submissionId);
+            assertSubmissionVerdict(page, id, submission, R.string.tasks_denied);
+            page.recreate();
+            assertSubmissionVerdict(page, id, submission, R.string.tasks_denied);
+            capture("submission-denied");
         }
     }
 
@@ -745,6 +753,22 @@ public final class TasksAndroidTest {
     private TaskEngine.Occurrence row(TaskDefinition task) throws Exception {
         return store.load(scope).occurrence(task.id, task.firstStart.toLocalDate(), System.currentTimeMillis());
     }
+    private void assertSubmissionVerdict(ActivityScenario<TasksActivity> page, String occurrence,
+            String submission, int verdict) throws Exception {
+        String tag = "task_submission_verdict:" + submission;
+        awaitTag(page, tag);
+        page.onActivity(activity -> {
+            View root = activity.findViewById(android.R.id.content);
+            View detail = root.findViewWithTag("task_detail:" + occurrence);
+            View completion = root.findViewWithTag("task_submission:" + occurrence);
+            View badge = root.findViewWithTag(tag);
+            assertNotNull(detail); assertNotNull(completion); assertNotNull(badge);
+            assertSame(completion, badge.getParent());
+            assertEquals(activity.getString(verdict), ((android.widget.TextView) badge).getText().toString());
+            assertFalse(containsText(detail, activity.getString(verdict)));
+        });
+    }
+
     private void switchRole(ActivityScenario<TasksActivity> page, boolean dom) {
         page.moveToState(Lifecycle.State.CREATED);
         if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();

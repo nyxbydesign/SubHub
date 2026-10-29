@@ -31,6 +31,7 @@
     <item name="daily_range_30" type="id" />
     <item name="daily_range_year" type="id" />
     <item name="daily_metric_filter" type="id" />
+    <item name="daily_period_total" type="id" />
     <item name="daily_open_statistics" type="id" />
     <string name="daily_compact_summary">%1$s service · %2$d detections</string>
 </resources>

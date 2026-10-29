@@ -391,7 +391,7 @@ public final class TasksActivity extends RolePage {
                 model.proofAttachments = false;
                 render(); scrollTop();
             }).setTag("task_open:" + occurrence.id);
-            TasksUi.badge(card, getString(statusLabel(occurrence.status)));
+            taskStatus(card, occurrence.status);
         }
     }
 
@@ -417,6 +417,11 @@ public final class TasksActivity extends RolePage {
             LinearLayout submission = PersonUi.card(body);
             submission.setTag("task_submission:" + occurrence.id);
             PersonUi.text(submission, getString(R.string.tasks_submission_heading), true);
+            if (occurrence.review != null && occurrence.submission.id.equals(occurrence.review.submissionId)
+                    && (occurrence.review.kind == TaskAction.Kind.ACCEPT || occurrence.review.kind == TaskAction.Kind.DENY))
+                TasksUi.badge(submission, getString(statusLabel(occurrence.review.kind == TaskAction.Kind.ACCEPT
+                        ? TaskEngine.Status.ACCEPTED : TaskEngine.Status.DENIED)))
+                        .setTag("task_submission_verdict:" + occurrence.submission.id);
             if (occurrence.submission.kind == TaskAction.Kind.OUTSIDE)
                 PersonUi.text(submission, getString(R.string.tasks_outside_pending), false);
             else {
@@ -512,7 +517,7 @@ public final class TasksActivity extends RolePage {
 
     private void details(LinearLayout card, TaskEngine.Occurrence occurrence) {
         PersonUi.text(card, occurrence.task.title, true).setTextSize(24);
-        TasksUi.badge(card, getString(statusLabel(occurrence.status)));
+        taskStatus(card, occurrence.status);
         DateTimeFormatter display = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(occurrence.task.zone);
         PersonUi.text(card, getString(R.string.tasks_window, display.format(occurrence.task.start(occurrence.date)),
                 display.format(occurrence.task.end(occurrence.date)), occurrence.task.zone.getId()), false);
@@ -523,6 +528,11 @@ public final class TasksActivity extends RolePage {
             PersonUi.text(card, String.join(" · ", days), false);
         }
         if (!occurrence.task.text.isEmpty()) PersonUi.text(card, occurrence.task.text, false);
+    }
+
+    private void taskStatus(LinearLayout card, TaskEngine.Status status) {
+        if (status != TaskEngine.Status.ACCEPTED && status != TaskEngine.Status.DENIED)
+            TasksUi.badge(card, getString(statusLabel(status)));
     }
 
     private void author() {
@@ -812,7 +822,8 @@ public final class TasksActivity extends RolePage {
             value.contextSignature = new ArrayList<>(content);
             for (TaskEngine.Occurrence row : value.rows) {
                 List<Object> fields = java.util.Arrays.asList(row.id, row.status, row.task.json().toString(),
-                        row.submission == null ? null : row.submission.json().toString());
+                        row.submission == null ? null : row.submission.json().toString(),
+                        row.review == null ? null : row.review.json().toString());
                 value.rowSignatures.put(row.id, fields);
                 content.add(fields);
             }

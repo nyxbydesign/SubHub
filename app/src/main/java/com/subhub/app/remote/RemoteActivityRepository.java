@@ -269,7 +269,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                 if (rows.getInt(7) == 0) {
                     ActivityEvent event = RemoteActivityWire.decode(new JSONObject(StoredPayloads.read(rows,4)));
                     entries.add(new ActivityEntry("local:" + rows.getString(1), PersonId.LOCAL,
-                            context.getString(R.string.role_this_device), clean(Build.MODEL), event,
+                            localSubName(), clean(Build.MODEL), event,
                             rows.getLong(5), false, localLabel(event.packageName)));
                 } else entries.add(entry(store.peer(rows.getString(2), rows.getString(3)), rows.getString(1),
                         StoredPayloads.read(rows,4), rows.getLong(5), rows.getInt(6) == 0));
@@ -285,7 +285,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             while(rows.moveToNext()){
                 if(entries.size()==limit){more=true;break;}
                 ActivityEvent event=RemoteActivityWire.decode(new JSONObject(StoredPayloads.read(rows,2)));
-                entries.add(new ActivityEntry("local:"+rows.getString(1),PersonId.LOCAL,context.getString(R.string.role_this_device),clean(Build.MODEL),event,rows.getLong(3),false,localLabel(event.packageName)));last=rows.getLong(0);
+                entries.add(new ActivityEntry("local:"+rows.getString(1),PersonId.LOCAL,localSubName(),clean(Build.MODEL),event,rows.getLong(3),false,localLabel(event.packageName)));last=rows.getLong(0);
             }
         }
         return new Page(entries,more?"local:"+last:null,requested);
@@ -386,6 +386,11 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         try { return clean(context.getPackageManager().getApplicationLabel(context.getPackageManager().getApplicationInfo(packageName, 0)).toString()); }
         catch (android.content.pm.PackageManager.NameNotFoundException unavailable) { return packageName; }
     }
+    private String localSubName() {
+        String name = clean(com.subhub.app.people.ProfileNames.chosen(context, false));
+        return name.isEmpty() ? context.getString(R.string.header_subtitle_sub) : name;
+    }
+
     private static String clean(String value) {
         StringBuilder result = new StringBuilder();
         for (int i = 0; i < value.length() && result.length() < 160; i++) {

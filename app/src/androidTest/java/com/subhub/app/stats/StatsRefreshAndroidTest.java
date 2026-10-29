@@ -142,6 +142,74 @@ public final class StatsRefreshAndroidTest {
         }
     }
 
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void incompleteSubHistoryHidesLargeUnknownTotalAndRetainsChart() throws Exception {
+        assertPeriodTotals(false);
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void incompleteDomHistoryHidesLargeUnknownTotalAndRetainsChart() throws Exception {
+        assertPeriodTotals(true);
+    }
+
+    private void assertPeriodTotals(boolean dom) throws Exception {
+        if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+        LocalDate today = LocalDate.now();
+        Map<String, Map<String, Long>> days = new TreeMap<>();
+        days.put(today.minusDays(1).toString(), new TreeMap<>(Collections.singletonMap("service_ms", 3600000L)));
+        days.put(today.toString(), new TreeMap<>(Collections.singletonMap("service_ms", 0L)));
+        try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(StatsActivity.class)) {
+            AtomicReference<DailyStatsPanel> panel = new AtomicReference<>();
+            AtomicReference<StatsActivity> current = new AtomicReference<>();
+            page.onActivity(activity -> {
+                current.set(activity);
+                View original = activity.findViewById(R.id.daily_statistics_panel);
+                ViewGroup parent = (ViewGroup) original.getParent(); int index = parent.indexOfChild(original);
+                parent.removeView(original);
+                DailyStatsPanel controlled = new DailyStatsPanel(activity, false, null, new DailyStatsPanel.Source() {
+                    @Override public DailyStatsPanel.DailyData load(String first, String last) {
+                        return new DailyStatsPanel.DailyData(today.minusDays(1).toString(), days);
+                    }
+                    @Override public boolean combined() { return dom; }
+                });
+                parent.addView(controlled, index, original.getLayoutParams()); panel.set(controlled);
+            });
+            await(() -> panel.get().findViewById(R.id.daily_metric_filter) != null);
+            onView(withId(R.id.daily_range_30)).perform(NativeUiActions.revealAboveNavigation(), click());
+            await(() -> panel.get().findViewById(R.id.daily_range_30).isSelected());
+            UiRefreshWitness.capture(current.get(), dom ? "dom-partial-history" : "sub-partial-history");
+            page.onActivity(activity -> {
+                assertNull(panel.get().findViewById(R.id.daily_period_total));
+                assertNotNull(panel.get().findViewById(R.id.daily_day_summary));
+                assertTrue(containsDescription(panel.get(), activity.getString(R.string.daily_trend)));
+                assertTrue(containsDescription(panel.get(), today.toString() + ":"));
+            });
+            assertEquals(2, days.size());
+            assertEquals(Long.valueOf(3600000L), days.get(today.minusDays(1).toString()).get("service_ms"));
+            for (int i = 0; i < 30; i++) days.putIfAbsent(today.minusDays(i).toString(),
+                    new TreeMap<>(Collections.singletonMap("service_ms", 0L)));
+            refresh(page, panel.get());
+            await(() -> panel.get().findViewById(R.id.daily_period_total) != null);
+            page.onActivity(activity -> assertNotEquals(activity.getString(R.string.role_unknown_data),
+                    ((TextView) panel.get().findViewById(R.id.daily_period_total)).getText().toString()));
+            for (Map<String, Long> day : days.values()) day.put("service_ms", 0L);
+            refresh(page, panel.get());
+            UiRefreshWitness.capture(current.get(), dom ? "dom-known-zero-history" : "sub-known-zero-history");
+            page.onActivity(activity -> {
+                TextView amount = panel.get().findViewById(R.id.daily_period_total);
+                assertNotNull(amount);
+                assertEquals("0m", amount.getText().toString());
+            });
+        }
+    }
+
+    private boolean containsDescription(View view, String prefix) {
+        if (view.getContentDescription() != null && view.getContentDescription().toString().startsWith(prefix)) return true;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            if (containsDescription(((ViewGroup) view).getChildAt(i), prefix)) return true;
+        return false;
+    }
+
     private void refresh(ActivityScenario<StatsActivity> page, DailyStatsPanel panel) throws Exception {
         page.onActivity(activity -> panel.refresh());
         await(() -> {

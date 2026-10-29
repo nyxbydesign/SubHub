@@ -243,7 +243,11 @@ public final class DailyStatsPanel extends LinearLayout {
             else total = total > Long.MAX_VALUE - v ? Long.MAX_VALUE : total + v;
             if (!day.isBefore(recorded)) trend.add(v);
         }
-        label(this, format(metrics[metric], complete ? total : -1), 32, false).setTypeface(null, Typeface.BOLD);
+        if (complete) {
+            TextView amount = label(this, format(metrics[metric], total), 32, false);
+            amount.setId(R.id.daily_period_total);
+            amount.setTypeface(null, Typeface.BOLD);
+        }
         label(
                 this,
                 range == 365 && year < today.getYear() ? Integer.toString(year) : getContext()
