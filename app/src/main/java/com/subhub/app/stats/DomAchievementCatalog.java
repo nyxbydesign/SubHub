@@ -29,28 +29,7 @@ final class DomAchievementCatalog {
 
     static List<AchievementManager.Achievement> all() { return VALUES; }
 
-    // Stable IDs name their original tier; requirements evolve independently of those IDs.
     static long target(String id) {
-        switch (id) {
-            case "dom_subs_1": case "dom_hardcore_1": return 2;
-            case "dom_subs_3": case "dom_hardcore_3": return 5;
-            case "dom_subs_5": case "dom_hardcore_5": return 10;
-            case "dom_subs_10": return 25;
-            case "dom_sessions_10": return 250;
-            case "dom_sessions_100": return 2_500;
-            case "dom_time_1hr": return 100L * 3_600;
-            case "dom_time_24hr": return 500L * 3_600;
-            case "dom_time_7days": return 2_500L * 3_600;
-            case "dom_time_30days": return 10_000L * 3_600;
-            case "dom_tribute_10": return 10_000;
-            case "dom_tribute_250": return 100_000;
-            case "dom_tribute_1000": return 1_000_000;
-            case "dom_tribute_10000": return 10_000_000;
-            default: return 0;
-        }
-    }
-
-    static long earlierTarget(String id) {
         switch (id) {
             case "dom_subs_1": case "dom_hardcore_1": return 1;
             case "dom_subs_3": case "dom_hardcore_3": return 3;

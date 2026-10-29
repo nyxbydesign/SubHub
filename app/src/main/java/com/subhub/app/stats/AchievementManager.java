@@ -79,17 +79,6 @@ public final class AchievementManager {
         long placeholder = LocalDate.of(2026, 8, 27).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
         return stored == placeholder ? 0L : stored;
     }
-    public long earlierEarnedGoal(String id) {
-        return isUnlocked(id) && role == AchievementRole.DOM
-                ? preferences.getLong(DomGoalMigration.EARLIER + id, 0L) : 0L;
-    }
-
-    private void migrateDomGoals() {
-        synchronized (UNLOCK_LOCK) {
-            if (role == AchievementRole.DOM && isAccessible()) DomGoalMigration.apply(preferences);
-        }
-    }
-
     public int getUnlockedCount() {
         int count = 0;
         for (Achievement value : all()) if (unlocked.contains(value.id)) count++;
@@ -102,7 +91,7 @@ public final class AchievementManager {
         if (role == AchievementRole.DOM) return new Progress(
                 domStats == null ? 0 : DomAchievementCatalog.current(value.id, domStats),
                 DomAchievementCatalog.target(value.id), isUnlocked(value.id),
-                DomAchievementCatalog.known(value.id, domStats), false);
+                DomAchievementCatalog.known(value.id, domStats));
         long current = current(value.id, stats);
         long target = target(value.id);
         return new Progress(current, target, isUnlocked(value.id));
@@ -120,7 +109,6 @@ public final class AchievementManager {
 
     public List<Achievement> checkDomAchievements(DomStatsSnapshot stats) {
         if (role != AchievementRole.DOM || !isAccessible()) return Collections.emptyList();
-        migrateDomGoals();
         domStats = java.util.Objects.requireNonNull(stats);
         return unlock(value -> DomAchievementCatalog.known(value.id, stats)
                 && DomAchievementCatalog.current(value.id, stats) >= DomAchievementCatalog.target(value.id));
@@ -167,7 +155,6 @@ public final class AchievementManager {
             DomStatsSnapshot aggregate) {
         synchronized (UNLOCK_LOCK) {
             if (!isAccessible()) return false;
-            migrateDomGoals();
             String prefix = "history_v1." + role.name() + ".";
             long now = System.currentTimeMillis();
             boolean initial = !preferences.contains(prefix + "cutoff");
@@ -527,12 +514,9 @@ public final class AchievementManager {
             this(current, target, unlocked, true);
         }
         Progress(long current, long target, boolean unlocked, boolean known) {
-            this(current, target, unlocked, known, true);
-        }
-        Progress(long current, long target, boolean unlocked, boolean known, boolean fillEarned) {
-            this.current = fillEarned && unlocked && target > 0 ? target : current;
+            this.current = unlocked && target > 0 ? target : current;
             this.target = target; this.unlocked = unlocked;
-            this.known = known || (fillEarned && unlocked);
+            this.known = known || unlocked;
         }
         public long getCurrent() { return current; }
         public long getTarget() { return target; }
