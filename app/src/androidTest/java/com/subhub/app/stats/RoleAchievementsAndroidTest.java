@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -123,6 +124,35 @@ public final class RoleAchievementsAndroidTest {
         assertEquals("first_session", sub.takePendingNotifications().get(0).getId());
         ControllerPinManager.enterDomMode();
         assertTrue(AchievementManager.forWorkspace(context).isUnlocked("dom_subs_1"));
+    }
+
+    @Test public void restoredGoalsPreserveReceiptsWithNewerOptionalMetadata() {
+        SharedPreferences saved = context.getSharedPreferences("betablocker_achievements", 0);
+        Set<String> earned = new LinkedHashSet<>(Arrays.asList("first_session", "dom_subs_1"));
+        long receivedAt = 1_790_000_000_000L;
+        assertTrue(saved.edit().putStringSet("unlocked", earned)
+                .putStringSet("pending_notifications", earned)
+                .putLong("unlocked_at.dom_subs_1", receivedAt)
+                .putLong("history_earned_at.first_session", receivedAt - 1_000)
+                .putInt("dom_goal_revision", 2)
+                .putLong("earned_goal_v1.dom_subs_1", 1).commit());
+        Map<String, ?> before = new LinkedHashMap<>(saved.getAll());
+
+        AchievementManager dom = AchievementManager.forWorkspace(context);
+        assertEquals(1, DomAchievementCatalog.target("dom_subs_1"));
+        assertEquals(10, DomAchievementCatalog.target("dom_sessions_10"));
+        assertEquals(3_600, DomAchievementCatalog.target("dom_time_1hr"));
+        assertEquals(1_000, DomAchievementCatalog.target("dom_tribute_10"));
+        assertTrue(dom.isUnlocked("dom_subs_1"));
+        assertEquals(receivedAt, dom.getUnlockedAt("dom_subs_1"));
+        assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
+        assertEquals(before, saved.getAll());
+
+        ControllerPinManager.enterSubMode();
+        AchievementManager sub = AchievementManager.forWorkspace(context);
+        assertTrue(sub.isUnlocked("first_session"));
+        assertEquals(receivedAt - 1_000, sub.getUnlockedAt("first_session"));
+        assertEquals(before, saved.getAll());
     }
 
     @Test public void backgroundSubMilestonesKeepTheirOwnCatalogDuringDomUse() {
@@ -269,34 +299,6 @@ public final class RoleAchievementsAndroidTest {
         }
     }
 
-    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
-    public void grandfatheredBadgesExplainEarlierGoalsWithoutChangingDates() throws Exception {
-        seedUi();
-        long date=System.currentTimeMillis()-40L*24*60*60*1000;
-        context.getSharedPreferences("betablocker_achievements",0).edit()
-                .putStringSet("unlocked",new LinkedHashSet<>(Arrays.asList("dom_time_1hr","dom_sessions_10","dom_tribute_10")))
-                .putLong("unlocked_at.dom_time_1hr",date).commit();
-        try(ActivityScenario<AchievementsActivity> scenario=launch(AchievementsActivity.class)) {
-            awaitText(scenario,context.getString(com.subhub.app.R.string.achievement_earned_earlier));
-            scenario.onActivity(activity->assertFits(activity.findViewById(android.R.id.content)));
-            capture(scenario,"dom-earlier-goals");
-            onView(org.hamcrest.Matchers.allOf(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.dom_time_1hr),
-                    androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_list))))
-                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
-            capture(scenario,"dom-earlier-goals-tap-ready");
-            onView(org.hamcrest.Matchers.allOf(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.dom_time_1hr),
-                    androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_list))))
-                    .perform(click());
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_description))
-                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.withText(
-                            org.hamcrest.Matchers.containsString(context.getString(com.subhub.app.R.string.achievement_earlier_goal,StatsSnapshot.formatDuration(3600))))));
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_description))
-                    .check((view,failure)->{if(failure!=null)throw failure;assertFits(view.getRootView());});
-            assertEquals(date,context.getSharedPreferences("betablocker_achievements",0).getLong("unlocked_at.dom_time_1hr",0));
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_close)).perform(click());
-        }
-    }
-
     @Test public void bothHomeCardsRouteToTheSameStatisticsAndAchievementsSections() throws Exception {
         seedUi();
         for (boolean dom : new boolean[]{true, false}) {
@@ -436,11 +438,9 @@ public final class RoleAchievementsAndroidTest {
     }
 
     private DomStatsSnapshot facts() {
-        return DomStatsSnapshot.aggregate(Arrays.asList(
-                new DomStatsSnapshot.Sub("fixture-a", generation, 1, System.currentTimeMillis(), System.currentTimeMillis(),
-                        new DomStatsSnapshot.Totals(180000,125,5000,0,5000,0),new DomStatsSnapshot.Observation(true,true,true)),
-                new DomStatsSnapshot.Sub("fixture-b", generation, 2, System.currentTimeMillis(), System.currentTimeMillis(),
-                        new DomStatsSnapshot.Totals(180000,125,5000,0,5000,0),new DomStatsSnapshot.Observation(true,true,true))),System.currentTimeMillis());
+        return DomStatsSnapshot.aggregate(Collections.singletonList(new DomStatsSnapshot.Sub("fixture", generation, 1,
+                System.currentTimeMillis(), System.currentTimeMillis(), new DomStatsSnapshot.Totals(3600, 10, 1000, 0, 1000, 0),
+                new DomStatsSnapshot.Observation(true, true, true))), System.currentTimeMillis());
     }
     private RemoteStore store() {
         String name = "role-achievement-" + UUID.randomUUID() + ".db";
@@ -506,13 +506,12 @@ public final class RoleAchievementsAndroidTest {
         }
         throw new AssertionError("Role page did not finish loading");
     }
-    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    @androidx.annotation.RequiresApi(29)
     private void capture(ActivityScenario<?> scenario, String name) throws Exception {
         CountDownLatch frame = new CountDownLatch(1);
         scenario.onActivity(activity -> {
             View root = activity.getWindow().getDecorView();
-            if (android.os.Build.VERSION.SDK_INT >= 29) root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);
-            root.invalidate();
+            root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown); root.invalidate();
         });
         assertTrue("No committed frame", frame.await(5, TimeUnit.SECONDS));
         Bitmap bitmap = instrumentation.getUiAutomation().takeScreenshot(); assertNotNull(bitmap);

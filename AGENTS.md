@@ -35,11 +35,6 @@ These repository rules apply to every automated or human-assisted change.
 
 Native text-fit checks must also cover text drawn directly on Canvas inside artwork. TextView bounds checks cannot detect that overflow; measure each drawn string against its allotted region and inspect a native artwork render after copy changes.
 
-Check padding on transparent achievement exports against the opaque artwork and final
-48-pixel rendering. Preserve exact edge-alpha samples and opaque bounds when a nonzero
-bounding box reaches the canvas edge. Lanczos resampling can leave alpha-1 tails around
-padded artwork; keep transparent-corner and opaque-clipping checks independent.
-
 Before merging or tagging a release, run:
 
 `./gradlew testDebugUnitTest lintDebug assembleDebug`
