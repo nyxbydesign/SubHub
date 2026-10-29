@@ -25,7 +25,7 @@ public abstract class PreferencePage extends AppCompatActivity {
         PrimaryHeader.bindSecondary(header, title, false);
         PrimaryHeader.backButton(header).setOnClickListener(view -> finish());
         LinearLayout.LayoutParams headerParams = (LinearLayout.LayoutParams) header.getLayoutParams();
-        headerParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        headerParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.primary_header_content_gap);
         header.setLayoutParams(headerParams);
     }
     protected LinearLayout card(LinearLayout parent) {

@@ -142,7 +142,8 @@ public class StatsActivity extends PreferencePage {
         page.setVisibility(catalogSelected ? android.view.View.GONE : android.view.View.VISIBLE);
         if (catalog != null) catalog.view().setVisibility(catalogSelected ? android.view.View.VISIBLE : android.view.View.GONE);
         StatsSections.select(shell, catalogSelected);
-        com.subhub.app.util.PrimaryHeader.bind(findViewById(android.R.id.content), 0,
+        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
+                hasSections ? R.drawable.ic_nav_stats : 0,
                 catalogSelected ? R.string.achievements_title : R.string.role_stats, 0);
         int target = catalogSelected ? catalogScroll : statisticsScroll;
         scroll.post(() -> scroll.scrollTo(0, target));
@@ -185,7 +186,7 @@ public class StatsActivity extends PreferencePage {
         com.subhub.app.security.ControllerEditMode.renderButton(this, role);
         com.subhub.app.util.PrimaryHeader.backButton(root).setVisibility(
                 dom ? android.view.View.VISIBLE : android.view.View.GONE);
-        com.subhub.app.util.PrimaryHeader.bind(root, 0, catalogSelected ? R.string.achievements_title : R.string.role_stats,
+        com.subhub.app.util.PrimaryHeader.bindPrimary(root, hasSections ? R.drawable.ic_nav_stats : 0, catalogSelected ? R.string.achievements_title : R.string.role_stats,
                 dom ? R.string.role_this_device : 0);
         if (remote != null) {
             try {

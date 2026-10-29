@@ -120,7 +120,7 @@ public final class MainActivity extends AppCompatActivity {
         roleHome = new com.subhub.app.people.RoleHomePresenter(this, uiData);
         roleHome.setSessionPage(localSessionPage);
         binding.commitmentStartPanel.setEditable(false);
-        PrimaryHeader.bind(binding.getRoot(), 0, R.string.role_overview, 0);
+        PrimaryHeader.bindPrimary(binding.getRoot(), R.drawable.ic_tab_home, R.string.role_overview, 0);
         editLockButton = findViewById(R.id.button_edit_lock);
         projectionManager =
                 (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
@@ -588,7 +588,8 @@ public final class MainActivity extends AppCompatActivity {
         if (!DeviceRolePreferences.supportsSub(this)) editLockButton.setText(R.string.role_dom);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(localSessionPage ? View.VISIBLE : View.GONE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
-        PrimaryHeader.bind(binding.getRoot(), 0,
+        PrimaryHeader.bindPrimary(binding.getRoot(), localSessionPage
+                ? R.drawable.ic_nav_contract : R.drawable.ic_tab_home,
                 localSessionPage ? R.string.role_session : R.string.role_overview, 0);
         binding.subDashboard.setVisibility(View.GONE);
         // Both spaces use the floating bottom navigation. Keep the final home

@@ -2,6 +2,7 @@
 <resources>
     <dimen name="page_margin">16dp</dimen>
     <dimen name="primary_header_top">10dp</dimen>
+    <dimen name="primary_header_content_gap">@dimen/settings_first_group_gap</dimen>
     <dimen name="primary_header_height">64dp</dimen>
     <dimen name="primary_header_icon_size">44dp</dimen>
     <dimen name="control_min_height">48dp</dimen>
