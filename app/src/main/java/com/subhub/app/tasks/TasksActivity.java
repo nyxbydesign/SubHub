@@ -411,7 +411,6 @@ public final class TasksActivity extends RolePage {
             LinearLayout media = PersonUi.column(this);
             card.addView(media, new LinearLayout.LayoutParams(-1, -2));
             media.setTag("task_definition_media:" + occurrence.id);
-            PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
             embed(media, occurrence.task.attachment, state.dom);
         }
         if (occurrence.submission != null) {

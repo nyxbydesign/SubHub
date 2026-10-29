@@ -2,6 +2,8 @@
 <resources>
     <item name="person_session_action" type="id" />
     <item name="people_add_sub" type="id" />
+    <item name="people_section_people" type="id" />
+    <item name="people_section_activity" type="id" />
     <item name="keyholder_pair_device" type="id" />
     <item name="settings_connections_security" type="id" />
     <string name="role_profile">Profile</string>

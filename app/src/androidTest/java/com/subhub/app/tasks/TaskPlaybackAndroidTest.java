@@ -303,10 +303,12 @@ public class TaskPlaybackAndroidTest {
             assertNotNull(card); assertSame(body, card.getParent());
             android.view.View description = findText(card, definition.text);
             assertNotNull(description); assertSame(card, description.getParent());
+            assertNull(findText(card, activity.getString(com.subhub.app.R.string.tasks_attachment_heading)));
             android.view.ViewGroup media = body.findViewWithTag("task_definition_media:" + occurrence());
             if (definition.attachment == null) assertNull(media);
             else {
                 assertNotNull(media); assertSame(card, media.getParent()); assertNull(media.getBackground());
+                assertEquals(1, media.getChildCount());
                 assertTrue(card.indexOfChild(description) < card.indexOfChild(media));
                 assertNotNull(media.findViewWithTag("task_inline_attachment:" + definition.attachment.hash));
             }

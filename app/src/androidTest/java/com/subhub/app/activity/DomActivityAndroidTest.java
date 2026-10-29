@@ -95,7 +95,7 @@ public final class DomActivityAndroidTest {
                     assertFalse(copy.contains("paid successfully"));
                     assertTextFits(row);
                     assertTextFits(a.findViewById(R.id.primary_header));
-                    assertTrue(a.findViewById(R.id.nav_activity).isSelected());
+                    assertTrue(a.findViewById(R.id.nav_people).isSelected());
                     assertFalse(hasInput(a.findViewById(R.id.dom_activity_list)));
                 });
                 captureWholeRow(page, index, expected);
@@ -364,9 +364,9 @@ public final class DomActivityAndroidTest {
                     cursor != null && cursor.startsWith("local:"));
             assertTrue(repository.locations.isEmpty());
             awaitUi(page, a -> a.findViewById(R.id.nav_activity_unread).getVisibility() == View.VISIBLE
-                    && (a.getString(R.string.dom_activity_title) + ", "
+                    && (a.getString(R.string.role_your_subs) + ", "
                     + a.getString(R.string.dom_activity_unread_count, 4))
-                    .contentEquals(a.findViewById(R.id.nav_activity).getContentDescription()));
+                    .contentEquals(a.findViewById(R.id.nav_people).getContentDescription()));
             assertTrue("The global Activity badge queries unread remote activity", repository.unreadQueries > 0);
             assertTrue(repository.submitted.isEmpty());
         }
