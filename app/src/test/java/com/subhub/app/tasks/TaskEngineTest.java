@@ -50,6 +50,39 @@ public class TaskEngineTest {
         return TaskEngine.parse(new JSONObject(engine.json().toString()));
     }
 
+    @Test public void reviewsStayWithTheirOwnSubmissionAcrossOccurrencesAndReplay() throws Exception {
+        TaskDefinition task = definition(true, false);
+        TaskEngine engine = engine(task);
+        LocalDate next = DATE.plusDays(1);
+        long firstStart = task.start(DATE).toEpochMilli(), nextStart = task.start(next).toEpochMilli();
+        TaskAction first = action("proof-first", task, SUBMIT, DATE, firstStart, "");
+        TaskAction second = action("proof-second", task, SUBMIT, next, nextStart, "");
+        TaskAction denied = action("review-first", task, DENY, DATE, firstStart + 1, first.id);
+        engine.apply(first, false);
+        assertNull(engine.occurrence(task.id, DATE, firstStart).review);
+        engine.apply(denied, true);
+        engine.apply(second, false);
+        assertNull(engine.occurrence(task.id, next, nextStart).review);
+        TaskAction wrong = action("wrong-review", task, ACCEPT, next, nextStart + 1, first.id);
+        assertThrows(IllegalStateException.class, () -> engine.apply(wrong, true));
+        assertNull(engine.occurrence(task.id, next, nextStart).review);
+        TaskAction approved = action("review-second", task, ACCEPT, next, nextStart + 2, second.id);
+        engine.apply(approved, true);
+        assertFalse(engine.apply(approved, true));
+        TaskEngine restored = replay(engine);
+        TaskEngine.Occurrence firstResult = restored.occurrence(task.id, DATE, firstStart);
+        TaskEngine.Occurrence secondResult = restored.occurrence(task.id, next, nextStart);
+        assertEquals(DENIED, firstResult.status);
+        assertEquals(denied.id, firstResult.review.id);
+        assertEquals(first.id, firstResult.review.submissionId);
+        assertEquals(ACCEPTED, secondResult.status);
+        assertEquals(approved.id, secondResult.review.id);
+        assertEquals(second.id, secondResult.review.submissionId);
+        assertEquals(1, restored.json().length());
+        assertTrue(restored.json().has("actions"));
+        assertEquals(RemoteProtocol.canonical(engine.json()), RemoteProtocol.canonical(restored.json()));
+    }
+
     @Test public void scheduleBoundariesRequireAnExplicitSubTimeout() throws Exception {
         TaskDefinition task = definition(true, true);
         TaskEngine engine = engine(task);

@@ -158,6 +158,35 @@ public class RemoteActivityAndroidTest {
         }
     }
 
+    @Test public void localActivityUsesSavedSubNameAcrossQueriesAndRenames() throws Exception {
+        SharedPreferences names = context.getSharedPreferences("subhub_profile_names", 0);
+        Map<String, ?> original = new HashMap<>(names.getAll());
+        try {
+            assertTrue(com.subhub.app.people.ProfileNames.set(context, true, "Synthetic Dom"));
+            assertTrue(com.subhub.app.people.ProfileNames.set(context, false, "Synthetic Sub"));
+            receiving.foreground("com.example.launcher", "com.example.local", true, System.currentTimeMillis());
+            drain(receiving);
+            receiver.receive(SUB, publish("remote_named", System.currentTimeMillis() - 1));
+            ActivityEntry local = receiving.recent(PersonId.LOCAL, 1).get(0);
+            String key = local.key;
+            assertEquals("Synthetic Sub", local.personName);
+            assertEquals("Synthetic Sub", receiving.locate(key, 10).entries.stream()
+                    .filter(row -> row.key.equals(key)).findFirst().get().personName);
+            assertEquals("Synthetic Sub", receiving.recent(null, 10).stream()
+                    .filter(row -> row.key.equals(key)).findFirst().get().personName);
+            assertEquals("Fixture Sub", receiving.recent(RemotePersonRepository.id(targetPeer), 1).get(0).personName);
+            assertTrue(com.subhub.app.people.ProfileNames.set(context, false, "Renamed Sub"));
+            assertEquals(key, receiving.recent(PersonId.LOCAL, 1).get(0).key);
+            assertEquals("Renamed Sub", receiving.recent(PersonId.LOCAL, 1).get(0).personName);
+            assertEquals("Renamed Sub", receiving.recent(null, 10).stream()
+                    .filter(row -> row.key.equals(key)).findFirst().get().personName);
+            assertTrue(com.subhub.app.people.ProfileNames.set(context, false, "\u202e\u2066"));
+            assertEquals(context.getString(com.subhub.app.R.string.header_subtitle_sub),
+                    receiving.recent(PersonId.LOCAL, 1).get(0).personName);
+            assertEquals(PersonId.LOCAL, receiving.recent(PersonId.LOCAL, 1).get(0).personId);
+        } finally { restore(names, original); }
+    }
+
     @Test public void combinedFeedPagesExistingLocalAndEligibleRemoteEvents() throws Exception {
         receiver.getWritableDatabase().delete("activity_source", null, null);
         long now = System.currentTimeMillis();

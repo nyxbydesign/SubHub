@@ -13,9 +13,10 @@ public final class TaskEngine {
         public final LocalDate date;
         public final String id;
         public final Status status;
-        public final TaskAction submission;
-        Occurrence(TaskDefinition task, LocalDate date, Status status, TaskAction submission) {
-            this.task = task; this.date = date; id = task.occurrenceId(date); this.status = status; this.submission = submission;
+        public final TaskAction submission, review;
+        Occurrence(TaskDefinition task, LocalDate date, Status status, TaskAction submission, TaskAction review) {
+            this.task = task; this.date = date; id = task.occurrenceId(date); this.status = status;
+            this.submission = submission; this.review = review;
         }
         public boolean failed() { return status == Status.DENIED || status == Status.TIMED_OUT; }
     }
@@ -23,6 +24,7 @@ public final class TaskEngine {
     private final Map<String, TaskAction> seen = new LinkedHashMap<>();
     private final Map<String, Status> states = new HashMap<>();
     private final Map<String, TaskAction> submissions = new HashMap<>();
+    private final Map<String, TaskAction> reviews = new HashMap<>();
     private final Set<String> refusedSeries = new HashSet<>();
     private final Set<String> cancelledOccurrences = new HashSet<>(), cancelledSeries = new HashSet<>();
     private final Map<String, TaskAttachment> media = new HashMap<>();
@@ -50,7 +52,9 @@ public final class TaskEngine {
         if (cancelled(id, date)) state = Status.CANCELLED;
         if (state == null) state = refusedSeries.contains(id) ? Status.REFUSED
                 : now < task.start(date).toEpochMilli() ? Status.SCHEDULED : Status.ACTIVE;
-        return new Occurrence(task, date, state, state == Status.CANCELLED ? null : submissions.get(key));
+        TaskAction submission = state == Status.CANCELLED ? null : submissions.get(key);
+        return new Occurrence(task, date, state, submission,
+                submission == null ? null : reviews.get(submission.id));
     }
     /** A duplicate exact action is acknowledged without repeating its state transition or effects. */
     public boolean apply(TaskAction action, boolean actorDom) throws JSONException {
@@ -90,7 +94,8 @@ public final class TaskEngine {
                     if (occurrence.status != Status.PENDING || occurrence.submission == null
                             || !occurrence.submission.id.equals(action.submissionId))
                         throw new IllegalStateException("Completion request is no longer pending");
-                    states.put(key, action.kind == TaskAction.Kind.ACCEPT ? Status.ACCEPTED : Status.DENIED); break;
+                    states.put(key, action.kind == TaskAction.Kind.ACCEPT ? Status.ACCEPTED : Status.DENIED);
+                    reviews.put(action.submissionId, action); break;
                 case REFUSE_ONCE: case REFUSE_SERIES:
                     if (!task.allowRefusal) throw new SecurityException("Task refusal is not enabled");
                     if (occurrence.status != Status.ACTIVE && occurrence.status != Status.SCHEDULED)
