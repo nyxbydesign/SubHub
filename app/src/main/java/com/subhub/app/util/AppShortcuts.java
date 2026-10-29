@@ -6,6 +6,8 @@ import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.graphics.drawable.Icon;
 
+import androidx.annotation.WorkerThread;
+
 import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 
@@ -18,6 +20,12 @@ public final class AppShortcuts {
     private AppShortcuts() {}
 
     public static void install(Context context) {
+        Context application = context.getApplicationContext();
+        new Thread(() -> installOnWorker(application), "SubHub-shortcuts").start();
+    }
+
+    @WorkerThread
+    private static void installOnWorker(Context context) {
         ShortcutManager manager = context.getSystemService(ShortcutManager.class);
         if (manager == null) return;
         Intent protection = new Intent(context, MainActivity.class)
