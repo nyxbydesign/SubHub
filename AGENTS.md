@@ -115,6 +115,16 @@ Seed earned synthetic achievements and consume their pending notifications befor
 fixtures. A one-time achievement snackbar can cover a correctly located row; dedicated notification
 tests must retain the real notification path.
 
+On retained Android 13+ guests, a denied notification permission can suppress a fresh
+system prompt. Inspect the grant and user-set/user-fixed flags before prompt tests;
+reset only that controlled package permission's flags, preserving the original failure
+and rerunning only the failed contract against unchanged APKs.
+
+For controller-dialog native taps, wait for UIAutomator idle after the keyboard opens
+or closes before tapping Cancel or Unlock. Espresso main-thread idle does not settle
+another process's keyboard window. Retain dialog identity when diagnosing a missed
+tap so it cannot be confused with a reopened authentication prompt.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
