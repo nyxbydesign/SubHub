@@ -35,6 +35,18 @@ These repository rules apply to every automated or human-assisted change.
 
 Native text-fit checks must also cover text drawn directly on Canvas inside artwork. TextView bounds checks cannot detect that overflow; measure each drawn string against its allotted region and inspect a native artwork render after copy changes.
 
+TextView `Layout.getLineWidth` includes trailing whitespace. Use
+[`Layout.getLineMax`](https://developer.android.com/reference/android/text/Layout#getLineMax(int))
+for the visible horizontal extent, and retain full/visible line widths, allocated bounds and
+failed native pixels before asserting. After a scroll request, verify the actual scroll endpoint
+and then a new hardware-frame commit before capturing the final instructions; smooth scrolling
+can still be moving when the main queue becomes idle. A frame callback alone does not establish
+screenshot freshness: qualify the composed scrolled layer with an opaque test witness and retain
+its draw identity, expected pixel and observed pixel before asserting.
+
+After dismissing a native authentication dialog, await the underlying Activity's window focus
+before interacting with it again. Main-thread idleness does not establish dialog-window removal.
+
 Before merging or tagging a release, run:
 
 `./gradlew testDebugUnitTest lintDebug assembleDebug`
