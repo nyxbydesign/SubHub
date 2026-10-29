@@ -134,13 +134,11 @@ public class TaskPlaybackAndroidTest {
         seed(android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", android.util.Base64.DEFAULT), "image/gif");
         try (ActivityScenario<TasksActivity> page = inline()) {
             awaitInline(page, "task_inline_image");
+            assertInstructionGrouping(page, "image");
             page.onActivity(activity -> {
                 android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
                 android.view.View image = body.findViewWithTag("task_inline_image");
                 assertTrue(image.getHeight() <= Math.round(activity.getResources().getDisplayMetrics().heightPixels * .4f));
-                android.view.View description = body.findViewWithTag("task_detail:" + occurrence());
-                android.view.View media = body.findViewWithTag("task_definition_media:" + occurrence());
-                assertEquals(body.indexOfChild(description) + 1, body.indexOfChild(media));
             });
             context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
             await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
@@ -168,7 +166,10 @@ public class TaskPlaybackAndroidTest {
             while ((n = input.read(buffer)) != -1) bytes.write(buffer, 0, n);
             seed(bytes.toByteArray(), "video/mp4");
         }
-        try (ActivityScenario<TasksActivity> page = inline()) { checkInlinePlayback(page); }
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_inline_play"); assertInstructionGrouping(page, "video");
+            checkInlinePlayback(page);
+        }
     }
 
     @Test public void inlineWavNativeControlsPlayAndRoleChangeRevokesPlayback() throws Exception {
@@ -180,7 +181,8 @@ public class TaskPlaybackAndroidTest {
         for (int i = 0; i < samples; i++) wav.putShort((short) (Math.sin(i * 2 * Math.PI * 440 / 8000) * 300));
         seed(wav.array(), "audio/wav");
         try (ActivityScenario<TasksActivity> page = inline()) {
-            awaitInline(page, "task_inline_play"); tapInline("task_inline_play"); awaitPlaying(page);
+            awaitInline(page, "task_inline_play"); assertInstructionGrouping(page, "audio");
+            tapInline("task_inline_play"); awaitPlaying(page);
             ControllerPinManager.enterSubMode();
             await(() -> { AtomicBoolean gone = new AtomicBoolean(); page.onActivity(activity -> gone.set(
                     activity.findViewById(android.R.id.content).findViewWithTag("task_inline_player") == null)); return gone.get(); });
@@ -199,13 +201,14 @@ public class TaskPlaybackAndroidTest {
                     ready.set(submission != null && submission.findViewWithTag("task_inline_image") != null);
                 }); return ready.get();
             });
+            assertInstructionGrouping(page, "single-proof");
             page.onActivity(activity -> {
                 android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
                 android.view.View detail = body.findViewWithTag("task_detail:" + occurrence());
                 android.view.View media = body.findViewWithTag("task_definition_media:" + occurrence());
                 android.view.ViewGroup submission = body.findViewWithTag("task_submission:" + occurrence());
-                assertEquals(body.indexOfChild(detail) + 1, body.indexOfChild(media));
-                assertEquals(body.indexOfChild(media) + 1, body.indexOfChild(submission));
+                assertSame(detail, media.getParent());
+                assertEquals(body.indexOfChild(detail) + 1, body.indexOfChild(submission));
                 assertNull(submission.findViewWithTag("task_attachment:" + attachment.hash));
                 android.view.View image = submission.findViewWithTag("task_inline_image");
                 proof.set((TaskAttachmentView) image.getParent());
@@ -279,6 +282,55 @@ public class TaskPlaybackAndroidTest {
             androidx.test.espresso.Espresso.pressBack(); awaitInline(page, "task_detail:" + occurrence());
             androidx.test.espresso.Espresso.pressBack(); awaitInline(page, "task_open:" + occurrence());
         }
+    }
+
+    @Test public void descriptionWithoutAttachmentHasNoEmptyMediaCardAndPrecedesCompletionRequest() throws Exception {
+        seedDefinition(null); submitProof(List.of());
+        try (ActivityScenario<TasksActivity> page = inline()) {
+            awaitInline(page, "task_submission:" + occurrence());
+            assertInstructionGrouping(page, "none");
+            page.recreate(); awaitInline(page, "task_submission:" + occurrence());
+            assertInstructionGrouping(page, "none-recreated");
+        }
+    }
+
+    private void assertInstructionGrouping(ActivityScenario<TasksActivity> page, String capture) throws Exception {
+        java.util.concurrent.atomic.AtomicReference<TasksActivity> host = new java.util.concurrent.atomic.AtomicReference<>();
+        page.onActivity(activity -> {
+            host.set(activity);
+            android.view.ViewGroup body = activity.findViewById(com.subhub.app.R.id.role_page_body);
+            android.view.ViewGroup card = body.findViewWithTag("task_detail:" + occurrence());
+            assertNotNull(card); assertSame(body, card.getParent());
+            android.view.View description = findText(card, definition.text);
+            assertNotNull(description); assertSame(card, description.getParent());
+            android.view.ViewGroup media = body.findViewWithTag("task_definition_media:" + occurrence());
+            if (definition.attachment == null) assertNull(media);
+            else {
+                assertNotNull(media); assertSame(card, media.getParent()); assertNull(media.getBackground());
+                assertTrue(card.indexOfChild(description) < card.indexOfChild(media));
+                assertNotNull(media.findViewWithTag("task_inline_attachment:" + definition.attachment.hash));
+            }
+            android.view.View submission = body.findViewWithTag("task_submission:" + occurrence());
+            if (submission != null) {
+                assertSame(body, submission.getParent());
+                assertTrue(body.indexOfChild(card) < body.indexOfChild(submission));
+                assertNotNull(findText(submission, "Synthetic completion text"));
+            }
+        });
+        if (android.os.Build.VERSION.SDK_INT >= 29)
+            com.subhub.app.UiRefreshWitness.capture(host.get(), "task-instruction-card-" + capture);
+    }
+
+    private static android.view.View findText(android.view.View root, String expected) {
+        if (root instanceof android.widget.TextView && expected.contentEquals(((android.widget.TextView) root).getText())) return root;
+        if (root instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.view.View found = findText(group.getChildAt(i), expected);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     private void awaitResumedMedia() throws Exception {

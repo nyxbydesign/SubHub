@@ -41,6 +41,12 @@ public final class ActivityText {
         }
     }
 
+    public static void bindIcon(android.widget.ImageView image, ActivityEntry entry) {
+        boolean app = entry.event.kind == ActivityEvent.Kind.APP_OPENED
+                || entry.event.kind == ActivityEvent.Kind.APP_LIMIT_REACHED;
+        com.subhub.app.util.AppIcons.bind(image, app ? entry.event.packageName : "", icon(entry));
+    }
+
     private static String reason(Context context, String reason) {
         switch (reason) {
             case "watched_app_open": return context.getString(R.string.dom_activity_reason_app);

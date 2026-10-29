@@ -58,7 +58,8 @@ public final class IncludedAppRow extends LinearLayout {
     void bind(
             String label, String packageName, Drawable appIcon, boolean selected, boolean editing) {
         included.setOnCheckedChangeListener(null);
-        icon.setImageDrawable(appIcon);
+        icon.setTag("app_icon:" + packageName);
+        com.subhub.app.util.AppIcons.bind(icon, packageName, R.drawable.ic_settings_apps, appIcon);
         name.setText(label);
         included.setContentDescription(
                 getContext().getString(R.string.app_include_accessibility, label));

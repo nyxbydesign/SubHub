@@ -260,11 +260,9 @@ public final class ActivityPreview {
             final android.widget.ImageView icon;
             final android.widget.TextView title, detail;
             ActivityEntry entry;
-            int resource;
             EntryRow(ActivityEntry entry) {
                 this.entry = entry;
-                resource = ActivityText.icon(entry);
-                view = PersonUi.row(rows, resource, ActivityText.title(getContext(), entry), " ", () -> {
+                view = PersonUi.row(rows, ActivityText.icon(entry), ActivityText.title(getContext(), entry), " ", () -> {
                     if (allowed()) PersonRoutes.open(getContext(), this.entry.personId);
                 });
                 view.setTag("activity_preview_entry:" + entry.key);
@@ -278,8 +276,7 @@ public final class ActivityPreview {
                 String label = ActivityText.title(getContext(), value);
                 if (!android.text.TextUtils.equals(title.getText(), label)) title.setText(label);
                 if (!android.text.TextUtils.equals(detail.getText(), text)) detail.setText(text);
-                int next = ActivityText.icon(value);
-                if (resource != next) { resource = next; icon.setImageResource(next); }
+                ActivityText.bindIcon(icon, value);
             }
         }
     }

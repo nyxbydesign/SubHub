@@ -114,10 +114,12 @@ public final class PersonUi {
         LinearLayout card = card(parent);
         text(card, parent.getContext().getString(R.string.role_app_time), true);
         for (PersonSnapshot.Allowance value : snapshot.allowances) {
-            row(card, R.drawable.ic_nav_limits, value.label,
+            LinearLayout app = row(card, R.drawable.ic_nav_limits, value.label,
                     value.usedMillis < 0 ? parent.getContext().getString(R.string.role_allowance_unknown, value.dailyMinutes)
                             : parent.getContext().getString(R.string.role_allowance_usage,
                                     value.usedMillis / 60_000L, value.dailyMinutes), null);
+            com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName,
+                    value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);

@@ -437,11 +437,8 @@ public final class RoleHomePresenter {
             LinearLayout row = PersonUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
             row.setMinimumHeight(dp(48));
             row.setPadding(0, dp(4), 0, dp(4));
-            if (!value.packageName.isEmpty()) try {
-                android.widget.ImageView icon = (android.widget.ImageView) row.getChildAt(0);
-                icon.setImageTintList(null);
-                icon.setImageDrawable(activity.getPackageManager().getApplicationIcon(value.packageName));
-            } catch (android.content.pm.PackageManager.NameNotFoundException ignored) { }
+            com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName,
+                    value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);

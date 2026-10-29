@@ -126,7 +126,11 @@ public final class RemoteContractActivity extends RemotePage {
         collect.add(()->{put(apps,"packages",new JSONArray(new TreeSet<>(selected)));Iterator<String> names=budgets.keys();List<String> remove=new ArrayList<>();while(names.hasNext()){String key=names.next();if(!selected.contains(key)&&!all.isChecked())remove.add(key);}for(String key:remove)budgets.remove(key);});
     }
     private void app(LinearLayout target,Set<String> selected,JSONObject budgets,String id,String label){
-        CheckBox box=new CheckBox(this);box.setText(label);box.setChecked(selected.contains(id));target.addView(box);controls.put("app:"+id,box);box.setOnCheckedChangeListener((b,on)->{if(on)selected.add(id);else selected.remove(id);});
+        LinearLayout row=new LinearLayout(this);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        android.widget.ImageView icon=new android.widget.ImageView(this);icon.setTag("app_icon:"+id);
+        com.subhub.app.util.AppIcons.bind(icon,id,R.drawable.ic_settings_apps);
+        LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(PersonUi.dp(this,28),PersonUi.dp(this,28));size.setMarginEnd(PersonUi.dp(this,8));row.addView(icon,size);
+        CheckBox box=new CheckBox(this);box.setText(label);box.setMinHeight(PersonUi.dp(this,48));box.setChecked(selected.contains(id));row.addView(box,new LinearLayout.LayoutParams(0,-2,1));target.addView(row);controls.put("app:"+id,box);box.setOnCheckedChangeListener((b,on)->{if(on)selected.add(id);else selected.remove(id);});
         int inherited=draft.optJSONObject("contract").optJSONObject("sections").optJSONObject("limits").optInt("app_timer_per_app_minutes",30);boolean custom=budgets.has(id);
         LinearLayout allowance=PersonUi.column(this);target.addView(allowance);allowance.setVisibility(selected.contains(id)||draft.optJSONObject("apps").optBoolean("all")?android.view.View.VISIBLE:android.view.View.GONE);
         EditText minutes=input(allowance,R.string.remote_allowance_minutes,Integer.toString(budgets.optInt(id,inherited)));minutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);controls.put("budget:"+id,minutes);
