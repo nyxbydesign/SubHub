@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    branches-ignore:
-      - master
+    branches:
+      - codex/censor-pipeline-v2
     tags:
       - "v*"
       - "!v*-dev.*"
@@ -68,6 +68,8 @@ jobs:
         run: |
           python3 scripts/release_candidate_policy.py \
             --event-name "$GITHUB_EVENT_NAME" \
+            --ref-type "$GITHUB_REF_TYPE" \
+            --ref-name "$GITHUB_REF_NAME" \
             --publish-release "$PUBLISH_RELEASE" \
             --immediate-quality-experiment "$IMMEDIATE_QUALITY_EXPERIMENT" \
             --replacement-lab-candidate "$REPLACEMENT_LAB_CANDIDATE"
