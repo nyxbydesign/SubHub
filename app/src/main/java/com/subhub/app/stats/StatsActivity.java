@@ -13,7 +13,12 @@ import java.text.DateFormat;
 import java.util.*;
 
 /** Current service, lifetime totals, dated activity and recorded sessions share one page. */
-public final class StatsActivity extends PreferencePage {
+public class StatsActivity extends PreferencePage {
+    private LinearLayout shell;
+    private ScrollView scroll;
+    private AchievementsPane catalog;
+    private boolean catalogSelected, resumed, hasSections;
+    private int statisticsScroll, catalogScroll;
     private DailyStatsPanel daily;
     private RemoteStatsSource remote;
     private AchievementRole workspace;
@@ -21,7 +26,7 @@ public final class StatsActivity extends PreferencePage {
     private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refreshRemote = new Runnable() {
         @Override public void run() {
-            if (remote == null && !domOverview || isFinishing()) return;
+            if (!resumed || catalogSelected || remote == null && !domOverview || isFinishing()) return;
             try {
                 if (remote != null) remote.requireAccess();
                 if (!workspace.accessible(StatsActivity.this)) { finish(); return; }
@@ -55,9 +60,20 @@ public final class StatsActivity extends PreferencePage {
             sessionLimit = Math.max(3, Math.min(30, state.getInt("stats_session_limit", 3)));
         }
         page(R.string.role_stats);
+        shell = page;
+        scroll = (ScrollView) shell.getParent();
+        hasSections = !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        catalogSelected = hasSections && (state == null ? initiallyShowAchievements()
+                : state.getBoolean("stats_catalog_selected", initiallyShowAchievements()));
+        if (state != null) {
+            statisticsScroll = state.getInt("stats_scroll");
+            catalogScroll = state.getInt("catalog_scroll");
+        }
+        if (hasSections) StatsSections.add(this, shell, catalogSelected);
+        page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        shell.addView(page, new LinearLayout.LayoutParams(-1, -2));
         if (domOverview) page.setTag("dom_statistics");
-        if (!getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
-            StatsSections.add(this, page, false);
         data = com.subhub.app.util.AsyncUiScope.forPage(this);
         currentSession = card(page);
         currentSession.setId(R.id.profile_stats_current);
@@ -93,20 +109,68 @@ public final class StatsActivity extends PreferencePage {
         totalsDetails.setId(R.id.stats_totals_details);
         achievements = new AchievementPreviewView(this);
         achievements.setId(R.id.stats_achievements);
+        if (hasSections) achievements.setOnClickListener(view -> showAchievements(true));
         page.addView(achievements, new LinearLayout.LayoutParams(-1, -2));
-        bindTotals();
-        bindSessions();
-        bindAllowances();
-        com.subhub.app.util.SubHubNavigation.attachToPage(this, page,
+        if (!catalogSelected) { bindTotals(); bindSessions(); bindAllowances(); }
+        com.subhub.app.util.SubHubNavigation.attachToPage(this, shell,
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
+        renderSection();
+    }
+
+    protected boolean initiallyShowAchievements() { return false; }
+
+    public final void showAchievements(boolean selected) {
+        if (!hasSections || selected == catalogSelected || !workspace.accessible(this)) return;
+        rememberScroll();
+        pauseSection();
+        catalogSelected = selected;
+        renderSection();
+        if (resumed) resumeSection();
+    }
+
+    private void rememberScroll() {
+        if (scroll == null) return;
+        if (catalogSelected) catalogScroll = scroll.getScrollY();
+        else statisticsScroll = scroll.getScrollY();
+    }
+
+    private void renderSection() {
+        if (catalogSelected && catalog == null) {
+            catalog = new AchievementsPane(this);
+            shell.addView(catalog.view(), new LinearLayout.LayoutParams(-1, -2));
+        }
+        page.setVisibility(catalogSelected ? android.view.View.GONE : android.view.View.VISIBLE);
+        if (catalog != null) catalog.view().setVisibility(catalogSelected ? android.view.View.VISIBLE : android.view.View.GONE);
+        StatsSections.select(shell, catalogSelected);
+        com.subhub.app.util.PrimaryHeader.bind(findViewById(android.R.id.content), 0,
+                catalogSelected ? R.string.achievements_title : R.string.role_stats, 0);
+        int target = catalogSelected ? catalogScroll : statisticsScroll;
+        scroll.post(() -> scroll.scrollTo(0, target));
+    }
+
+    private void pauseSection() {
+        if (catalog != null) catalog.pause();
+        if (data != null) {
+            data.cancel("dom-statistics");
+            data.cancel("local-statistics");
+            data.cancel("stats-app-allowances");
+        }
+        remoteClock.removeCallbacks(refreshRemote);
+    }
+
+    private void resumeSection() {
+        if (catalogSelected) { catalog.resume(); return; }
+        if (remote != null || domOverview) remoteClock.post(refreshRemote);
+        bindTotals(); bindSessions(); bindAllowances(); daily.refreshIfNeeded();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         if (workspace == null || !workspace.accessible(this)) { finish(); return; }
-        page.setVisibility(android.view.View.VISIBLE);
-        if (remote != null || domOverview) {
+        resumed = true;
+        renderSection();
+        if (!catalogSelected && (remote != null || domOverview)) {
             try { if (remote != null) remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
             remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
         }
@@ -121,7 +185,7 @@ public final class StatsActivity extends PreferencePage {
         com.subhub.app.security.ControllerEditMode.renderButton(this, role);
         com.subhub.app.util.PrimaryHeader.backButton(root).setVisibility(
                 dom ? android.view.View.VISIBLE : android.view.View.GONE);
-        com.subhub.app.util.PrimaryHeader.bind(root, 0, R.string.role_stats,
+        com.subhub.app.util.PrimaryHeader.bind(root, 0, catalogSelected ? R.string.achievements_title : R.string.role_stats,
                 dom ? R.string.role_this_device : 0);
         if (remote != null) {
             try {
@@ -131,6 +195,7 @@ public final class StatsActivity extends PreferencePage {
                 android.view.View nav = root.findViewById(R.id.bottom_navigation); if (nav != null) nav.setVisibility(android.view.View.GONE);
             } catch (Exception unavailable) { finish(); return; }
         } else if (dom) com.subhub.app.util.PrimaryHeader.subtitle(root).setText(com.subhub.app.people.ProfileNames.get(this, false));
+        if (catalogSelected) { catalog.resume(); firstResume = false; return; }
         if (firstResume) {
             firstResume = false;
             return;
@@ -143,6 +208,10 @@ public final class StatsActivity extends PreferencePage {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
+        rememberScroll();
+        state.putBoolean("stats_catalog_selected", catalogSelected);
+        state.putInt("stats_scroll", statisticsScroll);
+        state.putInt("catalog_scroll", catalogScroll);
         if (daily != null) daily.save(state);
         state.putInt("stats_session_limit", sessionLimit);
         super.onSaveInstanceState(state);
@@ -161,6 +230,9 @@ public final class StatsActivity extends PreferencePage {
     }
 
     @Override protected void onPause() {
+        rememberScroll();
+        resumed = false;
+        pauseSection();
         if (workspace == AchievementRole.DOM && page != null) page.setVisibility(android.view.View.INVISIBLE);
         if (data != null) data.cancel("dom-statistics");
         if (data != null) data.cancel("local-statistics");

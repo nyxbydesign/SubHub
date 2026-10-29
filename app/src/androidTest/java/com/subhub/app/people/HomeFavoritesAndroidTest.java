@@ -260,6 +260,26 @@ public final class HomeFavoritesAndroidTest {
             });
         }
     }
+    @Test public void peopleSectionsToggleWithinOneHostAndBackReturnsDirectlyHome() {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            awaitTag(scenario, "home_devices");
+            onView(withId(R.id.nav_people)).perform(click());
+            PeopleActivity host = resumed(PeopleActivity.class);
+            for (int count = 0; count < 3; count++) {
+                onView(withId(R.id.people_section_activity)).perform(click());
+                assertSame(host, resumed(PeopleActivity.class));
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    assertTrue(host.findViewById(R.id.people_section_activity).isSelected());
+                    assertTrue(host.findViewById(R.id.nav_people).isSelected());
+                });
+                onView(withId(R.id.people_section_people)).perform(click());
+                assertSame(host, resumed(PeopleActivity.class));
+            }
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(scenario, "home_devices");
+        }
+    }
+
     @Test public void longPressFavoritePersistsAndHomeHasOnlyIdentityNavigation() {
         PersonSnapshot favorite = roster.get(1);
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {

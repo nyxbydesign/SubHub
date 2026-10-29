@@ -205,6 +205,56 @@ public final class DomActivityAndroidTest {
             assertEquals(4,repository.latest.size());
         }
     }
+    @Test public void peopleSwitcherRetainsFeedAndSuspendsHiddenReadsAcrossRecreation() throws Exception {
+        repository.latest = List.of(entry("switch-first", ActivityEvent.Kind.APP_OPENED, false),
+                entry("switch-second", ActivityEvent.Kind.APP_OPENED, false));
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            onView(withTagValue(org.hamcrest.Matchers.is((Object) "activity_group:switch-first"))).perform(click());
+            awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:switch-second") != null);
+            final View[] retained = new View[1];
+            page.onActivity(a -> retained[0] = a.findViewById(R.id.dom_activity_list));
+            for (int count = 0; count < 3; count++) {
+                onView(withId(R.id.people_section_people)).perform(click());
+                page.onActivity(a -> {
+                    assertEquals(DomActivityActivity.class, a.getClass());
+                    assertTrue(a.findViewById(R.id.people_section_people).isSelected());
+                    assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
+                });
+                int loads = repository.loads.size();
+                ActivitySources.changed();
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                assertEquals("Hidden feed has no active source observer", loads, repository.loads.size());
+                assertTrue("Hidden feed does not acknowledge facts", repository.read.isEmpty());
+                onView(withId(R.id.people_section_activity)).perform(click());
+                awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:switch-second") != null);
+                page.onActivity(a -> {
+                    assertSame(retained[0], a.findViewById(R.id.dom_activity_list));
+                    assertTrue(a.findViewById(R.id.people_section_activity).isSelected());
+                });
+            }
+            onView(withId(R.id.people_section_people)).perform(click());
+            int hiddenLoads = repository.loads.size();
+            repository.latest = List.of(entry("hidden-unread", ActivityEvent.Kind.APP_OPENED, true),
+                    entry("switch-first", ActivityEvent.Kind.APP_OPENED, false),
+                    entry("switch-second", ActivityEvent.Kind.APP_OPENED, false));
+            ActivitySources.changed();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals(hiddenLoads, repository.loads.size());
+            assertFalse(repository.read.contains("hidden-unread"));
+            page.recreate();
+            page.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.people_section_people).isSelected());
+                assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
+            });
+            onView(withId(R.id.people_section_activity)).perform(click());
+            awaitUi(page, a -> ready(a) && repository.read.contains("hidden-unread"));
+            assertTrue(ControllerPinManager.isDomModeActive());
+            assertEquals(APPS, new AppModeManager(context).getSelectedPackages());
+            assertEquals(15, new AppTimerManager(context).allowanceMinutes("com.android.chrome"));
+        }
+    }
+
     @Test public void aNotificationFocusExpandsItsGroupAndRevealsTheOriginalFact() throws Exception {
         List<ActivityEntry> facts=new ArrayList<>();
         for(int index=0;index<8;index++)facts.add(entry("focus-group-"+index,ActivityEvent.Kind.APP_OPENED,false));
@@ -436,8 +486,45 @@ public final class DomActivityAndroidTest {
             check.run();
         });
         assertTrue("UI observation completed", done.await(9, TimeUnit.SECONDS));
-        if (failure.get() != null) throw new AssertionError(failure.get());
+        if (failure.get() != null) {
+            Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+            String run = InstrumentationRegistry.getArguments().getString("evidence_run", "activity");
+            File directory = new File(app.getFilesDir(), "activity-failures/" + run);
+            assertTrue(directory.isDirectory() || directory.mkdirs());
+            String name = Long.toString(SystemClock.uptimeMillis());
+            AtomicReference<String> layout = new AtomicReference<>();
+            scenario.onActivity(a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                DomActivityActivity.FeedState feed = new androidx.lifecycle.ViewModelProvider(a).get(DomActivityActivity.FeedState.class);
+                StringBuilder value = new StringBuilder("shown=" + list.isShown() + " layoutRequested=" + list.isLayoutRequested()
+                        + " height=" + list.getHeight() + " first=" + list.getFirstVisiblePosition()
+                        + " top=" + (list.getChildCount() == 0 ? 0 : list.getChildAt(0).getTop())
+                        + " expanded=" + feed.expanded + " cursor=" + feed.cursor + " focus=" + feed.focusKey);
+                appendBounds(list, value);
+                layout.set(value.toString());
+            });
+            java.nio.file.Files.write(new File(directory, name + ".txt").toPath(), layout.get().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Bitmap bitmap = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+            if (bitmap != null) {
+                try (FileOutputStream stream = new FileOutputStream(new File(directory, name + ".png"))) {
+                    assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream));
+                } finally { bitmap.recycle(); }
+            }
+            throw new AssertionError(failure.get());
+        }
     }
+    private static void appendBounds(View view, StringBuilder value) {
+        Object tag = view.getTag();
+        if (tag instanceof String && ((String) tag).startsWith("activity_entry:")) {
+            Rect visible = new Rect(); int[] screen = new int[2]; view.getLocationOnScreen(screen);
+            boolean shown = view.getGlobalVisibleRect(visible);
+            value.append("\n").append(tag).append(" screen=").append(screen[0]).append(',').append(screen[1])
+                    .append(" height=").append(view.getHeight()).append(" clipped=").append(visible).append(" visible=").append(shown);
+        }
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            appendBounds(((ViewGroup) view).getChildAt(i), value);
+    }
+
     private void capture(ActivityScenario<DomActivityActivity> page, String name) throws Exception {
         float scale = context.getResources().getConfiguration().fontScale;
         File output = new File(context.getFilesDir(), "activity-" + name + "-font-" + scale + ".png");
