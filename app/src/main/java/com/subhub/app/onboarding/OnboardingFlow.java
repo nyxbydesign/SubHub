@@ -10,7 +10,8 @@ import java.util.Set;
 
 /** Stable page identities keep a resumed draft independent of presentation order. */
 public final class OnboardingFlow {
-    public static final int VERSION = 3;
+    public static final int VERSION = 4;
+    public static final int STABLE_IDS_VERSION = 3;
     public static final String ROLE = "role";
     private OnboardingFlow() { }
 
@@ -36,6 +37,18 @@ public final class OnboardingFlow {
         return step > 0 && step <= pages.size() ? pages.get(step - 1).id : ROLE;
     }
 
+    public static String resumePage(List<OnboardingPage> pages, String id) {
+        if (index(pages, id) > 0 || ROLE.equals(id)) return id;
+        // Finish the Sub lessons before reaching the moved Dom settings later in Both.
+        if ("sub_appearance".equals(id) || "sub_wallet".equals(id))
+            return index(pages, "sub_apps") > 0 ? "sub_apps" : ROLE;
+        if ("dom_hardcore".equals(id))
+            return index(pages, "dom_create_task") > 0 ? "dom_create_task" : ROLE;
+        if ("dom_add_sub".equals(id))
+            return index(pages, "dom_wallet") > 0 ? "dom_wallet" : ROLE;
+        return ROLE;
+    }
+
     public static String legacyPage(List<OnboardingPage> pages, int version, int step) {
         if (version < 2) {
             int[] migrated = {0, 3, 1, 4, 5, 5};
@@ -46,6 +59,8 @@ public final class OnboardingFlow {
                 OnboardingPage.Kind.WALLET, OnboardingPage.Kind.APPS,
                 OnboardingPage.Kind.SECURITY, OnboardingPage.Kind.PERMISSIONS};
         OnboardingPage.Kind kind = kinds[Math.min(5, step)];
+        if (kind == OnboardingPage.Kind.APPEARANCE || kind == OnboardingPage.Kind.WALLET)
+            return index(pages, "sub_apps") > 0 ? "sub_apps" : pages.get(0).id;
         for (OnboardingPage page : pages) if (page.kind == kind) return page.id;
         return pages.isEmpty() ? ROLE : pages.get(0).id;
     }

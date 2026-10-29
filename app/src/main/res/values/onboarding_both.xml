@@ -3,7 +3,7 @@
     <string name="onboarding_both_switch_title">Switch workspaces</string>
     <string name="onboarding_both_switch_body">Use the menu to switch between Sub and Dom. Dom access requires unlocking. Switching preserves settings and any active session.</string>
     <string name="onboarding_both_handoff_title">Dom controls</string>
-    <string name="onboarding_both_handoff_description">Manage a selected Sub’s Contract and Tasks from the Dom workspace.</string>
+    <string name="onboarding_both_handoff_description">Pairing is covered. Now manage a selected Sub’s Contract and Tasks from the Dom workspace.</string>
     <string name="onboarding_both_target_title">Choose the Sub</string>
     <string name="onboarding_both_target_body">Select This device for local controls or a connected Sub for their controls. Each Sub has a separate Contract and Tasks.</string>
     <string name="onboarding_both_access_title">Dom access</string>

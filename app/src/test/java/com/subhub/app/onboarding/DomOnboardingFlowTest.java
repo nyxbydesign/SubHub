@@ -22,13 +22,15 @@ public final class DomOnboardingFlowTest {
         int pairing = position(pages, OnboardingPage.Scene.CONNECT_SUB);
         int contract = position(pages, OnboardingPage.Scene.CONTRACTS);
         int consent = position(pages, OnboardingPage.Scene.LOCAL_FEATURES);
-        int hardcore = position(pages, OnboardingPage.Scene.HARDCORE);
+        int wallet = position(pages, OnboardingPage.Scene.WALLET_RULES);
+        int censor = position(pages, OnboardingPage.Scene.CENSOR_SETTINGS);
         int create = position(pages, OnboardingPage.Scene.CREATE_TASK);
         int review = position(pages, OnboardingPage.Scene.REVIEW_TASK);
 
         assertEquals(0, security);
         assertTrue(security < pairing && pairing < contract);
-        assertTrue(contract < consent && consent < hardcore && hardcore < create);
+        assertEquals(pairing + 1, wallet); assertEquals(wallet + 1, censor);
+        assertTrue(censor < contract && contract < consent && consent < create);
         assertEquals("Task review needs its own page immediately after creation", create + 1, review);
         assertEquals(OnboardingPage.Kind.STORY, pages.get(create).kind);
         assertEquals(OnboardingPage.Kind.STORY, pages.get(review).kind);
@@ -61,7 +63,7 @@ public final class DomOnboardingFlowTest {
         }
         assertEquals(1, securityPages);
         assertEquals(1, pairingActions);
-        assertEquals(OnboardingPage.Action.NONE, pages.get(position(pages, OnboardingPage.Scene.HARDCORE)).action);
+        assertFalse(pages.stream().anyMatch(page -> page.scene == OnboardingPage.Scene.HARDCORE));
         assertThrows(UnsupportedOperationException.class, pages::clear);
     }
 
@@ -80,17 +82,19 @@ public final class DomOnboardingFlowTest {
         }
     }
 
-    @Test public void featureConsentAndHardcoreRemainSeparateLocalDecisions() throws Exception {
+    @Test public void featureConsentRemainsWithTheSub() throws Exception {
         String consent = copy(OnboardingPage.Scene.LOCAL_FEATURES);
         requireTerms(consent, "sub controls", "own device", "disable", "censor", "limits", "tributes",
                 "whispers", "popup storm", "tasks", "cannot run", "queued", "unpair", "authentication",
                 "stops further sharing");
-        String hardcore = copy(OnboardingPage.Scene.HARDCORE);
-        requireTerms(hardcore, "sub device", "opt in locally", "android approval", "accessibility",
-                "device admin", "overrides allowed features", "off restores",
-                "off locally in settings on the sub device", "ending a session remotely does not disable it",
-                "cannot make android impossible to bypass");
-        assertFalse(hardcore.contains("dom can release hardcore"));
+
+    }
+
+    @Test public void walletAndCensorExplainTheSelectedSubsContractWithoutLocalEditors() throws Exception {
+        requireTerms(copy(OnboardingPage.Scene.WALLET_RULES), "select a sub", "contract", "wallet",
+                "events", "prices", "daily and weekly caps", "correction time", "do not authorize payment", "separate consent");
+        requireTerms(copy(OnboardingPage.Scene.CENSOR_SETTINGS), "selected sub", "contract", "censor",
+                "style", "intensity", "detection", "artwork", "allowed features", "applied status");
     }
 
     @Test public void taskCreationTeachesSchedulingAttachmentsAndOptionalRefusal() throws Exception {

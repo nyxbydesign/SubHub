@@ -40,8 +40,9 @@ public final class BothOnboardingFlow {
     private static void append(List<OnboardingPage> target, List<OnboardingPage> source,
             EnumSet<Kind> setupSeen, EnumSet<Scene> sharedStories) {
         for (OnboardingPage page : source) {
+            // Pairing is taught once in Sub; the Dom handoff reuses that relationship.
             // Device-wide permissions follow the complete journey in the activity.
-            if (page.kind == Kind.PERMISSIONS || page.scene == Scene.PERMISSIONS
+            if (page.scene == Scene.CONNECT_SUB || page.kind == Kind.PERMISSIONS || page.scene == Scene.PERMISSIONS
                     || page.scene == Scene.SWITCH_ROLES) continue;
 
             // Security has both instructional and setup forms; either covers the shared lesson.

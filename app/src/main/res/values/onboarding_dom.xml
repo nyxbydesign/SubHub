@@ -13,6 +13,22 @@
     <string name="dom_onboarding_profiles_body">Each paired Sub has a separate profile, contract and Tasks in Subs.</string>
     <string name="dom_onboarding_pair_action">Create invitation</string>
 
+    <string name="dom_onboarding_wallet_title">Wallet rules</string>
+    <string name="dom_onboarding_wallet_body">In Subs, select a Sub, then open Contract → Wallet to manage their rules.</string>
+    <string name="dom_onboarding_wallet_events_title">Events and prices</string>
+    <string name="dom_onboarding_wallet_events_body">Choose tribute events, their prices and timing for the selected Sub.</string>
+    <string name="dom_onboarding_wallet_caps_title">Caps and correction time</string>
+    <string name="dom_onboarding_wallet_caps_body">Set daily and weekly caps and correction time. Check the selected Sub before applying changes.</string>
+    <string name="dom_onboarding_wallet_payment_title">Payment consent</string>
+    <string name="dom_onboarding_wallet_payment_body">Wallet rules do not authorize payment. Saved-wallet auto-pay requires the Sub’s separate consent.</string>
+
+    <string name="dom_onboarding_censor_title">Censor settings</string>
+    <string name="dom_onboarding_censor_body">In the selected Sub’s Contract, open Censor to configure their protection.</string>
+    <string name="dom_onboarding_censor_style_title">Style and detection</string>
+    <string name="dom_onboarding_censor_style_body">Choose the censor style, intensity, detection settings and artwork for that Sub.</string>
+    <string name="dom_onboarding_censor_scope_title">Apply to the selected Sub</string>
+    <string name="dom_onboarding_censor_scope_body">Changes use that Sub’s connection and Allowed features. Check the applied status before relying on an update.</string>
+
     <string name="dom_onboarding_contract_title">Manage a contract</string>
     <string name="dom_onboarding_contract_body">Open Subs, select a Sub, then open Contract. Changes belong to that Sub.</string>
     <string name="dom_onboarding_rules_title">Features and artwork</string>
@@ -30,15 +46,6 @@
     <string name="dom_onboarding_disabled_body">Outside Hardcore, disabled features cannot run or be changed by a Dom. Queued changes respect those choices too.</string>
     <string name="dom_onboarding_revocation_title">Revoke a pairing</string>
     <string name="dom_onboarding_revocation_body">Unpairing from Connection requires authentication and stops further sharing.</string>
-
-    <string name="dom_onboarding_hardcore_title">Hardcore controls</string>
-    <string name="dom_onboarding_hardcore_body">Hardcore is a separate choice made on the Sub device.</string>
-    <string name="dom_onboarding_hardcore_consent_title">Local consent</string>
-    <string name="dom_onboarding_hardcore_consent_body">The Sub must opt in locally. Android approval is required for Accessibility and Device Admin.</string>
-    <string name="dom_onboarding_hardcore_override_title">Feature override</string>
-    <string name="dom_onboarding_hardcore_override_body">While Hardcore is on, it overrides Allowed features. Turning it off restores those choices.</string>
-    <string name="dom_onboarding_hardcore_release_title">Local release</string>
-    <string name="dom_onboarding_hardcore_release_body">Turn Hardcore off locally in Settings on the Sub device. Ending a session remotely does not disable it. It adds uninstall and data-clear friction; it cannot make Android impossible to bypass.</string>
 
     <string name="dom_onboarding_create_title">Create a task</string>
     <string name="dom_onboarding_create_body">Choose a Sub in Subs, then open Tasks to create an assignment.</string>

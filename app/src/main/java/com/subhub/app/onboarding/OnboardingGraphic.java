@@ -34,6 +34,7 @@ public final class OnboardingGraphic extends View {
                 : scene == OnboardingPage.Scene.SWITCH_ROLES ? R.string.onboarding_graphic_roles
                 : scene == OnboardingPage.Scene.SECURITY ? R.string.onboarding_graphic_security
                 : scene == OnboardingPage.Scene.PERMISSIONS ? R.string.onboarding_graphic_permissions
+                : scene == OnboardingPage.Scene.WALLET_RULES ? R.string.dom_onboarding_wallet_title
                 : R.string.onboarding_graphic_tasks;
         setContentDescription(context.getString(description));
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -63,6 +64,8 @@ public final class OnboardingGraphic extends View {
             case REVIEW_TASK: review(canvas); break;
             case CONTRACTS: case LOCAL_FEATURES: contracts(canvas); break;
             case HARDCORE: hardcore(canvas); break;
+            case CENSOR_SETTINGS: contracts(canvas); break;
+            case WALLET_RULES: wallet(canvas); break;
             case SECURITY: security(canvas); break;
             case PERMISSIONS: permissions(canvas); break;
         }
@@ -163,6 +166,26 @@ public final class OnboardingGraphic extends View {
             line(canvas, x + 19, 119, x + 68 - i * 7, 119, outline, 3);
             rounded(canvas, x + 21, 145, 61, 25, 13, muted, false);
             circle(canvas, x + 65 - i * 13, 157.5f, 8, accent, false);
+        }
+    }
+
+    private void wallet(Canvas canvas) {
+        rounded(canvas, 29, 26, 207, 164, 18, raised, false);
+        rounded(canvas, 29, 26, 207, 164, 18, outline, true);
+        icon(canvas, R.drawable.ic_nav_money, 47, 43, 35, accent);
+        line(canvas, 97, 54, 215, 54, ink, 5);
+        line(canvas, 97, 69, 181, 69, outline, 3);
+        for (int i = 0; i < 3; i++) {
+            circle(canvas, 56, 104 + i * 26, 5, accent, true);
+            line(canvas, 73, 104 + i * 26, 182, 104 + i * 26, outline, 4);
+            line(canvas, 198, 104 + i * 26, 215, 104 + i * 26, accent, 4);
+        }
+        rounded(canvas, 220, 89, 113, 104, 14, muted, false);
+        rounded(canvas, 220, 89, 113, 104, 14, accent, true);
+        icon(canvas, R.drawable.ic_nav_money, 259, 101, 34, accent);
+        for (int i = 0; i < 2; i++) {
+            rounded(canvas, 235, 148 + i * 23, 83, 8, 4, surface, false);
+            rounded(canvas, 235, 148 + i * 23, 51 + i * 17, 8, 4, accent, false);
         }
     }
 

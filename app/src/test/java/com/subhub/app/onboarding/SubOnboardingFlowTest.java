@@ -58,13 +58,12 @@ public final class SubOnboardingFlowTest {
             assertNotEquals(page.id, Scene.REVIEW_TASK, page.scene);
             text(page);
         }
-        assertEquals(1, pages.stream().filter(page -> page.kind == Kind.APPEARANCE).count());
-        assertEquals(1, pages.stream().filter(page -> page.kind == Kind.WALLET).count());
+        assertEquals(0, pages.stream().filter(page -> page.kind == Kind.APPEARANCE).count());
+        assertEquals(0, pages.stream().filter(page -> page.kind == Kind.WALLET).count());
         assertEquals(1, pages.stream().filter(page -> page.kind == Kind.APPS).count());
         assertEquals(1, pages.stream().filter(page -> page.kind == Kind.SECURITY).count());
         assertTrue(indexOf(Scene.CONNECT_DOM) < indexOf(Scene.SUB_TASKS));
-        assertTrue(indexOf("sub_appearance") < indexOf("sub_wallet"));
-        assertTrue(indexOf("sub_wallet") < indexOf("sub_apps"));
+        assertTrue(indexOf(Scene.SUB_TASKS) < indexOf("sub_apps"));
         assertTrue(indexOf("sub_allowed_features") < indexOf(Scene.HARDCORE));
         assertThrows(UnsupportedOperationException.class, () -> pages.remove(0));
     }
@@ -103,7 +102,6 @@ public final class SubOnboardingFlowTest {
                 "if already enabled", "active service lock", "within your caps");
         contains(text(page("sub_allowed_features")), "disable", "locally", "queued updates",
                 "only after you enable it locally");
-        contains(text(page("sub_wallet")), "do not authorize payment", "separate consent");
     }
 
     @Test public void onlyExplicitPairingAndHardcoreActionsLeaveTheWalkthrough() {

@@ -38,17 +38,19 @@ public class BothOnboardingFlowTest {
         }
     }
 
-    @Test public void requiredJourneyCoversBothPairingDirectionsAndTheWholeTaskCycle() {
+    @Test public void requiredJourneyPairsOnceAndCoversBothSidesOfTheTaskCycle() {
         List<OnboardingPage> pages = BothOnboardingFlow.pages();
         assertEquals(Workspace.SUB, onlyScene(pages, Scene.CONNECT_DOM).workspace);
         assertEquals(Workspace.SUB, onlyScene(pages, Scene.SUB_TASKS).workspace);
         assertEquals(Workspace.SUB, onlyScene(pages, Scene.HARDCORE).workspace);
-        assertEquals(Workspace.DOM, onlyScene(pages, Scene.CONNECT_SUB).workspace);
+        assertFalse(pages.stream().anyMatch(page -> page.scene == Scene.CONNECT_SUB));
+        assertEquals(Workspace.DOM, onlyScene(pages, Scene.WALLET_RULES).workspace);
+        assertEquals(Workspace.DOM, onlyScene(pages, Scene.CENSOR_SETTINGS).workspace);
         assertEquals(Workspace.DOM, onlyScene(pages, Scene.CREATE_TASK).workspace);
         assertEquals(Workspace.DOM, onlyScene(pages, Scene.REVIEW_TASK).workspace);
         assertTrue(pages.stream().anyMatch(page -> page.scene == Scene.CONTRACTS
                 && page.workspace == Workspace.DOM));
-        for (Kind kind : new Kind[] {Kind.APPEARANCE, Kind.WALLET, Kind.APPS, Kind.SECURITY}) {
+        for (Kind kind : new Kind[] {Kind.APPS, Kind.SECURITY}) {
             assertEquals("Required device setup: " + kind, 1,
                     pages.stream().filter(page -> page.kind == kind).count());
         }
@@ -74,8 +76,8 @@ public class BothOnboardingFlowTest {
         }
         assertTrue(indexOfScene(pages, Scene.CONNECT_DOM) < handoff);
         assertTrue(indexOfScene(pages, Scene.SUB_TASKS) < handoff);
-        assertTrue(handoff < indexOfScene(pages, Scene.CONNECT_SUB));
-        assertTrue(indexOfScene(pages, Scene.CONNECT_SUB) < indexOfScene(pages, Scene.CREATE_TASK));
+        assertEquals(handoff + 1, indexOfScene(pages, Scene.WALLET_RULES));
+        assertEquals(handoff + 2, indexOfScene(pages, Scene.CENSOR_SETTINGS));
         assertTrue(indexOfScene(pages, Scene.CREATE_TASK) < indexOfScene(pages, Scene.REVIEW_TASK));
         assertReusedOrder(SubOnboardingFlow.pages(), pages.subList(0, handoff));
         assertReusedOrder(DomOnboardingFlow.pages(), pages.subList(handoff + 1, pages.size()));
@@ -104,7 +106,7 @@ public class BothOnboardingFlowTest {
     @Test public void actionsRetainConsentAndWorkspaceBoundaries() {
         List<OnboardingPage> pages = BothOnboardingFlow.pages();
         assertEquals(Action.PAIR_DOM, onlyScene(pages, Scene.CONNECT_DOM).action);
-        assertEquals(Action.PAIR_SUB, onlyScene(pages, Scene.CONNECT_SUB).action);
+        assertFalse(pages.stream().anyMatch(page -> page.action == Action.PAIR_SUB));
         assertEquals(Action.HARDCORE, onlyScene(pages, Scene.HARDCORE).action);
         for (OnboardingPage page : pages) {
             switch (page.action) {
@@ -144,7 +146,8 @@ public class BothOnboardingFlowTest {
         for (OnboardingPage source : original) {
             if (source.kind == Kind.STORY && source.scene != Scene.SWITCH_ROLES
                     && source.scene != Scene.SECURITY && source.scene != Scene.PERMISSIONS
-                    && source.scene != Scene.LOCAL_FEATURES && source.scene != Scene.HARDCORE) {
+                    && source.scene != Scene.LOCAL_FEATURES && source.scene != Scene.HARDCORE
+                    && source.scene != Scene.CONNECT_SUB) {
                 assertTrue("Keep each role-specific lesson: " + source.id,
                         pages.stream().anyMatch(page -> page.id.equals(source.id)));
             }

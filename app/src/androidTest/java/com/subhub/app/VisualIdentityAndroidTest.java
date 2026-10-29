@@ -128,20 +128,13 @@ public final class VisualIdentityAndroidTest {
         }
         try (ActivityScenario<OnboardingActivity> page = ActivityScenario.launch(
                 new Intent(context, OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY, true))) {
-            String[] setupPages = {"sub_appearance", "sub_wallet", "sub_apps", "sub_allowed_features", "sub_hardcore", "device_permissions"};
+            String[] setupPages = {"sub_apps", "sub_allowed_features", "sub_hardcore", "dom_wallet", "dom_censor", "device_permissions"};
             for (int step = 0; step < setupPages.length; step++) {
                 com.subhub.app.onboarding.OnboardingTestSupport.goTo(page, setupPages[step]);
                 settle();
                 final int number = step;
                 page.onActivity(a -> inspect(a, "setup-" + number));
-                if (step == 0) {
-                    for (String style : new String[] {"pixelate", "blur"}) {
-                        page.onActivity(a -> a.findViewById(android.R.id.content)
-                                .findViewWithTag("setup-style:" + style).performClick());
-                        settle();
-                        page.onActivity(a -> inspect(a, "setup-preview-" + style));
-                    }
-                }
+
 
             }
         }
