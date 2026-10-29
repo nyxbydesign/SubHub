@@ -1,0 +1,25 @@
+<resources>
+    <string name="onboarding_choose_role">How will you use SubHub?</string>
+    <string name="onboarding_role_sub">Sub</string>
+    <string name="onboarding_role_dom">Dom</string>
+    <string name="onboarding_role_both">Both</string>
+    <string name="onboarding_sub_workspace">Sub setup</string>
+    <string name="onboarding_dom_workspace">Dom setup</string>
+    <string name="onboarding_device_workspace">Device setup</string>
+    <string name="onboarding_permissions_body">Choose which Android access to allow. You can continue without granting access and enable it later when you use a feature.</string>
+    <string name="onboarding_security_ready">Local PIN configured</string>
+    <string name="onboarding_security_body">Keep local access available for settings and recovery. A remote connection uses its own pairing and approval.</string>
+    <string name="onboarding_replay_action">This walkthrough previews that role. Use Settings to change your device role.</string>
+    <string name="onboarding_hardcore_sub_only">Open the Sub workspace to configure Hardcore.</string>
+    <string name="onboarding_graphic_connect">Two phones connected through a private pairing invitation</string>
+    <string name="onboarding_graphic_tasks">Task instructions, a completion request and its review</string>
+    <string name="onboarding_graphic_contract">Separate controls for the selected features</string>
+    <string name="onboarding_graphic_hardcore">Optional extra protection controlled on the Sub device</string>
+    <string name="onboarding_graphic_roles">Separate Sub and Dom workspaces on one device</string>
+    <string name="onboarding_graphic_security">Local controller access protected by a PIN</string>
+    <string name="onboarding_graphic_permissions">Android access granted separately for each capability</string>
+    <item name="onboarding_role_choice" type="id" />
+    <item name="onboarding_workspace" type="id" />
+    <item name="onboarding_graphic" type="id" />
+    <item name="onboarding_role_status" type="id" />
+</resources>

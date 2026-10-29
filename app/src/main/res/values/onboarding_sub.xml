@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="onboarding_sub_connect_title">Connect to a Dom</string>
+    <string name="onboarding_sub_connect_body">Pairing is optional. Connect to receive contract settings and Tasks from your Dom after reviewing what you share.</string>
+    <string name="onboarding_sub_pair_steps_title">Approve on both devices</string>
+    <string name="onboarding_sub_pair_steps_body">Your Dom creates an invitation. Open or paste its code on this Sub device, compare the device fingerprint, and approve. Your Dom must also approve before pairing completes.</string>
+    <string name="onboarding_sub_shared_title">Shared with your Dom</string>
+    <string name="onboarding_sub_shared_body">Your Dom manages contract settings and artwork, sees app names, configured app usage, statistics, Activity, and device and session state, and can end the active session.</string>
+    <string name="onboarding_sub_unpair_title">Revoking access</string>
+    <string name="onboarding_sub_unpair_body">Use Connection → Unpair with keyholder authorization. Revocation stops future sharing once received; it does not erase information already shared.</string>
+    <string name="onboarding_sub_pair_action">Pair with a Dom</string>
+
+    <string name="onboarding_sub_tasks_title">Complete your Tasks</string>
+    <string name="onboarding_sub_tasks_body">Read the instructions and deadline in Tasks. Send a completion request when the work is ready.</string>
+    <string name="onboarding_sub_submit_title">Add proof to your request</string>
+    <string name="onboarding_sub_submit_body">Choose Request completion, add text or up to five attachments, then send. Proof belongs to your completion request.</string>
+    <string name="onboarding_sub_review_title">Wait for Dom review</string>
+    <string name="onboarding_sub_review_body">Your request stays Pending review until your Dom accepts or denies it. Request review outside the app sends a request without in-app proof; acceptance is still required.</string>
+
+    <string name="onboarding_sub_appearance_title">Choose a censor style</string>
+    <string name="onboarding_sub_appearance_body">Preview box, pixelation, blur, or static for this device.</string>
+    <string name="onboarding_sub_wallet_title">Set Wallet rules</string>
+    <string name="onboarding_sub_wallet_body">Choose optional tribute events, prices, correction time, and daily and weekly caps. Rules do not authorize payment; saved-wallet auto-pay requires separate consent.</string>
+    <string name="onboarding_sub_apps_title">Select apps</string>
+    <string name="onboarding_sub_apps_body">Choose which installed apps use your contract. Daily allowances are configured in Limits. A paired Dom manages these settings.</string>
+
+    <string name="onboarding_sub_features_title">Choose allowed features</string>
+    <string name="onboarding_sub_features_body">Settings → Allowed features lets you disable Censor, Limits, Tributes, Whispers, and Popup Storm locally.</string>
+    <string name="onboarding_sub_feature_control_title">Control what can run</string>
+    <string name="onboarding_sub_feature_control_body">Disabled features cannot run or accept changes from your Dom, including queued updates. Hardcore overrides these choices only after you enable it locally.</string>
+
+    <string name="onboarding_sub_hardcore_title">Consider Hardcore Mode</string>
+    <string name="onboarding_sub_hardcore_body">For stronger protection against quitting, you can opt in locally in Settings. Hardcore is optional; review its effects and your recovery access first.</string>
+    <string name="onboarding_sub_hardcore_controls_title">Protected Android controls</string>
+    <string name="onboarding_sub_hardcore_controls_body">Accessibility and Device Admin help guard supported uninstall and data-clear controls in Sub mode. Hardcore does not start protection by itself.</string>
+    <string name="onboarding_sub_hardcore_choices_title">Feature choices and release</string>
+    <string name="onboarding_sub_hardcore_choices_body">With your local consent, Hardcore overrides Allowed features. Turning it off in Settings releases the guard and restores your choices. Android also permits Device Admin deactivation.</string>
+    <string name="onboarding_sub_hardcore_payments_title">Separate payment consent</string>
+    <string name="onboarding_sub_hardcore_payments_body">Saved-wallet auto-pay needs separate consent, a verified linked wallet, and an active service lock. If already enabled, it can send eligible tribute while Hardcore is on, within your caps.</string>
+    <string name="onboarding_sub_hardcore_action">Hardcore settings</string>
+
+    <string name="onboarding_sub_security_title">Keyholder and recovery</string>
+    <string name="onboarding_sub_security_body">A local keyholder PIN is optional when unpaired. When paired, your Dom provides a keyholder code for local recovery and unpairing; ordinary contract changes stay with your Dom. Check this access before enabling Hardcore.</string>
+</resources>

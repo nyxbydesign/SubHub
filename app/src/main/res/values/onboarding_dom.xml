@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dom_onboarding_security_title">Secure Dom access</string>
+    <string name="dom_onboarding_security_body">Use a local PIN to protect Dom controls on this device.</string>
+
+    <string name="dom_onboarding_pair_title">Add a Sub</string>
+    <string name="dom_onboarding_pair_body">Create an invitation, then approve the Sub who joins it.</string>
+    <string name="dom_onboarding_invitation_title">Share an invitation</string>
+    <string name="dom_onboarding_invitation_body">Show the QR code or share the invitation code with your Sub.</string>
+    <string name="dom_onboarding_approval_title">Approve together</string>
+    <string name="dom_onboarding_approval_body">The Sub reviews your device and requests pairing. Compare fingerprints, then approve their device.</string>
+    <string name="dom_onboarding_profiles_title">Separate profiles</string>
+    <string name="dom_onboarding_profiles_body">Each paired Sub has a separate profile, contract and Tasks in Subs.</string>
+    <string name="dom_onboarding_pair_action">Create invitation</string>
+
+    <string name="dom_onboarding_contract_title">Manage a contract</string>
+    <string name="dom_onboarding_contract_body">Open Subs, select a Sub, then open Contract. Changes belong to that Sub.</string>
+    <string name="dom_onboarding_rules_title">Features and artwork</string>
+    <string name="dom_onboarding_rules_body">Configure Censor, Limits, Tributes, Whispers and Popup Storm within the features the Sub allows.</string>
+    <string name="dom_onboarding_apps_title">Apps and allowances</string>
+    <string name="dom_onboarding_apps_body">Choose which apps the contract covers and set their daily time allowances.</string>
+    <string name="dom_onboarding_sessions_title">Session controls</string>
+    <string name="dom_onboarding_sessions_body">Set the session duration. The Sub starts their session; you can end it from their profile.</string>
+
+    <string name="dom_onboarding_consent_title">Allowed features</string>
+    <string name="dom_onboarding_consent_body">The Sub controls Allowed features on their own device.</string>
+    <string name="dom_onboarding_opt_out_title">Local choices</string>
+    <string name="dom_onboarding_opt_out_body">The Sub can disable Censor, Limits, Tributes, Whispers, Popup Storm or Tasks.</string>
+    <string name="dom_onboarding_disabled_title">Disabled features</string>
+    <string name="dom_onboarding_disabled_body">Outside Hardcore, disabled features cannot run or be changed by a Dom. Queued changes respect those choices too.</string>
+    <string name="dom_onboarding_revocation_title">Revoke a pairing</string>
+    <string name="dom_onboarding_revocation_body">Unpairing from Connection requires authentication and stops further sharing.</string>
+
+    <string name="dom_onboarding_hardcore_title">Hardcore controls</string>
+    <string name="dom_onboarding_hardcore_body">Hardcore is a separate choice made on the Sub device.</string>
+    <string name="dom_onboarding_hardcore_consent_title">Local consent</string>
+    <string name="dom_onboarding_hardcore_consent_body">The Sub must opt in locally. Android approval is required for Accessibility and Device Admin.</string>
+    <string name="dom_onboarding_hardcore_override_title">Feature override</string>
+    <string name="dom_onboarding_hardcore_override_body">While Hardcore is on, it overrides Allowed features. Turning it off restores those choices.</string>
+    <string name="dom_onboarding_hardcore_release_title">Local release</string>
+    <string name="dom_onboarding_hardcore_release_body">Turn Hardcore off locally in Settings on the Sub device. Ending a session remotely does not disable it. It adds uninstall and data-clear friction; it cannot make Android impossible to bypass.</string>
+
+    <string name="dom_onboarding_create_title">Create a task</string>
+    <string name="dom_onboarding_create_body">Choose a Sub in Subs, then open Tasks to create an assignment.</string>
+    <string name="dom_onboarding_schedule_title">Schedule</string>
+    <string name="dom_onboarding_schedule_body">Set instructions, a future start time and duration in the Sub’s time zone. Choose repeat days for a recurring task.</string>
+    <string name="dom_onboarding_attachment_title">Attachment</string>
+    <string name="dom_onboarding_attachment_body">Add one image, audio or video attachment to the instructions.</string>
+    <string name="dom_onboarding_refusal_title">Allow refusal</string>
+    <string name="dom_onboarding_refusal_body">Turn on Allow refusal to let the Sub refuse one occurrence or the entire recurring series.</string>
+
+    <string name="dom_onboarding_review_title">Review a completion request</string>
+    <string name="dom_onboarding_review_body">Open a pending completion request and review that submission.</string>
+    <string name="dom_onboarding_proof_title">Review proof</string>
+    <string name="dom_onboarding_proof_body">Read completion text and view each image, audio or video attachment. Proof stays with its own task occurrence.</string>
+    <string name="dom_onboarding_outside_title">Outside requests</string>
+    <string name="dom_onboarding_outside_body">A request outside the app contains no proof in SubHub. Review it with the Sub; it still needs your verdict.</string>
+    <string name="dom_onboarding_verdict_title">Accepted or Denied</string>
+    <string name="dom_onboarding_verdict_body">Choose Accept or Deny for that submission. The result is shown as Accepted or Denied; sending proof alone does not complete a task.</string>
+</resources>

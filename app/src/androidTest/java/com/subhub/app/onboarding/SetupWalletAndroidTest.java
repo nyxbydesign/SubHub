@@ -69,7 +69,11 @@ public class SetupWalletAndroidTest {
                 assertTrue("Space below the artwork", rules.getTop() - artwork.getBottom()
                         >= a.getResources().getDimensionPixelSize(R.dimen.ui_gap_section));
                 ScrollView scroll = a.findViewById(R.id.tour_scroll);
-                assertTrue("Normal setup fits one page", scroll.getChildAt(0).getHeight() <= scroll.getHeight());
+                assertTrue("The complete rules remain scrollable", scroll.getChildAt(0).getHeight() >= scroll.getHeight());
+                android.graphics.Rect footer = new android.graphics.Rect(), content = new android.graphics.Rect();
+                assertTrue(a.findViewById(R.id.tour_next).getGlobalVisibleRect(footer));
+                assertTrue(scroll.getGlobalVisibleRect(content));
+                assertTrue("Footer stays outside the scrollable rules", footer.top >= content.bottom);
                 toggle(panel, PenanceInfraction.CENSORED_TAP).setChecked(true);
                 amount(panel, PenanceInfraction.CENSORED_TAP).setText("2.35");
                 amount(panel, PenanceInfraction.NEW_DETECTION).setText("1.25");
@@ -128,8 +132,7 @@ public class SetupWalletAndroidTest {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(
                 new Intent(context, OnboardingActivity.class).putExtra(OnboardingActivity.REPLAY, true))) {
-            onView(withId(R.id.tour_next)).perform(click());
-            onView(withId(R.id.tour_next)).perform(click());
+            OnboardingTestSupport.goTo(tour, "sub_wallet");
             tour.onActivity(a -> {
                 assertFalse(toggle(panel(a), PenanceInfraction.NEW_DETECTION).isEnabled());
                 assertFalse(amount(panel(a), PenanceInfraction.NEW_DETECTION).isEnabled());
@@ -195,15 +198,14 @@ public class SetupWalletAndroidTest {
         SharedPreferences draft = context.getSharedPreferences("subhub_onboarding", 0);
         draft.edit().putBoolean("in_progress", true).putInt("draft_step", 1).commit();
         try (ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(OnboardingActivity.class)) {
-            tour.onActivity(a -> assertEquals(a.getString(R.string.tour_select_apps),
+            tour.onActivity(a -> assertEquals(a.getString(R.string.onboarding_sub_apps_title),
                     ((android.widget.TextView) a.findViewById(R.id.tour_step_title)).getText().toString()));
         }
     }
 
     private ActivityScenario<OnboardingActivity> walletPage() {
         ActivityScenario<OnboardingActivity> tour = ActivityScenario.launch(OnboardingActivity.class);
-        onView(withId(R.id.tour_next)).perform(click());
-        onView(withId(R.id.tour_next)).perform(click());
+        OnboardingTestSupport.goTo(tour, "sub_wallet");
         return tour;
     }
 
