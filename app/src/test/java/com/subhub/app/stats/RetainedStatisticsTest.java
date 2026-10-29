@@ -106,9 +106,9 @@ public final class RetainedStatisticsTest {
 
     @Test public void thresholdsUseChronologicalSourceDatesAndSaturate() {
         Map<String, Map<String, Long>> days = new LinkedHashMap<>();
-        days.put("2026-08-03", Map.of("service_ms", 3_600_000L));
-        days.put("2026-08-01", Map.of("service_ms", 1_800_000L));
-        days.put("2026-08-02", Map.of("service_ms", 1_800_000L));
+        days.put("2026-08-03", Map.of("service_ms", 180_000_000L));
+        days.put("2026-08-01", Map.of("service_ms", 180_000_000L));
+        days.put("2026-08-02", Map.of("service_ms", 180_000_000L));
         RetainedStatistics history = new RetainedStatistics(UTC, NOW, days);
         assertEquals(time("2026-08-03T00:00:00Z") - 1, (long) history.awards(true).get("dom_time_1hr"));
         history.event("large", "a", "2026-08-01", "photos", Long.MAX_VALUE);

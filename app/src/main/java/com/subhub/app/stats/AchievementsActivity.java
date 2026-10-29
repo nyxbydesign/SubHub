@@ -321,7 +321,8 @@ public final class AchievementsActivity extends AppCompatActivity {
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         titleRow.addView(title);
         if (unlocked) {
-            TextView tag = text(getString(R.string.achievement_unlocked_tag), 9,
+            TextView tag = text(getString(manager.earlierEarnedGoal(achievement.getId()) > 0
+                    ? R.string.achievement_earned_earlier : R.string.achievement_unlocked_tag), 9,
                     R.color.accent_hot, true);
             tag.setAllCaps(true);
             tag.setLetterSpacing(0.1f);
@@ -400,6 +401,15 @@ public final class AchievementsActivity extends AppCompatActivity {
         binding.achievementList.addView(card);
     }
 
+    private String earlierGoal(String id, long target) {
+        if (id.startsWith("dom_time_")) return StatsSnapshot.formatDuration(target);
+        String number = java.text.NumberFormat.getIntegerInstance().format(
+                id.startsWith("dom_tribute_") ? target / 100 : target);
+        return getString(id.startsWith("dom_tribute_") ? R.string.achievement_goal_currency
+                : id.startsWith("dom_sessions_") ? R.string.achievement_goal_sessions
+                : R.string.achievement_goal_subs, number);
+    }
+
     private void showAchievementDetails(AchievementManager.Achievement achievement) {
         if (!manager.isAccessible() || achievement.getRole() != manager.getRole()) return;
         boolean unlocked = manager.isUnlocked(achievement.getId());
@@ -419,9 +429,12 @@ public final class AchievementsActivity extends AppCompatActivity {
                         : unlocked ? R.string.achievement_unlocked_tag
                         : R.string.achievement_locked);
         ((TextView) content.findViewById(R.id.achievement_detail_name)).setText(name);
-        ((TextView) content.findViewById(R.id.achievement_detail_description)).setText(
-                concealed ? getString(R.string.achievement_hidden_desc)
-                        : getString(achievement.getDescription()));
+        String description = concealed ? getString(R.string.achievement_hidden_desc)
+                : getString(achievement.getDescription());
+        long earlier = manager.earlierEarnedGoal(achievement.getId());
+        if (earlier > 0) description += "\n\n" + getString(R.string.achievement_earlier_goal,
+                earlierGoal(achievement.getId(), earlier));
+        ((TextView) content.findViewById(R.id.achievement_detail_description)).setText(description);
         TextView progressView = content.findViewById(R.id.achievement_detail_progress);
         progressView.setText(concealed || !progress.isCountable()
                 ? getString(concealed ? R.string.achievement_secret
