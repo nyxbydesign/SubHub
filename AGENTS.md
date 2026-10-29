@@ -125,6 +125,11 @@ or closes before tapping Cancel or Unlock. Espresso main-thread idle does not se
 another process's keyboard window. Retain dialog identity when diagnosing a missed
 tap so it cannot be confused with a reopened authentication prompt.
 
+Use the constant family declared by the current SDK method's `@IntDef` contract.
+Equal-valued legacy aliases can compile but still fail Android lint's `WrongConstant`
+check. Guard constant classes introduced after `minSdk` and qualify both compilation
+and lint rather than suppressing the mismatch.
+
 For keyboard regressions, check initial launch, activity recreation, and tap-to-edit
 separately. Android can restore an EditText's focus after `onCreate`, so a launch-only
 focus check does not verify recreated screens.
