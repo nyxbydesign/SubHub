@@ -269,6 +269,34 @@ public final class RoleAchievementsAndroidTest {
         }
     }
 
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void grandfatheredBadgesExplainEarlierGoalsWithoutChangingDates() throws Exception {
+        seedUi();
+        long date=System.currentTimeMillis()-40L*24*60*60*1000;
+        context.getSharedPreferences("betablocker_achievements",0).edit()
+                .putStringSet("unlocked",new LinkedHashSet<>(Arrays.asList("dom_time_1hr","dom_sessions_10","dom_tribute_10")))
+                .putLong("unlocked_at.dom_time_1hr",date).commit();
+        try(ActivityScenario<AchievementsActivity> scenario=launch(AchievementsActivity.class)) {
+            awaitText(scenario,context.getString(com.subhub.app.R.string.achievement_earned_earlier));
+            scenario.onActivity(activity->assertFits(activity.findViewById(android.R.id.content)));
+            capture(scenario,"dom-earlier-goals");
+            onView(org.hamcrest.Matchers.allOf(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.dom_time_1hr),
+                    androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_list))))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+            capture(scenario,"dom-earlier-goals-tap-ready");
+            onView(org.hamcrest.Matchers.allOf(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.dom_time_1hr),
+                    androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_list))))
+                    .perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_description))
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.withText(
+                            org.hamcrest.Matchers.containsString(context.getString(com.subhub.app.R.string.achievement_earlier_goal,StatsSnapshot.formatDuration(3600))))));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_description))
+                    .check((view,failure)->{if(failure!=null)throw failure;assertFits(view.getRootView());});
+            assertEquals(date,context.getSharedPreferences("betablocker_achievements",0).getLong("unlocked_at.dom_time_1hr",0));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.achievement_detail_close)).perform(click());
+        }
+    }
+
     @Test public void bothHomeCardsRouteToTheSameStatisticsAndAchievementsSections() throws Exception {
         seedUi();
         for (boolean dom : new boolean[]{true, false}) {
@@ -408,9 +436,11 @@ public final class RoleAchievementsAndroidTest {
     }
 
     private DomStatsSnapshot facts() {
-        return DomStatsSnapshot.aggregate(Collections.singletonList(new DomStatsSnapshot.Sub("fixture", generation, 1,
-                System.currentTimeMillis(), System.currentTimeMillis(), new DomStatsSnapshot.Totals(3600, 10, 1000, 0, 1000, 0),
-                new DomStatsSnapshot.Observation(true, true, true))), System.currentTimeMillis());
+        return DomStatsSnapshot.aggregate(Arrays.asList(
+                new DomStatsSnapshot.Sub("fixture-a", generation, 1, System.currentTimeMillis(), System.currentTimeMillis(),
+                        new DomStatsSnapshot.Totals(180000,125,5000,0,5000,0),new DomStatsSnapshot.Observation(true,true,true)),
+                new DomStatsSnapshot.Sub("fixture-b", generation, 2, System.currentTimeMillis(), System.currentTimeMillis(),
+                        new DomStatsSnapshot.Totals(180000,125,5000,0,5000,0),new DomStatsSnapshot.Observation(true,true,true))),System.currentTimeMillis());
     }
     private RemoteStore store() {
         String name = "role-achievement-" + UUID.randomUUID() + ".db";
@@ -476,12 +506,13 @@ public final class RoleAchievementsAndroidTest {
         }
         throw new AssertionError("Role page did not finish loading");
     }
-    @androidx.annotation.RequiresApi(29)
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     private void capture(ActivityScenario<?> scenario, String name) throws Exception {
         CountDownLatch frame = new CountDownLatch(1);
         scenario.onActivity(activity -> {
             View root = activity.getWindow().getDecorView();
-            root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown); root.invalidate();
+            if (android.os.Build.VERSION.SDK_INT >= 29) root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);
+            root.invalidate();
         });
         assertTrue("No committed frame", frame.await(5, TimeUnit.SECONDS));
         Bitmap bitmap = instrumentation.getUiAutomation().takeScreenshot(); assertNotNull(bitmap);
