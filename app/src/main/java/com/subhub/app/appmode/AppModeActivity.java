@@ -398,7 +398,7 @@ public final class AppModeActivity extends AppCompatActivity {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
             String label = com.subhub.app.configuration.FeatureEditorSession.remote(app)
                     ? com.subhub.app.configuration.FeatureEditorSession.scope(app).appLabel(name) : name;
-            android.graphics.drawable.Drawable icon = packages.getDefaultActivityIcon();
+            android.graphics.drawable.Drawable icon = null;
             try {
                 if (FeatureEditorSession.remote(app)) throw new PackageManager.NameNotFoundException(name);
                 ApplicationInfo info = packages.getApplicationInfo(name, 0);

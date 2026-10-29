@@ -32,12 +32,7 @@ public final class ContractAppList {
             icon.getLayoutParams().width = PersonUi.dp(parent.getContext(), 32);
             icon.getLayoutParams().height = PersonUi.dp(parent.getContext(), 32);
             icon.setTag("contract_app_icon:" + app.packageName);
-            if (!app.packageName.isEmpty()) try {
-                icon.setImageDrawable(parent.getContext().getPackageManager().getApplicationIcon(app.packageName));
-                icon.setImageTintList(null);
-            } catch (android.content.pm.PackageManager.NameNotFoundException | SecurityException missing) {
-                // The existing generic icon remains when this device has no authorized bitmap.
-            }
+            com.subhub.app.util.AppIcons.bind(icon, app.packageName, R.drawable.ic_settings_apps);
             androidx.core.view.ViewCompat.setScreenReaderFocusable(row, true);
         }
     }

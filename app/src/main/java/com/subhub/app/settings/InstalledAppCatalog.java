@@ -26,7 +26,7 @@ public final class InstalledAppCatalog {
         if (remote != null) {
             List<Entry> result = new ArrayList<>();
             for (Map.Entry<String,String> entry : remote.catalog().entrySet())
-                result.add(new Entry(entry.getValue(), entry.getKey(), app.getDrawable(com.subhub.app.R.drawable.ic_settings_apps)));
+                result.add(new Entry(entry.getValue(), entry.getKey(), null));
             result.sort((a,b) -> Collator.getInstance().compare(a.label,b.label));
             return Collections.unmodifiableList(result);
         }

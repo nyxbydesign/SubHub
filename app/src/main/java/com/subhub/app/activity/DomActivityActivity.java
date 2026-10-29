@@ -413,8 +413,7 @@ public final class DomActivityActivity extends AppCompatActivity {
             LinearLayout row = new LinearLayout(DomActivityActivity.this);
             row.setGravity(Gravity.TOP);
             ImageView icon = new ImageView(DomActivityActivity.this);
-            icon.setImageResource(ActivityText.icon(entry));
-            icon.setImageTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
+            ActivityText.bindIcon(icon, entry);
             icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             LinearLayout.LayoutParams image = new LinearLayout.LayoutParams(PersonUi.dp(DomActivityActivity.this, 24), PersonUi.dp(DomActivityActivity.this, 24));
             image.setMarginEnd(PersonUi.dp(DomActivityActivity.this, 12));

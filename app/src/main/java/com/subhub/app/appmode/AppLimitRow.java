@@ -32,7 +32,8 @@ final class AppLimitRow extends LinearLayout {
         header.setGravity(Gravity.CENTER_VERTICAL);
         addView(header, new LayoutParams(-1, -2));
         ImageView image = new ImageView(context);
-        image.setImageDrawable(icon);
+        image.setTag("app_icon:" + packageName);
+        com.subhub.app.util.AppIcons.bind(image, packageName, R.drawable.ic_settings_apps, icon);
         image.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         header.addView(image, new LayoutParams(dp(28), dp(28)));
         LinearLayout labels = new LinearLayout(context);

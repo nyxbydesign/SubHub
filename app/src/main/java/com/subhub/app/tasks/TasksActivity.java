@@ -408,7 +408,8 @@ public final class TasksActivity extends RolePage {
         if (state.refused.contains(occurrence.task.id))
             PersonUi.text(card, getString(R.string.tasks_series_refused), false);
         if (state.allowed && occurrence.task.attachment != null && inlineAuthorized()) {
-            LinearLayout media = PersonUi.card(body);
+            LinearLayout media = PersonUi.column(this);
+            card.addView(media, new LinearLayout.LayoutParams(-1, -2));
             media.setTag("task_definition_media:" + occurrence.id);
             PersonUi.text(media, getString(R.string.tasks_attachment_heading), true);
             embed(media, occurrence.task.attachment, state.dom);
