@@ -47,6 +47,31 @@ public final class RemoteProfiles {
         } catch (JSONException | IllegalArgumentException invalid) { return ProfileData.empty(peer.name); }
     }
 
+    /** The applied command identifies its author; a newly paired Dom must not inherit that attribution. */
+    static ProfileData contractDom(android.content.Context context, RemoteStore store, RemoteContracts contracts) {
+        ProfileData unknown = ProfileData.empty(context.getString(com.subhub.app.R.string.header_subtitle_dom));
+        synchronized (store) {
+            android.content.SharedPreferences main = context.getSharedPreferences(
+                    com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0);
+            String retained = main.getString("remote_active_configuration", "");
+            try {
+                JSONObject applied = retained.isEmpty() ? null : contracts.localApplied();
+                String commandId = main.getString("remote_active_command", "");
+                for (RemoteStore.Peer peer : store.peers(false)) {
+                    if (peer.localRole != RemoteProtocol.Role.SUB || peer.state != RemoteStore.State.ACTIVE) continue;
+                    if (retained.isEmpty()) return read(store, peer);
+                    if (applied == null || commandId.isEmpty()) return unknown;
+                    RemoteStore.Command command = store.command(peer.identity, peer.generation, commandId);
+                    if (command != null && command.state == RemoteStore.CommandState.APPLIED
+                            && RemoteProtocol.canonical(RemoteConfiguration.active(
+                                    new JSONObject(command.body).getJSONObject("configuration")))
+                                    .equals(RemoteProtocol.canonical(applied))) return read(store, peer);
+                }
+            } catch (Exception unavailable) { return unknown; }
+            return unknown;
+        }
+    }
+
     public static Map<String, Boolean> allowances(JSONObject runtime) {
         if (!RemoteTelemetry.validRuntime(runtime)) return Collections.emptyMap();
         JSONObject consent = runtime.optJSONObject("featureConsent");

@@ -41,8 +41,9 @@ public class ArrangementDetailsAndroidTest {
         new FeatureModuleManager(context).save(false, false, false, false);
         settings.edit().putBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, false).commit();
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
-        for (PenanceInfraction rule : PenanceInfraction.values())
-            if (rule != PenanceInfraction.PAID_PAUSE) rules.put(rule, 125);
+        for (PenanceInfraction rule : new PenanceInfraction[]{PenanceInfraction.NEW_DETECTION,
+                PenanceInfraction.CENSORED_DWELL, PenanceInfraction.CENSORED_TAP,
+                PenanceInfraction.WATCHED_APP_OPEN, PenanceInfraction.TAMPER_ATTEMPT}) rules.put(rule, 125);
         new PenanceManager(context).configure(true, rules, 1000, 5000, 10, 15);
         new com.subhub.app.penance.PaidPauseManager(context).configure(false, 375, 12);
         java.util.Set<String> apps = java.util.Set.of("com.android.chrome", "com.android.settings");
@@ -171,6 +172,18 @@ public class ArrangementDetailsAndroidTest {
         ViewGroup detail = activity.findViewById(R.id.role_page_body).findViewWithTag("contract_details:" + section.key);
         assertNotNull("Detail for " + section.key, detail);
         assertTrue("Expanded detail is rendered", detail.isShown());
+        if ("apps".equals(section.key)) {
+            assertEquals("App rows and separators", section.apps.size() * 2 - 1, detail.getChildCount());
+            for (int index = 0; index < section.apps.size(); index++) {
+                com.subhub.app.people.PersonSnapshot.App app = section.apps.get(index);
+                View row = detail.getChildAt(index * 2);
+                assertEquals("contract_app:" + app.label, row.getTag());
+                assertTrue(text(row).contains(app.label));
+                assertNotNull(row.findViewWithTag("contract_app_icon:" + app.packageName));
+                assertFalse(row.hasOnClickListeners());
+            }
+            return;
+        }
         String[] expected = section.details.split("\\n\\s*\\n");
         assertEquals("Every label/value paragraph is rendered", expected.length, detail.getChildCount());
         for (int index = 0; index < expected.length; index++) {

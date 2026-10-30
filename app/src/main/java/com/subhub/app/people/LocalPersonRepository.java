@@ -124,7 +124,10 @@ public final class LocalPersonRepository implements PersonRepository {
                 capabilities, canonical, allowances, wallet.getCurrency(),
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
                 stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
-                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
+                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context))
+                .withContractDom(capabilities.contains(PersonSnapshot.Capability.EDIT_CONTRACT)
+                        && !settings.preferences().contains("remote_active_configuration")
+                        ? ProfileStore.load(context, true) : ProfileData.empty(context.getString(R.string.header_subtitle_dom)));
     }
 
     private Map<String, Boolean> localConsent() {

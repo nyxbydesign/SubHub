@@ -193,6 +193,64 @@ public class RemoteConfigurationAndroidTest {
         RemoteStore.Command queued=dom.queueConfiguration(SUB,generation,0,0,doc);RemoteProtocol.Batch batch=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONFIGURATION);
         dom.acknowledge(SUB,sub.receive(DOM,batch));dom.markSent(SUB,batch);return sub.stageCommand(DOM,generation,new JSONObject(queued.body));
     }
+    @Test public void contractDomProfileFollowsAppliedOwnerDespiteOtherRelationshipsAndUpdates() throws Exception {
+        RemoteContracts contracts = new RemoteContracts(context, sub, writer());
+        RemoteStore.Peer owner = sub.peer(DOM, generation);
+        assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).avatar);
+        com.subhub.app.people.ProfileData first = new com.subhub.app.people.ProfileData("Contract owner", "Owner bio", "");
+        RemoteProfiles.receive(sub, owner, RemoteProfiles.encode(first, RemoteProtocol.Role.DOM));
+        PairingInvite other = PairingInvite.create(SUB, "other", 1000);
+        sub.saveInvite(other); sub.bindInvite(other.id, repeat('c'), other.tokenHash(), 1001);
+        sub.approveInvite(other.id, repeat('c'), "Unrelated Sub", 1001); sub.activate(repeat('c'), other.id);
+        RemoteProfiles.receive(sub, sub.peer(repeat('c'), other.id), RemoteProfiles.encode(
+                new com.subhub.app.people.ProfileData("Unrelated private profile", "Do not show", ""), RemoteProtocol.Role.SUB));
+        RemoteStore.Command command = deliver(configuration());
+        assertTrue(writer().apply(owner, command, assets, Set.of())); assertNotNull(contracts.localApplied());
+        assertEquals(first, RemoteProfiles.contractDom(context, sub, contracts));
+        android.graphics.Bitmap image = android.graphics.Bitmap.createBitmap(192, 192, android.graphics.Bitmap.Config.ARGB_8888);
+        image.eraseColor(android.graphics.Color.BLUE); String avatar;
+        try { avatar = com.subhub.app.people.ProfileImages.encode(image); } finally { image.recycle(); }
+        com.subhub.app.people.ProfileData updated = new com.subhub.app.people.ProfileData("Updated owner", "Changed after reconnect", avatar);
+        RemoteProfiles.receive(sub, owner, RemoteProfiles.encode(updated, RemoteProtocol.Role.DOM));
+        assertEquals(updated, RemoteProfiles.contractDom(context, sub, contracts));
+        RemoteProfiles.receive(sub, owner, RemoteProfiles.encode(new com.subhub.app.people.ProfileData("Updated owner", "", ""), RemoteProtocol.Role.DOM));
+        assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).about);
+        assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).avatar);
+        assertEquals(0, sub.peer(DOM, generation).lastSyncedAt);
+        main().edit().putBoolean("module_censor_enabled", true).commit(); assertNull(contracts.localApplied());
+        assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+    }
+
+    @Test public void rePairingCannotAttributeRetainedContractToTheNextDomOrGeneration() throws Exception {
+        RemoteContracts contracts = new RemoteContracts(context, sub, writer());
+        RemoteProfiles.receive(sub, sub.peer(DOM, generation), RemoteProfiles.encode(
+                new com.subhub.app.people.ProfileData("Previous Dom", "Previous private bio", ""), RemoteProtocol.Role.DOM));
+        RemoteStore.Command old = deliver(configuration()); assertTrue(writer().apply(sub.peer(DOM, generation), old, assets, Set.of()));
+        assertEquals("Previous Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        sub.revoke(DOM, generation);
+        PairingInvite next = PairingInvite.create(repeat('d'), "next", 2000);
+        sub.acceptInvite(next, "Next Dom"); sub.activate(repeat('d'), next.id);
+        RemoteStore.Peer nextOwner = sub.peer(repeat('d'), next.id);
+        RemoteProfiles.receive(sub, nextOwner, RemoteProfiles.encode(
+                new com.subhub.app.people.ProfileData("Next Dom", "Next private bio", ""), RemoteProtocol.Role.DOM));
+        assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).about);
+        RemoteStore.Command queued = sub.stageCommand(repeat('d'), next.id, new JSONObject(old.body));
+        assertEquals(RemoteStore.CommandState.QUEUED, queued.state);
+        assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        assertTrue(writer().apply(nextOwner, queued, assets, Set.of()));
+        assertEquals("Next Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        assertEquals("Next private bio", RemoteProfiles.contractDom(context, sub, contracts).about);
+        sub.revoke(repeat('d'), next.id);
+        PairingInvite renewed = PairingInvite.create(repeat('d'), "renewed", 3000);
+        sub.acceptInvite(renewed, "Renewed Dom"); sub.activate(repeat('d'), renewed.id);
+        RemoteProfiles.receive(sub, sub.peer(repeat('d'), renewed.id), RemoteProfiles.encode(
+                new com.subhub.app.people.ProfileData("Renewed Dom", "Fresh generation bio", ""), RemoteProtocol.Role.DOM));
+        assertEquals("Dom", RemoteProfiles.contractDom(context, sub, contracts).name);
+        assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).about);
+    }
+
     static JSONObject configuration() throws Exception {
         JSONObject sections=new JSONObject();
         for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSettingCatalog.defaults(section));
