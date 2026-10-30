@@ -68,6 +68,10 @@ the connection state. For pixel assertions, exclude fixture window transitions a
 a new hardware-frame commit where supported; UI idle and a fixed sleep alone do not
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
+
+After returning from Android Settings, await the host window's focus and a fresh hardware
+frame before the next native tap; a package match can include a transitioning window.
+After cancelling a credential prompt, verify its input is gone before tapping underlying controls.
 Give native evidence writers candidate-specific log paths and refuse to overwrite an existing log.
 When reusing a helper, qualify its output paths before starting the workload.
 
