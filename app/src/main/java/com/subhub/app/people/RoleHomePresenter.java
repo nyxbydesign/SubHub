@@ -190,7 +190,7 @@ public final class RoleHomePresenter {
     }
 
     private List<Object> personSignature(PersonSnapshot person, boolean favorite) {
-        List<Object> signature = new ArrayList<>(java.util.Arrays.asList(person.id, person.name,
+        List<Object> signature = new ArrayList<>(java.util.Arrays.asList(person.id, person.name, person.profile,
                 ProfileViews.targetDiscriminator(activity, person), PersonUi.connection(activity, person)));
         if (favorite) java.util.Collections.addAll(signature, person.serviceLabel,
                 person.sync.runtime, person.sync.stats, person.protectedSeconds, person.activityEvents);
@@ -308,7 +308,7 @@ public final class RoleHomePresenter {
         LinearLayout identity = new LinearLayout(activity);
         identity.setGravity(Gravity.CENTER_VERTICAL);
         identity.setMinimumHeight(dp(favorite ? 72 : 64));
-        identity.addView(ProfileViews.avatar(activity, person.name),
+        identity.addView(ProfileViews.avatar(activity, person.profile),
                 new LinearLayout.LayoutParams(dp(favorite ? 56 : 36), dp(favorite ? 56 : 36)));
         LinearLayout copy = PersonUi.column(activity);
         LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);

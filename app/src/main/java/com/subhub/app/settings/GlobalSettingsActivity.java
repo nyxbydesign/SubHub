@@ -35,8 +35,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private DeviceRoleView role;
-    private LinearLayout privacy, permissions, localPermissions, featureChoices, names;
-    private Boolean namesDom;
+    private LinearLayout privacy, permissions, localPermissions;
     private View permissionsHeading;
     private HardcoreModeManager hardcore;
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
@@ -83,9 +82,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         detach(header);
         body.removeAllViews();
         body.addView(header);
-        names = PersonUi.card(body);
-        names.setTag("settings_profile_names");
         LinearLayout device = PersonUi.card(body);
+        device.setTag("settings_device");
         role = new DeviceRoleView(this, () -> {
             recreate();
         });
@@ -93,8 +91,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         action(device, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
                 .setId(R.id.settings_connections_security);
 
-        featureChoices = PersonUi.card(body);
-        featureChoices.setTag("settings_feature_choices");
         heading(body, R.string.device_settings_privacy, "privacy");
         privacy = PersonUi.card(body);
         com.subhub.app.privacy.PrivacyControls.bind(this, privacy, this::applyState);
@@ -142,29 +138,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.buttonDiagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticsActivity.class)));
         PersonUi.text(help, getString(R.string.settings_build_summary, com.subhub.app.BuildConfig.VERSION_NAME,
                 com.subhub.app.BuildConfig.BUILD_DATE), false).setTag("settings_build_info");
-    }
-
-    private void nameField(LinearLayout parent, boolean dom) {
-        int label = dom ? R.string.profile_dom_name : R.string.profile_sub_name;
-        PersonUi.text(parent, getString(label), false);
-        android.widget.EditText input = new android.widget.EditText(this);
-        input.setTag(dom ? "profile_name:dom" : "profile_name:sub");
-        input.setContentDescription(getString(label));
-        input.setSingleLine(true);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS);
-        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(com.subhub.app.people.ProfileNames.MAX_LENGTH)});
-        input.setText(com.subhub.app.people.ProfileNames.chosen(this, dom));
-        input.setHint(com.subhub.app.people.ProfileNames.get(this, dom));
-        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
-        input.addTextChangedListener(new android.text.TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            public void onTextChanged(CharSequence s, int start, int before, int count) { }
-            public void afterTextChanged(android.text.Editable value) {
-                if (com.subhub.app.people.ProfileNames.set(GlobalSettingsActivity.this, dom, value.toString()))
-                    com.subhub.app.remote.RemoteFeature.get(GlobalSettingsActivity.this).changed();
-            }
-        });
-        parent.addView(input, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void openConnectionOrKeyholder() {
@@ -236,19 +209,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
-        boolean dom = DeviceRolePreferences.isDomWorkspace(this);
-        if (namesDom == null || namesDom != dom) {
-            namesDom = dom;
-            names.removeAllViews();
-            PersonUi.text(names, getString(R.string.profile_names_title), true);
-            nameField(names, dom);
-        }
         ((TextView) findViewById(R.id.settings_connections_security)).setText(
                 hasAssignedConnection() ? R.string.role_connection : R.string.keyholder_home_title);
         boolean local = DeviceRolePreferences.supportsSub(this);
-        boolean sub = local && !DeviceRolePreferences.isDomWorkspace(this);
-        featureChoices.setVisibility(sub ? View.VISIBLE : View.GONE);
-        com.subhub.app.security.SubFeatureControls.bind(this, featureChoices);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);
         if (local && !DeviceRolePreferences.isDomWorkspace(this)) {

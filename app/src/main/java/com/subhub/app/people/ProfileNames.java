@@ -6,7 +6,7 @@ import com.subhub.app.R;
 /** Display names are local preferences; person and relationship IDs never depend on them. */
 public final class ProfileNames {
     public static final int MAX_LENGTH = 80;
-    private static final String STORE = "subhub_profile_names";
+    static final String STORE = "subhub_profile_names";
     private ProfileNames() { }
 
     public static String chosen(Context context, boolean dom) {

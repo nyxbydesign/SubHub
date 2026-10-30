@@ -104,6 +104,8 @@
 
         <activity android:name=".activity.DomActivityActivity" android:exported="false" />
         <activity android:name=".stats.StatsActivity" android:exported="false" />
+        <activity android:name=".people.ProfileActivity" android:exported="false" />
+        <activity android:name=".people.ProfileEditorActivity" android:exported="false" />
         <activity android:name=".people.PeopleActivity" android:exported="false" />
         <activity android:name=".people.PersonActivity" android:exported="false" />
         <activity android:name=".people.ContractActivity" android:exported="false" />

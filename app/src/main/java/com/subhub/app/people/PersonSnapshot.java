@@ -28,6 +28,9 @@ public final class PersonSnapshot {
     public final String sessionIdentity;
     /** Durable source insertion sequence; zero means unknown. */
     public final long additionOrder;
+    public final ProfileData profile;
+    public final java.util.Map<String, Boolean> featureConsent;
+    public final boolean consentHardcoreOverride;
 
     public PersonSnapshot(PersonId id, String name, String device, String contractName,
             String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
@@ -64,6 +67,18 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder) {
+        this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt,
+                capabilities, sections, allowances, currency, protectedSeconds, activityEvents, tributeCents,
+                sessions, serviceActive, sync, sessionIdentity, additionOrder, ProfileData.empty(name),
+                Collections.emptyMap(), false);
+    }
+
+    private PersonSnapshot(PersonId id, String name, String device, String contractName,
+            String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
+            Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
+            String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
+            boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
+            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
@@ -86,6 +101,20 @@ public final class PersonSnapshot {
         this.sessions = sessions;
         this.serviceActive = serviceActive;
         this.sync = java.util.Objects.requireNonNull(sync);
+        this.profile = java.util.Objects.requireNonNull(profile);
+        this.featureConsent = Collections.unmodifiableMap(new java.util.LinkedHashMap<>(featureConsent));
+        this.consentHardcoreOverride = consentHardcoreOverride;
+    }
+
+    public PersonSnapshot withProfile(ProfileData value, java.util.Map<String, Boolean> consent) {
+        return withProfile(value, consent, false);
+    }
+
+    public PersonSnapshot withProfile(ProfileData value, java.util.Map<String, Boolean> consent, boolean hardcoreOverride) {
+        return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
+                lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
+                activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
+                value, consent, hardcoreOverride);
     }
 
     public boolean can(Capability capability) { return capabilities.contains(capability); }

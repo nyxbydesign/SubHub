@@ -65,9 +65,9 @@
         <TextView android:id="@+id/nav_activity_label" style="@style/Widget.SubHub.BottomTabLabel"
             android:text="@string/dom_activity_title" />
     </LinearLayout>
-    <LinearLayout android:id="@+id/nav_stats" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_stats" android:visibility="gone">
-        <ImageView android:id="@+id/nav_stats_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_stats" />
-        <TextView android:id="@+id/nav_stats_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_stats" />
+    <LinearLayout android:id="@+id/nav_stats" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_profile" android:visibility="gone">
+        <ImageView android:id="@+id/nav_stats_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_profile" />
+        <TextView android:id="@+id/nav_stats_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_profile" />
     </LinearLayout>
 
     <LinearLayout

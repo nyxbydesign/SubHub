@@ -201,7 +201,7 @@ public final class PrimaryPageHeaderAndroidTest {
 
     private View firstContent(Activity a) {
         View root=a.findViewById(android.R.id.content);
-        if(a instanceof GlobalSettingsActivity)return root.findViewWithTag("settings_profile_names");
+        if(a instanceof GlobalSettingsActivity)return root.findViewWithTag("settings_device");
         if(a instanceof PeopleActivity)return a.findViewById(R.id.people_section_container);
         if(a instanceof StatsActivity)return root.findViewWithTag("stats_sections");
         if(a instanceof MainActivity) {
