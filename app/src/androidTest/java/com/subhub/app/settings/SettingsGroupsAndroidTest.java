@@ -93,9 +93,11 @@ public class SettingsGroupsAndroidTest {
         }
     }
 
-    @Test public void subCanOpenAndroidPermissionSettingsWithoutUnlockingDom() {
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29) public void subCanOpenAndroidPermissionSettingsWithoutUnlockingDom() throws Exception {
         ControllerPinManager.enterSubMode();
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        String start = InstrumentationRegistry.getArguments().getString("permission_start", "accessibility");
+        assertTrue(Arrays.asList("accessibility", "overlay", "notifications", "battery").contains(start));
         try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
             scenario.onActivity(a -> {
                 View accessibility = a.findViewById(R.id.button_accessibility_settings);
@@ -104,16 +106,22 @@ public class SettingsGroupsAndroidTest {
                 assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
                 assertEquals(1f, a.findViewById(R.id.switch_hardcore_mode).getAlpha(), .01f);
             });
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_accessibility_settings))
-                    .perform(revealAboveNavigation(), click());
-            returnFromAndroidSettings(device);
+            awaitFocusedFrame(scenario);
+            if ("accessibility".equals(start)) {
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_accessibility_settings))
+                        .perform(revealAboveNavigation(), click());
+                returnFromAndroidSettings(device, scenario, "accessibility");
+            }
             int[] labels = {R.string.settings_overlay, R.string.settings_notifications, R.string.settings_battery};
-            for (int label : labels) {
+            String[] keys = {"overlay", "notifications", "battery"};
+            int first = "accessibility".equals(start) ? 0 : Arrays.asList(keys).indexOf(start);
+            for (int index = first; index < labels.length; index++) {
+                int label = labels[index];
                 onView(androidx.test.espresso.matcher.ViewMatchers.withText(label))
                         .check(androidx.test.espresso.assertion.ViewAssertions.matches(
                                 androidx.test.espresso.matcher.ViewMatchers.isEnabled()))
                         .perform(revealAboveNavigation(), click());
-                returnFromAndroidSettings(device);
+                returnFromAndroidSettings(device, scenario, keys[index]);
             }
             scenario.recreate();
             scenario.onActivity(a -> {
@@ -125,50 +133,46 @@ public class SettingsGroupsAndroidTest {
         }
     }
 
-    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29) public void namesAndLocalFeatureChoicesPersistWithoutUnlockingDom() throws Exception {
-        ControllerPinManager.enterSubMode();
-        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            onView(withTagValue(org.hamcrest.Matchers.is((Object)"profile_name:sub"))).perform(revealAboveNavigation(),
-                    androidx.test.espresso.action.ViewActions.replaceText("Fixture Sub"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
-            onView(withTagValue(org.hamcrest.Matchers.is((Object)"sub_feature:censor"))).perform(revealAboveNavigation(),click());
-            assertEquals("Fixture Sub",com.subhub.app.people.ProfileNames.get(context,false));
-            assertFalse(com.subhub.app.security.SubFeaturePolicy.chosen(context,"censor"));
-            assertFalse(ControllerPinManager.isDomModeActive());
-            page.recreate();
-            page.onActivity(a->{
-                assertFalse(((android.widget.CompoundButton)a.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor")).isChecked());
-                assertEquals("Fixture Sub",((android.widget.EditText)a.findViewById(android.R.id.content).findViewWithTag("profile_name:sub")).getText().toString());
-                a.findViewById(android.R.id.content).scrollTo(0,0);
-            });
-            capture(page,"settings-sub");
+    @Test public void settingsKeepProfileControlsAbsentAcrossRoleVariants() {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        for (com.subhub.app.security.DeviceRolePreferences.Mode mode : com.subhub.app.security.DeviceRolePreferences.Mode.values()) {
+            new SettingsRepository(context).preferences().edit().putString(
+                    com.subhub.app.security.DeviceRolePreferences.KEY_MODE, mode.name()).commit();
+            ControllerPinManager.enterDomMode();
+            try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                assertNoProfileControls(page); page.recreate(); assertNoProfileControls(page);
+            }
+            if (mode != com.subhub.app.security.DeviceRolePreferences.Mode.DOM_ONLY) {
+                ControllerPinManager.enterSubMode();
+                try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                    assertNoProfileControls(page); page.recreate(); assertNoProfileControls(page);
+                }
+            }
         }
     }
-    @Test public void activeModeShowsOnlyItsOwnNameThroughNativeSwitchesAndRecreation() {
-        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-        com.subhub.app.people.ProfileNames.set(context,true,"Fixture Dom");
-        com.subhub.app.people.ProfileNames.set(context,false,"Fixture Sub");
-        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            assertNameField(page,true,"Fixture Dom");
+    @Test public void settingsRoleSwitchPreservesSavedNamesWithoutDuplicateEditors() {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        com.subhub.app.people.ProfileNames.set(context, true, "Fixture Dom");
+        com.subhub.app.people.ProfileNames.set(context, false, "Fixture Sub");
+        try (ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            assertNoProfileControls(page);
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_edit_lock)).perform(click());
-            assertNameField(page,false,"Fixture Sub");
-            onView(withTagValue(org.hamcrest.Matchers.is((Object)"profile_name:sub"))).perform(
-                    androidx.test.espresso.action.ViewActions.replaceText("Updated Sub"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
-            page.recreate();assertNameField(page,false,"Updated Sub");
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_edit_lock)).perform(click());
-            onView(androidx.test.espresso.matcher.ViewMatchers.withHint(R.string.controller_pin_label)).perform(
-                    androidx.test.espresso.action.ViewActions.replaceText("2468"),androidx.test.espresso.action.ViewActions.closeSoftKeyboard());
-            onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.controller_pin_unlock)).perform(click());
-            assertNameField(page,true,"Fixture Dom");
-            page.recreate();assertNameField(page,true,"Fixture Dom");
-            assertEquals("Updated Sub",com.subhub.app.people.ProfileNames.get(context,false));
+            assertNoProfileControls(page); page.recreate(); assertNoProfileControls(page);
+            assertEquals("Fixture Dom", com.subhub.app.people.ProfileNames.get(context, true));
+            assertEquals("Fixture Sub", com.subhub.app.people.ProfileNames.get(context, false));
         }
     }
-    private static void assertNameField(ActivityScenario<GlobalSettingsActivity> page,boolean dom,String expected) {
-        page.onActivity(a->{View root=a.findViewById(android.R.id.content);
-            assertNull(root.findViewWithTag(dom?"profile_name:sub":"profile_name:dom"));
-            android.widget.EditText field=root.findViewWithTag(dom?"profile_name:dom":"profile_name:sub");
-            assertNotNull(field);assertTrue(field.isShown());assertEquals(expected,field.getText().toString());});
+    private static void assertNoProfileControls(ActivityScenario<GlobalSettingsActivity> page) {
+        page.onActivity(a -> {
+            View root = a.findViewById(android.R.id.content);
+            assertNotNull(root.findViewWithTag("settings_device"));
+            assertNull(root.findViewWithTag("settings_profile_names"));
+            assertNull(root.findViewWithTag("settings_feature_choices"));
+            assertNull(root.findViewWithTag("profile_name:dom"));
+            assertNull(root.findViewWithTag("profile_name:sub"));
+            for (String key : com.subhub.app.security.SubFeaturePolicy.FEATURES)
+                assertNull(root.findViewWithTag("sub_feature:" + key));
+        });
     }
 
     @Test public void hardcoreConsentIsLocalAndDoesNotRequireAControllerUnlock() throws Exception {
@@ -191,14 +195,42 @@ public class SettingsGroupsAndroidTest {
         assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).takeScreenshot(new java.io.File(directory,name+".png")));
     }
 
-    private static void returnFromAndroidSettings(UiDevice device) {
-        assertNotNull("The permission action must open Android Settings",
-                device.wait(Until.findObject(By.pkg("com.android.settings")), 8000));
+    @androidx.annotation.RequiresApi(29)
+    private static void returnFromAndroidSettings(UiDevice device, ActivityScenario<GlobalSettingsActivity> scenario,
+            String key) throws Exception {
+        Object settings = device.wait(Until.findObject(By.pkg("com.android.settings")), 8000);
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run", "settings-native");
+        assertTrue(run.matches("[a-zA-Z0-9-]+")); assertTrue(key.matches("[a-z]+"));
+        java.io.File directory = new java.io.File(InstrumentationRegistry.getInstrumentation().getTargetContext()
+                .getFilesDir(), "ui-v3/" + run);
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        assertTrue(device.takeScreenshot(new java.io.File(directory, "permission-" + key + "-observed.png")));
+        assertNotNull("The permission action must open Android Settings: " + key, settings);
         assertFalse(ControllerPinManager.isDomModeActive());
         device.pressBack();
         assertNotNull("Back must return to SubHub without a role change",
                 device.wait(Until.findObject(By.pkg("com.subhub.app")), 8000));
+        awaitFocusedFrame(scenario);
         assertFalse(ControllerPinManager.isDomModeActive());
+    }
+
+    @androidx.annotation.RequiresApi(29)
+    private static void awaitFocusedFrame(ActivityScenario<GlobalSettingsActivity> scenario) throws Exception {
+        long deadline = android.os.SystemClock.uptimeMillis() + 8000;
+        java.util.concurrent.atomic.AtomicBoolean focused = new java.util.concurrent.atomic.AtomicBoolean();
+        while (!focused.get() && android.os.SystemClock.uptimeMillis() < deadline) {
+            scenario.onActivity(a -> focused.set(a.hasWindowFocus()));
+            if (!focused.get()) android.os.SystemClock.sleep(25);
+        }
+        assertTrue("Returned Settings host must own the input window", focused.get());
+        java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
+        scenario.onActivity(a -> {
+            View root = a.getWindow().getDecorView();
+            assertTrue(root.isHardwareAccelerated());
+            root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown); root.invalidate();
+        });
+        assertTrue("Returned Settings host must compose a new frame", frame.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     private static void collect(View v, List<String> keys) {

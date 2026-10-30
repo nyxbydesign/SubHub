@@ -105,6 +105,7 @@ public final class PrimaryHeader {
             case TASKS: return R.drawable.ic_nav_tasks;
             case ACTIVITY: return R.drawable.ic_shell_activity;
             case STATS: return R.drawable.ic_nav_stats;
+            case PROFILE: return R.drawable.ic_nav_profile;
             case CENSOR: return R.drawable.ic_nav_censor;
             case LIMITS: return R.drawable.ic_nav_limits;
             case MONEY: return R.drawable.ic_nav_money;

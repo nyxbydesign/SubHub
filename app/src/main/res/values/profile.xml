@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="stats_section_profile" type="id" />
+    <string name="profile_edit">Edit profile</string>
+    <string name="profile_about">About me</string>
+    <string name="profile_change_avatar">Choose avatar</string>
+    <string name="profile_remove_avatar">Remove avatar</string>
+    <string name="profile_save">Save</string>
+    <string name="profile_image_failed">Could not open that image.</string>
+    <string name="profile_save_failed">Could not save your profile.</string>
+    <string name="profile_feature_allowed">Allowed</string>
+    <string name="profile_feature_denied">Not allowed</string>
+    <string name="profile_hardcore_allowances">Hardcore overrides the Sub\'s saved choices.</string>
+</resources>

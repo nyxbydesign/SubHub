@@ -31,7 +31,7 @@ import java.util.List;
 /** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
-    public enum Screen { HOME, PEOPLE, CONTRACT, TASKS, ACTIVITY, STATS, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public enum Screen { HOME, PEOPLE, CONTRACT, TASKS, ACTIVITY, STATS, PROFILE, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -86,6 +86,7 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_stats), true);
         setVisible(root.findViewById(R.id.nav_settings), true);
         Screen selected = active;
+        if (active == Screen.STATS) selected = Screen.PROFILE;
         if (active == Screen.ACTIVITY) selected = domMode ? Screen.PEOPLE : Screen.HOME;
         if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
                 || active == Screen.ATMOSPHERE || domMode && active == Screen.CONTRACT) {
@@ -110,7 +111,7 @@ public final class SubHubNavigation {
                 selected, Screen.CONTRACT, com.subhub.app.people.ContractActivity.class);
         bindTab(activity, root.findViewById(R.id.nav_stats),
                 root.findViewById(R.id.nav_stats_icon), root.findViewById(R.id.nav_stats_label),
-                selected, Screen.STATS, com.subhub.app.stats.StatsActivity.class);
+                selected, Screen.PROFILE, com.subhub.app.people.ProfileActivity.class);
         bindTab(activity, root.findViewById(R.id.nav_settings),
                 root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
                 selected, Screen.SETTINGS, GlobalSettingsActivity.class);
@@ -373,6 +374,8 @@ public final class SubHubNavigation {
             if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomModeActive()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
             if (selected && target.isInstance(activity)) {
+                if (activity instanceof com.subhub.app.stats.StatsActivity)
+                    ((com.subhub.app.stats.StatsActivity) activity).showProfile();
                 if (activity instanceof com.subhub.app.tasks.TasksActivity)
                     ((com.subhub.app.tasks.TasksActivity) activity).showSectionHome();
                 return;

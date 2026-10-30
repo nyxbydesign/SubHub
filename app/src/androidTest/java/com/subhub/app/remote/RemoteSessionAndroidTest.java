@@ -157,6 +157,59 @@ public class RemoteSessionAndroidTest {
         assertEquals(1,sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).changes.size());
         assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
     }
+
+    @Test public void pairedProfilesPersistOfflineAndReconnectWithChangedAndRemovedAvatars() throws Exception {
+        dh.profiles = true; sh.profiles = true;
+        android.graphics.Bitmap image = android.graphics.Bitmap.createBitmap(240, 180, android.graphics.Bitmap.Config.ARGB_8888);
+        String avatar;
+        try { image.eraseColor(android.graphics.Color.MAGENTA); avatar = com.subhub.app.people.ProfileImages.encode(image); }
+        finally { image.recycle(); }
+        dh.profile = new com.subhub.app.people.ProfileData("Fixture Dom", "Dom bio", "");
+        sh.profile = new com.subhub.app.people.ProfileData("Fixture Sub", "Sub bio", avatar);
+        exchange(true, false);
+        assertEquals(sh.profile, RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)));
+        assertEquals(dh.profile, RemoteProfiles.read(sub, sub.peer(dt.localIdentity(), generation)));
+        assertEquals("Fixture Sub", dom.peer(st.localIdentity(), generation).name);
+        com.subhub.app.people.ProfileData retained = sh.profile;
+        image = android.graphics.Bitmap.createBitmap(180, 240, android.graphics.Bitmap.Config.ARGB_8888);
+        try { image.eraseColor(android.graphics.Color.CYAN); avatar = com.subhub.app.people.ProfileImages.encode(image); }
+        finally { image.recycle(); }
+        sh.profile = new com.subhub.app.people.ProfileData("Updated Sub", "Changed while offline", avatar);
+        assertEquals(retained, RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)));
+        exchange(false, false);
+        assertEquals(sh.profile, RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)));
+        assertEquals(dh.profile, RemoteProfiles.read(sub, sub.peer(dt.localIdentity(), generation)));
+        sh.profile = new com.subhub.app.people.ProfileData("Updated Sub", "", "");
+        exchange(false, false);
+        assertEquals("", RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)).avatar);
+        assertEquals("", RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)).about);
+        dom.close(); dom = new RemoteStore(context, domName);
+        assertEquals(sh.profile, RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)));
+        RemoteStore.Peer beforeRename = dom.peer(st.localIdentity(), generation);
+        dom.updateDisplayName(st.localIdentity(), generation, "Name from a later legacy hello");
+        assertEquals("Name from a later legacy hello", RemoteProfiles.read(dom, beforeRename).name);
+    }
+
+    @Test public void profileNegotiationDoesNotSendFieldsToLegacyPeers() throws Exception {
+        sh.profiles = true;
+        sh.profile = new com.subhub.app.people.ProfileData("Sub", "Unsent profile fields", "");
+        sub.publish(dt.localIdentity(), generation, RemoteProtocol.Stream.STATS, "summary",
+                new JSONObject().put("count", 32), false, 1000);
+        exchange(false, false);
+        assertEquals(0, sh.profileCalls); assertEquals(0, dh.profileCalls);
+        assertEquals("", dom.profile(st.localIdentity(), generation));
+        assertEquals(32, dom.mirrored(st.localIdentity(), generation, RemoteProtocol.Stream.STATS, "summary").getInt("count"));
+    }
+
+    @Test public void revokedRelationshipsCannotReadOrReplaceProfileSnapshots() throws Exception {
+        RemoteStore.Peer peer = dom.peer(st.localIdentity(), generation);
+        JSONObject profile = RemoteProfiles.encode(new com.subhub.app.people.ProfileData("Sub", "Private paired bio", ""), RemoteProtocol.Role.SUB);
+        RemoteProfiles.receive(dom, peer, profile);
+        dom.revoke(peer.identity, peer.generation);
+        assertEquals("", dom.profile(peer.identity, peer.generation));
+        assertThrows(SecurityException.class, () -> RemoteProfiles.receive(dom, peer, profile));
+        assertEquals("", RemoteProfiles.read(dom, peer).about);
+    }
     private void exchange(boolean domInitiates,boolean dropAck) throws Exception { exchange(domInitiates,dropAck,true); }
     private void exchange(boolean domInitiates,boolean dropAck,boolean activity) throws Exception {
         PeerTransport source=domInitiates?dt:st,target=domInitiates?st:dt;
@@ -187,7 +240,14 @@ public class RemoteSessionAndroidTest {
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
         final RemoteStore store;final RemoteAssets assets;int prepares;
+        boolean profiles; int profileCalls;
+        com.subhub.app.people.ProfileData profile = com.subhub.app.people.ProfileData.empty("Fixture");
         FixtureHooks(RemoteStore store,RemoteAssets assets){this.store=store;this.assets=assets;}
+        public int profileVersion() { return profiles ? 1 : 0; }
+        public String displayName(RemoteStore.Peer peer) { return profiles ? profile.name : ""; }
+        public JSONObject profile(RemoteStore.Peer peer) throws Exception {
+            profileCalls++; return RemoteProfiles.encode(profile, peer.localRole);
+        }
         public void prepare(RemoteStore.Peer peer){prepares++;}
         public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){}
         public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception {

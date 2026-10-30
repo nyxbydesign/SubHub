@@ -35,7 +35,7 @@ public final class ProfileViews {
         hero.setPadding(0, PersonUi.dp(context, 4), 0, PersonUi.dp(context, 20));
         LinearLayout row = new LinearLayout(context);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(avatar(context, person.name), new LinearLayout.LayoutParams(
+        row.addView(avatar(context, person.profile), new LinearLayout.LayoutParams(
                 PersonUi.dp(context, 64), PersonUi.dp(context, 64)));
         LinearLayout copy = PersonUi.column(context);
         LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
@@ -48,6 +48,10 @@ public final class ProfileViews {
                 .setTag("person_target:" + person.id.value());
         PersonUi.text(copy, PersonUi.connection(context, person), false);
         hero.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        if (!person.profile.about.isEmpty()) {
+            PersonUi.text(hero, context.getString(R.string.profile_about), true);
+            PersonUi.text(hero, person.profile.about, false).setTag("person_about:" + person.id.value());
+        }
         parent.addView(hero, new LinearLayout.LayoutParams(-1, -2));
     }
 
@@ -56,7 +60,7 @@ public final class ProfileViews {
         LinearLayout card = PersonUi.card(parent);
         LinearLayout row = new LinearLayout(context);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(avatar(context, person.name), new LinearLayout.LayoutParams(
+        row.addView(avatar(context, person.profile), new LinearLayout.LayoutParams(
                 PersonUi.dp(context, 44), PersonUi.dp(context, 44)));
         LinearLayout content = PersonUi.column(context);
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
@@ -82,6 +86,31 @@ public final class ProfileViews {
         card.setTag("person:" + person.id.value());
         ViewCompat.setScreenReaderFocusable(card, true);
         return card;
+    }
+
+    public static View avatar(Context context, ProfileData profile) {
+        return new ProfileAvatarView(context, profile);
+    }
+
+    public static void allowedFeatures(LinearLayout parent, PersonSnapshot person) {
+        Context context = parent.getContext();
+        LinearLayout card = PersonUi.card(parent);
+        card.setTag("person_allowed_features");
+        PersonUi.text(card, context.getString(R.string.sub_features_title), true);
+        if (person.featureConsent.isEmpty() || person.sync.runtime != PersonSnapshot.Freshness.CURRENT)
+            PersonUi.text(card, context.getString(person.featureConsent.isEmpty()
+                    ? R.string.role_unknown_data : R.string.role_stale_data), false);
+        if (person.consentHardcoreOverride)
+            PersonUi.text(card, context.getString(R.string.profile_hardcore_allowances), false);
+        String[] keys = {"censor", "limits", "wallet", "subliminal", "popup"};
+        int[] labels = {R.string.sub_censor_title, R.string.sub_limits_title, R.string.sub_wallet_title,
+                R.string.sub_feature_whispers, R.string.popup_title};
+        for (int index = 0; index < keys.length; index++) {
+            Boolean allowed = person.featureConsent.get(keys[index]);
+            PersonUi.row(card, 0, context.getString(labels[index]), context.getString(allowed == null
+                    ? R.string.role_unknown_data : allowed ? R.string.profile_feature_allowed : R.string.profile_feature_denied), null)
+                    .setTag("person_allowance:" + keys[index]);
+        }
     }
 
     public static TextView avatar(Context context, String name) {

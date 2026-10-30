@@ -41,7 +41,9 @@ public final class RemotePersonRepository implements PersonRepository {
         return new PersonSnapshot(id,peer.name,runtime==null?"":runtime.optString("device",""),configuration==null?context.getString(R.string.remote_unknown):configuration.getJSONObject("contract").getString("name"),
                 service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
-                live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation));
+                live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
+                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime),
+                        runtime != null && runtime.optBoolean("hardcoreEnabled"));
     }
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");
@@ -50,13 +52,15 @@ public final class RemotePersonRepository implements PersonRepository {
             try{JSONObject doc=feature.contracts.current(peer);if(doc!=null)name=doc.getJSONObject("contract").getString("name");}catch(Exception unavailable){/* Keep local runtime and authority when the contract mirror is unavailable. */}
             EnumSet<PersonSnapshot.Capability> caps=local.capabilities.isEmpty()?EnumSet.noneOf(PersonSnapshot.Capability.class):EnumSet.copyOf(local.capabilities);caps.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
-                    local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync);
+                    local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
+                    .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride);
         }
         try {
             JSONObject applied=feature.contracts.localApplied();
             String name=applied==null?context.getString(R.string.role_local_configuration):applied.getJSONObject("contract").getString("name");
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
-                return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync);
+                return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
+                        .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride);
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;
     }

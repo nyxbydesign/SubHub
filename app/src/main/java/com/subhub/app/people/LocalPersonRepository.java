@@ -123,7 +123,15 @@ public final class LocalPersonRepository implements PersonRepository {
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
                 capabilities, canonical, allowances, wallet.getCurrency(),
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
-                stats.getSessions(), active);
+                stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
+                        com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
+    }
+
+    private Map<String, Boolean> localConsent() {
+        Map<String, Boolean> result = new java.util.LinkedHashMap<>();
+        for (String key : com.subhub.app.security.SubFeaturePolicy.FEATURES)
+            result.put(key, com.subhub.app.security.SubFeaturePolicy.allowed(context, key));
+        return result;
     }
 
     private String appLabel(String packageName) {

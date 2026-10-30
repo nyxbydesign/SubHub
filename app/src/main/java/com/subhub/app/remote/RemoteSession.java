@@ -12,6 +12,8 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default int profileVersion() { return 0; }
+        default JSONObject profile(RemoteStore.Peer peer) throws Exception { return null; }
         default int tasksVersion() { return 0; }
         default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
@@ -45,6 +47,7 @@ public final class RemoteSession {
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer));
+        if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
         if (hooks.tasksVersion() == 1) {
             hello.put("tasksVersion", 1);
             if (hooks.taskCancelVersion() == 1) hello.put("taskCancelVersion", 1);
@@ -60,6 +63,11 @@ public final class RemoteSession {
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
                 tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
         receiveDisplayName(response, peer);
+        if (profileVersion(response) == 1 && hooks.profileVersion() == 1) {
+            send(connection, message("profile", peer).put("profile", hooks.profile(peer)), deadlineNanos);
+            JSONObject profile = read(connection, deadlineNanos); requireType(profile, "profile", peer);
+            RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"));
+        }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1);
     }
@@ -76,6 +84,8 @@ public final class RemoteSession {
         store.setRoute(identity,generation,hello.getString("route"));
         receiveDisplayName(hello, peer);
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
+        boolean profile = profileVersion(hello) == 1 && hooks.profileVersion() == 1;
+        if (profile) ready.put("profileVersion", 1);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
         boolean activity=activityVersion(hello)==1;
         if(activity)ready.put("activityVersion",1);
@@ -86,6 +96,11 @@ public final class RemoteSession {
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",cancellation ? "1" : "0");
         if (cancellation) ready.put("taskCancelVersion",1);
         send(connection,ready,deadlineNanos);
+        if (profile) {
+            JSONObject received = read(connection, deadlineNanos); requireType(received, "profile", peer);
+            RemoteProfiles.receive(store, peer, received.getJSONObject("profile"));
+            send(connection, message("profile", peer).put("profile", hooks.profile(peer)), deadlineNanos);
+        }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos,activity,tasks);
     }
@@ -114,6 +129,13 @@ public final class RemoteSession {
         if (!(raw instanceof String) || ((String) raw).length() > com.subhub.app.people.ProfileNames.MAX_LENGTH)
             throw new JSONException("Invalid display name");
         store.updateDisplayName(peer.identity, peer.generation, (String) raw);
+    }
+
+    private static long profileVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("profileVersion")) return 0;
+        long version = RemoteProtocol.integer(frame, "profileVersion");
+        if (version <= 0) throw new JSONException("Invalid profile capability");
+        return version;
     }
 
     private static long activityVersion(JSONObject frame)throws JSONException {

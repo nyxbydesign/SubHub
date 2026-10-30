@@ -231,6 +231,12 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public int profileVersion() { return 1; }
+            @Override public JSONObject profile(RemoteStore.Peer peer) throws Exception {
+                requireActive(peer);
+                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole);
+            }
             @Override public int tasksVersion() { return 1; }
             @Override public int taskCancelVersion() { return 1; }
             @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {

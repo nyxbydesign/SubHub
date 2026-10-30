@@ -96,7 +96,8 @@ public final class PersonActivity extends RolePage {
 
     private static java.util.List<Object> signature(PersonSnapshot person) {
         java.util.List<Object> result = new java.util.ArrayList<>(java.util.Arrays.asList(
-                person.id, person.name, person.device, person.contractName, person.serviceLabel,
+                person.id, person.name, person.profile, person.featureConsent, person.consentHardcoreOverride,
+                person.device, person.contractName, person.serviceLabel,
                 person.connection, person.freshness, person.lastSyncedAt, person.capabilities,
                 person.currency, person.protectedSeconds, person.activityEvents, person.tributeCents,
                 person.sessions, person.serviceActive, person.sessionIdentity,
@@ -162,6 +163,7 @@ public final class PersonActivity extends RolePage {
         if ("profile".equals(section)) {
             title(R.string.role_profile);
             ProfileViews.identity(body, person);
+            ProfileViews.allowedFeatures(body, person);
             session(person);
             LinearLayout destinations = PersonUi.card(body);
             destinations.setTag("person_destinations");

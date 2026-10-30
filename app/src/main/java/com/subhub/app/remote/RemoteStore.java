@@ -132,6 +132,40 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 new Object[]{name, identity, generation});
     }
 
+    synchronized void updateProfile(String identity, String generation, JSONObject value, String name)
+            throws JSONException {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            Peer peer = active(db, identity, generation);
+            RemoteProfiles.parse(value, peer.remoteRole());
+            db.execSQL("INSERT OR REPLACE INTO remote_metadata(peer,generation,name,value) VALUES(?,?,'profile',?)",
+                    new Object[]{identity, generation, StoredPayloads.bind(RemoteProtocol.canonical(value))});
+            updateDisplayName(identity, generation, name);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    synchronized String profile(String identity, String generation) {
+        ProfileState state = profileState(identity, generation);
+        return state == null ? "" : state.record;
+    }
+
+    static final class ProfileState {
+        final String name, record;
+        ProfileState(String name, String record) { this.name = name; this.record = record; }
+    }
+
+    synchronized ProfileState profileState(String identity, String generation) {
+        try (Cursor rows = getReadableDatabase().rawQuery(
+                "SELECT p.name,m.value FROM peers p LEFT JOIN remote_metadata m ON p.peer=m.peer"
+                        + " AND p.generation=m.generation AND m.name='profile'"
+                        + " WHERE p.peer=? AND p.generation=? AND p.state='ACTIVE'",
+                new String[]{identity, generation})) {
+            return rows.moveToFirst() ? new ProfileState(rows.getString(0),
+                    rows.isNull(1) ? "" : StoredPayloads.read(rows, 1)) : null;
+        }
+    }
+
     public synchronized Peer peer(String identity, String generation) {
         RemoteProtocol.peerId(identity); RemoteProtocol.identifier(generation);
         return peer(getReadableDatabase(), identity, generation);
