@@ -72,6 +72,10 @@ pixels before assertions discard their evidence. A frame commit is not a physica
 After returning from Android Settings, await the host window's focus and a fresh hardware
 frame before the next native tap; a package match can include a transitioning window.
 After cancelling a credential prompt, verify its input is gone before tapping underlying controls.
+Seed fixed-count fixtures with explicit entries; iterating a production enum can silently
+change the asserted scenario as new features arrive.
+For scroll captures, compare the target's full screen bounds with the unobscured viewport.
+A clipped `getGlobalVisibleRect` result cannot establish that the complete target is visible.
 Give native evidence writers candidate-specific log paths and refuse to overwrite an existing log.
 When reusing a helper, qualify its output paths before starting the workload.
 
