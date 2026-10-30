@@ -29,6 +29,7 @@ public final class PersonSnapshot {
     /** Durable source insertion sequence; zero means unknown. */
     public final long additionOrder;
     public final ProfileData profile;
+    public final ProfileData contractDom;
     public final java.util.Map<String, Boolean> featureConsent;
     public final boolean consentHardcoreOverride;
 
@@ -70,7 +71,7 @@ public final class PersonSnapshot {
         this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt,
                 capabilities, sections, allowances, currency, protectedSeconds, activityEvents, tributeCents,
                 sessions, serviceActive, sync, sessionIdentity, additionOrder, ProfileData.empty(name),
-                Collections.emptyMap(), false);
+                Collections.emptyMap(), false, null);
     }
 
     private PersonSnapshot(PersonId id, String name, String device, String contractName,
@@ -78,7 +79,8 @@ public final class PersonSnapshot {
             Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
-            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride) {
+            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
+            ProfileData contractDom) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
@@ -102,6 +104,7 @@ public final class PersonSnapshot {
         this.serviceActive = serviceActive;
         this.sync = java.util.Objects.requireNonNull(sync);
         this.profile = java.util.Objects.requireNonNull(profile);
+        this.contractDom = contractDom;
         this.featureConsent = Collections.unmodifiableMap(new java.util.LinkedHashMap<>(featureConsent));
         this.consentHardcoreOverride = consentHardcoreOverride;
     }
@@ -114,7 +117,14 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                value, consent, hardcoreOverride);
+                value, consent, hardcoreOverride, contractDom);
+    }
+
+    public PersonSnapshot withContractDom(ProfileData value) {
+        return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
+                lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
+                activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
+                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value));
     }
 
     public boolean can(Capability capability) { return capabilities.contains(capability); }

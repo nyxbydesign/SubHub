@@ -94,9 +94,8 @@ public final class ProfileViews {
 
     public static void allowedFeatures(LinearLayout parent, PersonSnapshot person) {
         Context context = parent.getContext();
-        LinearLayout card = PersonUi.card(parent);
+        LinearLayout card = FeatureConsentView.card(parent);
         card.setTag("person_allowed_features");
-        PersonUi.text(card, context.getString(R.string.sub_features_title), true);
         if (person.featureConsent.isEmpty() || person.sync.runtime != PersonSnapshot.Freshness.CURRENT)
             PersonUi.text(card, context.getString(person.featureConsent.isEmpty()
                     ? R.string.role_unknown_data : R.string.role_stale_data), false);
@@ -105,12 +104,10 @@ public final class ProfileViews {
         String[] keys = {"censor", "limits", "wallet", "subliminal", "popup"};
         int[] labels = {R.string.sub_censor_title, R.string.sub_limits_title, R.string.sub_wallet_title,
                 R.string.sub_feature_whispers, R.string.popup_title};
-        for (int index = 0; index < keys.length; index++) {
-            Boolean allowed = person.featureConsent.get(keys[index]);
-            PersonUi.row(card, 0, context.getString(labels[index]), context.getString(allowed == null
-                    ? R.string.role_unknown_data : allowed ? R.string.profile_feature_allowed : R.string.profile_feature_denied), null)
-                    .setTag("person_allowance:" + keys[index]);
-        }
+        FeatureConsentView grid = new FeatureConsentView(context);
+        card.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+        for (int index = 0; index < keys.length; index++)
+            grid.readOnly(keys[index], labels[index], person.featureConsent.get(keys[index]));
     }
 
     public static TextView avatar(Context context, String name) {

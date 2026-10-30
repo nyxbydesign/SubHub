@@ -22,6 +22,19 @@ public class ProfileDataTest {
         assertEquals(ProfileData.empty("A"), new ProfileData("A", "", ""));
     }
 
+    @Test public void contractDomProjectionSurvivesOwnProfileUpdatesWithoutReplacingSubIdentity() {
+        PersonSnapshot original = new PersonSnapshot(PersonId.LOCAL, "Sub", "Device", "Contract", "Inactive",
+                PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
+                java.util.Collections.emptySet(), java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "EUR", 0, 0, 0, 0, false);
+        ProfileData dom = new ProfileData("Owning Dom", "Owner bio", "");
+        PersonSnapshot projected = original.withContractDom(dom).withProfile(
+                new ProfileData("Own Sub", "Own bio", ""), java.util.Collections.emptyMap());
+        assertEquals(dom, projected.contractDom); assertEquals("Own Sub", projected.name);
+        assertEquals("Own bio", projected.profile.about); assertNull(original.contractDom);
+        assertEquals(original.capabilities, projected.capabilities);
+    }
+
     @Test public void completeProfileProjectionKeepsItsNameAndConsentSnapshotTogether() {
         PersonSnapshot original = new PersonSnapshot(PersonId.LOCAL, "Earlier name", "Device", "Contract", "Inactive",
                 PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,

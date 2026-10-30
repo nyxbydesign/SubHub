@@ -20,18 +20,23 @@ import java.util.Map;
 /** Sub's contract exposes configuration details without editing or session mutation actions. */
 public final class ContractActivity extends RolePage {
     private String expandedSection = "";
+    private boolean expandedAbout;
     private final Map<String, View> details = new LinkedHashMap<>();
     private final Map<String, TextView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        if (state != null) expandedSection = state.getString("contract_expanded_section", "");
+        if (state != null) {
+            expandedSection = state.getString("contract_expanded_section", "");
+            expandedAbout = state.getBoolean("contract_about_expanded");
+        }
         page(R.string.role_contract, SubHubNavigation.Screen.CONTRACT, false);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("contract_expanded_section", expandedSection);
+        state.putBoolean("contract_about_expanded", expandedAbout);
         super.onSaveInstanceState(state);
     }
 
@@ -50,9 +55,7 @@ public final class ContractActivity extends RolePage {
         LinearLayout identity = PersonUi.card(body);
         identity.setBackgroundResource(R.drawable.bg_home_composition_person);
         identity.setTag("person_contract_identity");
-        String dom = People.keyholder().assignedDomName();
-        if (dom.isEmpty()) dom = ProfileNames.get(this, true);
-        ContractHeader.add(identity, person, getString(R.string.profile_configured_by_name, dom), data);
+        ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
         PersonUi.text(identity, ProfileViews.targetDiscriminator(this, person), false);
         if (person.sync.hasPendingConfiguration()) PersonUi.text(identity, getString(R.string.role_changes_pending), false);
         if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(identity,

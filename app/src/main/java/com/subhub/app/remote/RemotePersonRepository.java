@@ -53,14 +53,16 @@ public final class RemotePersonRepository implements PersonRepository {
             EnumSet<PersonSnapshot.Capability> caps=local.capabilities.isEmpty()?EnumSet.noneOf(PersonSnapshot.Capability.class):EnumSet.copyOf(local.capabilities);caps.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
                     local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                    .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride);
+                    .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                    .withContractDom(RemoteProfiles.contractDom(context, store, feature.contracts));
         }
         try {
             JSONObject applied=feature.contracts.localApplied();
             String name=applied==null?context.getString(R.string.role_local_configuration):applied.getJSONObject("contract").getString("name");
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
                 return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                        .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride);
+                        .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                        .withContractDom(RemoteProfiles.contractDom(context, store, feature.contracts));
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;
     }

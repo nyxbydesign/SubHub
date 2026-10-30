@@ -11,4 +11,6 @@
     <string name="profile_feature_allowed">Allowed</string>
     <string name="profile_feature_denied">Not allowed</string>
     <string name="profile_hardcore_allowances">Hardcore overrides the Sub\'s saved choices.</string>
+    <string name="profile_show_more">Show more</string>
+    <string name="profile_show_less">Show less</string>
 </resources>
