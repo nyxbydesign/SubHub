@@ -231,6 +231,10 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public int journalVersion() { return 1; }
+            @Override public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
+            }
             @Override public int profileVersion() { return 1; }
             @Override public JSONObject profile(RemoteStore.Peer peer) throws Exception {
                 requireActive(peer);

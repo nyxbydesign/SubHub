@@ -56,14 +56,13 @@ public final class ContractActivity extends RolePage {
         identity.setBackgroundResource(R.drawable.bg_home_composition_person);
         identity.setTag("person_contract_identity");
         ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
-        PersonUi.text(identity, ProfileViews.targetDiscriminator(this, person), false);
-        if (person.sync.hasPendingConfiguration()) PersonUi.text(identity, getString(R.string.role_changes_pending), false);
-        if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(identity,
-                getString(person.sync.contract == PersonSnapshot.Freshness.STALE
-                        ? R.string.role_stale_data : R.string.role_unknown_data), false);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
         PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+        if (person.sync.hasPendingConfiguration()) PersonUi.text(scope, getString(R.string.role_changes_pending), false);
+        if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(scope,
+                getString(person.sync.contract == PersonSnapshot.Freshness.STALE
+                        ? R.string.role_stale_data : R.string.role_unknown_data), false);
         PersonSnapshot.Section apps = find(person, "apps");
         if (apps == null) apps = new PersonSnapshot.Section("apps", getString(R.string.person_apps_title),
                 getString(R.string.role_unknown_data), "");

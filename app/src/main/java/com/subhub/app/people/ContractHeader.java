@@ -17,15 +17,16 @@ public final class ContractHeader {
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
         LinearLayout row = new LinearLayout(context); row.setGravity(Gravity.CENTER_VERTICAL);
         View avatar = ProfileViews.avatar(context, profile); avatar.setTag("contract_dom_avatar");
-        row.addView(avatar, new LinearLayout.LayoutParams(PersonUi.dp(context, 48), PersonUi.dp(context, 48)));
+        row.addView(avatar, new LinearLayout.LayoutParams(PersonUi.dp(context, 64), PersonUi.dp(context, 64)));
         TextView name = new TextView(context);
-        com.subhub.app.util.UiIdentity.textSize(name, R.dimen.ui_text_section);
+        name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 26);
         name.setTextColor(context.getColor(R.color.text_primary)); name.setTypeface(null, android.graphics.Typeface.BOLD);
         name.setText(profile.name); name.setTag("contract_dom_name");
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
-        size.setMarginStart(PersonUi.dp(context, 12)); row.addView(name, size);
+        size.setMarginStart(PersonUi.dp(context, 16)); row.addView(name, size);
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         if (!profile.about.isEmpty()) {
+            PersonUi.text(parent, context.getString(R.string.profile_about), true);
             TextView about = PersonUi.text(parent, profile.about, false); about.setTag("contract_dom_about");
             about.setMaxLines(expanded ? Integer.MAX_VALUE : 2);
             about.setEllipsize(expanded ? null : TextUtils.TruncateAt.END);
@@ -47,6 +48,9 @@ public final class ContractHeader {
                 }
             });
         }
-        TextView contract = PersonUi.text(parent, person.contractName, false); contract.setTag("contract_name");
+        if (person.contractDomId != null && context instanceof android.app.Activity)
+            PersonUi.action(parent, R.string.journal_title,
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.contractDomId), false)
+                    .setTag("profile_journal");
     }
 }

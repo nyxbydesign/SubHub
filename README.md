@@ -128,6 +128,10 @@ Activity records selected-app opens, triggered Tributes, and reached app limits.
 
 Choose Dom only, Sub only, or Both for this installation. Dom-only devices skip local protection setup. Unlocking a controller session is separate from the device's capabilities. A paired Sub receives settings from its assigned Dom; private payment credentials, Android permissions, and local authentication stay on their device.
 
+Open Journal below About me on your profile to write an entry, record a voice note, or attach files. Entries are private until you choose Share with Dom or Share with Subs. A shared profile opens a read-only Journal. Sharing applies to the currently paired devices; new or renewed pairings do not inherit earlier entries. Both devices need a Journal-compatible app version and must reconnect to exchange shared entries and attachments.
+
+Each entry allows 4,000 characters, one voice note of up to five minutes or 10 MiB, and five attachments of up to 25 MiB each. Microphone access is requested when you tap Record; leaving the editor stops recording. Each role keeps up to 1,000 entries and 256 MiB of copied media. Making an entry private or deleting it withdraws it on the next connection; files someone already exported to another app cannot be recalled.
+
 ### Milestones
 
 SubHub includes original illustrated achievements across censoring, protected time, sessions, streaks, customisation, App Mode, limits, service locks, Hardcore Mode, confirmed Wallet payments, and subliminal impressions. Related tiers keep one visual family and grow richer as the target rises.

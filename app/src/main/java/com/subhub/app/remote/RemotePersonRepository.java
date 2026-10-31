@@ -47,6 +47,7 @@ public final class RemotePersonRepository implements PersonRepository {
     }
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");
+        RemoteProfiles.ContractOwner contractOwner = RemoteProfiles.contractOwner(context, store, feature.contracts);
         for(RemoteStore.Peer peer:store.peers(false))if(peer.localRole==RemoteProtocol.Role.SUB && peer.state==RemoteStore.State.ACTIVE) {
             String name=context.getString(R.string.remote_managed_contract);
             try{JSONObject doc=feature.contracts.current(peer);if(doc!=null)name=doc.getJSONObject("contract").getString("name");}catch(Exception unavailable){/* Keep local runtime and authority when the contract mirror is unavailable. */}
@@ -54,7 +55,7 @@ public final class RemotePersonRepository implements PersonRepository {
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
                     local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
                     .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
-                    .withContractDom(RemoteProfiles.contractDom(context, store, feature.contracts));
+                    .withContractDom(contractOwner.profile, contractOwner.id);
         }
         try {
             JSONObject applied=feature.contracts.localApplied();
@@ -62,7 +63,7 @@ public final class RemotePersonRepository implements PersonRepository {
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
                 return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
                         .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
-                        .withContractDom(RemoteProfiles.contractDom(context, store, feature.contracts));
+                        .withContractDom(contractOwner.profile, contractOwner.id);
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;
     }
