@@ -2,9 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [master, codex/censor-pipeline-v2]
+    branches: [master, dev]
   pull_request:
-    branches: [master, codex/censor-pipeline-v2]
+    branches: [master, dev]
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
         env:
           RELEASE_NOTES_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version
+          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy
           python3 scripts/generate_release_notes.py --tag "$RELEASE_NOTES_REF" --check-only
       - name: Test, lint, and build universal APK
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug

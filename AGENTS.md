@@ -4,7 +4,9 @@ These repository rules apply to every automated or human-assisted change.
 
 ## Branch and commit discipline
 
-- `master` is the release branch. Keep it buildable; use a topic branch and pull request for work that is not ready to ship.
+- `master` is the stable release branch; `dev` is the development integration branch and the only branch that publishes prereleases.
+- Start each feature on its own `codex/<feature>` branch from current `dev`, and open its pull request against `dev`. Feature branches run verification without publishing prereleases.
+- Once the feature is complete and its required checks and review pass, merge it into `dev`. Verify that the merged result contains the tested work, then delete its remote and local feature branch. Preserve unmerged changes, active worktrees, and unrelated branches.
 - Keep commits narrowly reviewable and start imperative subjects with one of: `[feat]`, `[fix]`, `[perf]`, `[refactor]`, `[docs]`, `[test]`, `[build]`, `[ci]`, `[chore]`, or `[revert]`.
 - Commit messages must say what changed and why. Record user-visible behavior, migration or compatibility concerns, and the checks run in the commit body when the subject alone is not enough.
 - Release changelogs are generated from commit history. Every release commit must use a supported `[feat]`, `[fix]`, `[perf]`, `[refactor]`, `[docs]`, `[test]`, `[build]`, `[ci]`, `[chore]`, `[revert]` subject and describe the user-visible result clearly. Put one concise release-worthy summary sentence in the first body paragraph; keep checks in a later `Checks:` paragraph and use real line breaks rather than literal `\n` text.
@@ -242,8 +244,7 @@ Release signing is supplied only through the repository Actions secrets named in
 
 ## Development releases
 
-`codex/censor-pipeline-v2` is the consolidated development branch. Its pushes build the exact
-pushed commit and publish a signed GitHub
+Only pushes to `dev` build the exact pushed commit and publish a signed GitHub
 prerelease named `v<VERSION_NAME>-dev.<release workflow run_number>`. Do not cancel an older push's
 build just because a new commit arrives. Each tag is unique and immutable; verify all APKs,
 checksums and updater metadata in the draft before publishing. Dev builds must not become the
