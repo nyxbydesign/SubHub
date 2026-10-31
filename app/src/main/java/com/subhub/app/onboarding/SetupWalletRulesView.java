@@ -227,6 +227,7 @@ final class SetupWalletRulesView extends LinearLayout {
         input.setSingleLine();
         UiIdentity.inputType(input, InputType.TYPE_CLASS_NUMBER
                 | (integer ? 0 : InputType.TYPE_NUMBER_FLAG_DECIMAL));
+        com.subhub.app.util.InputBounds.limit(input, integer ? 10 : 16);
         input.setGravity(Gravity.CENTER);
         input.setPadding(dp(integer ? 3 : 6), dp(4), dp(integer ? 3 : 6), dp(4));
         input.setMinHeight(dp(48));

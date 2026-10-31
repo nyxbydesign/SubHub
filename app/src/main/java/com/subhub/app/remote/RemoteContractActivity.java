@@ -110,7 +110,11 @@ public final class RemoteContractActivity extends RemotePage {
             for(String choice:field.choices){CheckBox box=new CheckBox(this);box.setText(ConfigurationSettingCatalog.choiceLabel(field,choice));box.setChecked(selected.contains(choice));target.addView(box);controls.put(field.key+":"+choice,box);box.setOnCheckedChangeListener((b,checked)->{if(checked)selected.add(choice);else selected.remove(choice);});}
             collect.add(()->put(config,field.key,new JSONArray(selected)));return;
         }
-        EditText editor=new EditText(this);editor.setSaveEnabled(false);editor.setText(field.kind==ConfigurationSettingCatalog.Kind.SELECTION?join((JSONArray)value):field.displayText(value));target.addView(editor);controls.put(field.key,editor);
+        EditText editor=new EditText(this);editor.setSaveEnabled(false);
+        int maximum=field.kind==ConfigurationSettingCatalog.Kind.SELECTION?200*(field.maximumLength+1)-1:
+                field.kind==ConfigurationSettingCatalog.Kind.TEXT?field.maximumLength:field.kind==ConfigurationSettingCatalog.Kind.COLOR?9:32;
+        com.subhub.app.util.InputBounds.limit(editor,maximum);
+        editor.setText(field.kind==ConfigurationSettingCatalog.Kind.SELECTION?join((JSONArray)value):field.displayText(value));target.addView(editor);controls.put(field.key,editor);
         if(field.kind!=ConfigurationSettingCatalog.Kind.TEXT && field.kind!=ConfigurationSettingCatalog.Kind.COLOR && field.kind!=ConfigurationSettingCatalog.Kind.SELECTION)editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
         collect.add(()->{try{Object parsed=field.kind==ConfigurationSettingCatalog.Kind.SELECTION?field.normalize(new JSONArray(Arrays.asList(editor.getText().toString().split("\n")))):field.parseText(editor.getText().toString());put(config,field.key,parsed);}catch(RuntimeException invalid){editor.setError(getString(R.string.remote_invalid_value));throw invalid;}});
     }

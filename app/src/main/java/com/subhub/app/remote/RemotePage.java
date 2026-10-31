@@ -57,7 +57,11 @@ public abstract class RemotePage extends AppCompatActivity {
     protected TextView text(LinearLayout target,CharSequence value,boolean heading){return PersonUi.text(target,value,heading);}
     protected TextView button(LinearLayout target,int label,Runnable action){return PersonUi.action(target,label,action,false);}
     protected EditText input(LinearLayout target,int label,String value) {
-        text(target,getString(label),false);EditText editor=new EditText(this);editor.setText(value);
+        return input(target,label,value,com.subhub.app.util.InputBounds.DEFAULT_TEXT);
+    }
+    protected EditText input(LinearLayout target,int label,String value,int maximum) {
+        text(target,getString(label),false);EditText editor=new EditText(this);
+        com.subhub.app.util.InputBounds.limit(editor,maximum);editor.setText(value);
         editor.setSaveEnabled(false);editor.setSingleLine(false);target.addView(editor,new LinearLayout.LayoutParams(-1,-2));return editor;
     }
     protected void target(){

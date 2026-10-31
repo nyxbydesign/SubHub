@@ -142,7 +142,7 @@ public final class RemoteDurationControls {
     }
     private EditText number(LinearLayout range,int label,String key) {
         PersonUi.text(range,activity.getString(label),false);EditText editor=new EditText(activity);editor.setTag("remote_duration_"+key);
-        editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);editor.setText((String)draft.state.get(key));editor.setSaveEnabled(false);range.addView(editor);
+        editor.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);com.subhub.app.util.InputBounds.limit(editor,10);editor.setText((String)draft.state.get(key));editor.setSaveEnabled(false);range.addView(editor);
         editor.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){draft.state.set(key,s.toString());}public void afterTextChanged(Editable value){}});return editor;
     }
     private void changed(LinearLayout controls) { controls.removeAllViews();PersonUi.text(controls,activity.getString(R.string.remote_reload),false);PersonUi.action(controls,R.string.remote_duration_reload,()->{clearDraft();load(controls);},false); }

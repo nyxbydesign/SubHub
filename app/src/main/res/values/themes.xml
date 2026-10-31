@@ -193,6 +193,7 @@
     </style>
 
     <style name="Widget.SubHub.Input" parent="Widget.AppCompat.EditText">
+        <item name="android:maxLength">4096</item>
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">@dimen/ui_gap_inline</item>
@@ -339,6 +340,7 @@
     </style>
 
     <style name="Widget.SubHub.MoneyInput" parent="Widget.SubHub.Input">
+        <item name="android:maxLength">16</item>
         <item name="android:hint">@string/penance_strike_hint</item>
         <item name="android:inputType">numberDecimal</item>
         <item name="android:maxLines">1</item>
@@ -346,6 +348,7 @@
     </style>
 
     <style name="Widget.SubHub.IntegerInput" parent="Widget.SubHub.MoneyInput">
+        <item name="android:maxLength">10</item>
         <item name="android:inputType">number</item>
         <item name="android:hint">@null</item>
     </style>
