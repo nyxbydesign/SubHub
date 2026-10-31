@@ -52,6 +52,10 @@ public final class ProfileViews {
             PersonUi.text(hero, context.getString(R.string.profile_about), true);
             PersonUi.text(hero, person.profile.about, false).setTag("person_about:" + person.id.value());
         }
+        if (context instanceof android.app.Activity)
+            PersonUi.action(hero, R.string.journal_title,
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id), false)
+                    .setTag("profile_journal");
         parent.addView(hero, new LinearLayout.LayoutParams(-1, -2));
     }
 

@@ -118,6 +118,8 @@ public final class LocalPersonRepository implements PersonRepository {
                 : active ? R.string.role_service_active : R.string.role_service_inactive);
         EnumSet<PersonSnapshot.Capability> capabilities = EnumSet.allOf(PersonSnapshot.Capability.class);
         if (!People.isLocalConfigurationAllowed()) capabilities.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
+        boolean localDomOwner = capabilities.contains(PersonSnapshot.Capability.EDIT_CONTRACT)
+                && !settings.preferences().contains("remote_active_configuration");
         return new PersonSnapshot(id, ProfileNames.get(context, false), Build.MODEL,
                 context.getString(R.string.role_local_configuration),
                 service, PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
@@ -125,9 +127,10 @@ public final class LocalPersonRepository implements PersonRepository {
                 stats.getTotalProtectedSeconds(), stats.getActivityEvents(), stats.getTributeCents(),
                 stats.getSessions(), active).withProfile(ProfileStore.load(context, false), localConsent(),
                         com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context))
-                .withContractDom(capabilities.contains(PersonSnapshot.Capability.EDIT_CONTRACT)
-                        && !settings.preferences().contains("remote_active_configuration")
-                        ? ProfileStore.load(context, true) : ProfileData.empty(context.getString(R.string.header_subtitle_dom)));
+                .withContractDom(localDomOwner ? ProfileStore.load(context, true)
+                        : ProfileData.empty(context.getString(R.string.header_subtitle_dom)),
+                        localDomOwner && com.subhub.app.security.ControllerPinManager.isConfigured(context)
+                                ? new PersonId("journal_local_dom") : null);
     }
 
     private Map<String, Boolean> localConsent() {

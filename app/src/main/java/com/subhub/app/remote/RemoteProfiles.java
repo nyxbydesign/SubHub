@@ -49,7 +49,17 @@ public final class RemoteProfiles {
 
     /** The applied command identifies its author; a newly paired Dom must not inherit that attribution. */
     static ProfileData contractDom(android.content.Context context, RemoteStore store, RemoteContracts contracts) {
-        ProfileData unknown = ProfileData.empty(context.getString(com.subhub.app.R.string.header_subtitle_dom));
+        return contractOwner(context, store, contracts).profile;
+    }
+
+    static final class ContractOwner {
+        final ProfileData profile;
+        final com.subhub.app.people.PersonId id;
+        ContractOwner(ProfileData profile, com.subhub.app.people.PersonId id) { this.profile = profile; this.id = id; }
+    }
+
+    static ContractOwner contractOwner(android.content.Context context, RemoteStore store, RemoteContracts contracts) {
+        ContractOwner unknown = new ContractOwner(ProfileData.empty(context.getString(com.subhub.app.R.string.header_subtitle_dom)), null);
         synchronized (store) {
             android.content.SharedPreferences main = context.getSharedPreferences(
                     com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0);
@@ -59,13 +69,13 @@ public final class RemoteProfiles {
                 String commandId = main.getString("remote_active_command", "");
                 for (RemoteStore.Peer peer : store.peers(false)) {
                     if (peer.localRole != RemoteProtocol.Role.SUB || peer.state != RemoteStore.State.ACTIVE) continue;
-                    if (retained.isEmpty()) return read(store, peer);
+                    if (retained.isEmpty()) return new ContractOwner(read(store, peer), RemotePersonRepository.id(peer));
                     if (applied == null || commandId.isEmpty()) return unknown;
                     RemoteStore.Command command = store.command(peer.identity, peer.generation, commandId);
                     if (command != null && command.state == RemoteStore.CommandState.APPLIED
                             && RemoteProtocol.canonical(RemoteConfiguration.active(
                                     new JSONObject(command.body).getJSONObject("configuration")))
-                                    .equals(RemoteProtocol.canonical(applied))) return read(store, peer);
+                                    .equals(RemoteProtocol.canonical(applied))) return new ContractOwner(read(store, peer), RemotePersonRepository.id(peer));
                 }
             } catch (Exception unavailable) { return unknown; }
             return unknown;

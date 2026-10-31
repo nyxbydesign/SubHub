@@ -445,7 +445,7 @@ public final class ProfileAndroidTest {
                 assertEquals(owner.get().name, ((TextView) root.findViewWithTag("contract_dom_name")).getText().toString());
                 assertEquals(owner.get().about, ((TextView) root.findViewWithTag("contract_dom_about")).getText().toString());
                 assertEquals(2, ((TextView) root.findViewWithTag("contract_dom_about")).getMaxLines());
-                assertNotNull(root.findViewWithTag("contract_name"));
+                assertNull(root.findViewWithTag("contract_name"));
             });
             onView(tag("contract_dom_about_expand")).perform(revealAboveNavigation(), click()); scenario.recreate();
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("contract_dom_about") != null);

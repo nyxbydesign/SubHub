@@ -28,9 +28,11 @@ public class ProfileDataTest {
                 java.util.Collections.emptySet(), java.util.Collections.emptyList(), java.util.Collections.emptyList(),
                 "EUR", 0, 0, 0, 0, false);
         ProfileData dom = new ProfileData("Owning Dom", "Owner bio", "");
-        PersonSnapshot projected = original.withContractDom(dom).withProfile(
+        PersonId target = new PersonId("journal_local_dom");
+        PersonSnapshot projected = original.withContractDom(dom, target).withProfile(
                 new ProfileData("Own Sub", "Own bio", ""), java.util.Collections.emptyMap());
         assertEquals(dom, projected.contractDom); assertEquals("Own Sub", projected.name);
+        assertEquals(target, projected.contractDomId); assertNull(original.contractDomId);
         assertEquals("Own bio", projected.profile.about); assertNull(original.contractDom);
         assertEquals(original.capabilities, projected.capabilities);
     }

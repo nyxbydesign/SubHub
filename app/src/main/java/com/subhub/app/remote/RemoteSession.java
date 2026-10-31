@@ -12,6 +12,8 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default int journalVersion() { return 0; }
+        default void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int profileVersion() { return 0; }
         default JSONObject profile(RemoteStore.Peer peer) throws Exception { return null; }
         default int tasksVersion() { return 0; }
@@ -48,6 +50,7 @@ public final class RemoteSession {
         requirePeer(connection,peer);
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer));
         if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
+        if (hooks.journalVersion() == 1) hello.put("journalVersion", 1);
         if (hooks.tasksVersion() == 1) {
             hello.put("tasksVersion", 1);
             if (hooks.taskCancelVersion() == 1) hello.put("taskCancelVersion", 1);
@@ -59,6 +62,8 @@ public final class RemoteSession {
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
+        boolean journal = journalVersion(response) == 1 && hooks.journalVersion() == 1;
+        store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
         store.putMetadata(peer.identity,peer.generation,"tasks_version",tasksVersion(response)==1 && hooks.tasksVersion()==1 ? "1" : "0");
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
                 tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
@@ -69,7 +74,7 @@ public final class RemoteSession {
             RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"));
         }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1);
+        exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -85,6 +90,9 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
         boolean profile = profileVersion(hello) == 1 && hooks.profileVersion() == 1;
+        boolean journal = journalVersion(hello) == 1 && hooks.journalVersion() == 1;
+        store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
+        if (journal) ready.put("journalVersion", 1);
         if (profile) ready.put("profileVersion", 1);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
         boolean activity=activityVersion(hello)==1;
@@ -102,7 +110,7 @@ public final class RemoteSession {
             send(connection, message("profile", peer).put("profile", hooks.profile(peer)), deadlineNanos);
         }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
-        exchange(connection,peer,deadlineNanos,activity,tasks);
+        exchange(connection,peer,deadlineNanos,activity,tasks,journal);
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
@@ -129,6 +137,13 @@ public final class RemoteSession {
         if (!(raw instanceof String) || ((String) raw).length() > com.subhub.app.people.ProfileNames.MAX_LENGTH)
             throw new JSONException("Invalid display name");
         store.updateDisplayName(peer.identity, peer.generation, (String) raw);
+    }
+
+    private static long journalVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("journalVersion")) return 0;
+        long version = RemoteProtocol.integer(frame, "journalVersion");
+        if (version <= 0) throw new JSONException("Invalid Journal capability");
+        return version;
     }
 
     private static long profileVersion(JSONObject frame) throws JSONException {
@@ -158,12 +173,13 @@ public final class RemoteSession {
         return value;
     }
 
-    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks) throws Exception {
+    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
             push(connection,peer,deadline,activity);
             pull(connection,peer,deadline,activity);
             if (tasks) hooks.tasks(connection,peer,deadline);
+            if (journal) hooks.journal(connection,peer,deadline);
             send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
@@ -171,6 +187,7 @@ public final class RemoteSession {
             hooks.prepare(peer);
             push(connection,peer,deadline,activity);
             if (tasks) hooks.tasks(connection,peer,deadline);
+            if (journal) hooks.journal(connection,peer,deadline);
             requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());

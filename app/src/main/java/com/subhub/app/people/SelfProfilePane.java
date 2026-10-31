@@ -42,6 +42,8 @@ public final class SelfProfilePane {
             PersonUi.text(hero, activity.getString(R.string.profile_about), true);
             PersonUi.text(hero, profile.about, false).setTag("self_profile_about");
         }
+        PersonUi.action(hero, R.string.journal_title,
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, dom), false).setTag("profile_journal");
         PersonUi.action(hero, R.string.profile_edit, () -> {
             if (ProfileStore.mayEdit(activity, dom)) activity.startActivity(new Intent(activity, ProfileEditorActivity.class)
                     .putExtra(ProfileEditorActivity.EXTRA_DOM, dom));

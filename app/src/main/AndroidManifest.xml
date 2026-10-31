@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -42,6 +44,9 @@
         <service android:name=".capture.export.ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
         <activity android:name=".tasks.TasksActivity" android:exported="false" />
+        <activity android:name=".journal.JournalActivity" android:exported="false" android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
+        <provider android:name=".journal.JournalProvider" android:authorities="${applicationId}.journal"
+            android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".tasks.TasksOverviewActivity" android:exported="false" />
         <activity android:name=".tasks.TaskMediaActivity" android:exported="false" />
         <activity android:name=".security.AuthenticatorActivity" android:exported="false" />
