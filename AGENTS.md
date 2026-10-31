@@ -71,6 +71,11 @@ a new hardware-frame commit where supported; UI idle and a fixed sleep alone do 
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
 
+Instrumentation providers run under the test APK's UID. Create and clean their synthetic
+documents through that provider; target-process code cannot enumerate the test APK's cache.
+For scrollable forms, reveal and assert the complete control rectangle inside system insets
+before a native tap or capture; a partially visible button is not a full target witness.
+
 After returning from Android Settings, await the host window's focus and a fresh hardware
 frame before the next native tap; a package match can include a transitioning window.
 After cancelling a credential prompt, verify its input is gone before tapping underlying controls.
@@ -200,6 +205,11 @@ Seed and assert that fixture in the capture test so future passes retain it. Nev
 phone data or live payment credentials for documentation or marketing screenshots.
 
 ## Diagnostic trace verification
+
+Run negotiated peer feature phases inside `RemoteSession.exchange`, before its
+`done`/`done_ack`/`done_complete` drain. QUIC connection closure can overtake buffered
+frames after that drain; qualify new phases with real bidirectional transport,
+legacy-peer, reconnect, and revocation tests.
 
 For main-thread sampling, follow [live Accessibility profiling](docs/censor-lab/main-thread-profiling.md).
 Instrumentation setup must not be mistaken for a live, bound Accessibility pipeline.
