@@ -15,7 +15,7 @@ class ReleaseCandidatePolicyTest(unittest.TestCase):
                 policy.validate(event, publish, False, False, 'branch', policy.DEVELOPMENT_BRANCH)
 
     def test_push_publication_rejects_other_branches_and_missing_ref_context(self):
-        for branch in ('master', 'codex/ui-v3', 'codex/p2p-sync',
+        for branch in ('master', 'codex/censor-pipeline-v2', 'codex/ui-v3', 'codex/p2p-sync',
                        'fix/launcher-shortcut-thread', 'dev/agp-9.5.0', ''):
             with self.subTest(branch=branch), self.assertRaises(ValueError):
                 policy.validate('push', True, False, False, 'branch', branch)
@@ -28,14 +28,18 @@ class ReleaseCandidatePolicyTest(unittest.TestCase):
                   '--ref-type', 'branch', '--publish-release', 'true',
                   '--immediate-quality-experiment', 'false', '--replacement-lab-candidate', 'false']
         for branch, expected in ((policy.DEVELOPMENT_BRANCH, 0),
-                                 ('fix/launcher-shortcut-thread', 2), ('dev/agp-9.5.0', 2)):
+                                 ('fix/launcher-shortcut-thread', 2), ('dev/agp-9.5.0', 2),
+                                 ('codex/censor-pipeline-v2', 2), ('codex/profile-journal', 2)):
             actual = subprocess.run(common + ['--ref-name', branch], capture_output=True)
             self.assertEqual(expected, actual.returncode, actual.stderr)
 
     def test_workflow_trigger_uses_only_the_development_branch(self):
         source = (Path(__file__).resolve().parents[1] / '.github/workflows/release.yml').read_text(encoding='utf-8')
         trigger = source.split('  workflow_dispatch:', 1)[0]
-        self.assertIn('    branches:\n      - ' + policy.DEVELOPMENT_BRANCH + '\n', trigger)
+        self.assertEqual('dev', policy.DEVELOPMENT_BRANCH)
+        branches = trigger.split('    branches:\n', 1)[1].split('    tags:', 1)[0]
+        self.assertEqual(['- dev'], [line.strip() for line in branches.splitlines() if line.strip()])
+        self.assertIn("DEV_BUILD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}", source)
         self.assertNotIn('branches-ignore:', trigger)
         self.assertIn('--ref-type "$GITHUB_REF_TYPE"', source)
         self.assertIn('--ref-name "$GITHUB_REF_NAME"', source)

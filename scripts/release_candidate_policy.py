@@ -1,7 +1,7 @@
 """Constrain automatic development releases and private candidate flags."""
 import argparse
 
-DEVELOPMENT_BRANCH = 'codex/censor-pipeline-v2'
+DEVELOPMENT_BRANCH = 'dev'
 
 
 def boolean(value):

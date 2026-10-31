@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - codex/censor-pipeline-v2
+      - dev
     tags:
       - "v*"
       - "!v*-dev.*"
@@ -49,7 +49,7 @@ jobs:
       PUBLISH_RELEASE: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_release }}
       IMMEDIATE_QUALITY_EXPERIMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.immediate_quality_experiment || false }}
       REPLACEMENT_LAB_CANDIDATE: ${{ github.event_name == 'workflow_dispatch' && inputs.replacement_lab_candidate || false }}
-      DEV_BUILD: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+      DEV_BUILD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       CI_RUN_NUMBER: ${{ github.run_number }}
       PUSH_BEFORE: ${{ github.event.before }}
     steps:
