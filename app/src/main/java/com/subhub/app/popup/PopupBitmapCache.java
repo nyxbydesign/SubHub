@@ -51,10 +51,15 @@ final class PopupBitmapCache {
     }
 
     private Bitmap decode(String path) {
+        File temporary = null;
         try {
+            temporary = File.createTempFile("popup-input-", ".source", context.getCacheDir());
+            try (InputStream input = open(path); java.io.OutputStream output = new java.io.FileOutputStream(temporary)) {
+                if (com.subhub.app.util.BoundedCopy.copy(input, output, com.subhub.app.util.MediaInput.IMAGE_BYTES) == 0) return null;
+            }
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
-            try (InputStream input = open(path)) { BitmapFactory.decodeStream(input, null, bounds); }
+            BitmapFactory.decodeFile(temporary.getPath(), bounds);
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
             int sample = 1;
             while (Math.max(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_DECODE_EDGE) {
@@ -63,10 +68,10 @@ final class PopupBitmapCache {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inSampleSize = sample;
             options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            try (InputStream input = open(path)) { return BitmapFactory.decodeStream(input, null, options); }
+            return BitmapFactory.decodeFile(temporary.getPath(), options);
         } catch (Exception ignored) {
             return null;
-        }
+        } finally { if (temporary != null) temporary.delete(); }
     }
 
     private InputStream open(String path) throws Exception {

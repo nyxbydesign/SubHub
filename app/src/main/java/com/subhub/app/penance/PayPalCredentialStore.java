@@ -112,6 +112,12 @@ public final class PayPalCredentialStore {
     public boolean save(PayPalEnvironment environment, String clientId, String secret) {
         PayPalEnvironment selected = environment == null
                 ? PayPalEnvironment.SANDBOX : environment;
+        Credentials existing = load();
+        int maximum = com.subhub.app.util.InputBounds.CREDENTIAL;
+        if (clientId != null && clientId.length() > maximum
+                && (selected != existing.environment() || !clientId.equals(existing.clientId()))
+                || secret != null && secret.length() > maximum
+                && (selected != existing.environment() || !secret.equals(existing.secret()))) return false;
         String cleanId = clientId == null ? "" : clientId.trim();
         String cleanSecret = secret == null ? "" : secret.trim();
         if (cleanId.isEmpty() || cleanSecret.isEmpty()) return false;
@@ -134,7 +140,9 @@ public final class PayPalCredentialStore {
     /** Imports merchant credentials without retaining any local verification or payer state. */
     public boolean saveImported(PayPalEnvironment environment, String clientId, String secret) {
         if (environment == null || clientId == null || clientId.isEmpty()
-                || secret == null || secret.isEmpty()) return false;
+                || secret == null || secret.isEmpty()
+                || clientId.length() > com.subhub.app.util.InputBounds.CREDENTIAL
+                || secret.length() > com.subhub.app.util.InputBounds.CREDENTIAL) return false;
         String encryptedId = encrypt(clientId);
         String encryptedSecret = encrypt(secret);
         if (encryptedId.isEmpty() || encryptedSecret.isEmpty()) return false;

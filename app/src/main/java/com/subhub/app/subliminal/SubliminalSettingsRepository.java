@@ -232,7 +232,9 @@ public final class SubliminalSettingsRepository {
         for (String line : value.split("\\R")) {
             String clean = line.replaceAll("[\\p{Cntrl}&&[^\\r\\n\\t]]", "").trim();
             if (clean.isEmpty()) continue;
-            lines.add(clean.length() <= 120 ? clean : clean.substring(0, 120));
+            int end = Math.min(clean.length(), 120);
+            if (end < clean.length() && end > 0 && Character.isHighSurrogate(clean.charAt(end - 1))) end--;
+            lines.add(clean.substring(0, end));
             if (lines.size() >= 200) break;
         }
         return String.join("\n", lines);

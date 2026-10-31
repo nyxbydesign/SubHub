@@ -13,6 +13,8 @@ import java.util.*;
 
 /** Durable queue. Completion is recorded before offering optional original deletion. */
 public final class ExportJobStore extends SQLiteOpenHelper {
+    public static final int MAX_SOURCES = 100;
+    public static final long MAX_ARTWORK_BYTES = 256L * 1024 * 1024;
     public enum State { DRAFT, PENDING, RUNNING, SAVED, FAILED, CANCELLED, INTERRUPTED }
     private static boolean processRecovered;
     public static final class Item {
@@ -69,17 +71,20 @@ public final class ExportJobStore extends SQLiteOpenHelper {
         return create(sources, snapshot, options, State.DRAFT);
     }
     private String create(List<Uri> sources, JSONObject snapshot, ExportOptions options, State initial) throws IOException {
-        if (sources.isEmpty()) throw new IllegalArgumentException("Select media first");
+        if (sources.isEmpty() || sources.size() > MAX_SOURCES) throw new IllegalArgumentException("Select between 1 and 100 media files");
+        for (Uri source : sources) if (source == null || source.toString().length() > 8192)
+            throw new IllegalArgumentException("Invalid media source");
         String id = UUID.randomUUID().toString(); File assets = new File(directory(id), "assets");
         if (!assets.mkdirs()) throw new IOException("Cannot prepare export storage");
         int count = 0;
+        long artworkBytes = 0;
         try {
             for (File input : new CustomImageManager(context).enabledConfigurationFiles()) {
                 if (++count > 64) break;
                 try (InputStream from = new FileInputStream(input);
                      OutputStream to = new FileOutputStream(new File(assets, count + ".img"))) {
-                    byte[] buffer = new byte[65536]; int size;
-                    while ((size = from.read(buffer)) != -1) to.write(buffer, 0, size);
+                    artworkBytes += com.subhub.app.util.BoundedCopy.copy(from, to,
+                            Math.min(com.subhub.app.util.MediaInput.IMAGE_BYTES, MAX_ARTWORK_BYTES - artworkBytes));
                 }
             }
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();

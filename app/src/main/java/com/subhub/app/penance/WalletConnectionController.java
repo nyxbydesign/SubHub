@@ -44,9 +44,10 @@ public final class WalletConnectionController implements AutoCloseable {
         paypalClient = new PayPalOrdersClient(activity);
         autoPay = new HardcoreAutoPayManager(activity);
         uiData = AsyncUiScope.forPage(activity);
-        binding.paypalLink.setText(new PenanceManager(activity).getPayPalLink());
+        com.subhub.app.util.InputBounds.restore(binding.paypalLink, new PenanceManager(activity).getPayPalLink(), 2048);
         PayPalCredentialStore.Credentials credentials = paypalCredentials.load();
-        binding.paypalClientId.setText(credentials.clientId());
+        com.subhub.app.util.InputBounds.restore(binding.paypalClientId, credentials.clientId(), com.subhub.app.util.InputBounds.CREDENTIAL);
+        com.subhub.app.util.InputBounds.limit(binding.paypalClientSecret, com.subhub.app.util.InputBounds.CREDENTIAL);
         updatingPaypalEnvironment = true;
         binding.paypalEnvironment.check(
                 credentials.environment() == PayPalEnvironment.LIVE
@@ -147,7 +148,8 @@ public final class WalletConnectionController implements AutoCloseable {
                 binding.paypalLink.getText() == null
                         ? ""
                         : binding.paypalLink.getText().toString().trim();
-        if (!link.isEmpty() && !validPayPalLink(link)) {
+        if (!link.isEmpty() && (!validPayPalLink(link)
+                || link.length() > 2048 && !link.equals(new PenanceManager(activity).getPayPalLink()))) {
             Toast.makeText(activity, R.string.paypal_settings_invalid, Toast.LENGTH_SHORT).show();
             return;
         }
@@ -170,7 +172,11 @@ public final class WalletConnectionController implements AutoCloseable {
         if (secret.isEmpty()
                 && selected == existing.environment()
                 && clientId.equals(existing.clientId())) secret = existing.secret();
-        if (clientId.isEmpty() || secret.isEmpty()) {
+        if (clientId.isEmpty() || secret.isEmpty()
+                || clientId.length() > com.subhub.app.util.InputBounds.CREDENTIAL
+                    && (selected != existing.environment() || !clientId.equals(existing.clientId()))
+                || secret.length() > com.subhub.app.util.InputBounds.CREDENTIAL
+                    && (selected != existing.environment() || !secret.equals(existing.secret()))) {
             Toast.makeText(activity, R.string.paypal_sandbox_invalid, Toast.LENGTH_SHORT).show();
             return;
         }

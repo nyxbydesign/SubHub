@@ -110,6 +110,8 @@ Subliminal Messaging does not require Censor, Limits, or Wallet. Enable it from 
 
 Configure intensity, choose an image library, and try a bounded ten-second preview without enabling service participation. Popup Storm and Subliminal Messaging have separate controls under Atmosphere. Gallery offers a media preview, separate appearance and body-area editors, video position and export controls, and filename-based results. Exports keep originals unless deletion is explicitly selected.
 
+Image imports allow up to 25 MiB per source, including profile photos and Popup Storm artwork. Gallery accepts videos up to 1 GiB and up to 100 source files per batch. Copied artwork for an export is limited to 256 MiB. Files with unavailable or inaccurate size information are checked while reading.
+
 <p align="center">
   <img src="docs/screenshots/ui-map/page-map/14-atmosphere.png" alt="Independent Atmosphere feature controls" width="30%" />
   &nbsp;

@@ -36,7 +36,7 @@ public final class PairingActivity extends RemotePage {
             else PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
         }
         else {
-            link=input(body,R.string.remote_invite_input,getIntent().getData()==null?"":getIntent().getData().toString());
+            link=input(body,R.string.remote_invite_input,getIntent().getData()==null?"":getIntent().getData().toString(),com.subhub.app.util.InputBounds.PAIRING);
             link.setSaveEnabled(false);
             link.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
             button(body,R.string.remote_paste_code,()->{

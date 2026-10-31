@@ -115,7 +115,7 @@ public final class ConfigurationSettingCatalog {
         add("subliminal", "subliminal_max_interval_ms", R.string.pack_field_subliminal_max_interval_ms, R.string.pack_group_timing, Kind.LONG, 60000, 5000, 300000, 0, List.of());
         add("subliminal", "subliminal_text_size_sp", R.string.pack_field_subliminal_text_size_sp, R.string.pack_group_timing, Kind.INTEGER, 19, 14, 28, 0, List.of());
         add("subliminal", "subliminal_enabled_packs", R.string.pack_field_subliminal_enabled_packs, R.string.pack_group_phrase_packs, Kind.SELECTION, array("obedience", "focus"), 0, 200, 120, List.of("obedience", "focus", "beta", "findom", "custom"));
-        add("subliminal", "subliminal_custom_phrases", R.string.pack_field_subliminal_custom_phrases, R.string.pack_group_phrase_packs, Kind.TEXT, "", 0, 0, 24000, List.of());
+        add("subliminal", "subliminal_custom_phrases", R.string.pack_field_subliminal_custom_phrases, R.string.pack_group_phrase_packs, Kind.TEXT, "", 0, 0, 24199, List.of());
         add("popup", "popup_storm_enabled", R.string.pack_field_popup_storm_enabled, R.string.pack_group_popup_general, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
         add("popup", "popup_storm_active_preset", R.string.pack_field_popup_storm_active_preset, R.string.pack_group_popup_general, Kind.CHOICE, "MEDIUM", 0, 0, 0, List.of("GENTLE", "MEDIUM", "INTENSE", "OVERLOAD", "CUSTOM"));
         add("popup", "popup_storm_spawn_rate", R.string.pack_field_popup_storm_spawn_rate, R.string.pack_group_popup_general, Kind.DECIMAL, 2, 0, 8, 0, List.of());

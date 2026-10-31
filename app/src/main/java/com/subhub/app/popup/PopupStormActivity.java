@@ -461,6 +461,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         input.setMinimumHeight(dp(48));
         input.setSingleLine(true);
         input.setMaxLines(1);
+        com.subhub.app.util.InputBounds.limit(input, 32);
         input.setText(preferences.getString(key, defaultValue));
         com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
         input.setEnabled(FeatureEditorSession.canEdit(this, "popup"));

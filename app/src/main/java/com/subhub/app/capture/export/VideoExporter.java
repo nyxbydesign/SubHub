@@ -33,8 +33,8 @@ public final class VideoExporter {
         MediaMuxer muxer = null; CodecInputSurface surface = null;
         boolean decoderStarted = false, encoderStarted = false, success = false;
         Drain drain = null;
-        try {
-            input.setDataSource(context, source, null);
+        try (com.subhub.app.util.MediaInput bounded = com.subhub.app.util.MediaInput.video(context, source)) {
+            bounded.configure(input);
             int videoTrack = track(input, "video/");
             if (videoTrack < 0) throw new IOException("No video track");
             MediaFormat format = input.getTrackFormat(videoTrack);
@@ -56,7 +56,7 @@ public final class VideoExporter {
             muxer.setOrientationHint(0);
             int audioOutputTrack = -1;
             if (!options.mute) {
-                audio.setDataSource(context, source, null);
+                bounded.configure(audio);
                 int audioTrack = track(audio, "audio/");
                 if (audioTrack >= 0) {
                     MediaFormat audioFormat = audio.getTrackFormat(audioTrack);

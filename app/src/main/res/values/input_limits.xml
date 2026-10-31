@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="export_source_limit">Select up to 100 files per export.</string>
+</resources>

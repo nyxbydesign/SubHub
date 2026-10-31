@@ -249,6 +249,8 @@ public final class PenanceManager {
     }
 
     public void savePayPalLink(String value) {
+        if (value != null && value.length() > 2048 && !value.equals(getPayPalLink()))
+            throw new IllegalArgumentException("PayPal link is too long");
         preferences.edit().putString(KEY_PAYPAL_LINK,
                 value == null ? "" : value.trim()).remove(LEGACY_KEY_BACKEND_URL).commit();
     }

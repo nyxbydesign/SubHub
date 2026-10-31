@@ -16,21 +16,26 @@ import java.util.*;
 public final class ExportMedia {
     private ExportMedia() { }
     public static Bitmap image(Context context, Uri uri, int edge) throws IOException {
-        ContentResolver resolver = context.getContentResolver();
+        File sourceFile = com.subhub.app.util.MediaInput.stage(context, uri, com.subhub.app.util.MediaInput.IMAGE_BYTES);
+        try { return imageFile(sourceFile, edge); }
+        finally { sourceFile.delete(); }
+    }
+    private static Bitmap imageFile(File sourceFile, int edge) throws IOException {
+        if (edge <= 0) throw new IllegalArgumentException("Invalid image size");
         if (Build.VERSION.SDK_INT >= 28) return ImageDecoder.decodeBitmap(
-                ImageDecoder.createSource(resolver, uri), (decoder, info, source) -> {
+                ImageDecoder.createSource(sourceFile), (decoder, info, source) -> {
                     decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
                     int max = Math.max(info.getSize().getWidth(), info.getSize().getHeight());
                     if (max > edge) decoder.setTargetSampleSize(Math.max(1, (int) Math.ceil(max / (double) edge)));
                 });
         BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
-        try (InputStream stream = resolver.openInputStream(uri)) { BitmapFactory.decodeStream(stream, null, bounds); }
+        try (InputStream stream = new FileInputStream(sourceFile)) { BitmapFactory.decodeStream(stream, null, bounds); }
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = 1;
         while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > edge) options.inSampleSize *= 2;
         Bitmap decoded;
-        try (InputStream stream = resolver.openInputStream(uri)) { decoded = BitmapFactory.decodeStream(stream, null, options); }
+        try (InputStream stream = new FileInputStream(sourceFile)) { decoded = BitmapFactory.decodeStream(stream, null, options); }
         if (decoded == null) throw new IOException("Unsupported image");
-        try (InputStream stream = resolver.openInputStream(uri)) {
+        try (InputStream stream = new FileInputStream(sourceFile)) {
             if (stream == null) throw new IOException("Source is unavailable");
             int orientation = new ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1);
             Matrix matrix = new Matrix();
@@ -55,6 +60,8 @@ public final class ExportMedia {
         try {
             for (File file : files) {
                 if (result.size() >= limit) break;
+                if (!file.isFile() || file.length() <= 0 || file.length() > com.subhub.app.util.MediaInput.IMAGE_BYTES)
+                    throw new IOException("Export artwork exceeds the image size limit");
                 BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
                 BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
                 BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = 1;

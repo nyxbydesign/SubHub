@@ -138,6 +138,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.packCustom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_CUSTOM));
         binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
         if (!binding.customPhrases.getText().toString().equals(settings.getCustomPhrases())) {
+            com.subhub.app.util.InputBounds.limit(binding.customPhrases, com.subhub.app.util.InputBounds.SUBLIMINAL_PHRASES);
             binding.customPhrases.setText(settings.getCustomPhrases());
         }
         updateAdvancedLabels();

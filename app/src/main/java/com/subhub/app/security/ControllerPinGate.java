@@ -292,6 +292,7 @@ public final class ControllerPinGate {
 
     private static EditText pinInput(Activity activity, int hint) {
         EditText input = new EditText(activity);
+        com.subhub.app.util.InputBounds.limit(input, 12);
         input.setHint(hint);
         input.setSaveEnabled(false);
         input.setSingleLine(true);

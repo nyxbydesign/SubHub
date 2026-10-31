@@ -81,6 +81,8 @@ public abstract class PreferencePage extends AppCompatActivity {
         EditText input = (EditText) getLayoutInflater().inflate(R.layout.view_preference_input, parent, false);
         input.setSingleLine(); input.setHint(hint);
         com.subhub.app.util.UiIdentity.inputType(input, inputType);
+        if ((inputType & android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_NUMBER)
+            InputBounds.limit(input, 16);
         input.setMinHeight(dp(48));
         parent.addView(input); return input;
     }

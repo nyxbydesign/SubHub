@@ -204,6 +204,7 @@ public class ExportWorkspaceActivity extends PreferencePage {
     }
     private void select(List<Uri> uris) {
         if (uris == null || uris.isEmpty()) return;
+        if (uris.size() > ExportJobStore.MAX_SOURCES) { notice(getString(R.string.export_source_limit)); return; }
         selected.clear(); selected.addAll(uris);
         for (Uri uri : uris) try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (SecurityException ignored) { /* Provider may grant only transient access. */ }
@@ -404,8 +405,8 @@ public class ExportWorkspaceActivity extends PreferencePage {
         Bitmap image;
         if (ExportMedia.isVideo(this, source)) {
             MediaMetadataRetriever reader = new MediaMetadataRetriever();
-            try {
-                reader.setDataSource(this, source);
+            try (com.subhub.app.util.MediaInput bounded = com.subhub.app.util.MediaInput.video(this, source)) {
+                bounded.configure(reader);
                 String durationString = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
                 long duration = durationString == null ? 0 : Long.parseLong(durationString);
                 image = reader.getFrameAtTime(duration * 1000 * position / 100, MediaMetadataRetriever.OPTION_CLOSEST);
