@@ -354,10 +354,10 @@ public final class RoleAchievementsAndroidTest {
                     View root = activity.findViewById(android.R.id.content);
                     for (int id : new int[]{com.subhub.app.R.id.stats_lifetime_summary,
                             com.subhub.app.R.id.daily_statistics_panel, com.subhub.app.R.id.stats_totals_details,
-                            com.subhub.app.R.id.stats_achievements, com.subhub.app.R.id.stats_section_statistics,
+                            com.subhub.app.R.id.stats_achievements, com.subhub.app.R.id.stats_section_profile,
                             com.subhub.app.R.id.stats_section_achievements}) assertNotNull(root.findViewById(id));
                     assertTrue(root.findViewById(com.subhub.app.R.id.nav_stats).isSelected());
-                    assertTrue(root.findViewById(com.subhub.app.R.id.stats_section_statistics).isSelected());
+                    assertTrue(root.findViewById(com.subhub.app.R.id.stats_section_profile).isSelected());
                     assertFits(root);
                 });
                 capture(scenario, dom ? "dom-shared-statistics" : "sub-shared-statistics");
@@ -409,13 +409,13 @@ public final class RoleAchievementsAndroidTest {
                         assertFalse(a.findViewById(com.subhub.app.R.id.daily_statistics_panel).isShown());
                         assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_achievements).isSelected());
                     });
-                    onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_statistics))
+                    onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_profile))
                             .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
                     scenario.onActivity(a -> {
                         assertSame(retained[0], a.findViewById(com.subhub.app.R.id.daily_statistics_panel));
                         assertSame(retained[1], a.findViewById(com.subhub.app.R.id.daily_metric_filter));
                         assertTrue(a.findViewById(com.subhub.app.R.id.daily_range_year).isSelected());
-                        assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_statistics).isSelected());
+                        assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_profile).isSelected());
                     });
                 }
                 onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_achievements))
@@ -424,7 +424,7 @@ public final class RoleAchievementsAndroidTest {
                 await(scenario, root -> root.findViewById(com.subhub.app.R.id.achievement_list) != null
                         && root.findViewById(com.subhub.app.R.id.achievement_list).isShown());
                 scenario.onActivity(a -> assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_achievements).isSelected()));
-                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_statistics))
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_profile))
                         .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
                 await(scenario, root -> root.findViewById(com.subhub.app.R.id.daily_range_year).isSelected());
                 assertEquals(dom, ControllerPinManager.isDomModeActive());
@@ -433,11 +433,11 @@ public final class RoleAchievementsAndroidTest {
         try (ActivityScenario<AchievementsActivity> scenario = launch(AchievementsActivity.class)) {
             await(scenario, root -> root.findViewById(com.subhub.app.R.id.achievement_list) != null
                     && root.findViewById(com.subhub.app.R.id.achievement_list).isShown());
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_statistics))
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.stats_section_profile))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             scenario.onActivity(a -> assertEquals(AchievementsActivity.class, a.getClass()));
             scenario.recreate();
-            scenario.onActivity(a -> assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_statistics).isSelected()));
+            scenario.onActivity(a -> assertTrue(a.findViewById(com.subhub.app.R.id.stats_section_profile).isSelected()));
         }
     }
 

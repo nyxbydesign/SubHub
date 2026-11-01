@@ -1165,4 +1165,6 @@
     <string name="sub_feature_disabled">Disabled by Sub</string>
     <string name="sub_feature_whispers">Whispers</string>
     <string name="stats_remote_history_private">Session history stays on the Sub device.</string>
+    <string name="home_subs_total">Subs</string>
+    <string name="home_local_sub_count">%1$d local</string>
 </resources>

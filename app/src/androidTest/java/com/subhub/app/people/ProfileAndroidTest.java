@@ -76,10 +76,17 @@ public final class ProfileAndroidTest {
                 host.set(a);
                 assertEquals(a.getString(R.string.role_profile), ((TextView) a.findViewById(R.id.nav_stats_label)).getText());
                 assertTrue(a.findViewById(R.id.nav_stats).isSelected());
-                assertTrue(a.findViewById(android.R.id.content).findViewWithTag("self_profile:sub").isShown());
+                ViewGroup root = a.findViewById(android.R.id.content);
+                assertTrue(root.findViewWithTag("self_profile:sub").isShown());
+                assertNull(a.findViewById(R.id.stats_section_statistics));
+                View profile = root.findViewWithTag("self_profile");
+                View stats = a.findViewById(R.id.stats_lifetime_summary);
+                assertNotNull(stats);
+                ViewGroup shell = (ViewGroup) profile.getParent();
+                assertEquals(shell.indexOfChild(profile) + 1, shell.indexOfChild((View) stats.getParent()));
             });
             for (int repeat = 0; repeat < 3; repeat++) {
-                onView(withId(R.id.stats_section_statistics)).perform(revealAboveNavigation(), click());
+                onView(withId(R.id.stats_section_profile)).perform(revealAboveNavigation(), click());
                 await(scenario, a -> a.findViewById(R.id.daily_range_7) != null && a.findViewById(R.id.daily_range_7).isShown());
                 if (repeat == 0) {
                     scenario.onActivity(a -> daily.set(a.findViewById(R.id.daily_statistics_panel)));
@@ -90,7 +97,7 @@ public final class ProfileAndroidTest {
                     assertSame(host.get(), a); assertTrue(a.findViewById(R.id.stats_lifetime_summary).isShown());
                     assertSame(daily.get(), a.findViewById(R.id.daily_statistics_panel));
                     assertTrue(a.findViewById(R.id.daily_range_7).isSelected());
-                    assertEquals(a.getString(R.string.role_stats), ((TextView) a.findViewById(R.id.primary_header_title)).getText());
+                    assertEquals(a.getString(R.string.role_profile), ((TextView) a.findViewById(R.id.primary_header_title)).getText());
                 });
                 onView(withId(R.id.stats_section_achievements)).perform(revealAboveNavigation(), click());
                 scenario.onActivity(a -> {
@@ -105,7 +112,7 @@ public final class ProfileAndroidTest {
             }
             scenario.recreate();
             scenario.onActivity(a -> assertTrue(a.findViewById(R.id.stats_section_profile).isSelected()));
-            onView(withId(R.id.stats_section_statistics)).perform(revealAboveNavigation(), click());
+            onView(withId(R.id.stats_section_profile)).perform(revealAboveNavigation(), click());
             await(scenario, a -> a.findViewById(R.id.daily_range_7) != null && a.findViewById(R.id.daily_range_7).isSelected());
         }
     }
@@ -252,7 +259,7 @@ public final class ProfileAndroidTest {
             onView(tag("profile_name:dom")).perform(revealAboveNavigation(), replaceText("Updated own Dom"), closeSoftKeyboard());
             onView(tag("profile_save")).perform(revealAboveNavigation(), click());
             assertSelf(scenario, true, "Updated own Dom");
-            onView(withId(R.id.stats_section_statistics)).perform(revealAboveNavigation(), click());
+            onView(tag("profile_stats_unlock")).perform(revealAboveNavigation(), click());
             onView(withHint(R.string.controller_pin_label)).check(
                     androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));
             assertFalse(ControllerPinManager.isDomModeActive());
@@ -266,11 +273,15 @@ public final class ProfileAndroidTest {
                 assertNull(a.findViewById(R.id.daily_statistics_panel));
                 assertNull(a.findViewById(R.id.achievement_list));
             });
-            onView(withId(R.id.stats_section_statistics)).perform(revealAboveNavigation(), click());
+            onView(tag("profile_stats_unlock")).perform(revealAboveNavigation(), click());
             onView(withHint(R.string.controller_pin_label)).perform(replaceText("2468"), closeSoftKeyboard());
             onView(withText(R.string.controller_pin_unlock)).perform(click());
             await(scenario, a -> a.findViewById(R.id.daily_range_7) != null && a.findViewById(R.id.daily_range_7).isShown());
-            scenario.onActivity(a -> assertTrue(a.findViewById(R.id.stats_lifetime_summary).isShown()));
+            scenario.onActivity(a -> {
+                assertTrue(a.findViewById(R.id.stats_lifetime_summary).isShown());
+                assertTrue(a.findViewById(R.id.button_edit_lock).isSelected());
+                assertEquals(a.getString(R.string.device_role_lock), a.findViewById(R.id.button_edit_lock).getContentDescription());
+            });
             onView(withId(R.id.stats_section_profile)).perform(revealAboveNavigation(), click());
             onView(withId(R.id.button_edit_lock)).perform(click());
             assertSelf(scenario, true, "Updated own Dom");
@@ -449,14 +460,30 @@ public final class ProfileAndroidTest {
                 assertSelf(scenario, dom, dom ? "Alex Morgan" : "Mara Sinclair");
                 await(scenario, a -> avatarReady(a.findViewById(android.R.id.content)));
                 capture(scenario, name + "-profile").recycle();
+                java.util.concurrent.atomic.AtomicBoolean expandable = new java.util.concurrent.atomic.AtomicBoolean();
+                scenario.onActivity(a -> {
+                    View more = a.findViewById(android.R.id.content).findViewWithTag("self_profile_about_expand");
+                    expandable.set(more != null && more.getVisibility() == View.VISIBLE);
+                });
+                if (expandable.get()) {
+                    onView(tag("self_profile_about_expand")).perform(revealAboveNavigation(), click());
+                    settleNativeFrame(scenario);
+                    capture(scenario, name + "-profile-expanded").recycle();
+                }
                 scenario.onActivity(a -> textFits(a.findViewById(android.R.id.content)));
                 if (!dom) {
                     onView(tag("sub_feature:popup")).perform(revealAboveNavigation());
                     capture(scenario, name + "-allowances").recycle();
                 }
-                onView(withId(R.id.stats_section_statistics)).perform(revealAboveNavigation(), click());
+                alignCardTop(scenario, a -> a.findViewById(R.id.stats_lifetime_summary));
                 await(scenario, a -> a.findViewById(R.id.daily_range_7) != null && a.findViewById(R.id.daily_range_7).isShown());
                 capture(scenario, name + "-stats").recycle();
+                onView(withId(R.id.daily_metric_filter)).perform(revealAboveNavigation());
+                capture(scenario, name + "-activity").recycle();
+                alignCardTop(scenario, a -> a.findViewById(R.id.stats_totals_details));
+                capture(scenario, name + "-totals").recycle();
+                alignCardTop(scenario, a -> a.findViewById(R.id.stats_achievements));
+                capture(scenario, name + "-achievement-preview").recycle();
                 scenario.onActivity(a -> textFits(a.findViewById(android.R.id.content)));
                 onView(withId(R.id.stats_section_achievements)).perform(revealAboveNavigation(), click());
                 await(scenario, a -> {

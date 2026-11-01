@@ -86,6 +86,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
                 if (!FavoriteSubStore.eligible(person)) continue;
                 boolean favorite = favorites.isFavorite(person);
                 if (favorite) {
+                    card.setBackgroundResource(R.drawable.bg_home_favorite);
                     TextView mark = PersonUi.text(card, getString(R.string.home_favorite_marked), false);
                     mark.setTextColor(getColor(R.color.accent_text));
                     mark.setTag("people_favorite:" + person.id.value());

@@ -50,8 +50,13 @@ public final class OverviewUi {
         ViewCompat.setAccessibilityHeading(label, true);
         row.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
         if (action != null) {
-            TextView link = text(context, context.getString(actionTitle) + "  ›", 12, false);
+            TextView link = text(context, context.getString(actionTitle), 12, false);
             link.setTextColor(context.getColor(R.color.accent_text));
+            android.graphics.drawable.Drawable arrow = context.getDrawable(R.drawable.ic_overview_chevron).mutate();
+            arrow.setBounds(0, 0, dp(context, 20), dp(context, 20));
+            arrow.setTint(context.getColor(R.color.accent_text));
+            link.setCompoundDrawablesRelative(null, null, arrow, null);
+            link.setCompoundDrawablePadding(dp(context, 4));
             link.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); link.setMinHeight(dp(context, 48));
             link.setMinWidth(dp(context, 48));
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-2, -2);

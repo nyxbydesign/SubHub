@@ -29,7 +29,7 @@ public class StatsActivity extends PreferencePage {
     private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refreshRemote = new Runnable() {
         @Override public void run() {
-            if (!resumed || catalogSelected || profileSelected || remote == null && !domOverview || isFinishing()) return;
+            if (!resumed || catalogSelected || remote == null && !domOverview || isFinishing()) return;
             try {
                 if (remote != null) remote.requireAccess();
                 if (!workspace.accessible(StatsActivity.this)) { finish(); return; }
@@ -44,7 +44,7 @@ public class StatsActivity extends PreferencePage {
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
     private AchievementPreviewView achievements;
     private LocalRetainedStatistics localFacts;
-    private boolean firstResume = true;
+    private android.view.View statisticsUnlock;
     private int sessionLimit = 3;
     private com.subhub.app.util.AsyncUiScope data;
 
@@ -54,9 +54,7 @@ public class StatsActivity extends PreferencePage {
         hasSections = !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
         catalogSelected = hasSections && (state == null ? initiallyShowAchievements()
                 : state.getBoolean("stats_catalog_selected", initiallyShowAchievements()));
-        profileSelected = hasSections && (state == null ? initiallyShowProfile()
-                : state.getBoolean("profile_selected", initiallyShowProfile()));
-        if (profileSelected) catalogSelected = false;
+        profileSelected = hasSections && !catalogSelected;
         workspace = AchievementRole.current(this);
         if (!workspaceReadable()) { finish(); return; }
         domOverview = workspace == AchievementRole.DOM
@@ -83,9 +81,6 @@ public class StatsActivity extends PreferencePage {
         if (domOverview) page.setTag("dom_statistics");
         data = com.subhub.app.util.AsyncUiScope.forPage(this);
         restoreStatisticsState(state);
-        if (!catalogSelected && !profileSelected) {
-            buildStatistics(); bindTotals(); bindSessions(); bindAllowances();
-        }
         com.subhub.app.util.SubHubNavigation.attachToPage(this, shell,
                 com.subhub.app.util.SubHubNavigation.Screen.STATS);
         renderSection();
@@ -106,7 +101,7 @@ public class StatsActivity extends PreferencePage {
                 ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         summary.addView(numbers, new LinearLayout.LayoutParams(-1, -2));
         lifetimeTime = metric(numbers, domOverview ? R.string.dom_stats_time : R.string.stats_time);
-        lifetimeCensors = metric(numbers, domOverview ? R.string.dom_stats_paired : R.string.stats_censors);
+        lifetimeCensors = metric(numbers, domOverview ? R.string.home_subs_total : R.string.stats_censors);
         lifetimeSessions = metric(numbers, domOverview ? R.string.dom_stats_sessions : R.string.stats_sessions);
         if (domOverview) {
             lifetimeTime.setTag("dom_stats_time");
@@ -118,7 +113,7 @@ public class StatsActivity extends PreferencePage {
         page.addView(daily, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams activityParams =
                 (LinearLayout.LayoutParams) daily.getLayoutParams();
-        activityParams.bottomMargin = dp(14);
+        activityParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         allowances = new LinearLayout(this);
         allowances.setOrientation(LinearLayout.VERTICAL);
         allowances.setId(R.id.profile_stats_allowances);
@@ -178,7 +173,7 @@ public class StatsActivity extends PreferencePage {
         rememberScroll();
         pauseSection();
         catalogSelected = selected;
-        profileSelected = false;
+        profileSelected = !selected;
         renderSection();
         if (resumed) resumeSection();
     }
@@ -191,16 +186,33 @@ public class StatsActivity extends PreferencePage {
     }
 
     private void renderSection() {
-        if (!profileSelected && !catalogSelected) buildStatistics();
+        if (!catalogSelected && workspace.accessible(this)) buildStatistics();
         if (profileSelected && profile == null) {
             profile = new com.subhub.app.people.SelfProfilePane(this);
-            shell.addView(profile.view(), new LinearLayout.LayoutParams(-1, -2));
+            shell.addView(profile.view(), shell.indexOfChild(page), new LinearLayout.LayoutParams(-1, -2));
         }
         if (catalogSelected && catalog == null) {
             catalog = new AchievementsPane(this);
             shell.addView(catalog.view(), new LinearLayout.LayoutParams(-1, -2));
         }
-        page.setVisibility(catalogSelected || profileSelected ? android.view.View.GONE : android.view.View.VISIBLE);
+        page.setVisibility(catalogSelected || !workspace.accessible(this) ? android.view.View.GONE : android.view.View.VISIBLE);
+        if (lockedOwnProfile() && statisticsUnlock == null) {
+            LinearLayout unlock = card(shell);
+            unlock.setTag("profile_stats_locked");
+            heading(unlock, R.string.role_stats);
+            button(unlock, getString(R.string.controller_pin_unlock), () ->
+                    com.subhub.app.security.ControllerPinGate.unlock(this, () -> {
+                        com.subhub.app.security.ControllerEditMode.renderButton(this,
+                                com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+                        renderSection();
+                        if (resumed) resumeSection();
+                    }, false)).setTag("profile_stats_unlock");
+            statisticsUnlock = unlock;
+            shell.removeView(unlock);
+            shell.addView(unlock, shell.indexOfChild(page));
+        }
+        if (statisticsUnlock != null) statisticsUnlock.setVisibility(lockedOwnProfile()
+                ? android.view.View.VISIBLE : android.view.View.GONE);
         if (profile != null) profile.view().setVisibility(profileSelected ? android.view.View.VISIBLE : android.view.View.GONE);
         if (catalog != null) catalog.view().setVisibility(catalogSelected ? android.view.View.VISIBLE : android.view.View.GONE);
         StatsSections.select(shell, catalogSelected, profileSelected);
@@ -222,8 +234,9 @@ public class StatsActivity extends PreferencePage {
     }
 
     private void resumeSection() {
-        if (profileSelected) { profile.refresh(); return; }
+        if (profileSelected) profile.refresh();
         if (catalogSelected) { catalog.resume(); return; }
+        if (!workspace.accessible(this)) return;
         if (remote != null || domOverview) remoteClock.post(refreshRemote);
         bindTotals(); bindSessions(); bindAllowances(); daily.refreshIfNeeded();
     }
@@ -242,7 +255,7 @@ public class StatsActivity extends PreferencePage {
         if (!workspaceReadable()) { finish(); return; }
         resumed = true;
         renderSection();
-        if (!catalogSelected && !profileSelected && (remote != null || domOverview)) {
+        if (!catalogSelected && workspace.accessible(this) && (remote != null || domOverview)) {
             try { if (remote != null) remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
             remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
         }
@@ -275,16 +288,13 @@ public class StatsActivity extends PreferencePage {
                 android.view.View nav = root.findViewById(R.id.bottom_navigation); if (nav != null) nav.setVisibility(android.view.View.GONE);
             } catch (Exception unavailable) { finish(); return; }
         } else if (dom) com.subhub.app.util.PrimaryHeader.subtitle(root).setText(com.subhub.app.people.ProfileNames.get(this, false));
-        if (profileSelected) { profile.refresh(); firstResume = false; return; }
-        if (catalogSelected) { catalog.resume(); firstResume = false; return; }
-        if (firstResume) {
-            firstResume = false;
-            return;
-        }
+        if (profileSelected) profile.refresh();
+        if (!workspace.accessible(this)) { return; }
+        if (catalogSelected) { catalog.resume(); return; }
         bindTotals();
         bindSessions();
         bindAllowances();
-        daily.refresh();
+        daily.refreshIfNeeded();
     }
 
     @Override
@@ -618,7 +628,13 @@ public class StatsActivity extends PreferencePage {
     }
 
     private void heading(LinearLayout parent, int title) {
-        text(parent, getString(title), 16, false).setTypeface(null, Typeface.BOLD);
+        TextView label = text(parent, getString(title), 16, false);
+        int icon = title == R.string.stats_recent_sessions || title == R.string.profile_stats_current_session
+                || title == R.string.dom_stats_current ? R.drawable.ic_overview_clock
+                : R.drawable.ic_nav_stats;
+        com.subhub.app.util.UiIdentity.sectionIcon(label, icon);
+        label.setTypeface(null, Typeface.BOLD);
+        androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
     }
 
     private LinearLayout row(LinearLayout parent, int label, String value) {

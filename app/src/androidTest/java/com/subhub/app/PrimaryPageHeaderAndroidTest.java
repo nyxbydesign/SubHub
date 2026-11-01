@@ -113,13 +113,13 @@ public final class PrimaryPageHeaderAndroidTest {
             assertEquals(reference, inspectPage(page, name+"-tasks", R.drawable.ic_nav_tasks, R.string.tasks_title, true));
         }
         try (ActivityScenario<StatsActivity> page = ActivityScenario.launch(StatsActivity.class)) {
-            assertEquals(reference, inspectPage(page, name+"-stats", R.drawable.ic_nav_stats, R.string.role_stats, true));
+            assertEquals(reference, inspectPage(page, name+"-profile", R.drawable.ic_nav_profile, R.string.role_profile, true));
             onView(withId(R.id.stats_section_achievements)).perform(click());
             assertEquals(reference, inspectPage(page, name+"-achievements", R.drawable.ic_nav_stats, R.string.achievements_title, true));
             page.recreate();
             assertEquals(reference, inspectPage(page, name+"-achievements-recreated", R.drawable.ic_nav_stats, R.string.achievements_title, false));
-            onView(withId(R.id.stats_section_statistics)).perform(click());
-            assertEquals(reference, inspectPage(page, name+"-stats-return", R.drawable.ic_nav_stats, R.string.role_stats, false));
+            onView(withId(R.id.stats_section_profile)).perform(click());
+            assertEquals(reference, inspectPage(page, name+"-profile-return", R.drawable.ic_nav_profile, R.string.role_profile, false));
         }
         assertEquals(mode, DeviceRolePreferences.get(context));
         assertEquals(dom, ControllerPinManager.isDomModeActive());

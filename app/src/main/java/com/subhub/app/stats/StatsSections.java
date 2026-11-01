@@ -20,8 +20,6 @@ final class StatsSections {
         row.setBaselineAligned(false);
         sections.addView(row, new LinearLayout.LayoutParams(-1, -2));
         section(activity, row, R.string.role_profile, R.id.stats_section_profile, profile, false);
-        section(activity, row, R.string.role_stats, R.id.stats_section_statistics,
-                !achievements && !profile, false);
         section(activity, row, R.string.achievements_title, R.id.stats_section_achievements,
                 achievements, true);
         int required = 0;
@@ -46,11 +44,11 @@ final class StatsSections {
     }
 
     static void select(LinearLayout parent, boolean catalog, boolean profile) {
-        for (int id : new int[] { R.id.stats_section_profile, R.id.stats_section_statistics, R.id.stats_section_achievements }) {
+        for (int id : new int[] { R.id.stats_section_profile, R.id.stats_section_achievements }) {
             Button button = parent.findViewById(id);
             if (button == null) continue;
             boolean selected = profile ? id == R.id.stats_section_profile
-                    : id == (catalog ? R.id.stats_section_achievements : R.id.stats_section_statistics);
+                    : id == (catalog ? R.id.stats_section_achievements : R.id.stats_section_profile);
             button.setSelected(selected);
             button.setBackgroundResource(selected ? R.drawable.bg_primary_button : R.drawable.bg_outline_button);
         }
