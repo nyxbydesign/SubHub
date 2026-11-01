@@ -58,6 +58,12 @@ recreating it or issuing further foreground input. Keep the existing authority
 assertions; a missing resumed host is an observer-lifecycle failure to reconcile,
 not a reason to weaken the application's role guard.
 
+Device-capability transitions through `DeviceRolePreferences.set` require controller
+authentication on established devices. Native fixtures must verify their existing PIN
+before a transition, and restore the required capability mode before deleting their
+role-owned Journal entries. Keep rejected Sub changes as guard evidence rather than
+weakening the setter to satisfy fixture setup.
+
 Use the measured unobscured ScrollView viewport to reveal a compound identity block.
 A scroll offset chosen for a small button can leave a taller name/details group behind
 floating navigation. Retain its bounds and rendered frame, then verify full clearance
