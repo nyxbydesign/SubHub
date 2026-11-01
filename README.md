@@ -122,11 +122,11 @@ Image imports allow up to 25 MiB per source, including profile photos and Popup 
 
 ### Profiles and Activity
 
-Dom uses Overview, People, Activity, and Settings. Long-press a Sub in People to mark a favorite. Overview shows that Sub's identity, current session status, and recorded statistics, followed by the Dom's own Journal, up to three recently added Subs, recent activity, and achievements. Unknown or stale values remain labeled.
+Primary navigation has Overview, Subs (Dom) or Contract (Sub), Tasks, and Profile. Open Settings from the top-right gear on a main page. Long-press a Sub in Subs to mark a favorite. Dom Overview shows that Sub's identity, current session status, and recorded statistics, followed by the Dom's own Journal, up to three recently added Subs, recent activity, and the latest three unlocked Dom badges. Unknown or stale values remain labeled.
 
-Sub Overview shows the authorized Dom profile, current session and remaining time, the Sub's own Journal, tasks, configured app allowances, and achievements. App time offers Show all when more than three configured apps are available. Hidden and permanent session durations retain their existing display rules.
+Sub Overview shows the authorized Dom profile, current session and remaining time, the Sub's own Journal, tasks, configured app allowances, and the latest three unlocked Sub badges. App time offers Show all when more than three configured apps are available. Hidden and permanent session durations retain their existing display rules.
 
-Sub Contract is read-only. It groups the Dom profile, About and authorized shared-Journal link, then Apps & duration and expandable Censor, App limits, Wallet and Atmosphere details. The shared-Journal link becomes unavailable when its audience is withdrawn. Participation controls remain in Profile.
+Sub Contract is read-only. It groups the Dom profile, About and authorized shared-Journal link, then Apps & duration and expandable Censor, App limits, Wallet and Atmosphere details. Apps shows a selection count until expanded. The shared-Journal link becomes unavailable when its audience is withdrawn. The Sub's Profile groups all participation controls, including Tasks, between About me and Journal.
 
 Choose a person to configure their apps, feature settings, artwork, and next-session duration. Start and End act on that selected person where authorized. Stats opens usage summaries and history directly. A Sub can read their applied contract and statistics, start an eligible session, settle Tribute, and use allowed pause or safety controls.
 

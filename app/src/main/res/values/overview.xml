@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <item name="overview_settings" type="id" />
-    <item name="overview_page_style" type="id" />
+    <plurals name="overview_apps_selected">
+        <item quantity="one">%d app selected</item>
+        <item quantity="other">%d apps selected</item>
+    </plurals>
     <string name="overview_view_profile">View profile</string>
     <string name="overview_view_subs">View Subs</string>
     <string name="overview_open_contract">Open Contract</string>

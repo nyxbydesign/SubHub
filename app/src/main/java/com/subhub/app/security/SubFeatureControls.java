@@ -11,7 +11,7 @@ public final class SubFeatureControls {
     public static void bind(Activity activity, LinearLayout parent) {
         parent.removeAllViews();
         if (!DeviceRolePreferences.supportsSub(activity) || DeviceRolePreferences.isDomWorkspace(activity)) return;
-        int inset = PersonUi.dp(activity, 12); parent.setPadding(inset, inset, inset, inset);
+        parent.setPadding(0, PersonUi.dp(activity, 10), 0, 0);
         android.widget.TextView heading = PersonUi.text(parent, activity.getString(R.string.sub_features_title), true);
         heading.setPadding(0, 0, 0, PersonUi.dp(activity, 4));
         if (SubFeaturePolicy.hardcoreOverride(activity))
@@ -31,5 +31,18 @@ public final class SubFeatureControls {
                 com.subhub.app.remote.RemoteFeature.get(activity).changed();
             });
         }
+        android.widget.CompoundButton tasks = grid.editable("tasks", R.string.tasks_title,
+                SubFeaturePolicy.chosen(activity, "tasks"));
+        tasks.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(android.widget.CompoundButton view, boolean checked) {
+                try {
+                    new com.subhub.app.tasks.TaskRepository(activity, com.subhub.app.people.PersonId.LOCAL).setAllowed(checked);
+                } catch (IllegalStateException | SecurityException unavailable) {
+                    view.setOnCheckedChangeListener(null);
+                    view.setChecked(SubFeaturePolicy.chosen(activity, "tasks"));
+                    view.setOnCheckedChangeListener(this);
+                }
+            }
+        });
     }
 }

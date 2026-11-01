@@ -92,8 +92,21 @@ public final class OverviewReferenceAndroidTest {
         assertTrue(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
         OnboardingState.complete(context);
         assertTrue(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).edit().clear().commit());
-        assertTrue(context.getSharedPreferences("betablocker_achievements", 0).edit()
-                .putStringSet("unlocked", Set.of("first_session")).remove("pending_notifications").commit());
+        Set<String> earned = new java.util.LinkedHashSet<>();
+        android.content.SharedPreferences.Editor achievementFixture = context.getSharedPreferences("betablocker_achievements", 0)
+                .edit().remove("pending_notifications");
+        for (boolean dom : new boolean[]{true, false}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            java.util.List<com.subhub.app.stats.AchievementManager.Achievement> catalog =
+                    com.subhub.app.stats.AchievementManager.forWorkspace(context).all();
+            for (int index = 0; index < 4; index++) {
+                String id = catalog.get(index).getId(); earned.add(id);
+                achievementFixture.putLong("unlocked_at." + id, System.currentTimeMillis() - 60_000L * (index + 1))
+                        .remove("history_earned_at." + id);
+            }
+        }
+        assertTrue(achievementFixture.putStringSet("unlocked", earned).commit());
+        ControllerPinManager.enterDomMode();
         journal = JournalRuntime.get(context); recoverJournalFixtures();
         ControllerPinManager.enterDomMode();
         assertTrue(ProfileStore.save(context, true, "Nova", "Clear plans. Room to grow.", avatar(), "Woman", 34));
@@ -147,6 +160,7 @@ public final class OverviewReferenceAndroidTest {
             capture(activity, "overview-dom-recent", "home_recent_person:" + people.get().get(1).id.value());
             capture(activity, "overview-dom-activity", "activity_preview:all");
             capture(activity, "overview-dom-achievements", "achievement_preview");
+            assertRecentBadges(activity);
             scenario.onActivity(a -> {
                 View root = a.findViewById(R.id.home_dom_overview);
                 assertFalse(hasText(root, "A little progress today."));
@@ -180,6 +194,7 @@ public final class OverviewReferenceAndroidTest {
             capture(activity, "overview-sub-journal", "home_journal:sub");
             capture(activity, "overview-sub-app-time", "home_app_time");
             capture(activity, "overview-sub-achievements", "achievement_preview");
+            assertRecentBadges(activity);
             capture(activity, "overview-sub-help", "home_help");
             scenario.onActivity(a -> {
                 assertFalse(a.findViewById(R.id.button_protection).isShown());
@@ -189,6 +204,13 @@ public final class OverviewReferenceAndroidTest {
                 assertEquals("Nova", ((TextView) tagged(a, "home_contract_dom_name")).getText().toString());
                 assertTrue(((TextView) tagged(a, "home_contract_dom_details")).getText().toString().contains("34"));
                 assertCanvasFits((ServiceCountdownView) a.findViewById(R.id.service_countdown));
+                try {
+                    TextView state = (TextView) tagged(a, "overview_session_state");
+                    android.text.Layout layout = state.getLayout(); assertNotNull(layout);
+                    java.lang.reflect.Field field = MainActivity.class.getDeclaredField("roleHome"); field.setAccessible(true);
+                    ((RoleHomePresenter) field.get(a)).renderOverviewSession(true, false);
+                    assertSame("Unchanged clock ticks retain the laid-out session label", layout, state.getLayout());
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
             });
             tap("home_journal:sub"); JournalActivity own = resumed(JournalActivity.class);
             assertFalse(own.getIntent().getBooleanExtra("journal_dom", true));
@@ -197,7 +219,7 @@ public final class OverviewReferenceAndroidTest {
             tap("home_assigned_dom_connection"); ContractActivity contract = resumed(ContractActivity.class);
             assertReadOnly(contract.findViewById(R.id.role_page_body));
             onMain(contract::finish); resumed(MainActivity.class);
-            onView(withId(R.id.overview_settings)).perform(NativeUiActions.revealAboveNavigation(), click());
+            onView(withId(R.id.primary_header_settings)).perform(NativeUiActions.revealAboveNavigation(), click());
             GlobalSettingsActivity settings = resumed(GlobalSettingsActivity.class);
             onMain(settings::finish); resumed(MainActivity.class);
         }
@@ -211,6 +233,22 @@ public final class OverviewReferenceAndroidTest {
             await(() -> tagged(activity, "contract_section:censor") != null);
             capture(activity, "contract-sub-top", null);
             capture(activity, "contract-sub-apps-duration", "person_contract_scope");
+            onMain(() -> {
+                View apps = tagged(activity, "contract_section:apps");
+                assertTrue(hasText(apps, activity.getResources().getQuantityString(R.plurals.overview_apps_selected, 2, 2)));
+                assertFalse(hasText(apps, "Chrome"));
+                android.widget.ImageView arrow = (android.widget.ImageView) ((ViewGroup) apps).getChildAt(((ViewGroup) apps).getChildCount() - 1);
+                assertEquals(90f, arrow.getRotation(), 0f);
+            });
+            tap("contract_section:apps");
+            await(() -> tagged(activity, "contract_details:apps").getVisibility() == View.VISIBLE);
+            capture(activity, "contract-sub-apps-expanded", "contract_details:apps");
+            onMain(() -> {
+                ViewGroup apps = (ViewGroup) tagged(activity, "contract_section:apps");
+                assertEquals(-90f, apps.getChildAt(apps.getChildCount() - 1).getRotation(), 0f);
+                assertTrue(hasText(tagged(activity, "contract_details:apps"), "Chrome"));
+            });
+            tap("contract_section:apps");
             capture(activity, "contract-sub-features", "person_contract_features");
             scenario.onActivity(a -> {
                 View body = a.findViewById(R.id.role_page_body); assertReadOnly(body);
@@ -356,7 +394,8 @@ public final class OverviewReferenceAndroidTest {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
             await(() -> activity.findViewById(R.id.button_protection).isShown());
-            capture(activity, "overview-sub-inactive", null);
+            onMain(() -> activity.findViewById(R.id.button_protection).setTag("overview_session_start"));
+            capture(activity, "overview-sub-inactive", "overview_session_start");
             onMain(() -> assertFalse(activity.findViewById(R.id.service_countdown).isShown()));
         }
     }
@@ -423,6 +462,31 @@ public final class OverviewReferenceAndroidTest {
         PersonSnapshot result = copy(local, syncOverride.get() == null ? local.sync : syncOverride.get(), usage.get());
         ProfileData profile = ownerOverride.get() == null ? local.contractDom : ownerOverride.get();
         return profile == null ? result : result.withContractDom(profile, local.contractDomId);
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void sharedFeatureAndHelpPagesRenderCompactCardsAndTheirExistingHeaderActions() throws Exception {
+        for (Class<? extends Activity> type : List.of(com.subhub.app.settings.SettingsActivity.class,
+                com.subhub.app.appmode.AppModeActivity.class, com.subhub.app.penance.PenanceActivity.class,
+                com.subhub.app.atmosphere.AtmosphereActivity.class, com.subhub.app.help.HelpActivity.class)) {
+            ControllerPinManager.enterDomMode();
+            try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(type)) {
+                Activity activity = resumed(type);
+                await(() -> activity.findViewById(R.id.primary_header_title).isLaidOut()
+                        && !activity.getWindow().getDecorView().isLayoutRequested());
+                String label = "shared-page-" + type.getSimpleName();
+                com.subhub.app.UiRefreshWitness.capture(activity, label);
+                onMain(() -> {
+                    TextView title = activity.findViewById(R.id.primary_header_title);
+                    assertNotNull(title.getLayout());
+                    for (int line = 0; line < title.getLayout().getLineCount(); line++)
+                        assertEquals(0, title.getLayout().getEllipsisCount(line));
+                    if (type == com.subhub.app.help.HelpActivity.class)
+                        assertTrue(activity.findViewById(R.id.button_back).isShown());
+                    else assertTrue(activity.findViewById(R.id.primary_header_settings).isShown());
+                });
+            }
+        }
     }
     private static PersonSnapshot copy(PersonSnapshot p, PersonSnapshot.SyncState sync, List<PersonSnapshot.Allowance> allowances) {
         PersonSnapshot result = new PersonSnapshot(p.id, p.name, p.device, p.contractName, p.serviceLabel, p.connection,
@@ -500,6 +564,26 @@ public final class OverviewReferenceAndroidTest {
         return false;
     }
     private static void assertReadOnly(View root) { assertFalse(hasType(root, EditText.class)); assertFalse(hasType(root, android.widget.CompoundButton.class)); }
+    private static void assertRecentBadges(Activity activity) {
+        onMain(() -> {
+            ViewGroup badges = (ViewGroup) tagged(activity, "achievement_recent_badges");
+            assertNotNull(badges); assertEquals(3, badges.getChildCount());
+            com.subhub.app.stats.AchievementManager manager = com.subhub.app.stats.AchievementManager.forWorkspace(activity);
+            java.util.List<com.subhub.app.stats.AchievementManager.Achievement> earnedBadges = new ArrayList<>();
+            for (com.subhub.app.stats.AchievementManager.Achievement badge : manager.all())
+                if (manager.isUnlocked(badge.getId())) earnedBadges.add(badge);
+            earnedBadges.sort(java.util.Comparator.comparingLong(
+                    (com.subhub.app.stats.AchievementManager.Achievement badge) -> manager.getUnlockedAt(badge.getId())).reversed());
+            long previous = Long.MAX_VALUE;
+            for (int index = 0; index < badges.getChildCount(); index++) {
+                View badge = ((ViewGroup) badges.getChildAt(index)).getChildAt(0);
+                String id = badge.getTag().toString().substring("achievement_recent:".length());
+                assertTrue(manager.isUnlocked(id));
+                assertEquals(earnedBadges.get(index).getId(), id);
+                long earned = manager.getUnlockedAt(id); assertTrue(earned <= previous); previous = earned;
+            }
+        });
+    }
     private static void assertCanvasFits(ServiceCountdownView clock) {
         try {
             java.lang.reflect.Field p = ServiceCountdownView.class.getDeclaredField("text"), l = ServiceCountdownView.class.getDeclaredField("overviewLabel");

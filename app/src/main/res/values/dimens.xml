@@ -8,10 +8,10 @@
     <dimen name="control_min_height">48dp</dimen>
     <dimen name="page_content_tail_gap">16dp</dimen>
     <dimen name="bottom_tab_min_height">64dp</dimen>
-    <dimen name="home_primary_content_gap">12dp</dimen>
-    <dimen name="settings_card_gap">12dp</dimen>
-    <dimen name="settings_first_group_gap">12dp</dimen>
-    <dimen name="settings_group_gap">16dp</dimen>
+    <dimen name="home_primary_content_gap">@dimen/ui_gap_group</dimen>
+    <dimen name="settings_card_gap">@dimen/ui_gap_group</dimen>
+    <dimen name="settings_first_group_gap">@dimen/ui_gap_group</dimen>
+    <dimen name="settings_group_gap">@dimen/ui_gap_group</dimen>
     <dimen name="settings_group_label_gap">4dp</dimen>
     <dimen name="bottom_nav_margin">14dp</dimen>
     <dimen name="bottom_nav_min_margin">2dp</dimen>

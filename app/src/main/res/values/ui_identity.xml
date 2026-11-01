@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compact Wallet spacing is the reference; touch targets remain 48dp. -->
+    <!-- Shared card density; interactive controls retain 48dp touch targets. -->
     <dimen name="ui_gap_inline">4dp</dimen>
     <dimen name="ui_gap_control">8dp</dimen>
-    <dimen name="ui_gap_group">12dp</dimen>
-    <dimen name="ui_gap_section">16dp</dimen>
-    <dimen name="ui_card_padding">16dp</dimen>
-    <dimen name="ui_card_padding_compact">12dp</dimen>
+    <dimen name="ui_gap_group">10dp</dimen>
+    <dimen name="ui_gap_section">14dp</dimen>
+    <dimen name="ui_card_padding">14dp</dimen>
+    <dimen name="ui_card_padding_vertical">10dp</dimen>
+    <dimen name="ui_card_padding_compact">14dp</dimen>
     <dimen name="ui_tile_padding">10dp</dimen>
     <dimen name="ui_control_padding">10dp</dimen>
     <dimen name="ui_control_padding_compact">8dp</dimen>

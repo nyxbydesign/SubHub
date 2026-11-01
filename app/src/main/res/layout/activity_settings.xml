@@ -3,7 +3,7 @@
     <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:focusable="true" android:focusableInTouchMode="true" android:orientation="vertical" android:paddingStart="@dimen/page_margin" android:paddingTop="@dimen/primary_header_top" android:paddingEnd="@dimen/page_margin" android:paddingBottom="@dimen/bottom_nav_clearance">
             <include layout="@layout/view_primary_header" />
-            <LinearLayout android:id="@+id/censor_appearance" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/settings_card_gap" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="12dp">
+            <LinearLayout android:id="@+id/censor_appearance" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/settings_card_gap" android:background="@drawable/bg_card" android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
                 <TextView android:id="@+id/button_appearance_details" style="@style/Widget.SubHub.SectionHeader" android:accessibilityHeading="true" android:minHeight="48dp" android:gravity="center_vertical" android:text="@string/appearance_title" />
                 <LinearLayout android:id="@+id/appearance_content" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
                     <Button android:id="@+id/button_censor_presets" style="@style/Widget.SubHub.DefaultButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_control" android:text="@string/censor_presets_title" />
@@ -119,7 +119,7 @@
                     </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
-            <LinearLayout android:id="@+id/censor_filter_rules" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/settings_card_gap" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="12dp">
+            <LinearLayout android:id="@+id/censor_filter_rules" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/settings_card_gap" android:background="@drawable/bg_card" android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
                 <TextView style="@style/Widget.SubHub.SectionHeader" android:accessibilityHeading="true" android:text="@string/censor_filter_rules_title" />
                 <LinearLayout android:id="@+id/censor_capture_section" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_control" android:orientation="vertical" android:padding="0dp">
                     <TextView android:id="@+id/button_capture_details" style="@style/Widget.SubHub.FieldLabel" android:layout_marginTop="0dp" android:minHeight="48dp" android:gravity="center_vertical" android:text="@string/censor_capture_options" />

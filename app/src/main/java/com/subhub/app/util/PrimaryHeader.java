@@ -54,6 +54,25 @@ public final class PrimaryHeader {
         bind(root, 0, titleRes, 0);
     }
 
+    public static void settings(android.app.Activity activity, View root, boolean selected) {
+        ImageView settings = root.findViewById(R.id.primary_header_settings);
+        if (settings == null) return;
+        settings.setVisibility(View.VISIBLE);
+        settings.setSelected(selected);
+        ViewCompat.setAccessibilityDelegate(settings, new androidx.core.view.AccessibilityDelegateCompat() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host,
+                    androidx.core.view.accessibility.AccessibilityNodeInfoCompat info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(android.widget.Button.class.getName());
+            }
+        });
+        settings.setOnClickListener(view -> {
+            if (!(activity instanceof com.subhub.app.settings.GlobalSettingsActivity))
+                activity.startActivity(new android.content.Intent(activity,
+                        com.subhub.app.settings.GlobalSettingsActivity.class));
+        });
+    }
+
     private static void fitHeader(View root, ImageView icon, TextView title, boolean hasIcon, boolean keepIcon) {
         TextView control = editLockButton(root);
         ViewGroup header = (ViewGroup) view(root);
@@ -87,6 +106,9 @@ public final class PrimaryHeader {
         int iconWidth = root.getResources().getDimensionPixelSize(R.dimen.primary_header_icon_size);
         int textWidth = headerWidth - header.getPaddingLeft() - header.getPaddingRight()
                 - backWidth - iconWidth - Math.round(19 * density) - controlWidth;
+        View settings = root.findViewById(R.id.primary_header_settings);
+        if (settings != null && settings.getVisibility() == View.VISIBLE)
+            textWidth -= Math.round(48 * density);
         if (badge.getVisibility() == View.VISIBLE) textWidth -= (int) Math.ceil(
                 badge.getPaint().measureText(badge.getText().toString()))
                 + badge.getPaddingLeft() + badge.getPaddingRight() + Math.round(8 * density);

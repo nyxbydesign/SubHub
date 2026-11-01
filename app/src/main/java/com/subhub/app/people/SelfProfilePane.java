@@ -29,6 +29,11 @@ public final class SelfProfilePane {
         hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         hero.setTag(dom ? "self_profile:dom" : "self_profile:sub");
         hero.addView(new ProfilePreview(activity, profile, dom, "self_profile", false, null), new LinearLayout.LayoutParams(-1, -2));
+        if (!dom) {
+            LinearLayout features = PersonUi.column(activity); features.setTag("self_profile_features");
+            hero.addView(features, new LinearLayout.LayoutParams(-1, -2));
+            com.subhub.app.security.SubFeatureControls.bind(activity, features);
+        }
         com.subhub.app.journal.JournalPreview.add(hero, dom, PersonId.LOCAL,
                 () -> com.subhub.app.journal.JournalRoutes.own(activity, dom));
         TextView edit = PersonUi.action(hero, R.string.profile_edit, () -> {
@@ -38,6 +43,5 @@ public final class SelfProfilePane {
         edit.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_journal_edit, 0, 0, 0);
         edit.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
         edit.setCompoundDrawablePadding(PersonUi.dp(activity, 8)); edit.setPadding(0, 0, 0, 0);
-        if (!dom) com.subhub.app.security.SubFeatureControls.bind(activity, PersonUi.card(content));
     }
 }

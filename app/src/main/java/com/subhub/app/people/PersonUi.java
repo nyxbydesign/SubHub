@@ -25,10 +25,9 @@ public final class PersonUi {
     public static LinearLayout card(LinearLayout parent) {
         LinearLayout value = column(parent.getContext());
         value.setBackgroundResource(R.drawable.bg_card);
-        int inset = dp(parent.getContext(), 16);
-        value.setPadding(inset, inset, inset, inset);
+        UiIdentity.cardPadding(value);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.bottomMargin = dp(parent.getContext(), 14);
+        params.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         parent.addView(value, params);
         return value;
     }
@@ -53,15 +52,15 @@ public final class PersonUi {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(dp(context, 64));
-        row.setPadding(0, dp(context, 8), 0, dp(context, 8));
+        row.setMinimumHeight(dp(context, 48));
+        row.setPadding(0, dp(context, 6), 0, dp(context, 6));
         if (icon != 0) {
             ImageView image = new ImageView(context);
             image.setImageResource(icon);
             image.setImageTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.accent_text)));
             image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(context, 24), dp(context, 24));
-            imageParams.setMarginEnd(dp(context, 14));
+            imageParams.setMarginEnd(dp(context, 12));
             row.addView(image, imageParams);
         }
         LinearLayout copy = column(context);

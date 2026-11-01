@@ -24,7 +24,7 @@ public final class ContractActivity extends RolePage {
     private String atmosphereSummary;
     private boolean contractUnknown;
     private final Map<String, View> details = new LinkedHashMap<>();
-    private final Map<String, TextView> indicators = new LinkedHashMap<>();
+    private final Map<String, ImageView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
 
     @Override protected void onCreate(Bundle state) {
@@ -43,7 +43,6 @@ public final class ContractActivity extends RolePage {
     }
 
     @Override protected void refresh() {
-        OverviewUi.header(this, true);
         data.cancel("contract-cover");
         loading();
         PersonRepository repository = People.repository(getApplicationContext());
@@ -68,7 +67,6 @@ public final class ContractActivity extends RolePage {
         details.clear();
         indicators.clear();
         headers.clear();
-        OverviewUi.header(this, true);
         TextView readOnly = OverviewUi.text(this, getString(R.string.overview_read_only), 12, false);
         readOnly.setGravity(Gravity.END); readOnly.setPadding(0, 0, 0, PersonUi.dp(this, 6));
         body.addView(readOnly, new LinearLayout.LayoutParams(-1, -2));
@@ -115,10 +113,12 @@ public final class ContractActivity extends RolePage {
                 getString(R.string.overview_unknown), "") : source;
         if (separator) OverviewUi.divider(parent);
         String summary = "atmosphere".equals(value.key) && atmosphereSummary != null ? atmosphereSummary : value.summary;
-        if ("apps".equals(value.key) && !value.apps.isEmpty()) {
-            java.util.List<String> names = new java.util.ArrayList<>();
-            for (PersonSnapshot.App app : value.apps) names.add(app.label);
-            summary = String.join(", ", names);
+        if ("apps".equals(value.key) && !contractUnknown) {
+            int count = value.apps.size();
+            if (count == 0 && !value.details.isEmpty())
+                for (String label : value.details.split("\n")) if (!label.trim().isEmpty()) count++;
+            if (count > 0 || value.summary.equals(getResources().getQuantityString(R.plurals.apps_included_count, 0, 0)))
+                summary = getResources().getQuantityString(R.plurals.overview_apps_selected, count, count);
         }
         Runnable expand = value.details.isEmpty() ? null : () -> {
             expandedSection = value.key.equals(expandedSection) ? "" : value.key;
@@ -132,7 +132,7 @@ public final class ContractActivity extends RolePage {
         LinearLayout header = OverviewUi.row(parent, actualIcon, title, summary, expand);
         header.setTag("contract_section:" + value.key);
         if (value.details.isEmpty()) return;
-        TextView indicator = (TextView) header.getChildAt(header.getChildCount() - 1);
+        ImageView indicator = (ImageView) header.getChildAt(header.getChildCount() - 1);
         LinearLayout detail = PersonUi.column(this);
         detail.setTag("contract_details:" + value.key);
         detail.setPadding(PersonUi.dp(this, 36), PersonUi.dp(this, 4), 0, PersonUi.dp(this, 8));
@@ -154,7 +154,7 @@ public final class ContractActivity extends RolePage {
         for (String key : details.keySet()) {
             boolean expanded = key.equals(expandedSection);
             details.get(key).setVisibility(expanded ? View.VISIBLE : View.GONE);
-            indicators.get(key).setText(expanded ? "⌃" : "⌄");
+            indicators.get(key).setRotation(expanded ? -90 : 90);
             ViewCompat.setStateDescription(headers.get(key), getString(expanded
                     ? R.string.section_expanded : R.string.section_collapsed));
         }

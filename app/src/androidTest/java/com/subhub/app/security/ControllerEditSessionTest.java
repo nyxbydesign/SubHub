@@ -71,7 +71,7 @@ public final class ControllerEditSessionTest {
                         assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_stats).getVisibility());
                         assertEquals(
                                 View.VISIBLE,
-                                activity.findViewById(R.id.nav_settings).getVisibility());
+                                activity.findViewById(R.id.primary_header_settings).getVisibility());
                         assertTrue(activity.findViewById(R.id.button_protection).isEnabled());
                         assertEquals(
                                 View.VISIBLE,

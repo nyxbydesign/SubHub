@@ -1,7 +1,6 @@
 package com.subhub.app.people;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
@@ -9,10 +8,8 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
-import com.subhub.app.settings.GlobalSettingsActivity;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,56 +17,12 @@ import java.util.List;
 public final class OverviewUi {
     private OverviewUi() { }
 
-    public static void header(AppCompatActivity activity, boolean enabled) {
-        ViewGroup header = activity.findViewById(R.id.primary_header);
-        ViewGroup content = activity.findViewById(android.R.id.content);
-        View page = content.getChildAt(0);
-        if (!Boolean.valueOf(enabled).equals(page.getTag(R.id.overview_page_style))) {
-            int background = enabled ? R.drawable.bg_overview_page : R.drawable.bg_main;
-            page.setBackgroundResource(background); activity.getWindow().setBackgroundDrawableResource(background);
-            page.setTag(R.id.overview_page_style, enabled);
-        }
-        View role = header.findViewById(R.id.button_edit_lock);
-        if (enabled && !(role.getBackground() instanceof android.graphics.drawable.InsetDrawable)) {
-            int start = role.getPaddingStart(), top = role.getPaddingTop(), end = role.getPaddingEnd(), bottom = role.getPaddingBottom();
-            role.setBackground(new android.graphics.drawable.InsetDrawable(activity.getDrawable(R.drawable.bg_shell_role), 0, dp(activity, 8), 0, dp(activity, 8)));
-            role.setPaddingRelative(start, top, end, bottom);
-        } else if (!enabled && role.getBackground() instanceof android.graphics.drawable.InsetDrawable) role.setBackgroundResource(R.drawable.bg_shell_role);
-        ImageView settings = header.findViewById(R.id.overview_settings);
-        if (settings == null && enabled) {
-            settings = new ImageView(activity);
-            settings.setId(R.id.overview_settings);
-            settings.setImageResource(R.drawable.ic_overview_settings);
-            settings.setImageTintList(android.content.res.ColorStateList.valueOf(activity.getColor(R.color.text_primary)));
-            settings.setContentDescription(activity.getString(R.string.global_settings_title));
-            settings.setPadding(dp(activity, 12), dp(activity, 12), dp(activity, 12), dp(activity, 12));
-            header.addView(settings, new LinearLayout.LayoutParams(dp(activity, 48), dp(activity, 48)));
-            click(settings, () -> activity.startActivity(new Intent(activity, GlobalSettingsActivity.class)));
-        }
-        if (settings != null) settings.setVisibility(enabled ? View.VISIBLE : View.GONE);
-        TextView brand = header.findViewById(R.id.primary_header_brand);
-        TextView title = header.findViewById(R.id.primary_header_title);
-        if (enabled) { brand.setTextSize(24); title.setTextSize(18); }
-        else {
-            brand.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, activity.getResources().getDimension(R.dimen.ui_text_label));
-            title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, activity.getResources().getDimension(R.dimen.ui_text_title));
-        }
-        if (enabled) {
-            header.setBackground(null);
-            header.findViewById(R.id.primary_header_icon).setVisibility(View.GONE);
-            View copy = header.findViewById(R.id.primary_header_copy);
-            ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) copy.getLayoutParams();
-            if (params.getMarginStart() != 0) { params.setMarginStart(0); copy.setLayoutParams(params); }
-        } else header.setBackgroundResource(R.drawable.bg_primary_header_rule);
-    }
-
     public static LinearLayout card(LinearLayout parent) {
         LinearLayout card = PersonUi.column(parent.getContext());
         card.setBackgroundResource(R.drawable.bg_overview_card);
-        int padding = dp(parent.getContext(), 14);
-        card.setPadding(padding, dp(parent.getContext(), 10), padding, dp(parent.getContext(), 10));
+        com.subhub.app.util.UiIdentity.cardPadding(card);
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.bottomMargin = dp(parent.getContext(), 10);
+        size.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
         parent.addView(card, size);
         return card;
     }
@@ -154,9 +107,11 @@ public final class OverviewUi {
         if (!stacked) detailSize.setMarginStart(dp(context, 10));
         copy.addView(detail, detailSize);
         if (action != null) {
-            TextView arrow = text(context, "›", 22, false); arrow.setGravity(Gravity.CENTER);
+            ImageView arrow = new ImageView(context);
+            arrow.setImageResource(R.drawable.ic_overview_chevron);
+            arrow.setImageTintList(android.content.res.ColorStateList.valueOf(context.getColor(R.color.text_secondary)));
             arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(arrow, new LinearLayout.LayoutParams(dp(context, 20), -2)); click(row, action);
+            row.addView(arrow, new LinearLayout.LayoutParams(dp(context, 20), dp(context, 20))); click(row, action);
         }
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2)); return row;
     }

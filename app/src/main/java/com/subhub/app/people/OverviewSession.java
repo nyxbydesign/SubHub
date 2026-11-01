@@ -23,6 +23,7 @@ final class OverviewSession {
     private final int[] originalPadding, commitmentPadding;
     private final int originalTopMargin;
     private boolean compact;
+    private int renderedState;
 
     OverviewSession(AppCompatActivity activity) {
         this.activity = activity;
@@ -67,7 +68,7 @@ final class OverviewSession {
         status.setVisibility(enabled ? View.GONE : View.VISIBLE);
         if (enabled) {
             service.setBackgroundResource(R.drawable.bg_overview_card);
-            service.setPadding(dp(14), dp(10), dp(14), dp(10));
+            com.subhub.app.util.UiIdentity.cardPadding(service);
             commitment.setPadding(0, dp(8), 0, 0);
             boolean stacked = activity.getResources().getConfiguration().fontScale >= 1.3f;
             header.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
@@ -92,8 +93,11 @@ final class OverviewSession {
     }
 
     void state(boolean active, boolean paused) {
-        state.setText(paused ? R.string.overview_session_paused : active
-                ? R.string.overview_session_active : R.string.overview_session_inactive);
+        int next = paused ? R.string.overview_session_paused : active
+                ? R.string.overview_session_active : R.string.overview_session_inactive;
+        if (renderedState == next) return;
+        renderedState = next;
+        state.setText(next);
         stateDot.setBackgroundTintList(android.content.res.ColorStateList.valueOf(activity.getColor(
                 active && !paused ? R.color.home_composition_current : R.color.text_muted)));
     }

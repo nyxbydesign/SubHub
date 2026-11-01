@@ -31,9 +31,8 @@ public abstract class PreferencePage extends AppCompatActivity {
     protected LinearLayout card(LinearLayout parent) {
         LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL);
         card.setBackgroundResource(R.drawable.bg_card);
-        int inset = getResources().getDimensionPixelSize(R.dimen.ui_card_padding_compact);
         int gap = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        card.setPadding(inset, gap, inset, gap);
+        UiIdentity.cardPadding(card);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = gap;
         parent.addView(card, params); return card;
     }

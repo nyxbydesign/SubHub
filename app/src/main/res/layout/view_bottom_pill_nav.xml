@@ -130,18 +130,4 @@
             android:text="@string/nav_atmosphere" />
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/nav_settings"
-        style="@style/Widget.SubHub.BottomTab"
-        android:contentDescription="@string/nav_settings">
-        <ImageView
-            android:id="@+id/nav_settings_icon"
-            style="@style/Widget.SubHub.BottomTabIcon"
-            android:contentDescription="@null"
-            android:src="@drawable/ic_tab_settings" />
-        <TextView
-            android:id="@+id/nav_settings_label"
-            style="@style/Widget.SubHub.BottomTabLabel"
-            android:text="@string/nav_settings" />
-    </LinearLayout>
 </GridLayout>

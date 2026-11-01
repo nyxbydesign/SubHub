@@ -94,7 +94,7 @@
                         <TextView android:labelFor="@id/rule_task_failure_amount" style="@style/Widget.SubHub.RuleCostLabel" android:layout_marginTop="@dimen/ui_gap_control" />
                         <EditText android:id="@+id/rule_task_failure_amount" style="@style/Widget.SubHub.MoneyInput" />
                     </LinearLayout>
-                    <LinearLayout android:id="@+id/tamper_rule_panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="@dimen/ui_card_padding_compact">
+                    <LinearLayout android:id="@+id/tamper_rule_panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_card" android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
                         <com.subhub.app.util.StateToggle android:id="@+id/rule_tamper_enabled" style="@style/Widget.SubHub.RuleToggle" android:text="@string/penance_rule_tamper_title" />
                         <TextView style="@style/Widget.SubHub.FieldHelp" android:text="@string/penance_rule_tamper_help" />
                         <com.subhub.app.util.FormRow android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/ui_gap_control">

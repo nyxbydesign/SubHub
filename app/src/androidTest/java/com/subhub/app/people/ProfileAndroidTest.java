@@ -157,6 +157,49 @@ public final class ProfileAndroidTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal() throws Exception {
+        assertTrue(ProfileStore.save(context, false, "Milo", "A steady routine and clear communication.", ""));
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
+                .putBoolean("tasks", true).putBoolean("hardcore_locally_consented", false).commit());
+        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks") != null);
+            scenario.onActivity(a -> {
+                View root = a.findViewById(android.R.id.content);
+                ViewGroup hero = root.findViewWithTag("self_profile:sub");
+                View features = root.findViewWithTag("self_profile_features");
+                View preview = root.findViewWithTag("profile_preview:sub");
+                View journal = root.findViewWithTag("profile_journal");
+                while (journal.getParent() != hero) journal = (View) journal.getParent();
+                assertEquals(hero, features.getParent());
+                assertTrue(hero.indexOfChild(preview) < hero.indexOfChild(features));
+                assertTrue(hero.indexOfChild(features) < hero.indexOfChild(journal));
+                assertNotNull(root.findViewWithTag("self_profile_about"));
+                assertEquals(6, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
+            });
+            onView(tag("sub_feature:censor")).perform(revealAboveNavigation());
+            capture(scenario, "sub-profile-feature-group-top").recycle();
+            onView(tag("sub_feature:tasks")).perform(revealAboveNavigation(), click());
+            assertFalse(SubFeaturePolicy.chosen(context, "tasks"));
+            assertFalse(new com.subhub.app.tasks.TaskRepository(context, PersonId.LOCAL).allowed());
+            capture(scenario, "sub-profile-tasks-off-before-journal").recycle();
+            scenario.recreate();
+            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks") != null);
+            scenario.onActivity(a -> assertFalse(((CompoundButton) a.findViewById(android.R.id.content)
+                    .findViewWithTag("sub_feature:tasks")).isChecked()));
+            long before = System.currentTimeMillis();
+            onView(tag("sub_feature:tasks")).perform(revealAboveNavigation(), click());
+            assertTrue(SubFeaturePolicy.chosen(context, "tasks"));
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0) >= before);
+            scenario.onActivity(a -> {
+                CompoundButton stale = a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks");
+                ControllerPinManager.enterDomMode(); stale.performClick();
+                assertTrue(SubFeaturePolicy.chosen(context, "tasks")); assertTrue(stale.isChecked());
+                ControllerPinManager.enterSubMode();
+            });
+        }
+    }
+
     @Test public void nativeRoleSwitchesKeepDomAndSubIdentitySeparate() {
         assertTrue(ProfileStore.save(context, false, "Fixture Sub", "Sub bio", ""));
         ControllerPinManager.enterDomMode();
@@ -500,7 +543,7 @@ public final class ProfileAndroidTest {
             capture(scenario, "compact-editable-allowances").recycle();
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup grid = root.findViewWithTag("feature_consent_grid");
-                assertEquals(5, grid.getChildCount());
+                assertEquals(6, grid.getChildCount());
                 for (String key : SubFeaturePolicy.FEATURES) {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
                     assertNotNull(choice); assertTrue(choice.getHeight() >= PersonUi.dp(a, 48));
@@ -510,7 +553,7 @@ public final class ProfileAndroidTest {
                 }
                 if (a.getResources().getConfiguration().fontScale <= 1.0f)
                     assertEquals(grid.getChildAt(0).getTop(), grid.getChildAt(1).getTop());
-                textFits(root);
+                textFits(grid);
             });
             onView(tag("sub_feature:censor")).perform(revealAboveNavigation(), click());
             assertTrue(SubFeaturePolicy.chosen(context, "censor")); scenario.recreate();

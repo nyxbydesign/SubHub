@@ -5,7 +5,7 @@ import android.widget.TextView;
 
 import androidx.annotation.DimenRes;
 
-/** The same scalable typography tokens for XML and dynamically created UI. */
+/** Shared typography and spacing tokens for XML and dynamically created UI. */
 public final class UiIdentity {
     private UiIdentity() {}
 
@@ -17,5 +17,11 @@ public final class UiIdentity {
         android.graphics.Typeface typeface = view.getTypeface();
         view.setInputType(type);
         view.setTypeface(typeface);
+    }
+
+    public static void cardPadding(android.view.View view) {
+        int side = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding);
+        int vertical = view.getResources().getDimensionPixelSize(com.subhub.app.R.dimen.ui_card_padding_vertical);
+        view.setPaddingRelative(side, vertical, side, vertical);
     }
 }

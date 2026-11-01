@@ -84,7 +84,7 @@ public final class SubHubNavigation {
         setVisible(root.findViewById(R.id.nav_activity), false);
         setVisible(root.findViewById(R.id.nav_contract), !domMode);
         setVisible(root.findViewById(R.id.nav_stats), true);
-        setVisible(root.findViewById(R.id.nav_settings), true);
+        PrimaryHeader.settings(activity, root, active == Screen.SETTINGS);
         Screen selected = active;
         if (active == Screen.STATS) selected = Screen.PROFILE;
         if (active == Screen.ACTIVITY) selected = domMode ? Screen.PEOPLE : Screen.HOME;
@@ -112,9 +112,6 @@ public final class SubHubNavigation {
         bindTab(activity, root.findViewById(R.id.nav_stats),
                 root.findViewById(R.id.nav_stats_icon), root.findViewById(R.id.nav_stats_label),
                 selected, Screen.PROFILE, com.subhub.app.people.ProfileActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_settings),
-                root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
-                selected, Screen.SETTINGS, GlobalSettingsActivity.class);
         bindNavigationLayout(navigation);
         bindActivityUnread(activity, root, domMode && activityAvailable && ControllerPinManager.isDomModeActive());
     }

@@ -123,17 +123,17 @@ public final class HelpActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackgroundResource(R.drawable.bg_card);
-        card.setPadding(dp(16), 0, dp(16), 0);
+        card.setPadding(dp(14), 0, dp(14), 0);
         card.setTag("help_question:" + getResources().getResourceEntryName(title));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        if (binding.helpSections.getChildCount() > 0) params.topMargin = dp(8);
+        if (binding.helpSections.getChildCount() > 0) params.topMargin = dp(10);
         card.setLayoutParams(params);
         LinearLayout headerRow = new LinearLayout(this);
         headerRow.setOrientation(LinearLayout.HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
-        headerRow.setPadding(0, dp(12), 0, dp(12));
-        headerRow.setMinimumHeight(dp(56));
+        headerRow.setPadding(0, dp(6), 0, dp(6));
+        headerRow.setMinimumHeight(dp(48));
         headerRow.setFocusable(true);
         android.util.TypedValue ripple = new android.util.TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);

@@ -25,6 +25,7 @@ public final class AchievementPreviewView extends LinearLayout {
         setBackgroundResource(R.drawable.bg_home_composition_stat);
         int padding = PersonUi.dp(context, 14);
         setPadding(padding, compact ? PersonUi.dp(context, 4) : padding, padding, compact ? PersonUi.dp(context, 4) : padding);
+        if (!compact) com.subhub.app.util.UiIdentity.cardPadding(this);
         if (compact) setBackgroundResource(R.drawable.bg_overview_card);
         setMinimumHeight(PersonUi.dp(context, 48));
         setFocusable(true);
@@ -50,7 +51,8 @@ public final class AchievementPreviewView extends LinearLayout {
         java.util.Collections.addAll(signature, preview.fingerprint, preview.achievements.getTotalCount(),
                 preview.achievements.progressCurrency(), preview.next == null || preview.progress.isKnown());
         for (AchievementManager.Achievement achievement : preview.achievements.all())
-            java.util.Collections.addAll(signature, achievement.getId(), preview.achievements.isUnlocked(achievement.getId()));
+            java.util.Collections.addAll(signature, achievement.getId(), preview.achievements.isUnlocked(achievement.getId()),
+                    preview.achievements.getUnlockedAt(achievement.getId()));
         if (signature.equals(rendered) && getChildCount() > 0) return;
         rendered = signature;
         removeAllViews();
@@ -60,6 +62,7 @@ public final class AchievementPreviewView extends LinearLayout {
                     getContext().getString(R.string.overview_achievements_count,
                             preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()),
                     () -> getContext().startActivity(new Intent(getContext(), AchievementsActivity.class)));
+            recentBadges(preview.achievements);
             return;
         }
         PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
@@ -97,6 +100,28 @@ public final class AchievementPreviewView extends LinearLayout {
         progress.setProgress(preview.next == null ? 100 : preview.progress.percent());
         progress.setProgressTintList(ColorStateList.valueOf(getContext().getColor(R.color.accent_text)));
         addView(progress, new LayoutParams(-1, PersonUi.dp(getContext(), 6)));
+    }
+
+    private void recentBadges(AchievementManager achievements) {
+        java.util.List<AchievementManager.Achievement> unlocked = new java.util.ArrayList<>();
+        for (AchievementManager.Achievement achievement : achievements.all())
+            if (achievements.isUnlocked(achievement.getId())) unlocked.add(achievement);
+        unlocked.sort(java.util.Comparator.comparingLong(
+                (AchievementManager.Achievement achievement) -> achievements.getUnlockedAt(achievement.getId())).reversed());
+        if (unlocked.isEmpty()) return;
+        LinearLayout badges = new LinearLayout(getContext());
+        badges.setGravity(Gravity.CENTER_VERTICAL);
+        badges.setTag("achievement_recent_badges");
+        LayoutParams size = new LayoutParams(-1, -2); size.bottomMargin = PersonUi.dp(getContext(), 6);
+        addView(badges, size);
+        for (AchievementManager.Achievement achievement : unlocked.subList(0, Math.min(3, unlocked.size()))) {
+            LinearLayout cell = new LinearLayout(getContext()); cell.setGravity(Gravity.CENTER);
+            badges.addView(cell, new LayoutParams(0, -2, 1));
+            AchievementBadgeView badge = new AchievementBadgeView(getContext());
+            badge.bind(achievement.getBadgeArtRes(), true, false, getContext().getString(achievement.getName()));
+            badge.setTag("achievement_recent:" + achievement.getId());
+            cell.addView(badge, new LayoutParams(PersonUi.dp(getContext(), 56), PersonUi.dp(getContext(), 56)));
+        }
     }
 
     private String formatProgress(HomeAchievementPreview preview) {

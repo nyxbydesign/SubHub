@@ -86,7 +86,7 @@ public final class JournalPreview extends LinearLayout {
             addView(row, new LayoutParams(-1, -2)); entryAction = this;
             com.subhub.app.people.OverviewUi.click(this, open); return;
         }
-        setOrientation(VERTICAL); setPadding(0, PersonUi.dp(activity, 14), 0, 0);
+        setOrientation(VERTICAL); setPadding(0, PersonUi.dp(activity, 10), 0, 0);
         View divider = new View(activity); divider.setBackgroundColor(activity.getColor(R.color.outline_subtle));
         addView(divider, new LayoutParams(-1, PersonUi.dp(activity, 1)));
         LinearLayout action = PersonUi.row(this, R.drawable.ic_journal, activity.getString(link ? R.string.overview_shared_journal : R.string.journal_title), "", () -> {

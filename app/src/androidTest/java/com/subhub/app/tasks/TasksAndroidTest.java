@@ -276,7 +276,8 @@ public final class TasksAndroidTest {
             awaitTag(page, "tasks_create"); tap("tasks_create");
             edit("tasks_title", titlePrefix + "must not be submitted");
             switchRole(page, false);
-            awaitTag(page, "tasks_allowed");
+            awaitTag(page, "tasks_target");
+            onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
             onView(withTagValue(is("tasks_save"))).check(doesNotExist());
             onView(withTagValue(is("tasks_create"))).check(doesNotExist());
             assertTrue(store.load(scope).definitions().isEmpty());
@@ -288,14 +289,26 @@ public final class TasksAndroidTest {
 
     @Test public void localSubOwnsOptOutAcrossRecreationAndDomCannotEditIt() throws Exception {
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<TasksActivity> page = launch()) {
-            awaitTag(page, "tasks_allowed"); tap("tasks_allowed");
+        try (ActivityScenario<com.subhub.app.people.ProfileActivity> profile = ActivityScenario.launch(com.subhub.app.people.ProfileActivity.class)) {
+            awaitTag(profile, "sub_feature:tasks"); tap("sub_feature:tasks");
             await(() -> !repository.allowed());
-            page.recreate(); awaitTag(page, "tasks_allowed");
+            profile.recreate(); awaitTag(profile, "sub_feature:tasks");
+            profile.onActivity(activity -> assertFalse(((android.widget.CompoundButton) activity.findViewById(android.R.id.content)
+                    .findViewWithTag("sub_feature:tasks")).isChecked()));
+        }
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "tasks_target");
+            onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
             onView(withText(R.string.tasks_disabled)).check(matches(isDisplayed()));
             switchRole(page, true);
             awaitTag(page, "tasks_target");
             onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
+            assertFalse(repository.allowed());
+        }
+        ControllerPinManager.enterDomMode();
+        try (ActivityScenario<com.subhub.app.people.ProfileActivity> profile = ActivityScenario.launch(com.subhub.app.people.ProfileActivity.class)) {
+            awaitTag(profile, "self_profile:dom");
+            onView(withTagValue(is("sub_feature:tasks"))).check(doesNotExist());
             assertFalse(repository.allowed());
         }
     }
@@ -552,7 +565,7 @@ public final class TasksAndroidTest {
             capture("tasks-detail");
             androidx.test.espresso.Espresso.pressBack();
             awaitTag(page, "task_open:" + occurrenceId(task));
-            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_settings)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.primary_header_settings)).perform(click());
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.nav_tasks)).perform(click());
             awaitTag(page, "task_open:" + occurrenceId(task));
             assertEquals(Lifecycle.State.RESUMED, page.getState());
