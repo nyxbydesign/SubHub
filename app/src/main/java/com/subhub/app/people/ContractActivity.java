@@ -21,6 +21,8 @@ import java.util.Map;
 public final class ContractActivity extends RolePage {
     private String expandedSection = "";
     private boolean expandedAbout;
+    private String atmosphereSummary;
+    private boolean contractUnknown;
     private final Map<String, View> details = new LinkedHashMap<>();
     private final Map<String, TextView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
@@ -41,24 +43,42 @@ public final class ContractActivity extends RolePage {
     }
 
     @Override protected void refresh() {
+        OverviewUi.header(this, true);
         data.cancel("contract-cover");
         loading();
         PersonRepository repository = People.repository(getApplicationContext());
-        data.load("contract", () -> repository.load(PersonId.LOCAL), this::render, failure -> unavailable());
+        android.content.Context application = getApplicationContext();
+        data.load("contract", () -> {
+            PersonSnapshot person = repository.load(PersonId.LOCAL);
+            String atmosphere = null;
+            if (person.sync.contract == PersonSnapshot.Freshness.CURRENT) {
+                boolean whispers = new com.subhub.app.settings.FeatureModuleManager(application).isSubliminalEnabled();
+                boolean popup = com.subhub.app.popup.PopupStormSettings.load(application).isEnabled();
+                atmosphere = application.getString(R.string.overview_atmosphere_states,
+                        application.getString(whispers ? R.string.role_enabled : R.string.role_disabled),
+                        application.getString(popup ? R.string.role_enabled : R.string.role_disabled));
+            }
+            return new ContractData(person, atmosphere);
+        }, value -> { atmosphereSummary = value.atmosphere; render(value.person); }, failure -> unavailable());
     }
 
     private void render(PersonSnapshot person) {
+        contractUnknown = person.sync.contract == PersonSnapshot.Freshness.UNKNOWN;
         body.removeAllViews();
         details.clear();
         indicators.clear();
         headers.clear();
-        LinearLayout identity = PersonUi.card(body);
-        identity.setBackgroundResource(R.drawable.bg_home_composition_person);
+        OverviewUi.header(this, true);
+        TextView readOnly = OverviewUi.text(this, getString(R.string.overview_read_only), 12, false);
+        readOnly.setGravity(Gravity.END); readOnly.setPadding(0, 0, 0, PersonUi.dp(this, 6));
+        body.addView(readOnly, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout identity = OverviewUi.card(body);
+        OverviewUi.heading(identity, R.string.overview_profile, 0, null);
         identity.setTag("person_contract_identity");
         ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
-        LinearLayout scope = PersonUi.card(body);
+        LinearLayout scope = OverviewUi.card(body);
         scope.setTag("person_contract_scope");
-        PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
+        OverviewUi.heading(scope, R.string.overview_apps_duration, 0, null);
         if (person.sync.hasPendingConfiguration()) PersonUi.text(scope, getString(R.string.role_changes_pending), false);
         if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(scope,
                 getString(person.sync.contract == PersonSnapshot.Freshness.STALE
@@ -73,11 +93,12 @@ public final class ContractActivity extends RolePage {
         section(scope, duration, R.drawable.ic_nav_limits, true);
         LinearLayout features = null;
         for (PersonSnapshot.Section value : person.sections) {
-            if ("apps".equals(value.key) || "duration".equals(value.key)) continue;
+            if (!"censor".equals(value.key) && !"limits".equals(value.key)
+                    && !"wallet".equals(value.key) && !"atmosphere".equals(value.key)) continue;
             if (features == null) {
-                features = PersonUi.card(body);
+                features = OverviewUi.card(body);
                 features.setTag("person_contract_features");
-                PersonUi.text(features, getString(R.string.profile_contract_features), true);
+                OverviewUi.heading(features, R.string.overview_features, 0, null);
             }
             section(features, value, PersonUi.icon(value.key), features.getChildCount() > 1);
         }
@@ -89,67 +110,43 @@ public final class ContractActivity extends RolePage {
         return null;
     }
 
-    private void section(LinearLayout parent, PersonSnapshot.Section value, int icon, boolean separator) {
-        if (separator) {
-            View line = new View(this);
-            line.setBackgroundColor(getColor(R.color.outline_subtle));
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, PersonUi.dp(this, 1));
-            size.setMarginStart(PersonUi.dp(this, 48));
-            parent.addView(line, size);
+    private void section(LinearLayout parent, PersonSnapshot.Section source, int icon, boolean separator) {
+        PersonSnapshot.Section value = contractUnknown ? new PersonSnapshot.Section(source.key, source.title,
+                getString(R.string.overview_unknown), "") : source;
+        if (separator) OverviewUi.divider(parent);
+        String summary = "atmosphere".equals(value.key) && atmosphereSummary != null ? atmosphereSummary : value.summary;
+        if ("apps".equals(value.key) && !value.apps.isEmpty()) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (PersonSnapshot.App app : value.apps) names.add(app.label);
+            summary = String.join(", ", names);
         }
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinimumHeight(PersonUi.dp(this, 64));
-        header.setPadding(0, PersonUi.dp(this, 12), 0, PersonUi.dp(this, 12));
+        Runnable expand = value.details.isEmpty() ? null : () -> {
+            expandedSection = value.key.equals(expandedSection) ? "" : value.key;
+            updateDetails();
+        };
+        String title = "limits".equals(value.key) ? getString(R.string.overview_app_limits)
+                : "wallet".equals(value.key) ? getString(R.string.overview_wallet)
+                : "duration".equals(value.key) ? getString(R.string.role_service_duration) : value.title;
+        int actualIcon = "censor".equals(value.key) ? R.drawable.ic_overview_filter
+                : "duration".equals(value.key) || "limits".equals(value.key) ? R.drawable.ic_overview_clock : icon;
+        LinearLayout header = OverviewUi.row(parent, actualIcon, title, summary, expand);
         header.setTag("contract_section:" + value.key);
-        ImageView image = new ImageView(this);
-        image.setImageResource(icon);
-        image.setImageTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
-        image.setBackgroundResource(R.drawable.bg_profile_avatar);
-        image.setPadding(PersonUi.dp(this, 7), PersonUi.dp(this, 7), PersonUi.dp(this, 7), PersonUi.dp(this, 7));
-        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        header.addView(image, new LinearLayout.LayoutParams(PersonUi.dp(this, 36), PersonUi.dp(this, 36)));
-        LinearLayout copy = PersonUi.column(this);
-        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
-        copySize.setMarginStart(PersonUi.dp(this, 12));
-        header.addView(copy, copySize);
-        PersonUi.text(copy, value.title, true);
-        if (!value.summary.isEmpty()) PersonUi.text(copy, value.summary, false);
-        parent.addView(header, new LinearLayout.LayoutParams(-1, -2));
         if (value.details.isEmpty()) return;
-        TextView indicator = new TextView(this);
-        indicator.setTextSize(16);
-        indicator.setGravity(Gravity.CENTER);
-        indicator.setTextColor(getColor(R.color.accent_text));
-        indicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        header.addView(indicator, new LinearLayout.LayoutParams(PersonUi.dp(this, 32), -2));
+        TextView indicator = (TextView) header.getChildAt(header.getChildCount() - 1);
         LinearLayout detail = PersonUi.column(this);
         detail.setTag("contract_details:" + value.key);
-        detail.setBackgroundResource(R.drawable.bg_home_composition_stat);
-        detail.setPadding(PersonUi.dp(this, 12), PersonUi.dp(this, 4), PersonUi.dp(this, 12), PersonUi.dp(this, 8));
+        detail.setPadding(PersonUi.dp(this, 36), PersonUi.dp(this, 4), 0, PersonUi.dp(this, 8));
         if ("apps".equals(value.key)) ContractAppList.add(detail, value);
         else for (String block : value.details.split("\\n\\s*\\n")) {
+            if ("atmosphere".equals(value.key) && block.startsWith(getString(R.string.atmosphere_whispers_title) + "\n"))
+                block = getString(R.string.overview_whispers) + block.substring(block.indexOf('\n'));
             SpannableString copyText = new SpannableString(block);
-            int firstLine = "apps".equals(value.key) ? -1 : block.indexOf('\n');
+            int firstLine = block.indexOf('\n');
             if (firstLine > 0) copyText.setSpan(new StyleSpan(Typeface.BOLD), 0, firstLine, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             PersonUi.text(detail, copyText, false);
         }
-        LinearLayout.LayoutParams detailSize = new LinearLayout.LayoutParams(-1, -2);
-        detailSize.bottomMargin = PersonUi.dp(this, 10);
-        parent.addView(detail, detailSize);
-        details.put(value.key, detail);
-        indicators.put(value.key, indicator);
-        headers.put(value.key, header);
-        header.setFocusable(true);
-        header.setClickable(true);
-        android.util.TypedValue ripple = new android.util.TypedValue();
-        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-        header.setForeground(getDrawable(ripple.resourceId));
-        ViewCompat.setScreenReaderFocusable(header, true);
-        header.setOnClickListener(ignored -> {
-            expandedSection = value.key.equals(expandedSection) ? "" : value.key;
-            updateDetails();
-        });
+        parent.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        details.put(value.key, detail); indicators.put(value.key, indicator); headers.put(value.key, header);
     }
 
     private void updateDetails() {
@@ -161,5 +158,11 @@ public final class ContractActivity extends RolePage {
             ViewCompat.setStateDescription(headers.get(key), getString(expanded
                     ? R.string.section_expanded : R.string.section_collapsed));
         }
+    }
+
+    private static final class ContractData {
+        final PersonSnapshot person;
+        final String atmosphere;
+        ContractData(PersonSnapshot person, String atmosphere) { this.person = person; this.atmosphere = atmosphere; }
     }
 }

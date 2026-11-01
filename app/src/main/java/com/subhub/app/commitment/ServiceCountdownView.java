@@ -32,10 +32,11 @@ public final class ServiceCountdownView extends View {
     private final RectF circle = new RectF(), center = new RectF();
     private final AsyncUiScope jobs;
     private final SettingsRepository settings;
-    private String label = "", requestedMask;
+    private String label = "", overviewLabel = "", requestedMask;
     private float fraction;
     private boolean hidden;
     private boolean permanent;
+    private boolean overview;
     private Mask mask;
     private ValueAnimator reveal;
 
@@ -60,6 +61,12 @@ public final class ServiceCountdownView extends View {
         permanent = false;
         hidden = hideTime;
         label = CommitmentActivity.formatDuration(remaining);
+        long seconds = Math.max(0L, (remaining + 999L) / 1000L);
+        overviewLabel = seconds >= 86400L
+                ? getContext().getString(R.string.overview_days_hours, seconds / 86400L, seconds % 86400L / 3600L)
+                : seconds >= 3600L
+                        ? getContext().getString(R.string.overview_hours_minutes, seconds / 3600L, seconds % 3600L / 60L)
+                        : getContext().getString(R.string.overview_minutes_seconds, seconds / 60L, seconds % 60L);
         setContentDescription(hideTime ? getContext().getString(R.string.pact_time_hidden)
                 : getContext().getString(R.string.commitment_active_remaining, label));
         float next = duration <= 0 ? 0 : Math.max(0f, Math.min(1f, (float) remaining / duration));
@@ -72,6 +79,7 @@ public final class ServiceCountdownView extends View {
         permanent = true;
         hidden = hideTime;
         label = "\u221e";
+        overviewLabel = label;
         setContentDescription(getContext().getString(hideTime
                 ? R.string.pact_time_hidden : R.string.service_duration_permanent));
         setFraction(1f, animate);
@@ -95,6 +103,10 @@ public final class ServiceCountdownView extends View {
 
     public void stop() {
         if (reveal != null) { reveal.cancel(); reveal = null; }
+    }
+
+    public void setOverview(boolean value) {
+        if (overview != value) { overview = value; invalidate(); }
     }
 
     private void requestMask() {
@@ -169,6 +181,27 @@ public final class ServiceCountdownView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (overview) {
+            float width = Math.max(0, getWidth());
+            float height = Math.min(getHeight(), width * 76 / 240f);
+            center.set(0, (getHeight() - height) / 2f, width, (getHeight() + height) / 2f);
+            if (hidden) {
+                if (mask == null) canvas.drawRoundRect(center, dp(8), dp(8), placeholder);
+                else {
+                    canvas.drawBitmap(ValueAnimator.areAnimatorsEnabled()
+                            ? mask.frame(android.os.SystemClock.uptimeMillis()) : mask.frames[0], null, center, image);
+                    if (mask.frames.length > 1 && ValueAnimator.areAnimatorsEnabled()) postInvalidateOnAnimation();
+                }
+            } else {
+                text.setTextAlign(Paint.Align.LEFT);
+                text.setTextSize(32 * getResources().getDisplayMetrics().scaledDensity);
+                float measured = text.measureText(overviewLabel);
+                if (measured > width) text.setTextSize(text.getTextSize() * width / measured);
+                canvas.drawText(overviewLabel, 0, (getHeight() - text.ascent() - text.descent()) / 2f, text);
+            }
+            return;
+        }
+        text.setTextAlign(Paint.Align.CENTER);
         float size = Math.min(getWidth(), getHeight());
         float stroke = Math.max(dp(7), size * .047f);
         float radius = Math.max(0, (size - stroke - dp(8)) / 2);

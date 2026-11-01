@@ -138,8 +138,8 @@ public final class HomeFavoritesAndroidTest {
                 View root = activity.findViewById(R.id.home_dom_overview);
                 assertNotSame(favoriteView.get(), root.findViewWithTag(favorite));
                 assertTrue(contains(root.findViewWithTag("home_favorite_stats:" + first.id.value()),
-                        com.subhub.app.stats.StatsSnapshot.formatDuration(changed.protectedSeconds) + " · "
-                                + changed.activityEvents + " " + activity.getString(R.string.role_stat_activity)));
+                        activity.getString(R.string.overview_protected_activity,
+                                com.subhub.app.stats.StatsSnapshot.formatDuration(changed.protectedSeconds), changed.activityEvents)));
                 assertSame(summary.get(), root.findViewWithTag("home_devices"));
                 assertSame(recentRow.get(), root.findViewWithTag(recent));
                 assertSame(preview.get(), root.findViewWithTag("activity_preview:all"));
@@ -155,7 +155,8 @@ public final class HomeFavoritesAndroidTest {
             AtomicReference<Boolean> rendered = new AtomicReference<>(false);
             do {
                 scenario.onActivity(activity -> rendered.set(contains(activity.findViewById(R.id.home_dom_overview)
-                        .findViewWithTag("activity_preview_entry:fact-0"), com.subhub.app.activity.ActivityText.title(activity, updated))));
+                        .findViewWithTag("activity_preview_entry:fact-0"), updated.personName + " · "
+                                + com.subhub.app.activity.ActivityText.title(activity, updated))));
                 if (!rendered.get()) SystemClock.sleep(20);
             } while (!rendered.get() && SystemClock.uptimeMillis() < deadline);
             com.subhub.app.UiRefreshWitness.capture(home, "home-dom-changed-activity");
@@ -205,9 +206,10 @@ public final class HomeFavoritesAndroidTest {
                 assertNotNull(sessions);
                 assertTrue(devices.isClickable());
                 assertTrue(sessions.isClickable());
-                assertTrue(contains(devices, "2 online · 1 offline"));
+                assertTrue(contains(devices, "1 online · 1 offline"));
                 assertTrue(contains(sessions, activity.getString(R.string.home_in_session)));
-                assertTrue("Only current active sessions count", contains(sessions, "1 / 3 Subs"));
+                assertTrue("Unknown sessions are not reported as zero", contains(sessions, activity.getString(R.string.overview_unknown)));
+                assertTrue("Confirmed subset remains explicit", contains(sessions, "1 confirmed active"));
                 assertTrue("Stale session is explicitly unknown", contains(sessions, "1 unknown"));
                 TextView lastOnline = root.findViewWithTag("home_recent_connection:" + roster.get(1).id.value());
                 assertNotNull(lastOnline);
@@ -240,8 +242,8 @@ public final class HomeFavoritesAndroidTest {
             awaitTag(scenario, "home_devices");
             scenario.onActivity(activity -> {
                 View root = activity.findViewById(R.id.home_dom_overview);
-                assertTrue(contains(root.findViewWithTag("home_in_session"), "2 / 2 Subs"));
-                assertTrue(contains(root.findViewWithTag("home_devices"), "2 online · 0 offline"));
+                assertTrue(contains(root.findViewWithTag("home_in_session"), "2"));
+                assertTrue(contains(root.findViewWithTag("home_devices"), "1 online · 0 offline"));
                 View tab = activity.findViewById(R.id.nav_people);
                 assertEquals("Subs", tab.getContentDescription().toString());
                 assertEquals("Subs", ((TextView) activity.findViewById(R.id.nav_people_label)).getText().toString());
@@ -255,8 +257,9 @@ public final class HomeFavoritesAndroidTest {
             awaitTag(scenario, "home_devices");
             scenario.onActivity(activity -> {
                 View root = activity.findViewById(R.id.home_dom_overview);
-                assertTrue(contains(root.findViewWithTag("home_in_session"), "0 / 0 Subs"));
-                assertTrue(contains(root.findViewWithTag("home_devices"), "0 online · 0 offline"));
+                assertTrue(contains(root.findViewWithTag("home_in_session"), "0"));
+                assertTrue(contains(root.findViewWithTag("home_devices"), "0"));
+                assertTrue(contains(root.findViewWithTag("home_devices"), activity.getString(R.string.overview_paired_subs)));
             });
         }
     }
@@ -321,17 +324,17 @@ public final class HomeFavoritesAndroidTest {
         roster = new ArrayList<>(java.util.Arrays.asList(oldest, person('e', "Unknown order", 0), revoked, middle, newest));
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             awaitTag(scenario, "home_choose_favorite");
-            awaitTag(scenario, "activity_preview_entry:fact-4");
+            awaitTag(scenario, "activity_preview_entry:fact-1");
             scenario.onActivity(activity -> {
                 ViewGroup composition = activity.findViewById(R.id.home_dom_overview).findViewWithTag("home_people_composition");
                 List<String> actual = tags(composition, "home_recent_person:");
                 assertEquals(java.util.Arrays.asList("home_recent_person:" + newest.id.value(), "home_recent_person:" + middle.id.value(),
                         "home_recent_person:" + oldest.id.value()), actual);
-                assertEquals(5, tags(activity.findViewById(R.id.home_dom_overview), "activity_preview_entry:").size());
+                assertEquals(2, tags(activity.findViewById(R.id.home_dom_overview), "activity_preview_entry:").size());
                 assertNull(composition.findViewWithTag("home_favorite:" + revoked.id.value()));
                 assertNoQuickControls(composition);
             });
-            assertEquals(5, recentLimit.get());
+            assertEquals(2, recentLimit.get());
             onView(withTagValue(is("home_choose_favorite")))
                     .perform(NativeUiActions.revealAboveNavigation(), click());
             PeopleActivity people = resumed(PeopleActivity.class);
@@ -357,7 +360,7 @@ public final class HomeFavoritesAndroidTest {
         assertTrue(favorites.toggle(roster.get(0)));
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             awaitTag(scenario, "home_favorite:" + roster.get(0).id.value());
-            awaitTag(scenario, "activity_preview_entry:fact-4");
+            awaitTag(scenario, "activity_preview_entry:fact-1");
             assertEquals(0, localReads.get());
             onView(withId(R.id.button_edit_lock)).perform(click());
             awaitTag(scenario, "home_dom_unlock");
@@ -415,7 +418,7 @@ public final class HomeFavoritesAndroidTest {
         assertTrue(favorites.toggle(roster.get(0)));
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             awaitTag(scenario, "home_favorite:" + roster.get(0).id.value());
-            awaitTag(scenario, "activity_preview_entry:fact-4");
+            awaitTag(scenario, "activity_preview_entry:fact-1");
             scenario.onActivity(activity -> {
                 android.os.Bundle args = InstrumentationRegistry.getArguments();
                 String scale = args.getString("shell_expected_font_scale"), width = args.getString("shell_expected_width_dp");
@@ -524,6 +527,7 @@ public final class HomeFavoritesAndroidTest {
     private List<ActivityEntry> events(int limit) {
         if (fixedEvents != null) return new ArrayList<>(fixedEvents.subList(0, Math.min(limit, fixedEvents.size())));
         List<ActivityEntry> events = new ArrayList<>();
+        if (roster.isEmpty()) return events;
         PersonSnapshot person = roster.get(0);
         for (int index = 0; index < Math.min(6, limit); index++) events.add(new ActivityEntry("fact-" + index,
                 person.id, person.name, person.device, new ActivityEvent("event-" + index, ActivityEvent.Kind.APP_OPENED,

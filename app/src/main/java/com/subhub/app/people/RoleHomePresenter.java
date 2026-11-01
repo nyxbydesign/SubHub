@@ -30,6 +30,7 @@ public final class RoleHomePresenter {
     private final View service, oldDashboard;
     private final HomeSelection selection;
     private final FavoriteSubStore favorites;
+    private final OverviewSession session;
     private LinearLayout domPeople;
     private com.subhub.app.stats.AchievementPreviewView domAchievements;
     private LinearLayout domFavorite, domSummary, domRecent, subUsage;
@@ -69,6 +70,7 @@ public final class RoleHomePresenter {
         status.setVisibility(View.VISIBLE);
         reparent(activity.findViewById(R.id.sub_wallet_pay));
         reparent(activity.findViewById(R.id.sub_wallet_pause));
+        session = new OverviewSession(activity);
     }
 
     private void reparent(View child) {
@@ -78,8 +80,14 @@ public final class RoleHomePresenter {
 
     public void setSessionPage(boolean value) { sessionPage = value; }
 
+    public boolean overviewSession() { return !sessionPage && !domWorkspace(); }
+
+    public void renderOverviewSession(boolean active, boolean paused) { session.state(active, paused); }
+
     public void refresh(boolean force) {
         boolean dom = domWorkspace();
+        OverviewUi.header(activity, !sessionPage);
+        session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
         subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
         service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
@@ -153,12 +161,14 @@ public final class RoleHomePresenter {
         if (!signature.equals(renderedFavorite)) {
             renderedFavorite = signature;
             domFavorite.removeAllViews();
-            heading(domFavorite, R.string.home_favorite_title, 0, null);
-            if (favorite == null) PersonUi.action(domFavorite, R.string.home_favorite_choose, () -> {
+            if (favorite == null) {
+                LinearLayout empty = OverviewUi.card(domFavorite);
+                OverviewUi.heading(empty, R.string.home_favorite_title, 0, null);
+                PersonUi.action(empty, R.string.home_favorite_choose, () -> {
                 if (domWorkspace() && ControllerPinManager.isDomModeActive())
                     activity.startActivity(new Intent(activity, PeopleActivity.class));
-            }, true).setTag("home_choose_favorite");
-            else favoriteOverview(favorite);
+                }, true).setTag("home_choose_favorite");
+            } else favoriteOverview(favorite);
         }
         signature = new ArrayList<>();
         for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
@@ -175,12 +185,13 @@ public final class RoleHomePresenter {
             renderedRecent = signature;
             domRecent.removeAllViews();
             if (!recent.isEmpty()) {
-                heading(domRecent, R.string.home_recent_additions, 0, null);
-                for (PersonSnapshot person : recent) {
-                    LinearLayout recentCard = card(domRecent, R.drawable.bg_home_recent);
-                    recentCard.setPadding(dp(12), dp(8), dp(12), dp(8));
+                LinearLayout recentCard = OverviewUi.card(domRecent);
+                OverviewUi.heading(recentCard, R.string.home_recent_additions, R.string.overview_view_subs, () -> {
+                    if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                        activity.startActivity(new Intent(activity, PeopleActivity.class));
+                });
+                for (PersonSnapshot person : recent)
                     identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
-                }
             }
         }
     }
@@ -198,21 +209,20 @@ public final class RoleHomePresenter {
     }
 
     private void homeSummary(List<PersonSnapshot> people) {
-        int sessions = 0, subs = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        int sessions = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
         java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
             if (person.connection == PersonSnapshot.Connection.REVOKED
                     || person.connection == PersonSnapshot.Connection.PENDING
                     || person.connection == PersonSnapshot.Connection.UNPAIRED) continue;
             if (!counted.add(FavoriteSubStore.identity(person.id))) continue;
-            subs++;
             if (person.sync.runtime == PersonSnapshot.Freshness.CURRENT) {
                 if (person.serviceActive) sessions++;
             } else unknownSessions++;
-            if (person.connection == PersonSnapshot.Connection.LOCAL
-                    || person.connection == PersonSnapshot.Connection.CONNECTED) online++;
-            else if (person.connection == PersonSnapshot.Connection.OFFLINE
-                    || person.connection == PersonSnapshot.Connection.ERROR) offline++;
+            if (person.id.isLocal()) continue;
+            paired++;
+            if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            else if (person.connection == PersonSnapshot.Connection.OFFLINE) offline++;
             else unknownDevices++;
         }
         LinearLayout summaries = new LinearLayout(activity);
@@ -221,31 +231,47 @@ public final class RoleHomePresenter {
         summaries.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         summaries.setBaselineAligned(false);
         domSummary.addView(summaries, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout active = PersonUi.column(activity);
-        LinearLayout devices = PersonUi.column(activity);
-        for (LinearLayout tile : new LinearLayout[]{active, devices}) {
-            tile.setBackgroundResource(R.drawable.bg_home_composition_stat);
-            tile.setPadding(dp(14), dp(12), dp(14), dp(12));
-            LinearLayout.LayoutParams size = stacked ? new LinearLayout.LayoutParams(-1, -2)
-                    : new LinearLayout.LayoutParams(0, -1, 1);
-            size.bottomMargin = dp(10);
-            if (!stacked && tile == devices) size.setMarginStart(dp(10));
-            summaries.addView(tile, size);
-        }
-        active.setTag("home_in_session");
-        devices.setTag("home_devices");
-        PersonUi.text(active, activity.getString(R.string.home_in_session), true);
-        PersonUi.text(active, activity.getString(R.string.home_session_counts, sessions, subs), false);
-        if (unknownSessions > 0) PersonUi.text(active,
+        LinearLayout inSession = summary(summaries, stacked, R.drawable.ic_overview_clock,
+                R.string.home_in_session, unknownSessions == 0 ? Integer.toString(sessions)
+                        : activity.getString(R.string.overview_unknown));
+        inSession.setTag("home_in_session");
+        if (unknownSessions > 0) PersonUi.text(inSession,
                 activity.getString(R.string.home_status_unknown, unknownSessions), false);
-        PersonUi.text(devices, activity.getString(R.string.home_devices), true);
-        PersonUi.text(devices, activity.getString(R.string.home_devices_counts, online, offline), false);
-        if (unknownDevices > 0) PersonUi.text(devices,
-                activity.getString(R.string.home_status_unknown, unknownDevices), false);
-        for (LinearLayout tile : new LinearLayout[]{active, devices}) clickable(tile, () -> {
+        if (unknownSessions > 0 && sessions > 0) PersonUi.text(inSession,
+                activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
+        LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
+                R.string.overview_paired_subs, Integer.toString(paired));
+        pairedSubs.setTag("home_devices");
+        if (paired > 0) PersonUi.text(pairedSubs,
+                activity.getString(R.string.home_devices_counts, online, offline), false).setTextSize(12);
+        if (unknownDevices > 0) PersonUi.text(pairedSubs,
+                activity.getString(R.string.home_status_unknown, unknownDevices), false).setTextSize(12);
+    }
+
+    private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value) {
+        LinearLayout tile = PersonUi.column(activity);
+        tile.setBackgroundResource(R.drawable.bg_overview_card); tile.setPadding(dp(14), dp(10), dp(14), dp(10));
+        LinearLayout.LayoutParams size = stacked ? new LinearLayout.LayoutParams(-1, -2)
+                : new LinearLayout.LayoutParams(0, -1, 1);
+        size.bottomMargin = dp(10);
+        if (!stacked && parent.getChildCount() > 0) size.setMarginStart(dp(10));
+        parent.addView(tile, size);
+        LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL);
+        android.widget.ImageView image = new android.widget.ImageView(activity); image.setImageResource(icon);
+        image.setImageTintList(ColorStateList.valueOf(activity.getColor(R.color.text_primary)));
+        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(image, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        LinearLayout copy = PersonUi.column(activity);
+        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1); copySize.setMarginStart(dp(12));
+        row.addView(copy, copySize);
+        copy.addView(OverviewUi.text(activity, value, 22, true), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(OverviewUi.text(activity, activity.getString(label), 12, false), new LinearLayout.LayoutParams(-1, -2));
+        tile.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        OverviewUi.click(tile, () -> {
             if (domWorkspace() && ControllerPinManager.isDomModeActive())
                 activity.startActivity(new Intent(activity, PeopleActivity.class));
         });
+        return tile;
     }
 
     private void ensureDomSections() {
@@ -257,10 +283,13 @@ public final class RoleHomePresenter {
         domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
         resetDomSignatures();
         domFavorite = PersonUi.column(activity); domSummary = PersonUi.column(activity); domRecent = PersonUi.column(activity);
-        for (LinearLayout slot : new LinearLayout[]{domFavorite, domSummary, domRecent})
+        for (LinearLayout slot : new LinearLayout[]{domFavorite, domSummary})
             domPeople.addView(slot, new LinearLayout.LayoutParams(-1, -2));
+        com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(domPeople), true,
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, true));
+        domPeople.addView(domRecent, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(domFavorite, activity.getString(R.string.role_loading), false);
-        com.subhub.app.activity.ActivityPreview.add(domBody, null, 5, data, "home-activity-preview");
+        com.subhub.app.activity.ActivityPreview.addOverview(domBody, data, "home-activity-preview");
         domAchievements = achievementPreview(domBody);
     }
 
@@ -283,61 +312,53 @@ public final class RoleHomePresenter {
     }
 
     private void favoriteOverview(PersonSnapshot person) {
-        LinearLayout card = card(domFavorite, R.drawable.bg_home_favorite);
+        LinearLayout card = OverviewUi.card(domFavorite);
         card.setTag("home_favorite:" + person.id.value());
-        identityHeader(card, person, true).setTag("home_favorite_identity:" + person.id.value());
-        divider(card);
+        OverviewUi.heading(card, R.string.home_favorite_title, R.string.overview_view_profile, () -> openPerson(person));
+        LinearLayout identity = identityHeader(card, person, true);
+        identity.setTag("home_favorite_identity:" + person.id.value());
+        LinearLayout copy = identity.findViewWithTag("home_identity_copy");
+        if (person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN && person.sync.stats == PersonSnapshot.Freshness.UNKNOWN) {
+            TextView unknown = OverviewUi.text(activity, activity.getString(R.string.overview_session_stats_unknown), 13, false);
+            unknown.setTag("home_favorite_unknown:" + person.id.value()); copy.addView(unknown); return;
+        }
         String session = person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
-                ? activity.getString(R.string.role_unknown_data) : person.serviceLabel;
+                ? activity.getString(R.string.overview_session_unknown) : person.serviceLabel;
         if (person.sync.runtime == PersonSnapshot.Freshness.STALE)
             session += " · " + activity.getString(R.string.role_stale_data);
-        PersonUi.row(card, R.drawable.ic_nav_limits, activity.getString(R.string.role_session), session, null)
-                .setTag("home_favorite_session:" + person.id.value());
-        divider(card);
+        TextView sessionText = OverviewUi.text(activity, session, 13, false);
+        sessionText.setTag("home_favorite_session:" + person.id.value()); copy.addView(sessionText);
         String stats = person.sync.stats == PersonSnapshot.Freshness.UNKNOWN
-                ? activity.getString(R.string.role_unknown_data)
-                : StatsSnapshot.formatDuration(person.protectedSeconds) + " · " + person.activityEvents
-                        + " " + activity.getString(R.string.role_stat_activity);
+                ? activity.getString(R.string.overview_stats_unknown)
+                : activity.getString(R.string.overview_protected_activity,
+                        StatsSnapshot.formatDuration(person.protectedSeconds), person.activityEvents);
         if (person.sync.stats == PersonSnapshot.Freshness.STALE)
             stats += " · " + activity.getString(R.string.role_stale_data);
-        PersonUi.row(card, R.drawable.ic_nav_stats, activity.getString(R.string.role_stats), stats, null)
-                .setTag("home_favorite_stats:" + person.id.value());
+        TextView statsText = OverviewUi.text(activity, stats, 12, false);
+        statsText.setTag("home_favorite_stats:" + person.id.value()); copy.addView(statsText);
     }
 
     private LinearLayout identityHeader(LinearLayout parent, PersonSnapshot person, boolean favorite) {
-        LinearLayout identity = new LinearLayout(activity);
-        identity.setGravity(Gravity.CENTER_VERTICAL);
-        identity.setMinimumHeight(dp(favorite ? 72 : 64));
-        identity.addView(ProfileViews.avatar(activity, person.profile),
-                new LinearLayout.LayoutParams(dp(favorite ? 56 : 36), dp(favorite ? 56 : 36)));
-        LinearLayout copy = PersonUi.column(activity);
-        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
-        copySize.setMarginStart(dp(12));
-        identity.addView(copy, copySize);
-        TextView name = text(person.name, favorite ? 22 : 14, true);
-        name.setTag((favorite ? "home_favorite_name:" : "home_recent_name:") + person.id.value());
-        copy.addView(name);
-        TextView device = text(ProfileViews.targetDiscriminator(activity, person), 12, false);
-        copy.addView(device);
-        TextView connection = text(PersonUi.connection(activity, person), favorite ? 12 : 11, false);
-        connection.setTag("home_recent_connection:" + person.id.value());
-        if (person.connection == PersonSnapshot.Connection.CONNECTED)
-            connection.setTextColor(activity.getColor(R.color.home_composition_current));
-        copy.addView(connection);
-        if (!favorite) for (TextView label : new TextView[] {name, device}) {
-            label.setSingleLine(true);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        OverviewUi.Identity identity = OverviewUi.identity(parent, person.profile, false,
+                (favorite ? "home_favorite:" : "home_recent:") + person.id.value());
+        identity.copy.setTag("home_identity_copy");
+        identity.name.setTag((favorite ? "home_favorite_name:" : "home_recent_name:") + person.id.value());
+        if (person.connection != PersonSnapshot.Connection.LOCAL) {
+            TextView connection = OverviewUi.text(activity, PersonUi.connection(activity, person), 12, false);
+            connection.setTag("home_recent_connection:" + person.id.value());
+            if (person.connection == PersonSnapshot.Connection.CONNECTED)
+                connection.setTextColor(activity.getColor(R.color.home_composition_current));
+            if (person.connection == PersonSnapshot.Connection.CONNECTED
+                    && activity.getResources().getConfiguration().fontScale < 1.3f) {
+                identity.copy.removeView(identity.name);
+                LinearLayout line = new LinearLayout(activity); line.setGravity(Gravity.CENTER_VERTICAL);
+                line.addView(identity.name, new LinearLayout.LayoutParams(0, -2, 1));
+                LinearLayout.LayoutParams statusSize = new LinearLayout.LayoutParams(-2, -2); statusSize.setMarginStart(dp(8));
+                line.addView(connection, statusSize); identity.copy.addView(line, 0);
+            } else identity.copy.addView(connection);
         }
-        TextView open = text("›", 24, false);
-        open.setGravity(Gravity.CENTER);
-        open.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        identity.addView(open, new LinearLayout.LayoutParams(dp(24), -2));
-        identity.setContentDescription(person.name + ". " + ProfileViews.targetDiscriminator(activity, person)
-                + ". " + PersonUi.connection(activity, person));
-        androidx.appcompat.widget.TooltipCompat.setTooltipText(identity, identity.getContentDescription());
-        parent.addView(identity, new LinearLayout.LayoutParams(-1, -2));
-        clickable(identity, () -> openPerson(person));
-        return identity;
+        OverviewUi.click(identity.view, () -> openPerson(person));
+        return identity.view;
     }
 
     private void openPerson(PersonSnapshot person) {
@@ -359,21 +380,34 @@ public final class RoleHomePresenter {
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
         subPerson = person; subDom = dom;
         if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
-        List<Object> relationSignature = dom == null ? java.util.Collections.emptyList()
-                : java.util.Arrays.asList(dom.name, dom.status);
+        List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId,
+                person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
+                dom == null ? null : dom.name, dom == null ? null : dom.status);
+        boolean assigned = person.contractDomId != null || dom != null;
         if (!relationSignature.equals(renderedRelationship)) {
             renderedRelationship = relationSignature;
             relationship.removeAllViews();
-            if (dom != null) {
-                LinearLayout linked = card(relationship, R.drawable.bg_home_composition_stat);
-                PersonUi.row(linked, R.drawable.ic_nav_people, dom.name, activity.getString(dom.status), () -> {
-                    if (domWorkspace()) return;
-                    ConnectionUi ui = People.connectionUi();
-                    if (ui != null) ui.openConnection(activity, PersonId.LOCAL);
-                }).setTag("home_assigned_dom_connection");
+            if (assigned) {
+                LinearLayout linked = OverviewUi.card(relationship);
+                Runnable open = () -> { if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class)); };
+                OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open);
+                ProfileData profile = person.contractDom != null ? person.contractDom
+                        : ProfileData.empty(dom.name);
+                OverviewUi.Identity identity = OverviewUi.identity(linked, profile, true, "home_contract_dom");
+                if (!profile.about.isEmpty()) {
+                    TextView about = OverviewUi.text(activity, profile.about, 13, false);
+                    about.setMaxLines(2); about.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    about.setTag("home_dom_about"); identity.copy.addView(about);
+                }
+                OverviewUi.click(identity.view, open);
+                identity.view.setTag("home_assigned_dom_connection");
+                if (person.sync.hasPendingConfiguration()) PersonUi.text(linked, activity.getString(R.string.role_changes_pending), false);
+                if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(linked,
+                        activity.getString(person.sync.contract == PersonSnapshot.Freshness.STALE
+                                ? R.string.role_stale_data : R.string.role_unknown_data), false);
             }
         }
-        relationship.setVisibility(dom == null ? View.GONE : View.VISIBLE);
+        relationship.setVisibility(assigned ? View.VISIBLE : View.GONE);
         String subtitle = taskSubtitle();
         if (!android.text.TextUtils.equals(subTasksDetail.getText(), subtitle)) subTasksDetail.setText(subtitle);
         List<Object> usageSignature = new ArrayList<>();
@@ -381,9 +415,7 @@ public final class RoleHomePresenter {
         for (PersonSnapshot.Allowance value : person.allowances) java.util.Collections.addAll(usageSignature,
                 value.packageName, value.label, value.dailyMinutes, value.usedMillis);
         if (!usageSignature.equals(renderedUsage)) {
-            renderedUsage = usageSignature;
-            subUsage.removeAllViews();
-            usage(person, dom);
+            renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person, dom);
         }
         subAchievements.load(data, "home-achievement-preview");
     }
@@ -391,26 +423,22 @@ public final class RoleHomePresenter {
     private void ensureSubSections() {
         subBody.removeAllViews();
         renderedUsage = null; renderedRelationship = null;
-        LinearLayout tasks = PersonUi.row(PersonUi.card(subBody), R.drawable.ic_nav_tasks,
+        com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(subBody), false,
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, false));
+        LinearLayout tasks = OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_nav_tasks,
                 activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
                     if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
                             .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
                 });
-        tasks.setTag("home_tasks");
-        subTasksDetail = (TextView) ((LinearLayout) tasks.getChildAt(1)).getChildAt(1);
-        subUsage = PersonUi.column(activity);
-        subBody.addView(subUsage, new LinearLayout.LayoutParams(-1, -2));
+        tasks.setTag("home_tasks"); subTasksDetail = tasks.findViewWithTag("overview_row_value");
+        subUsage = PersonUi.column(activity); subBody.addView(subUsage, new LinearLayout.LayoutParams(-1, -2));
         subAchievements = achievementPreview(subBody);
-        TextView help = text(activity.getString(R.string.role_help_safety), 13, false);
-        help.setTextColor(activity.getColor(R.color.accent_text));
-        help.setGravity(Gravity.CENTER);
-        help.setMinHeight(dp(48));
-        subBody.addView(help, new LinearLayout.LayoutParams(-1, -2));
-        clickable(help, () -> activity.startActivity(new Intent(activity, HelpActivity.class)));
+        OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_tab_help, activity.getString(R.string.role_help_safety), "",
+                () -> activity.startActivity(new Intent(activity, HelpActivity.class))).setTag("home_help");
     }
 
     private com.subhub.app.stats.AchievementPreviewView achievementPreview(LinearLayout parent) {
-        com.subhub.app.stats.AchievementPreviewView preview = new com.subhub.app.stats.AchievementPreviewView(activity);
+        com.subhub.app.stats.AchievementPreviewView preview = new com.subhub.app.stats.AchievementPreviewView(activity, true);
         parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         preview.load(data, "home-achievement-preview");
         return preview;
@@ -418,9 +446,7 @@ public final class RoleHomePresenter {
 
     private void usage(PersonSnapshot person, AssignedDom dom) {
         if (person.allowances.isEmpty()) return;
-        LinearLayout card = card(subUsage, R.drawable.bg_home_composition_stat);
-        card.setTag("home_app_time");
-        PersonUi.text(card, activity.getString(R.string.role_app_time), true);
+        LinearLayout card = OverviewUi.card(subUsage); card.setTag("home_app_time");
         List<PersonSnapshot.Allowance> values = new ArrayList<>(person.allowances);
         values.sort((a, b) -> {
             if (a.packageName.isEmpty() != b.packageName.isEmpty()) return a.packageName.isEmpty() ? -1 : 1;
@@ -429,34 +455,33 @@ public final class RoleHomePresenter {
             int compared = Long.compare(left, right);
             return compared != 0 ? compared : a.label.compareToIgnoreCase(b.label);
         });
+        OverviewUi.heading(card, R.string.role_app_time, selection.allUsage
+                ? R.string.profile_show_less : R.string.overview_show_all, values.size() <= 3 ? null : () -> {
+                    selection.allUsage = !selection.allUsage; renderSub(subPerson, subDom);
+                });
+        if (values.size() > 3) {
+            android.view.ViewGroup header = (android.view.ViewGroup) card.getChildAt(0);
+            header.getChildAt(header.getChildCount() - 1).setTag("home_usage_all");
+        }
         int shown = selection.allUsage ? values.size() : Math.min(3, values.size());
         for (int index = 0; index < shown; index++) {
             PersonSnapshot.Allowance value = values.get(index);
-            if (index > 0) divider(card);
+            if (index > 0) OverviewUi.divider(card);
             String copy = value.usedMillis < 0
                     ? activity.getString(R.string.role_allowance_unknown, value.dailyMinutes)
                     : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.dailyMinutes);
-            LinearLayout row = PersonUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
-            row.setMinimumHeight(dp(48));
-            row.setPadding(0, dp(4), 0, dp(4));
+            LinearLayout row = OverviewUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
+            row.setMinimumHeight(dp(32)); row.setPadding(0, dp(4), 0, dp(4));
             com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName,
                     value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
-            progress.setMax(1000);
-            progress.setProgress(value.dailyMinutes <= 0 ? 0 : (int) Math.min(1000,
+            progress.setMax(1000); progress.setProgress(value.dailyMinutes <= 0 ? 0 : (int) Math.min(1000,
                     value.usedMillis / (value.dailyMinutes * 60_000d) * 1000));
             progress.setProgressTintList(ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
             progress.setContentDescription(value.label);
-            card.addView(progress, new LinearLayout.LayoutParams(-1, dp(4)));
-        }
-        if (values.size() > 3) {
-            TextView more = text(selection.allUsage ? activity.getString(R.string.home_composition_show_less)
-                    : activity.getString(R.string.home_composition_show_all, values.size()), 13, true);
-            more.setMinHeight(dp(48));
-            more.setGravity(Gravity.CENTER);
-            card.addView(more, new LinearLayout.LayoutParams(-1, -2));
-            clickable(more, () -> { selection.allUsage = !selection.allUsage; renderSub(subPerson, subDom); });
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, dp(4));
+            size.setMarginStart(dp(36)); size.bottomMargin = dp(8); card.addView(progress, size);
         }
     }
 
@@ -472,61 +497,6 @@ public final class RoleHomePresenter {
                             : state == KeyholderProvider.State.PENDING ? R.string.role_connection_pending
                                     : R.string.role_connection_error);
         } catch (RuntimeException unavailable) { return null; }
-    }
-
-    private LinearLayout card(LinearLayout parent, int background) {
-        LinearLayout value = PersonUi.card(parent);
-        value.setBackgroundResource(background);
-        return value;
-    }
-
-    private void heading(LinearLayout parent, int label, int actionLabel, Runnable action) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text(activity.getString(label), 16, true);
-        ViewCompat.setAccessibilityHeading(title, true);
-        row.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        if (action != null) {
-            TextView link = text(activity.getString(actionLabel), 12, false);
-            link.setMinHeight(dp(48));
-            link.setMinWidth(dp(48));
-            link.setGravity(Gravity.CENTER);
-            link.setTextColor(activity.getColor(R.color.accent_text));
-            row.addView(link, new LinearLayout.LayoutParams(-2, -2));
-            clickable(link, action);
-        }
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.setMargins(0, dp(8), 0, dp(8));
-        parent.addView(row, size);
-    }
-
-    private TextView text(String copy, int size, boolean bold) {
-        TextView value = new TextView(activity);
-        value.setText(copy);
-        value.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size);
-        value.setTextColor(activity.getColor(bold ? R.color.text_primary : R.color.text_secondary));
-        value.setIncludeFontPadding(false);
-        value.setPadding(0, dp(3), 0, dp(3));
-        if (bold) value.setTypeface(null, android.graphics.Typeface.BOLD);
-        return value;
-    }
-
-    private void divider(LinearLayout parent) {
-        View line = new View(activity);
-        line.setBackgroundColor(activity.getColor(R.color.outline_subtle));
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, dp(1));
-        size.setMargins(0, dp(8), 0, 0);
-        parent.addView(line, size);
-    }
-
-    private void clickable(View view, Runnable action) {
-        view.setFocusable(true);
-        view.setClickable(true);
-        android.util.TypedValue ripple = new android.util.TypedValue();
-        activity.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
-        view.setForeground(activity.getDrawable(ripple.resourceId));
-        view.setOnClickListener(ignored -> action.run());
-        ViewCompat.setScreenReaderFocusable(view, true);
     }
 
     private int dp(int value) { return PersonUi.dp(activity, value); }

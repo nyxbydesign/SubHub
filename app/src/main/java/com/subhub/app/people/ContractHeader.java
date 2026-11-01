@@ -15,10 +15,21 @@ public final class ContractHeader {
         android.content.Context context = parent.getContext();
         ProfileData profile = person.contractDom == null
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
-        parent.addView(new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion),
-                new LinearLayout.LayoutParams(-1, -2));
+        ProfilePreview preview = new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion);
+        View avatar = preview.findViewWithTag("contract_dom_avatar");
+        avatar.setLayoutParams(new LinearLayout.LayoutParams(PersonUi.dp(context, 56), PersonUi.dp(context, 56)));
+        ((TextView) preview.findViewWithTag("contract_dom_name")).setTextSize(20);
+        ((TextView) preview.findViewWithTag("contract_dom_details")).setTextSize(13);
+        TextView about = preview.findViewWithTag("contract_dom_about");
+        if (about != null) about.setTextSize(14);
+        for (int i = 0; i < preview.getChildCount(); i++) {
+            View child = preview.getChildAt(i);
+            if (child instanceof TextView && ((TextView) child).getText().toString().equals(context.getString(R.string.profile_about)))
+                ((TextView) child).setTextSize(14);
+        }
+        parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         if (person.contractDomId != null && context instanceof android.app.Activity)
-            com.subhub.app.journal.JournalPreview.add(parent,
+            com.subhub.app.journal.JournalPreview.addSharedLink(parent,
                     com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), person.contractDomId,
                     () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.contractDomId));
     }

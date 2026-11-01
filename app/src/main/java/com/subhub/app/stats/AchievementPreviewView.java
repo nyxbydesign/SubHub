@@ -13,12 +13,19 @@ import com.subhub.app.util.AsyncUiScope;
 /** Compact achievement progress shared by the overview and local statistics. */
 public final class AchievementPreviewView extends LinearLayout {
     private java.util.List<Object> rendered;
+    private final boolean compact;
     public AchievementPreviewView(android.content.Context context) {
+        this(context, false);
+    }
+
+    public AchievementPreviewView(android.content.Context context, boolean compact) {
         super(context);
+        this.compact = compact;
         setOrientation(VERTICAL);
         setBackgroundResource(R.drawable.bg_home_composition_stat);
         int padding = PersonUi.dp(context, 14);
-        setPadding(padding, padding, padding, padding);
+        setPadding(padding, compact ? PersonUi.dp(context, 4) : padding, padding, compact ? PersonUi.dp(context, 4) : padding);
+        if (compact) setBackgroundResource(R.drawable.bg_overview_card);
         setMinimumHeight(PersonUi.dp(context, 48));
         setFocusable(true);
         setClickable(true);
@@ -47,6 +54,14 @@ public final class AchievementPreviewView extends LinearLayout {
         if (signature.equals(rendered) && getChildCount() > 0) return;
         rendered = signature;
         removeAllViews();
+        if (compact) {
+            com.subhub.app.people.OverviewUi.row(this, R.drawable.ic_overview_achievement,
+                    getContext().getString(R.string.achievements_title),
+                    getContext().getString(R.string.overview_achievements_count,
+                            preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()),
+                    () -> getContext().startActivity(new Intent(getContext(), AchievementsActivity.class)));
+            return;
+        }
         PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
         PersonUi.text(this, getContext().getString(R.string.achievements_progress_compact,
                 preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()), false);
