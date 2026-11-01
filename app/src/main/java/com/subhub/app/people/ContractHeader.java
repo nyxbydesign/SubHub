@@ -15,42 +15,11 @@ public final class ContractHeader {
         android.content.Context context = parent.getContext();
         ProfileData profile = person.contractDom == null
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
-        LinearLayout row = new LinearLayout(context); row.setGravity(Gravity.CENTER_VERTICAL);
-        View avatar = ProfileViews.avatar(context, profile); avatar.setTag("contract_dom_avatar");
-        row.addView(avatar, new LinearLayout.LayoutParams(PersonUi.dp(context, 64), PersonUi.dp(context, 64)));
-        TextView name = new TextView(context);
-        name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 26);
-        name.setTextColor(context.getColor(R.color.text_primary)); name.setTypeface(null, android.graphics.Typeface.BOLD);
-        name.setText(profile.name); name.setTag("contract_dom_name");
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
-        size.setMarginStart(PersonUi.dp(context, 16)); row.addView(name, size);
-        parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        if (!profile.about.isEmpty()) {
-            PersonUi.text(parent, context.getString(R.string.profile_about), true);
-            TextView about = PersonUi.text(parent, profile.about, false); about.setTag("contract_dom_about");
-            about.setMaxLines(expanded ? Integer.MAX_VALUE : 2);
-            about.setEllipsize(expanded ? null : TextUtils.TruncateAt.END);
-            TextView more = PersonUi.action(parent, expanded ? R.string.profile_show_less : R.string.profile_show_more,
-                    () -> { }, false);
-            more.setTag("contract_dom_about_expand"); more.setMinHeight(PersonUi.dp(context, 48));
-            more.setVisibility(View.GONE);
-            more.setOnClickListener(view -> {
-                boolean open = about.getMaxLines() == 2;
-                about.setMaxLines(open ? Integer.MAX_VALUE : 2); about.setEllipsize(open ? null : TextUtils.TruncateAt.END);
-                more.setText(open ? R.string.profile_show_less : R.string.profile_show_more); onExpansion.accept(open);
-            });
-            about.addOnLayoutChangeListener((view, a, b, c, d, e, f, g, h) -> {
-                android.text.Layout layout = about.getLayout();
-                if (layout != null) {
-                    boolean overflowing = layout.getLineCount() > 2 || layout.getLineCount() > 0
-                            && layout.getEllipsisCount(layout.getLineCount() - 1) > 0;
-                    more.setVisibility(overflowing ? View.VISIBLE : View.GONE);
-                }
-            });
-        }
+        parent.addView(new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion),
+                new LinearLayout.LayoutParams(-1, -2));
         if (person.contractDomId != null && context instanceof android.app.Activity)
-            PersonUi.action(parent, R.string.journal_title,
-                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.contractDomId), false)
-                    .setTag("profile_journal");
+            com.subhub.app.journal.JournalPreview.add(parent,
+                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), person.contractDomId,
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.contractDomId));
     }
 }

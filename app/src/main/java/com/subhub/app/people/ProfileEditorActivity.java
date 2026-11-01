@@ -16,7 +16,7 @@ public final class ProfileEditorActivity extends PreferencePage {
     public static final String EXTRA_DOM = "profile_dom";
     private boolean dom, importing;
     private String avatar;
-    private EditText name, about;
+    private EditText name, about, gender, age;
     private LinearLayout portrait;
     private TextView save, change, remove;
     private AsyncUiScope data;
@@ -61,6 +61,25 @@ public final class ProfileEditorActivity extends PreferencePage {
         name.setContentDescription(getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name));
         name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileNames.MAX_LENGTH)});
         name.setText(state == null ? ProfileNames.chosen(this, dom) : state.getString("profile_name", ""));
+        com.subhub.app.util.FormRow details = new com.subhub.app.util.FormRow(this, null);
+        form.addView(details, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout genderField = PersonUi.column(this), ageField = PersonUi.column(this);
+        details.addView(genderField, new LinearLayout.LayoutParams(0, -2, 1));
+        details.addView(ageField, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView genderLabel = fieldLabel(genderField, getString(R.string.profile_gender));
+        gender = input(genderField, R.string.profile_optional, android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        gender.setTag("profile_gender"); gender.setContentDescription(getString(R.string.profile_gender));
+        gender.setId(R.id.profile_gender_input); genderLabel.setLabelFor(gender.getId()); gender.setHint((CharSequence) null);
+        com.subhub.app.util.InputBounds.limit(gender, ProfileData.MAX_GENDER_LENGTH);
+        gender.setText(state == null ? profile.gender : state.getString("profile_gender", profile.gender));
+        TextView ageLabel = fieldLabel(ageField, getString(R.string.profile_age));
+        age = input(ageField, R.string.profile_optional, android.text.InputType.TYPE_CLASS_NUMBER);
+        age.setTag("profile_age"); age.setContentDescription(getString(R.string.profile_age));
+        age.setId(R.id.profile_age_input); ageLabel.setLabelFor(age.getId()); age.setHint((CharSequence) null);
+        com.subhub.app.util.InputBounds.limit(age, 3);
+        age.setText(state == null ? profile.age == 0 ? "" : Integer.toString(profile.age) : state.getString("profile_age", ""));
+        fieldHelp(form, getString(R.string.profile_optional_visibility));
         fieldLabel(form, getString(R.string.profile_about));
         about = input(form, R.string.profile_about, android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -90,7 +109,11 @@ public final class ProfileEditorActivity extends PreferencePage {
 
     private void save() {
         if (importing || !ProfileStore.mayEdit(this, dom)) return;
-        if (!ProfileStore.save(this, dom, name.getText().toString(), about.getText().toString(), avatar)) {
+        int enteredAge;
+        try { enteredAge = ProfileData.parseAge(age.getText().toString()); }
+        catch (IllegalArgumentException invalid) { age.setError(getString(R.string.profile_age_invalid)); return; }
+        if (!ProfileStore.save(this, dom, name.getText().toString(), about.getText().toString(), avatar,
+                gender.getText().toString(), enteredAge)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
         com.subhub.app.remote.RemoteFeature.get(this).changed();
@@ -106,6 +129,8 @@ public final class ProfileEditorActivity extends PreferencePage {
         if (name != null) {
             state.putString("profile_name", name.getText().toString());
             state.putString("profile_about", about.getText().toString());
+            state.putString("profile_gender", gender.getText().toString());
+            state.putString("profile_age", age.getText().toString());
             state.putString("profile_avatar", avatar);
         }
         super.onSaveInstanceState(state);

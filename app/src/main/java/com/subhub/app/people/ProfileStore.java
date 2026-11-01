@@ -24,18 +24,29 @@ public final class ProfileStore {
         String name = ProfileNames.clean(string(values, key));
         if (name.isEmpty()) name = context.getString(dom ? R.string.header_subtitle_dom : R.string.header_subtitle_sub);
         String about = ProfileData.cleanAbout(string(values, key + "_about"));
-        try { return new ProfileData(name, about, string(values, key + "_avatar")); }
-        catch (IllegalArgumentException invalid) { return new ProfileData(name, about, ""); }
+        String gender = ProfileData.cleanGender(string(values, key + "_gender"));
+        Object storedAge = values.get(key + "_age");
+        int age = storedAge instanceof Integer && (Integer) storedAge >= 1 && (Integer) storedAge <= ProfileData.MAX_AGE
+                ? (Integer) storedAge : 0;
+        try { return new ProfileData(name, about, string(values, key + "_avatar"), gender, age); }
+        catch (IllegalArgumentException invalid) { return new ProfileData(name, about, "", gender, age); }
     }
 
     public static boolean save(Context context, boolean dom, String name, String about, String avatar) {
         if (!mayEdit(context, dom)) return false;
-        ProfileData value = new ProfileData(name, about, avatar);
+        ProfileData previous = load(context, dom);
+        return save(context, dom, name, about, avatar, previous.gender, previous.age);
+    }
+
+    public static boolean save(Context context, boolean dom, String name, String about, String avatar, String gender, int age) {
+        if (!mayEdit(context, dom)) return false;
+        ProfileData value = new ProfileData(name, about, avatar, gender, age);
         ProfileImages.requireValid(value.avatar);
         String key = dom ? "dom" : "sub";
         SharedPreferences preferences = context.getSharedPreferences(ProfileNames.STORE, 0);
         return preferences.edit().putString(key, value.name).putString(key + "_about", value.about)
-                .putString(key + "_avatar", value.avatar).commit();
+                .putString(key + "_avatar", value.avatar).putString(key + "_gender", value.gender)
+                .putInt(key + "_age", value.age).commit();
     }
 
     private static String string(Map<String, ?> values, String key) {

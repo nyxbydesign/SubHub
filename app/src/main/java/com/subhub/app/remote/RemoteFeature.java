@@ -236,10 +236,16 @@ public final class RemoteFeature {
                 com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
             }
             @Override public int profileVersion() { return 1; }
+            @Override public int profileDetailsVersion() { return 1; }
             @Override public JSONObject profile(RemoteStore.Peer peer) throws Exception {
                 requireActive(peer);
                 return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
                         peer.localRole == RemoteProtocol.Role.DOM), peer.localRole);
+            }
+            @Override public JSONObject profile(RemoteStore.Peer peer, boolean details) throws Exception {
+                requireActive(peer);
+                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details);
             }
             @Override public int tasksVersion() { return 1; }
             @Override public int taskCancelVersion() { return 1; }
