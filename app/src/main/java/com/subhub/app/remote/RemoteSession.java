@@ -15,7 +15,9 @@ public final class RemoteSession {
         default int journalVersion() { return 0; }
         default void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int profileVersion() { return 0; }
+        default int profileDetailsVersion() { return 0; }
         default JSONObject profile(RemoteStore.Peer peer) throws Exception { return null; }
+        default JSONObject profile(RemoteStore.Peer peer, boolean details) throws Exception { return profile(peer); }
         default int tasksVersion() { return 0; }
         default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
@@ -50,6 +52,7 @@ public final class RemoteSession {
         requirePeer(connection,peer);
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer));
         if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
+        if (hooks.profileVersion() == 1 && hooks.profileDetailsVersion() == 1) hello.put("profileDetailsVersion", 1);
         if (hooks.journalVersion() == 1) hello.put("journalVersion", 1);
         if (hooks.tasksVersion() == 1) {
             hello.put("tasksVersion", 1);
@@ -68,10 +71,11 @@ public final class RemoteSession {
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
                 tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
         receiveDisplayName(response, peer);
+        boolean details = profileDetailsVersion(response) == 1 && hooks.profileDetailsVersion() == 1;
         if (profileVersion(response) == 1 && hooks.profileVersion() == 1) {
-            send(connection, message("profile", peer).put("profile", hooks.profile(peer)), deadlineNanos);
+            send(connection, message("profile", peer).put("profile", hooks.profile(peer, details)), deadlineNanos);
             JSONObject profile = read(connection, deadlineNanos); requireType(profile, "profile", peer);
-            RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"));
+            RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"), details);
         }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal);
@@ -90,10 +94,12 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
         boolean profile = profileVersion(hello) == 1 && hooks.profileVersion() == 1;
+        boolean details = profile && profileDetailsVersion(hello) == 1 && hooks.profileDetailsVersion() == 1;
         boolean journal = journalVersion(hello) == 1 && hooks.journalVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
         if (journal) ready.put("journalVersion", 1);
         if (profile) ready.put("profileVersion", 1);
+        if (details) ready.put("profileDetailsVersion", 1);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
         boolean activity=activityVersion(hello)==1;
         if(activity)ready.put("activityVersion",1);
@@ -106,8 +112,8 @@ public final class RemoteSession {
         send(connection,ready,deadlineNanos);
         if (profile) {
             JSONObject received = read(connection, deadlineNanos); requireType(received, "profile", peer);
-            RemoteProfiles.receive(store, peer, received.getJSONObject("profile"));
-            send(connection, message("profile", peer).put("profile", hooks.profile(peer)), deadlineNanos);
+            RemoteProfiles.receive(store, peer, received.getJSONObject("profile"), details);
+            send(connection, message("profile", peer).put("profile", hooks.profile(peer, details)), deadlineNanos);
         }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos,activity,tasks,journal);
@@ -143,6 +149,13 @@ public final class RemoteSession {
         if (!frame.has("journalVersion")) return 0;
         long version = RemoteProtocol.integer(frame, "journalVersion");
         if (version <= 0) throw new JSONException("Invalid Journal capability");
+        return version;
+    }
+
+    private static long profileDetailsVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("profileDetailsVersion")) return 0;
+        long version = RemoteProtocol.integer(frame, "profileDetailsVersion");
+        if (version <= 0) throw new JSONException("Invalid profile details capability");
         return version;
     }
 

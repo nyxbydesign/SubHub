@@ -132,6 +132,10 @@ Choose Dom only, Sub only, or Both for this installation. Dom-only devices skip 
 
 Open Journal below About me on your profile to write an entry, record a voice note, or attach files. Entries are private until you choose Share with Dom or Share with Subs. A shared profile opens a read-only Journal. Sharing applies to the currently paired devices; new or renewed pairings do not inherit earlier entries. Both devices need a Journal-compatible app version and must reconnect to exchange shared entries and attachments.
 
+Each role can optionally include a self-entered gender description (up to 40 characters) and age (1–130) in its profile. Leave either field blank to omit it. Age is entered directly; no birth date is collected. These fields use the same paired-profile visibility as the name and About me, and are exchanged only when both app versions support them. Older versions continue to exchange the original name, About me, and avatar fields.
+
+The profile's Journal section previews its latest visible entry. Your own profile can show private entries; another person's profile shows only entries shared with you. Open an entry to read its full text, play a voice note, or open an attachment. Attachments waiting to sync stay marked until the paired devices reconnect, and shared entries stay read-only.
+
 Each entry allows 4,000 characters, one voice note of up to five minutes or 10 MiB, and five attachments of up to 25 MiB each. Microphone access is requested when you tap Record; leaving the editor stops recording. Each role keeps up to 1,000 entries and 256 MiB of copied media. Making an entry private or deleting it withdraws it on the next connection; files someone already exported to another app cannot be recalled.
 
 ### Milestones

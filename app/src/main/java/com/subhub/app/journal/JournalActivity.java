@@ -62,6 +62,8 @@ public final class JournalActivity extends PreferencePage {
     private TextView recordButton, recordTime, saveButton, addButton;
     private EditText editor;
     private View visibilityToggle;
+    private int message;
+    private final List<View> recordingLocked = new ArrayList<>();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (!resumed) return;
@@ -80,6 +82,7 @@ public final class JournalActivity extends PreferencePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        message = state == null ? 0 : state.getInt("journal_message", 0);
         model = new ViewModelProvider(this).get(JournalModel.class);
         try {
             boolean dom = getIntent().getBooleanExtra(JournalRoutes.EXTRA_DOM, false);
@@ -101,20 +104,29 @@ public final class JournalActivity extends PreferencePage {
             }, R.string.journal_import_failed);
         });
         microphone = registerForActivityResult(new ActivityResultContracts.RequestPermission(), allowed -> {
-            if (!allowed) { pendingRecord = false; notice(getString(R.string.journal_permission_needed)); return; }
+            if (!allowed) { pendingRecord = false; showMessage(R.string.journal_permission_needed); return; }
             pendingRecord = true;
             if (resumed) { pendingRecord = false; startRecording(); }
         });
         page(R.string.journal_title);
         PrimaryHeader.backButton(page).setOnClickListener(view -> back());
         content = PersonUi.column(this); page.addView(content, new LinearLayout.LayoutParams(-1, -2));
+        JournalUi.text(content, getString(R.string.journal_loading), 14, false).setTag("journal_loading");
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { back(); }
         });
         model.updates.observe(this, ignored -> {
-            if (model.error != 0) { notice(getString(model.error)); model.error = 0; }
+            if (model.busy) message = 0;
+            if (model.error != 0) { message = model.error; model.error = 0; }
             rendered = "";
-            if (model.editing) renderEditor(); else refresh();
+            if (model.editing) renderEditor();
+            else if (model.busy) {
+                if (content.findViewWithTag("journal_busy") == null) {
+                    LinearLayout progress = JournalUi.progress(content); progress.setTag("journal_busy");
+                    content.removeView(progress); content.addView(progress, 0);
+                }
+                disableActions(content);
+            } else refresh();
         });
         InputFocusPolicy.openActivityForReading(this);
     }
@@ -137,6 +149,7 @@ public final class JournalActivity extends PreferencePage {
     @Override protected void onSaveInstanceState(Bundle state) {
         stopRecording(true);
         try { if (model != null) model.save(state); } catch (Exception invalid) { state.clear(); }
+        state.putInt("journal_message", message);
         super.onSaveInstanceState(state);
     }
 
@@ -152,6 +165,7 @@ public final class JournalActivity extends PreferencePage {
         final Map<String, Boolean> shared = new LinkedHashMap<>();
         final Map<String, Boolean> ready = new LinkedHashMap<>();
         final String selected;
+        String author = "", compatibility = "";
         String signature = "";
         Snapshot(List<JournalEntry> entries, String selected) { this.entries = entries; this.selected = selected; }
     }
@@ -160,19 +174,28 @@ public final class JournalActivity extends PreferencePage {
         if (!authorized()) { unavailable(); return; }
         JournalRuntime runtime = model.runtime; boolean dom = model.dom;
         PersonId target = model.target; String selected = model.selected; int offset = model.offset;
+        android.content.Context application = getApplicationContext();
         data.load("journal-screen", () -> {
             List<JournalEntry> entries;
             if (selected.isEmpty()) entries = runtime.list(dom, target, offset);
             else { JournalEntry entry = runtime.entry(dom, target, selected);
                 if (entry == null) throw new SecurityException("Journal entry unavailable"); entries = List.of(entry); }
             Snapshot value = new Snapshot(entries, selected);
+            if (!target.isLocal()) {
+                if (JournalRuntime.localShared(target)) value.author = application.getString(dom ? R.string.role_sub : R.string.role_dom);
+                else {
+                    com.subhub.app.remote.RemoteStore.Peer peer = runtime.peer(target, dom);
+                    value.author = peer.name;
+                    value.compatibility = runtime.authority.metadata(peer.identity, peer.generation, "journal_version", "");
+                }
+            }
             for (JournalEntry entry : entries) {
                 value.signature += entry.json().toString();
                 if (target.isLocal()) value.shared.put(entry.id, runtime.shared(dom, entry.id));
                 if (!selected.isEmpty()) for (JournalAttachment file : entry.media())
                     value.ready.put(file.hash, runtime.mediaReady(dom, target, entry.id, file));
             }
-            value.signature += value.shared.toString() + value.ready + offset;
+            value.signature += value.shared.toString() + value.ready + offset + value.author + value.compatibility;
             return value;
         }, value -> {
             if (model.editing || model.busy || !value.selected.equals(model.selected)) return;
@@ -182,71 +205,141 @@ public final class JournalActivity extends PreferencePage {
             ScrollView scroll = page.getParent() instanceof ScrollView ? (ScrollView) page.getParent() : null;
             int previous = scroll == null ? 0 : scroll.getScrollY();
             closePlayers(); content.removeAllViews();
+            showMessageIn(content);
             if (value.selected.isEmpty()) renderList(value); else renderEntry(value);
             if (scroll != null) scroll.post(() -> scroll.scrollTo(0, previous));
-        }, failure -> unavailable());
+        }, failure -> {
+            if (failure instanceof SecurityException || !authorized()) unavailable();
+            else failedRefresh();
+        });
     }
     private void unavailable() {
-        closePlayers(); content.removeAllViews(); PersonUi.text(content, getString(R.string.journal_unavailable), false);
+        closePlayers(); content.removeAllViews();
+        JournalUi.empty(content, R.drawable.ic_ux_lock, getString(R.string.journal_unavailable));
+        content.findViewWithTag("journal_empty").setTag("journal_unavailable");
+    }
+    private void failedRefresh() {
+        rendered = "";
+        if (content.findViewWithTag("journal_load_error") != null) return;
+        View loading = content.findViewWithTag("journal_loading"); if (loading != null) content.removeView(loading);
+        LinearLayout error = JournalUi.surface(content); error.setTag("journal_load_error");
+        JournalUi.text(error, getString(R.string.journal_load_failed), 14, true);
+        JournalUi.action(error, R.string.journal_retry, 0, () -> { rendered = ""; refresh(); }, false).setTag("journal_retry");
+        content.removeView(error); content.addView(error, 0);
+    }
+    private void showMessage(int value) {
+        message = value;
+        if (model != null && model.editing && recorder == null) renderEditor();
+        else { rendered = ""; refresh(); }
+    }
+    private void showMessageIn(LinearLayout parent) {
+        if (message != 0) {
+            LinearLayout notice = JournalUi.surface(parent); notice.setTag("journal_message");
+            TextView text = JournalUi.text(notice, getString(message), 14, true);
+            text.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        }
+    }
+    private void disableActions(View view) {
+        if (view.isClickable() || view instanceof EditText) view.setEnabled(false);
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) disableActions(group.getChildAt(i));
+        }
+    }
+    private void sharedContext(Snapshot value) {
+        if (model.target.isLocal()) return;
+        TextView source = JournalUi.text(content, getString(R.string.journal_shared_by, value.author), 14, false);
+        source.setPadding(0, 0, 0, dp(12)); source.setTag("journal_author");
+        if ("0".equals(value.compatibility)) {
+            TextView compatible = JournalUi.text(content, getString(R.string.journal_sync_version), 13, false);
+            compatible.setPadding(0, 0, 0, dp(12)); compatible.setTag("journal_compatibility");
+        }
     }
 
     private void renderList(Snapshot value) {
-        if (model.target.isLocal()) PersonUi.action(content, R.string.journal_new, () -> beginEdit(null, false), true).setTag("journal_new");
-        if (value.entries.isEmpty()) PersonUi.text(PersonUi.card(content), getString(model.target.isLocal()
-                ? R.string.journal_empty : R.string.journal_shared_empty), false).setTag("journal_empty");
+        sharedContext(value);
+        if (model.target.isLocal()) {
+            TextView create = JournalUi.action(content, R.string.journal_new, R.drawable.ic_journal_add, () -> beginEdit(null, false), true);
+            create.setTag("journal_new");
+            LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) create.getLayoutParams();
+            size.topMargin = 0; size.bottomMargin = dp(12); create.setLayoutParams(size);
+        }
+        if (value.entries.isEmpty()) JournalUi.empty(content, R.drawable.ic_journal, getString(model.target.isLocal()
+                ? R.string.journal_empty : R.string.journal_shared_empty));
         for (int index = 0; index < Math.min(value.entries.size(), JournalStore.PAGE_SIZE); index++) {
             JournalEntry entry = value.entries.get(index);
-            LinearLayout card = PersonUi.card(content); card.setTag("journal_entry:" + entry.id);
-            PersonUi.text(card, date(entry.created), true);
-            if (model.target.isLocal()) PersonUi.text(card, getString(Boolean.TRUE.equals(value.shared.get(entry.id))
-                    ? R.string.journal_shared : R.string.journal_private), false).setTag("journal_visibility:" + entry.id);
+            LinearLayout card = JournalUi.surface(content); card.setTag("journal_entry:" + entry.id);
+            JournalUi.text(card, date(entry.created), 12, false);
+            JournalUi.state(card, !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id)))
+                    .setTag("journal_visibility:" + entry.id);
             if (!entry.text.isEmpty()) {
-                TextView preview = PersonUi.text(card, entry.text, false); preview.setMaxLines(3);
+                TextView preview = JournalUi.text(card, entry.text, 16, true); preview.setMaxLines(3);
                 preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
             }
-            if (entry.audio != null) PersonUi.text(card, getString(R.string.journal_audio), false);
-            if (!entry.attachments.isEmpty()) PersonUi.text(card, getString(R.string.journal_attach_count, entry.attachments.size()), false);
+            List<String> media = new ArrayList<>();
+            if (entry.audio != null) media.add(getString(R.string.journal_audio));
+            if (!entry.attachments.isEmpty()) media.add(getResources().getQuantityString(R.plurals.journal_attachment_count, entry.attachments.size(), entry.attachments.size()));
+            if (!media.isEmpty()) {
+                TextView summary = JournalUi.text(card, String.join(" · ", media), 13, false);
+                summary.setPadding(0, dp(entry.text.isEmpty() ? 0 : 10), 0, 0);
+            }
             card.setClickable(true); card.setFocusable(true); card.setMinimumHeight(dp(48));
+            android.util.TypedValue ripple = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+            card.setForeground(getDrawable(ripple.resourceId));
             card.setContentDescription(date(entry.created) + (entry.text.isEmpty() ? "" : ", " + entry.text));
             card.setOnClickListener(view -> { model.selected = entry.id; rendered = ""; top(); refresh(); });
         }
-        if (model.offset > 0) PersonUi.action(content, R.string.journal_previous, () -> {
+        if (model.offset > 0) JournalUi.action(content, R.string.journal_previous, 0, () -> {
             model.offset = Math.max(0, model.offset - JournalStore.PAGE_SIZE); rendered = ""; top(); refresh();
         }, false).setTag("journal_previous");
-        if (value.entries.size() > JournalStore.PAGE_SIZE) PersonUi.action(content, R.string.journal_next, () -> {
+        if (value.entries.size() > JournalStore.PAGE_SIZE) JournalUi.action(content, R.string.journal_next, 0, () -> {
             model.offset += JournalStore.PAGE_SIZE; rendered = ""; top(); refresh();
         }, false).setTag("journal_next");
     }
 
     private void renderEntry(Snapshot value) {
         JournalEntry entry = value.entries.get(0);
-        LinearLayout card = PersonUi.card(content); card.setTag("journal_detail");
-        PersonUi.text(card, date(entry.created), true);
-        if (!entry.text.isEmpty()) PersonUi.text(card, entry.text, false).setTag("journal_text_body");
+        sharedContext(value);
+        LinearLayout card = JournalUi.surface(content); card.setTag("journal_detail");
+        JournalUi.text(card, date(entry.created), 12, false);
+        boolean shared = !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id));
+        JournalUi.state(card, shared).setTag("journal_detail_visibility");
+        if (!entry.text.isEmpty()) {
+            TextView writing = JournalUi.text(card, entry.text, 16, true); writing.setTag("journal_text_body"); writing.setTextIsSelectable(true);
+        }
         if (entry.audio != null) {
-            PersonUi.text(card, getString(R.string.journal_audio), true);
+            if (!entry.text.isEmpty()) JournalUi.divider(card);
+            JournalUi.heading(card, getString(R.string.journal_audio), R.drawable.ic_journal_microphone);
             if (Boolean.TRUE.equals(value.ready.get(entry.audio.hash))) audio(card, entry.audio, false);
             else PersonUi.text(card, getString(R.string.journal_media_pending), false);
         }
+        if (!entry.attachments.isEmpty()) {
+            if (!entry.text.isEmpty() || entry.audio != null) JournalUi.divider(card);
+            JournalUi.heading(card, getResources().getQuantityString(R.plurals.journal_attachment_count, entry.attachments.size(), entry.attachments.size()), R.drawable.ic_journal_attachment);
+        }
         for (JournalAttachment file : entry.attachments) attachment(card, file, false, Boolean.TRUE.equals(value.ready.get(file.hash)));
-        if (!model.target.isLocal()) return;
-        boolean shared = Boolean.TRUE.equals(value.shared.get(entry.id));
-        PersonUi.text(card, getString(shared ? R.string.journal_shared : R.string.journal_private), false).setTag("journal_detail_visibility");
-        PersonUi.action(content, shared ? R.string.journal_make_private : model.dom ? R.string.journal_share_subs : R.string.journal_share_dom, () -> {
+        if (!model.target.isLocal()) {
+            TextView readOnly = JournalUi.text(content, getString(R.string.journal_read_only), 12, false);
+            readOnly.setTag("journal_read_only"); return;
+        }
+        LinearLayout[] actions = JournalUi.pair(content);
+        JournalUi.action(actions[0], shared ? R.string.journal_make_private : model.dom ? R.string.journal_share_subs : R.string.journal_share_dom,
+                shared ? R.drawable.ic_ux_lock : R.drawable.ic_journal_share, () -> {
             JournalModel draft = model;
             draft.work(() -> { draft.runtime.save(draft.dom, entry, !shared, !shared); return true; }, ignored -> { }, R.string.journal_no_audience);
         }, false).setTag("journal_share");
-        PersonUi.action(content, R.string.journal_edit, () -> beginEdit(entry, shared), false).setTag("journal_edit");
-        PersonUi.action(content, R.string.journal_delete, () -> {
+        JournalUi.action(actions[1], R.string.journal_edit, R.drawable.ic_journal_edit, () -> beginEdit(entry, shared), false).setTag("journal_edit");
+        TextView delete = JournalUi.action(content, R.string.journal_delete, R.drawable.ic_journal_delete, () -> {
             JournalModel draft = model;
             draft.work(() -> { draft.runtime.delete(draft.dom, entry.id); return true; }, ignored -> draft.selected = "", R.string.journal_failed);
-        }, false).setTag("journal_delete");
+        }, false); delete.setTag("journal_delete"); delete.setBackground(null); delete.setTextColor(getColor(R.color.text_secondary));
     }
 
     private void beginEdit(JournalEntry entry, boolean shared) {
         if (model.busy || !model.target.isLocal() || !authorized()) return;
         data.cancel("journal-screen"); closePlayers();
         model.editing = true; model.initialShared = shared; model.share = shared;
+        message = 0;
         model.draft = UUID.randomUUID().toString(); model.id = entry == null ? UUID.randomUUID().toString().replace("-", "") : entry.id;
         model.created = entry == null ? System.currentTimeMillis() : entry.created;
         model.text = entry == null ? "" : entry.text; model.audio = entry == null ? null : entry.audio;
@@ -258,47 +351,62 @@ public final class JournalActivity extends PreferencePage {
     private void renderEditor() {
         if (content == null || !model.editing || !authorized()) return;
         model.runtime.retainDraft(model.dom, model.draft, model.allMedia());
-        closePlayers(); content.removeAllViews();
-        LinearLayout form = PersonUi.card(content); form.setTag("journal_editor");
-        TextView label = PersonUi.text(form, getString(R.string.journal_text), true);
+        closePlayers(); content.removeAllViews(); recordingLocked.clear(); showMessageIn(content);
+        if (model.busy) JournalUi.progress(content).setTag("journal_busy");
+        LinearLayout form = JournalUi.surface(content); form.setTag("journal_editor");
+        TextView label = JournalUi.heading(form, getString(R.string.journal_entry), R.drawable.ic_journal);
         editor = input(form, R.string.journal_text_hint, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         editor.setTag("journal_text"); editor.setId(View.generateViewId()); label.setLabelFor(editor.getId());
-        editor.setSingleLine(false); editor.setMinLines(4); editor.setMaxLines(12); editor.setGravity(Gravity.TOP);
+        editor.setSingleLine(false); editor.setMinLines(6); editor.setMaxLines(12); editor.setGravity(Gravity.TOP);
+        editor.setTextSize(16); editor.setLineSpacing(dp(4), 1); editor.setPadding(dp(12), dp(12), dp(12), dp(12));
         editor.setFilters(new InputFilter[]{new InputFilter.LengthFilter(JournalEntry.MAX_TEXT)});
         editor.setSaveEnabled(false); editor.setText(model.text); editor.setEnabled(!model.busy);
-        TextView count = PersonUi.text(form, getString(R.string.journal_text_count, model.text.length()), false); count.setGravity(Gravity.END);
+        TextView count = JournalUi.text(form, getString(R.string.journal_text_count, model.text.length()), 12, false);
+        count.setGravity(Gravity.END); count.setPadding(0, dp(8), 0, 0);
         editor.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int n, int after) { }
             public void onTextChanged(CharSequence s, int start, int before, int n) { model.text = s.toString(); count.setText(getString(R.string.journal_text_count, s.length())); }
             public void afterTextChanged(Editable text) { }
         });
-        LinearLayout sound = PersonUi.card(content); PersonUi.text(sound, getString(R.string.journal_audio), true);
+        JournalUi.divider(form);
+        LinearLayout sound = form; JournalUi.heading(sound, getString(R.string.journal_audio), R.drawable.ic_journal_microphone);
         if (model.audio != null) {
             audio(sound, model.audio, true);
-            PersonUi.action(sound, R.string.journal_remove_audio, () -> {
-                if (model.busy || recorder != null) return; model.audio = null; renderEditor();
-            }, false).setTag("journal_remove_audio");
         }
-        recordTime = PersonUi.text(sound, getString(R.string.journal_recording_limit), false); recordTime.setTag("journal_record_time");
-        recordButton = PersonUi.action(sound, model.audio == null ? R.string.journal_record : R.string.journal_record_again, () -> {
+        LinearLayout[] recordControls = JournalUi.pair(sound);
+        recordTime = JournalUi.text(recordControls[0], getString(R.string.journal_voice_limit), 13, false);
+        recordTime.setTag("journal_record_time"); recordTime.setPadding(0, dp(14), 0, dp(8));
+        recordButton = JournalUi.action(recordControls[1], model.audio == null ? R.string.journal_record : R.string.journal_record_again, R.drawable.ic_journal_microphone, () -> {
             if (recorder != null) stopRecording(true);
             else if (!model.busy) requestRecording();
         }, false); recordButton.setTag("journal_record"); recordButton.setEnabled(!model.busy);
-        LinearLayout files = PersonUi.card(content);
-        PersonUi.text(files, getString(R.string.journal_attachments, model.files().size()), true).setTag("journal_attachments_count");
-        for (JournalAttachment file : model.files()) attachment(files, file, true, true);
-        PersonUi.text(files, getString(R.string.journal_attachment_limit), false);
-        addButton = PersonUi.action(files, R.string.journal_add_attachment, () -> {
+        if (model.audio != null) {
+            TextView removeAudio = JournalUi.action(sound, R.string.journal_remove_audio, R.drawable.ic_journal_delete, () -> {
+                if (model.busy || recorder != null) return; model.audio = null; renderEditor();
+            }, false); removeAudio.setTag("journal_remove_audio"); removeAudio.setBackground(null); recordingLocked.add(removeAudio);
+        }
+        JournalUi.divider(form);
+        LinearLayout files = form;
+        LinearLayout[] attachmentHeader = JournalUi.pair(files);
+        JournalUi.heading(attachmentHeader[0], getString(R.string.journal_attachments, model.files().size()), R.drawable.ic_journal_attachment).setTag("journal_attachments_count");
+        addButton = JournalUi.action(attachmentHeader[1], R.string.journal_add, R.drawable.ic_journal_add, () -> {
             if (!model.busy && recorder == null && model.files().size() < JournalEntry.MAX_ATTACHMENTS) picker.launch(new String[]{"*/*"});
         }, false); addButton.setTag("journal_add_attachment");
         addButton.setEnabled(!model.busy && model.files().size() < JournalEntry.MAX_ATTACHMENTS);
         addButton.setAlpha(addButton.isEnabled() ? 1f : .4f);
-        LinearLayout sharing = PersonUi.card(content);
+        addButton.setContentDescription(getString(R.string.journal_add_attachment));
+        for (JournalAttachment file : model.files()) attachment(files, file, true, true);
+        TextView attachmentLimit = JournalUi.text(files, getString(R.string.journal_attachment_limit), 12, false);
+        attachmentLimit.setPadding(0, dp(8), 0, 0);
+        JournalUi.divider(form);
+        LinearLayout sharing = form;
         visibilityToggle = toggle(sharing, model.dom ? R.string.journal_share_subs : R.string.journal_share_dom,
                 model.share, checked -> model.share = checked);
         visibilityToggle.setTag("journal_visibility"); visibilityToggle.setEnabled(!model.busy);
-        saveButton = PersonUi.action(content, R.string.profile_save, this::save, true); saveButton.setTag("journal_save"); saveButton.setEnabled(!model.busy);
-        PersonUi.action(content, android.R.string.cancel, this::back, false).setTag("journal_cancel");
+        LinearLayout[] actions = JournalUi.pair(content);
+        saveButton = JournalUi.action(actions[0], R.string.profile_save, 0, this::save, true); saveButton.setTag("journal_save"); saveButton.setEnabled(!model.busy);
+        JournalUi.action(actions[1], android.R.string.cancel, 0, this::back, false).setTag("journal_cancel");
+        if (model.busy) disableActions(content);
     }
 
     private void save() {
@@ -306,7 +414,7 @@ public final class JournalActivity extends PreferencePage {
         final JournalEntry entry;
         try { entry = new JournalEntry(model.id, model.created, Math.max(model.created, System.currentTimeMillis()),
                 JournalEntry.cleanText(model.text), model.audio, model.files()); }
-        catch (IllegalArgumentException invalid) { notice(getString(R.string.journal_empty_error)); return; }
+        catch (IllegalArgumentException invalid) { showMessage(R.string.journal_empty_error); return; }
         JournalModel draft = model; boolean share = draft.share, newlyShared = !draft.initialShared;
         String token = draft.draft;
         draft.work(() -> { draft.runtime.save(draft.dom, entry, share, newlyShared); draft.runtime.releaseDraft(draft.dom, token); return entry.id; }, id -> {
@@ -329,6 +437,7 @@ public final class JournalActivity extends PreferencePage {
 
     private void requestRecording() {
         if (!authorized() || !model.editing) return;
+        if (message != 0) { message = 0; renderEditor(); }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
             microphone.launch(Manifest.permission.RECORD_AUDIO);
         else startRecording();
@@ -337,7 +446,7 @@ public final class JournalActivity extends PreferencePage {
     private void startRecording() {
         if (!resumed || model.busy || !model.editing || recorder != null || !authorized()
                 || ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return;
-        closePlayers();
+        for (JournalAudioPlayer player : players) player.setPlaybackEnabled(false);
         try {
             recording = File.createTempFile("journal-audio-", ".m4a", getCacheDir());
             recorder = new MediaRecorder(); recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
@@ -348,11 +457,13 @@ public final class JournalActivity extends PreferencePage {
                 if (value == recorder && (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED
                         || what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)) stopRecording(true);
             });
-            recorder.setOnErrorListener((value, what, extra) -> { if (value == recorder) { stopRecording(false); notice(getString(R.string.journal_record_failed)); } });
+            recorder.setOnErrorListener((value, what, extra) -> { if (value == recorder) { stopRecording(false); showMessage(R.string.journal_record_failed); } });
             recorder.prepare(); recorder.start(); recordingStarted = android.os.SystemClock.elapsedRealtime();
             recordButton.setText(R.string.journal_stop); editor.setEnabled(false); addButton.setEnabled(false);
-            visibilityToggle.setEnabled(false); saveButton.setEnabled(false); timer.run();
-        } catch (Exception failure) { stopRecording(false); notice(getString(R.string.journal_record_failed)); }
+            visibilityToggle.setEnabled(false); saveButton.setEnabled(false);
+            for (View control : recordingLocked) control.setEnabled(false);
+            timer.run();
+        } catch (Exception failure) { stopRecording(false); showMessage(R.string.journal_record_failed); }
     }
     private void stopRecording(boolean keep) {
         if (recorder == null) return;
@@ -376,42 +487,41 @@ public final class JournalActivity extends PreferencePage {
     private void audio(LinearLayout parent, JournalAttachment file, boolean draft) {
         Uri uri = draft ? JournalProvider.draftUri(this, model.dom, model.draft, file)
                 : JournalProvider.uri(this, model.dom, model.target, model.selected, file);
-        JournalAudioPlayer player = new JournalAudioPlayer(this, uri, () -> notice(getString(R.string.journal_media_pending)));
+        JournalAudioPlayer player = new JournalAudioPlayer(this, uri, () -> showMessage(R.string.journal_media_pending));
         players.add(player); parent.addView(player, new LinearLayout.LayoutParams(-1, -2));
     }
     private void attachment(LinearLayout parent, JournalAttachment file, boolean draft, boolean ready) {
         LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setMinimumHeight(dp(64));
         row.setTag("journal_attachment:" + file.hash);
-        ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.ic_settings_apps); icon.setPadding(dp(10), dp(10), dp(10), dp(10));
+        ImageView icon = new ImageView(this); icon.setImageResource(file.mime.startsWith("image/") ? R.drawable.ic_journal_photo
+                : file.mime.startsWith("audio/") ? R.drawable.ic_journal_microphone
+                : file.mime.startsWith("video/") ? R.drawable.ic_journal_play : R.drawable.ic_journal_file);
+        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
         icon.setImageTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
-        icon.setBackgroundResource(R.drawable.bg_profile_avatar); icon.setClipToOutline(true);
+        icon.setBackgroundResource(R.drawable.bg_journal_media); icon.setClipToOutline(true);
         icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = PersonUi.column(this); LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
         size.setMarginStart(dp(12)); row.addView(copy, size);
-        PersonUi.text(copy, file.name, true);
+        TextView filename = JournalUi.text(copy, file.name, 14, true); filename.setTypeface(null, android.graphics.Typeface.BOLD);
+        filename.setMaxLines(2); filename.setEllipsize(android.text.TextUtils.TruncateAt.END);
         String kind = getString(file.mime.startsWith("image/") ? R.string.journal_photo : file.mime.startsWith("audio/")
                 ? R.string.journal_audio : file.mime.startsWith("video/") ? R.string.journal_video : R.string.journal_file);
-        PersonUi.text(copy, getString(R.string.journal_file_summary, kind, android.text.format.Formatter.formatShortFileSize(this, file.length)), false);
+        TextView metadata = JournalUi.text(copy, getString(R.string.journal_file_summary, kind,
+                android.text.format.Formatter.formatShortFileSize(this, file.length)), 12, false);
+        metadata.setPadding(0, dp(4), 0, 0);
+        if (!ready) JournalUi.text(copy, getString(R.string.journal_media_pending), 12, false);
         if (draft) {
-            boolean compact = getResources().getConfiguration().screenWidthDp < 360
-                    || getResources().getConfiguration().fontScale > 1.25f;
-            View remove;
-            if (compact) {
-                android.widget.ImageButton iconButton = new android.widget.ImageButton(this);
-                iconButton.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
-                iconButton.setImageTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
-                iconButton.setBackgroundResource(R.drawable.bg_card); iconButton.setPadding(dp(12), dp(12), dp(12), dp(12));
-                remove = iconButton;
-            } else {
-                TextView label = (TextView) getLayoutInflater().inflate(R.layout.view_ux_action, row, false);
-                label.setText(R.string.journal_remove); label.setMinWidth(dp(48)); label.setMinHeight(dp(48));
-                remove = label;
-            }
+            android.widget.ImageButton remove = new android.widget.ImageButton(this);
+            remove.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+            remove.setImageTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
+            android.util.TypedValue ripple = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true);
+            remove.setBackground(getDrawable(ripple.resourceId)); remove.setPadding(dp(12), dp(12), dp(12), dp(12));
             remove.setContentDescription(getString(R.string.journal_remove_attachment, file.name));
             remove.setTag("journal_remove:" + file.hash);
-            LinearLayout.LayoutParams removeSize = new LinearLayout.LayoutParams(compact ? dp(48) : -2, compact ? dp(48) : -2); removeSize.setMarginStart(dp(8));
+            LinearLayout.LayoutParams removeSize = new LinearLayout.LayoutParams(dp(48), dp(48)); removeSize.setMarginStart(dp(8));
             row.addView(remove, removeSize);
+            recordingLocked.add(remove);
             remove.setOnClickListener(view -> {
                 if (model.busy || recorder != null) return;
                 synchronized (model) { model.attachments.removeIf(item -> item.hash.equals(file.hash)); } renderEditor();
@@ -429,7 +539,14 @@ public final class JournalActivity extends PreferencePage {
                 BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = 1;
                 while ((long) bounds.outWidth / options.inSampleSize > 192 || (long) bounds.outHeight / options.inSampleSize > 192) options.inSampleSize *= 2;
                 return BitmapFactory.decodeFile(source.getAbsolutePath(), options);
-            }, bitmap -> { if (bitmap != null) { icon.setImageTintList(null); icon.setPadding(0, 0, 0, 0); icon.setScaleType(ImageView.ScaleType.CENTER_CROP); icon.setImageBitmap(bitmap); } }, ignored -> { });
+            }, bitmap -> {
+                if (bitmap == null) return;
+                try {
+                    if (!authorized() || !icon.isAttachedToWindow()) throw new SecurityException("Journal preview no longer visible");
+                    if (draft) runtime.draftFile(dom, token, file.hash); else runtime.mediaFile(dom, target, selected, file.hash);
+                    icon.setImageTintList(null); icon.setPadding(0, 0, 0, 0); icon.setScaleType(ImageView.ScaleType.CENTER_CROP); icon.setImageBitmap(bitmap);
+                } catch (Exception unavailable) { bitmap.recycle(); }
+            }, ignored -> { });
         }
         row.setOnClickListener(view -> {
             if (model.busy || recorder != null || !authorized()) return;
@@ -445,6 +562,7 @@ public final class JournalActivity extends PreferencePage {
             catch (android.content.ActivityNotFoundException missing) { notice(getString(R.string.journal_no_viewer)); }
         });
         row.setClickable(true); row.setFocusable(true); row.setContentDescription(getString(R.string.journal_open_attachment, file.name));
+        row.setEnabled(ready); row.setAlpha(ready ? 1f : .75f);
     }
     private void closePlayers() { for (JournalAudioPlayer player : players) player.close(); players.clear(); }
     private void top() { if (page != null && page.getParent() instanceof ScrollView) ((ScrollView) page.getParent()).scrollTo(0, 0); }

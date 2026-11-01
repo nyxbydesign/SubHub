@@ -15,24 +15,48 @@ public final class RemoteProfiles {
     private RemoteProfiles() { }
 
     public static JSONObject encode(ProfileData profile, RemoteProtocol.Role role) throws JSONException {
-        return new JSONObject().put("role", role.name()).put("name", profile.name)
+        return encode(profile, role, false);
+    }
+
+    public static JSONObject encode(ProfileData profile, RemoteProtocol.Role role, boolean details) throws JSONException {
+        JSONObject value = new JSONObject().put("role", role.name()).put("name", profile.name)
                 .put("about", profile.about).put("avatar", profile.avatar);
+        if (details) value.put("gender", profile.gender).put("age", profile.age);
+        return value;
     }
 
     public static ProfileData parse(JSONObject value, RemoteProtocol.Role expected) throws JSONException {
-        if (value.length() != 4 || !expected.name().equals(value.get("role"))
+        return parse(value, expected, value.has("gender") || value.has("age"));
+    }
+
+    private static ProfileData parse(JSONObject value, RemoteProtocol.Role expected, boolean details) throws JSONException {
+        if (value.length() != (details ? 6 : 4) || !expected.name().equals(value.get("role"))
                 || !(value.get("name") instanceof String) || !(value.get("about") instanceof String)
                 || !(value.get("avatar") instanceof String)) throw new JSONException("Invalid profile fields");
         String name = value.getString("name"), about = value.getString("about");
         if (!name.equals(ProfileNames.clean(name)) || name.length() > ProfileNames.MAX_LENGTH
                 || !about.equals(ProfileData.cleanAbout(about)) || about.length() > ProfileData.MAX_ABOUT_LENGTH)
             throw new JSONException("Invalid profile text");
-        try { return new ProfileData(name, about, value.getString("avatar")); }
+        String gender = "";
+        int age = 0;
+        if (details) {
+            if (!(value.get("gender") instanceof String)) throw new JSONException("Invalid profile gender");
+            gender = value.getString("gender");
+            if (!gender.equals(ProfileData.cleanGender(gender))) throw new JSONException("Invalid profile gender");
+            long enteredAge = RemoteProtocol.integer(value, "age");
+            if (enteredAge < 0 || enteredAge > ProfileData.MAX_AGE) throw new JSONException("Invalid profile age");
+            age = (int) enteredAge;
+        }
+        try { return new ProfileData(name, about, value.getString("avatar"), gender, age); }
         catch (IllegalArgumentException invalid) { throw new JSONException("Invalid profile image"); }
     }
 
     static void receive(RemoteStore store, RemoteStore.Peer peer, JSONObject value) throws JSONException {
-        ProfileData profile = parse(value, peer.remoteRole());
+        receive(store, peer, value, false);
+    }
+
+    static void receive(RemoteStore store, RemoteStore.Peer peer, JSONObject value, boolean details) throws JSONException {
+        ProfileData profile = parse(value, peer.remoteRole(), details);
         ProfileImages.requireValid(profile.avatar);
         store.updateProfile(peer.identity, peer.generation, value, profile.name);
     }
@@ -43,7 +67,7 @@ public final class RemoteProfiles {
             if (current == null) return ProfileData.empty(peer.name);
             if (current.record.isEmpty()) return ProfileData.empty(current.name);
             ProfileData saved = parse(new JSONObject(current.record), peer.remoteRole());
-            return new ProfileData(current.name, saved.about, saved.avatar);
+            return new ProfileData(current.name, saved.about, saved.avatar, saved.gender, saved.age);
         } catch (JSONException | IllegalArgumentException invalid) { return ProfileData.empty(peer.name); }
     }
 

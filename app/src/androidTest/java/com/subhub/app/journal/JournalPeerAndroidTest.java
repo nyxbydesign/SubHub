@@ -88,6 +88,12 @@ public class JournalPeerAndroidTest {
     private RemoteSession.Hooks hooks(JournalRuntime runtime, boolean supported) throws Exception {
         RemoteAssets empty = new RemoteAssets(new File(root, runtime == dr ? "empty-dom" : "empty-sub"));
         return new RemoteSession.Hooks() {
+            public int profileVersion() { return 1; }
+            public int profileDetailsVersion() { return 1; }
+            public JSONObject profile(RemoteStore.Peer peer, boolean details) throws Exception {
+                return com.subhub.app.remote.RemoteProfiles.encode(new com.subhub.app.people.ProfileData(
+                        peer.localRole == RemoteProtocol.Role.DOM ? "Fixture Dom" : "Fixture Sub", "", "", "Self-entered", 32), peer.localRole, details);
+            }
             public int journalVersion() { return supported ? 1 : 0; }
             public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 calls.incrementAndGet(); JournalPeer.exchange(runtime, connection, peer, deadline);

@@ -16,7 +16,7 @@ public final class JournalPickerFixtureProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
     private String name(Uri uri) {
         String name = uri.getLastPathSegment();
-        if (name == null || !name.matches("small[1-6]|photo|oversize|hiddenoversize"))
+        if (name == null || !name.matches("small[1-6]|photo|pending|oversize|hiddenoversize"))
             throw new SecurityException("Unknown synthetic document");
         return name;
     }
@@ -45,6 +45,7 @@ public final class JournalPickerFixtureProvider extends ContentProvider {
             try (RandomAccessFile out = new RandomAccessFile(file, "rw")) {
                 out.setLength(name.endsWith("oversize") ? JournalAttachment.MAX_BYTES + 1 : 64);
                 out.seek(0); out.writeUTF(name);
+                if (name.equals("pending")) out.writeUTF(java.util.UUID.randomUUID().toString());
             }
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
         } catch (Exception failure) { throw new FileNotFoundException("Synthetic document unavailable"); }

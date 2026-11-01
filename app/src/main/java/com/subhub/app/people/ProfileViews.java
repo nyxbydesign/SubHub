@@ -31,32 +31,20 @@ public final class ProfileViews {
 
     public static void identity(LinearLayout parent, PersonSnapshot person) {
         Context context = parent.getContext();
-        LinearLayout hero = PersonUi.column(context);
-        hero.setPadding(0, PersonUi.dp(context, 4), 0, PersonUi.dp(context, 20));
-        LinearLayout row = new LinearLayout(context);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(avatar(context, person.profile), new LinearLayout.LayoutParams(
-                PersonUi.dp(context, 64), PersonUi.dp(context, 64)));
-        LinearLayout copy = PersonUi.column(context);
-        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1);
-        copySize.setMarginStart(PersonUi.dp(context, 16));
-        row.addView(copy, copySize);
-        TextView name = PersonUi.text(copy, person.name, true);
-        name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 26);
-        ViewCompat.setAccessibilityHeading(name, true);
-        PersonUi.text(copy, targetDiscriminator(context, person), false)
-                .setTag("person_target:" + person.id.value());
-        PersonUi.text(copy, PersonUi.connection(context, person), false);
-        hero.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        if (!person.profile.about.isEmpty()) {
-            PersonUi.text(hero, context.getString(R.string.profile_about), true);
-            PersonUi.text(hero, person.profile.about, false).setTag("person_about:" + person.id.value());
+        LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
+        ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
+        View about = identity.findViewWithTag("person_about");
+        if (about != null) about.setTag("person_about:" + person.id.value());
+        hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
+        if (context instanceof android.app.Activity) {
+            PersonId target = person.id.isLocal() ? new PersonId("journal_local_sub") : person.id;
+            com.subhub.app.journal.JournalPreview.add(hero,
+                    com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), target,
+                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id));
         }
-        if (context instanceof android.app.Activity)
-            PersonUi.action(hero, R.string.journal_title,
-                    () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id), false)
-                    .setTag("profile_journal");
-        parent.addView(hero, new LinearLayout.LayoutParams(-1, -2));
+        TextView target = PersonUi.text(parent, targetDiscriminator(context, person), false);
+        target.setTag("person_target:" + person.id.value());
+        PersonUi.text(parent, PersonUi.connection(context, person), false);
     }
 
     public static LinearLayout person(LinearLayout parent, PersonSnapshot person, Runnable open) {

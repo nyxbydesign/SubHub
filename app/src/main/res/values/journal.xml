@@ -2,6 +2,19 @@
 <resources>
     <string name="journal_title">Journal</string>
     <string name="journal_new">New entry</string>
+    <string name="journal_add">Add</string>
+    <string name="journal_loading">Loading entries…</string>
+    <string name="journal_load_failed">Could not load entries.</string>
+    <string name="journal_retry">Retry</string>
+    <string name="journal_working">Working…</string>
+    <plurals name="journal_attachment_count">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="journal_shared_by">Shared by %1$s</string>
+    <string name="journal_read_only">Shared entry · read-only</string>
+    <string name="journal_voice_limit">5 min · 10 MiB</string>
+    <string name="journal_media_summary">%1$s · %2$s</string>
     <string name="journal_entry">Entry</string>
     <string name="journal_text">Text</string>
     <string name="journal_text_hint">Write an entry</string>

@@ -5,6 +5,26 @@ import java.util.Base64;
 import org.junit.Test;
 
 public class ProfileDataTest {
+    @Test public void optionalDetailsStayEmptyForLegacyProfilesAndAgeIsOnlySelfEntered() {
+        ProfileData legacy = new ProfileData("Person", "About", "");
+        assertEquals("", legacy.gender); assertEquals(0, legacy.age);
+        assertEquals(0, ProfileData.parseAge("")); assertEquals(0, ProfileData.parseAge("  "));
+        assertEquals(1, ProfileData.parseAge("1")); assertEquals(130, ProfileData.parseAge("130"));
+        assertEquals(32, ProfileData.parseAge(" 32 "));
+        for (String invalid : new String[]{"0", "131", "999", "-1", "+25", "25.5", "2000-01-01", "age 25"})
+            assertThrows(invalid, IllegalArgumentException.class, () -> ProfileData.parseAge(invalid));
+        assertThrows(IllegalArgumentException.class, () -> new ProfileData("A", "", "", "", -1));
+        assertThrows(IllegalArgumentException.class, () -> new ProfileData("A", "", "", "", 131));
+    }
+
+    @Test public void genderIsOptionalBoundedAndDoesNotSplitUnicodeCharacters() {
+        assertEquals("Non-binary", ProfileData.cleanGender("  Non-binary  "));
+        assertEquals("Self entered", ProfileData.cleanGender("Self\nentered"));
+        assertEquals("x".repeat(39), ProfileData.cleanGender("x".repeat(39) + "😀"));
+        ProfileData details = new ProfileData("A", "", "", "Non-binary", 32);
+        assertNotEquals(details, new ProfileData("A", "", "", "", 32));
+        assertNotEquals(details, new ProfileData("A", "", "", "Non-binary", 0));
+    }
     @Test public void textKeepsParagraphsAndWholeUnicodeCharactersWithinItsLimits() {
         ProfileData value = new ProfileData("  A\nName  ", "  First\r\nSecond\tline  ", "");
         assertEquals("A Name", value.name);
