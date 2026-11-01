@@ -356,8 +356,10 @@ public final class MainActivity extends AppCompatActivity {
             // service. Re-arm the stored arrangement and keep the original expiry intact.
             CommitmentManager.reinforceProtection(this);
         }
+        boolean paused = new PaidPauseManager(this).isActive();
         boolean service = active || appMode.isArmed() || ScreenCaptureService.isRunning()
-                || ScreenshotAccessibilityService.isRecognitionActive() || new PaidPauseManager(this).isActive();
+                || ScreenshotAccessibilityService.isRecognitionActive() || paused;
+        if (roleHome != null) roleHome.renderOverviewSession(service, paused);
         int next = !service ? 0 : active ? 1 : 2;
         boolean animate = durationDisplay >= 0 && durationDisplay != next
                 && binding.commitmentCard.isLaidOut() && android.animation.ValueAnimator.areAnimatorsEnabled();
@@ -388,7 +390,8 @@ public final class MainActivity extends AppCompatActivity {
 
     private void sizeServiceCountdown() {
         if (binding == null) return;
-        int height = dp(Math.round(180 * Math.max(1f, getResources().getConfiguration().fontScale)));
+        int height = dp(Math.round((roleHome != null && roleHome.overviewSession() ? 44 : 180)
+                * Math.max(1f, getResources().getConfiguration().fontScale)));
         android.view.ViewGroup.LayoutParams size = binding.serviceCountdown.getLayoutParams();
         if (size.height != height) { size.height = height; binding.serviceCountdown.setLayoutParams(size); }
     }

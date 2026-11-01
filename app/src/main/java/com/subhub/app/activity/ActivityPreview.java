@@ -30,12 +30,20 @@ public final class ActivityPreview {
     private ActivityPreview() { }
 
     public static void add(LinearLayout parent, PersonId person, int limit, AsyncUiScope data, String jobKey) {
+        add(parent, person, limit, data, jobKey, false);
+    }
+
+    public static void addOverview(LinearLayout parent, AsyncUiScope data, String jobKey) {
+        add(parent, null, 2, data, jobKey, true);
+    }
+
+    private static void add(LinearLayout parent, PersonId person, int limit, AsyncUiScope data, String jobKey, boolean overview) {
         if (limit < 1 || limit > 10 || jobKey == null || jobKey.isEmpty()) {
             throw new IllegalArgumentException("Invalid activity preview bounds");
         }
-        Preview preview = new Preview(parent.getContext(), person, limit, data, jobKey);
+        Preview preview = new Preview(parent.getContext(), person, limit, data, jobKey, overview);
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
-        size.bottomMargin = PersonUi.dp(parent.getContext(), 14);
+        size.bottomMargin = PersonUi.dp(parent.getContext(), overview ? 10 : 14);
         parent.addView(preview, size);
     }
 
@@ -53,6 +61,7 @@ public final class ActivityPreview {
     private static final class Preview extends LinearLayout implements DefaultLifecycleObserver {
         private final PersonId person;
         private final int limit;
+        private final boolean overview;
         private final AsyncUiScope data;
         private final String jobKey;
         private final LifecycleOwner owner;
@@ -65,31 +74,39 @@ public final class ActivityPreview {
         private int message;
         private final java.util.concurrent.atomic.AtomicBoolean scheduled = new java.util.concurrent.atomic.AtomicBoolean();
 
-        Preview(Context context, PersonId person, int limit, AsyncUiScope data, String jobKey) {
+        Preview(Context context, PersonId person, int limit, AsyncUiScope data, String jobKey, boolean overview) {
             super(context);
             this.person = person;
             this.limit = limit;
+            this.overview = overview;
             this.data = java.util.Objects.requireNonNull(data);
             this.jobKey = jobKey;
             owner = lifecycle(context);
             setOrientation(VERTICAL);
             setVisibility(DeviceRolePreferences.supportsDom(context) ? VISIBLE : GONE);
             setTag("activity_preview:" + (person == null ? "all" : person.value()));
-            setBackgroundResource(R.drawable.bg_card);
-            int inset = PersonUi.dp(context, 16);
+            setBackgroundResource(overview ? R.drawable.bg_overview_card : R.drawable.bg_card);
+            int inset = PersonUi.dp(context, overview ? 14 : 16);
             setPadding(inset, inset, inset, inset);
-            PersonUi.text(this, context.getString(ActivitySources.repository().localOnly()
+            if (overview) {
+                com.subhub.app.people.OverviewUi.heading(this, R.string.overview_activity, R.string.dom_activity_view_all, this::openAll);
+                android.view.ViewGroup header = (android.view.ViewGroup) getChildAt(getChildCount() - 1);
+                header.getChildAt(header.getChildCount() - 1).setTag("activity_preview_view_all:" + (person == null ? "all" : person.value()));
+            } else PersonUi.text(this, context.getString(ActivitySources.repository().localOnly()
                     ? R.string.dom_activity_recent_local : R.string.dom_activity_recent), true);
             rows = PersonUi.column(context);
             addView(rows, new LayoutParams(-1, -2));
             PersonUi.text(rows, context.getString(R.string.role_loading), false);
-            PersonUi.action(this, R.string.dom_activity_view_all, () -> {
-                if (!allowed()) return;
-                Intent intent = new Intent(context, DomActivityActivity.class);
-                if (person != null && person.isLocal()) intent.putExtra(DomActivityActivity.EXTRA_LOCAL_HISTORY, true);
-                if (newest != null) intent.putExtra(DomActivityActivity.EXTRA_ENTRY_KEY, newest);
-                context.startActivity(intent);
-            }, false).setTag("activity_preview_view_all:" + (person == null ? "all" : person.value()));
+            if (!overview) PersonUi.action(this, R.string.dom_activity_view_all, this::openAll, false)
+                    .setTag("activity_preview_view_all:" + (person == null ? "all" : person.value()));
+        }
+
+        private void openAll() {
+            if (!allowed()) return;
+            Intent intent = new Intent(getContext(), DomActivityActivity.class);
+            if (person != null && person.isLocal()) intent.putExtra(DomActivityActivity.EXTRA_LOCAL_HISTORY, true);
+            if (newest != null) intent.putExtra(DomActivityActivity.EXTRA_ENTRY_KEY, newest);
+            getContext().startActivity(intent);
         }
 
         @Override protected void onAttachedToWindow() {
@@ -237,7 +254,7 @@ public final class ActivityPreview {
             int index = 0;
             for (ActivityEntry entry : sorted) {
                 List<String> details = new ArrayList<>();
-                if (person == null) details.add(entry.personName + " · "
+                if (person == null && !overview) details.add(entry.personName + " · "
                         + ProfileViews.targetDiscriminator(getContext(), entry.personId, entry.device));
                 String detail = ActivityText.detail(getContext(), entry);
                 if (!detail.isEmpty()) details.add(detail);
@@ -270,10 +287,17 @@ public final class ActivityPreview {
                 LinearLayout copy = (LinearLayout) view.getChildAt(1);
                 title = (android.widget.TextView) copy.getChildAt(0);
                 detail = (android.widget.TextView) copy.getChildAt(1);
+                if (overview) {
+                    view.setMinimumHeight(PersonUi.dp(getContext(), 48));
+                    view.setPadding(0, PersonUi.dp(getContext(), 4), 0, PersonUi.dp(getContext(), 4));
+                    title.setTextSize(14); detail.setTextSize(12);
+                    view.getChildAt(2).setVisibility(GONE);
+                }
             }
             void bind(ActivityEntry value, String text) {
                 entry = value;
                 String label = ActivityText.title(getContext(), value);
+                if (overview && person == null) label = value.personName + " · " + label;
                 if (!android.text.TextUtils.equals(title.getText(), label)) title.setText(label);
                 if (!android.text.TextUtils.equals(detail.getText(), text)) detail.setText(text);
                 ActivityText.bindIcon(icon, value);
