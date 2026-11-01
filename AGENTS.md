@@ -47,6 +47,22 @@ the control with a native tap and after recreation. Track each native Journal fi
 owning role and retain a scoped cleanup ledger so a failed multi-role test can remove
 its own entries without attempting cross-role deletion or wiping unrelated guest data.
 
+Build native profile-avatar fixtures with `ProfileImages.encode`; persisted thumbnails
+use bounded 192-pixel JPEG data even when the imported source is PNG. Keep image validation
+strict. Text-fit checks may permit ellipsis only on explicitly tagged, bounded roster
+name/bio previews; continue checking their line count and drawn width, all controls in
+full, and native tap-through to the complete profile.
+
+After a monitored child Activity finishes, await the parent in `RESUMED` before
+recreating it or issuing further foreground input. Keep the existing authority
+assertions; a missing resumed host is an observer-lifecycle failure to reconcile,
+not a reason to weaken the application's role guard.
+
+Use the measured unobscured ScrollView viewport to reveal a compound identity block.
+A scroll offset chosen for a small button can leave a taller name/details group behind
+floating navigation. Retain its bounds and rendered frame, then verify full clearance
+before sampling avatar pixels or issuing input.
+
 Native text-fit checks must also cover text drawn directly on Canvas inside artwork. TextView bounds checks cannot detect that overflow; measure each drawn string against its allotted region and inspect a native artwork render after copy changes.
 
 TextView `Layout.getLineWidth` includes trailing whitespace. Use
