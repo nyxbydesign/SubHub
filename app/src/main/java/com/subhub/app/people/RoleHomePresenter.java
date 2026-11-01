@@ -208,7 +208,7 @@ public final class RoleHomePresenter {
     }
 
     private void homeSummary(List<PersonSnapshot> people) {
-        int sessions = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
         java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
             if (person.connection == PersonSnapshot.Connection.REVOKED
@@ -218,7 +218,8 @@ public final class RoleHomePresenter {
             if (person.sync.runtime == PersonSnapshot.Freshness.CURRENT) {
                 if (person.serviceActive) sessions++;
             } else unknownSessions++;
-            if (person.id.isLocal()) continue;
+            subs++;
+            if (person.id.isLocal()) { local++; continue; }
             paired++;
             if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
             else if (person.connection == PersonSnapshot.Connection.OFFLINE) offline++;
@@ -239,10 +240,12 @@ public final class RoleHomePresenter {
         if (unknownSessions > 0 && sessions > 0) PersonUi.text(inSession,
                 activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
         LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
-                R.string.overview_paired_subs, Integer.toString(paired));
+                R.string.home_subs_total, Integer.toString(subs));
         pairedSubs.setTag("home_devices");
         if (paired > 0) PersonUi.text(pairedSubs,
                 activity.getString(R.string.home_devices_counts, online, offline), false).setTextSize(12);
+        if (local > 0) PersonUi.text(pairedSubs,
+                activity.getString(R.string.home_local_sub_count, local), false).setTextSize(12);
         if (unknownDevices > 0) PersonUi.text(pairedSubs,
                 activity.getString(R.string.home_status_unknown, unknownDevices), false).setTextSize(12);
     }
@@ -313,6 +316,7 @@ public final class RoleHomePresenter {
     private void favoriteOverview(PersonSnapshot person) {
         LinearLayout card = OverviewUi.card(domFavorite);
         card.setTag("home_favorite:" + person.id.value());
+        card.setBackgroundResource(R.drawable.bg_home_favorite);
         OverviewUi.heading(card, R.string.home_favorite_title, R.string.overview_view_profile, () -> openPerson(person));
         LinearLayout identity = identityHeader(card, person, true);
         identity.setTag("home_favorite_identity:" + person.id.value());
@@ -438,7 +442,9 @@ public final class RoleHomePresenter {
 
     private com.subhub.app.stats.AchievementPreviewView achievementPreview(LinearLayout parent) {
         com.subhub.app.stats.AchievementPreviewView preview = new com.subhub.app.stats.AchievementPreviewView(activity, true);
-        parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
+        size.bottomMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        parent.addView(preview, size);
         preview.load(data, "home-achievement-preview");
         return preview;
     }

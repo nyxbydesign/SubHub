@@ -183,6 +183,10 @@ public final class DailyStatsPanel extends LinearLayout {
                     .setId(R.id.daily_open_statistics);
             return;
         }
+        TextView heading = label(this, getContext().getString(R.string.daily_activity), 16, false);
+        heading.setTypeface(null, Typeface.BOLD);
+        com.subhub.app.util.UiIdentity.sectionIcon(heading, R.drawable.ic_nav_stats);
+        androidx.core.view.ViewCompat.setAccessibilityHeading(heading, true);
         LinearLayout ranges = new LinearLayout(getContext());
         addView(ranges, new LayoutParams(-1, -2));
         int[] counts = {7, 30, 365},

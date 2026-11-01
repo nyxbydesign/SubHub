@@ -39,7 +39,9 @@ public final class AchievementPreviewView extends LinearLayout {
         data.load(key, () -> HomeAchievementPreview.load(app, stats), this::render, failure -> {
             rendered = null;
             removeAllViews();
-            PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
+            com.subhub.app.util.UiIdentity.sectionIcon(
+                PersonUi.text(this, getContext().getString(R.string.achievements_title), true),
+                R.drawable.ic_overview_achievement);
         });
     }
 
@@ -63,13 +65,16 @@ public final class AchievementPreviewView extends LinearLayout {
                             preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()),
                     () -> getContext().startActivity(new Intent(getContext(), AchievementsActivity.class)));
             recentBadges(preview.achievements);
+            nextAchievement(preview);
             return;
         }
-        PersonUi.text(this, getContext().getString(R.string.achievements_title), true);
+        com.subhub.app.util.UiIdentity.sectionIcon(
+                PersonUi.text(this, getContext().getString(R.string.achievements_title), true),
+                R.drawable.ic_overview_achievement);
         PersonUi.text(this, getContext().getString(R.string.achievements_progress_compact,
                 preview.achievements.getUnlockedCount(), preview.achievements.getTotalCount()), false);
         LinearLayout badges = new LinearLayout(getContext());
-        badges.setGravity(Gravity.CENTER_VERTICAL);
+        badges.setGravity(Gravity.TOP);
         addView(badges, new LayoutParams(-1, -2));
         java.util.List<AchievementManager.Achievement> visible = new java.util.ArrayList<>();
         for (AchievementManager.Achievement achievement : preview.achievements.all())
@@ -91,9 +96,15 @@ public final class AchievementPreviewView extends LinearLayout {
             label.setTextSize(11);
             if (++shown == 3) break;
         }
-        if (preview.next == null) PersonUi.text(this, getContext().getString(R.string.achievements_all_complete), false);
-        else PersonUi.text(this, getContext().getString(R.string.achievements_next_fmt,
-                getContext().getString(preview.next.getName()), formatProgress(preview)), false);
+        nextAchievement(preview);
+    }
+
+    private void nextAchievement(HomeAchievementPreview preview) {
+        TextView next = PersonUi.text(this, preview.next == null
+                ? getContext().getString(R.string.achievements_all_complete)
+                : getContext().getString(R.string.achievements_next_fmt,
+                        getContext().getString(preview.next.getName()), formatProgress(preview)), false);
+        next.setTag("achievement_next");
         ProgressBar progress = new ProgressBar(getContext(), null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
         if (preview.next != null && !preview.progress.isKnown()) progress.setVisibility(GONE);
@@ -110,17 +121,20 @@ public final class AchievementPreviewView extends LinearLayout {
                 (AchievementManager.Achievement achievement) -> achievements.getUnlockedAt(achievement.getId())).reversed());
         if (unlocked.isEmpty()) return;
         LinearLayout badges = new LinearLayout(getContext());
-        badges.setGravity(Gravity.CENTER_VERTICAL);
+        badges.setGravity(Gravity.TOP);
         badges.setTag("achievement_recent_badges");
         LayoutParams size = new LayoutParams(-1, -2); size.bottomMargin = PersonUi.dp(getContext(), 6);
         addView(badges, size);
         for (AchievementManager.Achievement achievement : unlocked.subList(0, Math.min(3, unlocked.size()))) {
-            LinearLayout cell = new LinearLayout(getContext()); cell.setGravity(Gravity.CENTER);
+            LinearLayout cell = new LinearLayout(getContext()); cell.setOrientation(VERTICAL); cell.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
             badges.addView(cell, new LayoutParams(0, -2, 1));
             AchievementBadgeView badge = new AchievementBadgeView(getContext());
             badge.bind(achievement.getBadgeArtRes(), true, false, getContext().getString(achievement.getName()));
             badge.setTag("achievement_recent:" + achievement.getId());
             cell.addView(badge, new LayoutParams(PersonUi.dp(getContext(), 56), PersonUi.dp(getContext(), 56)));
+            TextView title = PersonUi.text(cell, getContext().getString(achievement.getName()), false);
+            title.setTextSize(11); title.setGravity(Gravity.CENTER);
+            title.setTag("achievement_recent_title:" + achievement.getId());
         }
     }
 

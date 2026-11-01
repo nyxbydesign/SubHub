@@ -568,6 +568,8 @@ public final class OverviewReferenceAndroidTest {
         onMain(() -> {
             ViewGroup badges = (ViewGroup) tagged(activity, "achievement_recent_badges");
             assertNotNull(badges); assertEquals(3, badges.getChildCount());
+            TextView next = ((ViewGroup) badges.getParent()).findViewWithTag("achievement_next");
+            assertNotNull(next); assertTrue(next.getText().length() > 0);
             com.subhub.app.stats.AchievementManager manager = com.subhub.app.stats.AchievementManager.forWorkspace(activity);
             java.util.List<com.subhub.app.stats.AchievementManager.Achievement> earnedBadges = new ArrayList<>();
             for (com.subhub.app.stats.AchievementManager.Achievement badge : manager.all())
@@ -579,6 +581,9 @@ public final class OverviewReferenceAndroidTest {
                 View badge = ((ViewGroup) badges.getChildAt(index)).getChildAt(0);
                 String id = badge.getTag().toString().substring("achievement_recent:".length());
                 assertTrue(manager.isUnlocked(id));
+                TextView title = ((ViewGroup) badges.getChildAt(index)).findViewWithTag("achievement_recent_title:" + id);
+                assertNotNull(title);
+                assertEquals(activity.getString(earnedBadges.get(index).getName()), title.getText().toString());
                 assertEquals(earnedBadges.get(index).getId(), id);
                 long earned = manager.getUnlockedAt(id); assertTrue(earned <= previous); previous = earned;
             }

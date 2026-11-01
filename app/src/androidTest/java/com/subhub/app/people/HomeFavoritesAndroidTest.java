@@ -243,7 +243,13 @@ public final class HomeFavoritesAndroidTest {
             scenario.onActivity(activity -> {
                 View root = activity.findViewById(R.id.home_dom_overview);
                 assertTrue(contains(root.findViewWithTag("home_in_session"), "2"));
-                assertTrue(contains(root.findViewWithTag("home_devices"), "1 online · 0 offline"));
+                View devices = root.findViewWithTag("home_devices");
+                assertTrue(contains(devices, "1 online · 0 offline"));
+                assertTrue(contains(devices, "1 local"));
+                assertTrue(contains(devices, activity.getString(R.string.home_subs_total)));
+                ViewGroup row = (ViewGroup) ((ViewGroup) devices).getChildAt(0);
+                ViewGroup copy = (ViewGroup) row.getChildAt(1);
+                assertEquals("2", ((TextView) copy.getChildAt(0)).getText().toString());
                 View tab = activity.findViewById(R.id.nav_people);
                 assertEquals("Subs", tab.getContentDescription().toString());
                 assertEquals("Subs", ((TextView) activity.findViewById(R.id.nav_people_label)).getText().toString());
@@ -259,7 +265,7 @@ public final class HomeFavoritesAndroidTest {
                 View root = activity.findViewById(R.id.home_dom_overview);
                 assertTrue(contains(root.findViewWithTag("home_in_session"), "0"));
                 assertTrue(contains(root.findViewWithTag("home_devices"), "0"));
-                assertTrue(contains(root.findViewWithTag("home_devices"), activity.getString(R.string.overview_paired_subs)));
+                assertTrue(contains(root.findViewWithTag("home_devices"), activity.getString(R.string.home_subs_total)));
             });
         }
     }
