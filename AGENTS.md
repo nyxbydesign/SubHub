@@ -35,6 +35,18 @@ These repository rules apply to every automated or human-assisted change.
 
 ## Required verification
 
+AppCompat methods can be public Java APIs yet restricted to their library by `@RestrictTo`.
+Use supported framework or AndroidX compatibility tint APIs from application code; keep
+`RestrictedApi` lint enabled rather than suppressing it. Global Settings is
+`GlobalSettingsActivity`; `SettingsActivity` is the guarded Censor editor. Resolve the intended
+screen before launching a native Settings observer, and preserve its role authorization.
+
+Check expandable TextView overflow after its text layout is ready, such as at pre-draw;
+a bounds-change callback alone can miss ellipsis and hide the expansion control. Verify
+the control with a native tap and after recreation. Track each native Journal fixture's
+owning role and retain a scoped cleanup ledger so a failed multi-role test can remove
+its own entries without attempting cross-role deletion or wiping unrelated guest data.
+
 Native text-fit checks must also cover text drawn directly on Canvas inside artwork. TextView bounds checks cannot detect that overflow; measure each drawn string against its allotted region and inspect a native artwork render after copy changes.
 
 TextView `Layout.getLineWidth` includes trailing whitespace. Use
