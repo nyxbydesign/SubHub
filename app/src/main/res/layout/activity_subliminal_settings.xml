@@ -21,7 +21,7 @@
 
         <LinearLayout android:id="@+id/intensity_card" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/ui_gap_group" android:background="@drawable/bg_card"
-            android:orientation="vertical" android:padding="@dimen/ui_gap_group">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/subliminal_intensity_title" />
             <TextView style="@style/Widget.SubHub.FieldHelp"
@@ -89,7 +89,7 @@
 
         <LinearLayout android:id="@+id/message_packs_card" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/ui_gap_group" android:background="@drawable/bg_card"
-            android:orientation="vertical" android:padding="@dimen/ui_gap_group">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/subliminal_packs_title" />
             <com.subhub.app.util.SelectionGrid android:id="@+id/message_packs_grid" android:layout_width="match_parent"

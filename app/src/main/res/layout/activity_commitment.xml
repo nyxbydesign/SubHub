@@ -23,8 +23,7 @@
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/ui_gap_section"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/ui_card_padding">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <com.subhub.app.commitment.ServiceDurationView
                 android:id="@+id/duration_selection"
                 android:layout_width="match_parent"
@@ -43,8 +42,7 @@
             android:layout_marginTop="@dimen/ui_gap_section"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="@dimen/ui_card_padding"
-            android:visibility="gone">
+            android:visibility="gone" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
 
             <TextView style="@style/Widget.SubHub.SectionHeader" android:text="@string/commitment_pact_sealed" />
 

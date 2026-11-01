@@ -148,7 +148,7 @@ public final class RoleExperienceAndroidTest {
                     context.getString(R.string.achievements_title))));
             ProfileStatsActivityAndroidTest.captureNativeProfile(home, "sub-achievements", "achievement_preview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_tasks, R.id.nav_contract, R.id.nav_stats, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_tasks, R.id.nav_contract, R.id.nav_stats);
                 assertFalse(home.findViewById(R.id.commitment_start_panel).isShown());
                 assertFalse(home.findViewById(R.id.sub_dashboard).isShown());
                 assertTrue(home.findViewById(R.id.button_protection).isShown());
@@ -179,7 +179,7 @@ public final class RoleExperienceAndroidTest {
             ProfileStatsActivityAndroidTest.captureNativeProfile(stats, "stats-achievements", "achievement_preview");
             capture(stats, "sub-stats");
             onMain(() -> assertTrue(stats.findViewById(R.id.nav_stats).isSelected()));
-            tap(stats, R.id.nav_settings);
+            tap(stats, R.id.primary_header_settings);
             GlobalSettingsActivity settings = resumed(GlobalSettingsActivity.class);
             capture(settings, "sub-settings");
             onMain(() -> {
@@ -202,7 +202,7 @@ public final class RoleExperienceAndroidTest {
             MainActivity home = resumed(MainActivity.class);
             capture(home, "dom-overview");
             onMain(() -> {
-                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_stats, R.id.nav_settings);
+                assertVisibleTabs(home, R.id.nav_home, R.id.nav_people, R.id.nav_tasks, R.id.nav_stats);
                 assertFalse(home.findViewById(R.id.home_service_widget).isShown());
                 assertTrue(home.findViewById(R.id.button_edit_lock).isShown());
                 assertFits(home.getWindow().getDecorView());

@@ -27,7 +27,6 @@ public final class FeatureConsentView extends ViewGroup {
 
     public static LinearLayout card(LinearLayout parent) {
         LinearLayout card = PersonUi.card(parent);
-        int inset = PersonUi.dp(parent.getContext(), 12); card.setPadding(inset, inset, inset, inset);
         TextView heading = PersonUi.text(card, parent.getContext().getString(R.string.sub_features_title), true);
         heading.setPadding(0, 0, 0, PersonUi.dp(parent.getContext(), 4));
         return card;

@@ -17,7 +17,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.widget.SwitchCompat;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
@@ -279,24 +278,6 @@ public final class TasksActivity extends RolePage {
                 else { model.closeForm(); render(); }
             }
             return;
-        }
-        if (state.canOptOut) {
-            LinearLayout consent = PersonUi.card(body);
-            SwitchCompat allowed = new SwitchCompat(this);
-            allowed.setText(R.string.tasks_allowed);
-            allowed.setTextColor(getColor(R.color.text_primary));
-            allowed.setMinHeight(PersonUi.dp(this, 48));
-            allowed.setChecked(state.chosen);
-            allowed.setSaveEnabled(false);
-            allowed.setTag("tasks_allowed");
-            allowed.setEnabled(!model.busy && !model.loading);
-            consent.addView(allowed, new LinearLayout.LayoutParams(-1, -2));
-            TaskRepository repo = repository;
-            allowed.setOnCheckedChangeListener((button, checked) -> mutate(() -> {
-                repo.setAllowed(checked); return null;
-            }, false));
-            if (!state.chosen && state.allowed)
-                PersonUi.text(consent, getString(R.string.tasks_hardcore_override), false);
         }
         if (!state.allowed) {
             PersonUi.text(PersonUi.card(body), getString(R.string.tasks_disabled), false);

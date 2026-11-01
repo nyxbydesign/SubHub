@@ -86,7 +86,6 @@ public final class RoleHomePresenter {
 
     public void refresh(boolean force) {
         boolean dom = domWorkspace();
-        OverviewUi.header(activity, !sessionPage);
         session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
         subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);

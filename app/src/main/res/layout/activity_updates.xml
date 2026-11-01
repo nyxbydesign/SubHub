@@ -22,8 +22,7 @@
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/ui_gap_group">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/update_status_title" />
             <TextView
@@ -85,8 +84,7 @@
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/ui_gap_group">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/update_automatic_title" />
             <com.subhub.app.util.StateToggle
@@ -119,8 +117,7 @@
             android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="@dimen/ui_gap_group"
-            android:visibility="gone">
+            android:visibility="gone" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/update_release_notes" />
             <TextView
@@ -142,8 +139,7 @@
             android:layout_marginTop="@dimen/ui_gap_group"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="@dimen/ui_gap_group"
-            android:visibility="gone">
+            android:visibility="gone" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:text="@string/update_download_options" />
             <TextView

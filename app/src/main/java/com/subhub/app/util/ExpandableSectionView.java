@@ -20,9 +20,7 @@ public final class ExpandableSectionView extends LinearLayout {
         super(context);
         setOrientation(VERTICAL);
         setBackgroundResource(R.drawable.bg_card);
-        int side = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
-        int vertical = getResources().getDimensionPixelSize(R.dimen.ui_gap_control);
-        setPadding(side, vertical, side, vertical);
+        UiIdentity.cardPadding(this);
         LayoutInflater.from(context).inflate(R.layout.view_expandable_section, this, true);
         header = findViewById(R.id.section_header);
         content = findViewById(R.id.section_content);

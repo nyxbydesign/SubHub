@@ -37,10 +37,8 @@ public class SettingsGroupsAndroidTest {
     @After
     public void restore() {
         android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-        android.content.SharedPreferences.Editor names=context.getSharedPreferences("subhub_profile_names",0).edit().clear();
-        for(Map.Entry<String,?> entry:namesBefore.entrySet())names.putString(entry.getKey(),(String)entry.getValue());names.commit();
-        android.content.SharedPreferences.Editor consent=context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).edit().clear();
-        for(Map.Entry<String,?> entry:consentBefore.entrySet())consent.putBoolean(entry.getKey(),(Boolean)entry.getValue());consent.commit();
+        SharedPreferenceTestRestore.restore(context.getSharedPreferences("subhub_profile_names",0), namesBefore);
+        SharedPreferenceTestRestore.restore(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0), consentBefore);
         ControllerPinManager.enterSubMode();
     }
 

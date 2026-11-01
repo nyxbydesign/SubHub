@@ -84,7 +84,7 @@ public final class DailyStatsPanel extends LinearLayout {
         uiData = com.subhub.app.util.AsyncUiScope.forContext(context);
         taskKey = "daily-panel:" + System.identityHashCode(this);
         setOrientation(VERTICAL);
-        setPadding(dp(16), dp(14), dp(16), dp(16));
+        com.subhub.app.util.UiIdentity.cardPadding(this);
         setBackgroundResource(R.drawable.bg_card);
         setId(R.id.daily_statistics_panel);
         restoreState(state);

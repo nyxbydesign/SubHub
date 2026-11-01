@@ -100,4 +100,18 @@
         android:singleLine="false"
         android:ellipsize="none"
         android:text="@string/controller_edit_locked" />
+
+    <ImageView
+        android:id="@+id/primary_header_settings"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:padding="12dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_overview_settings"
+        android:contentDescription="@string/global_settings_title"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:tint="@color/text_primary" />
 </LinearLayout>

@@ -86,7 +86,7 @@ public class UiInputLatencyAndroidTest {
             instrument.waitForIdleSync();
             SystemClock.sleep(300);
             begin(GlobalSettingsActivity.class);
-            tap(view(MainActivity.class, R.id.nav_settings));
+            tap(view(MainActivity.class, R.id.primary_header_settings));
             report.put("home_to_settings_first_draw_ms", awaitDraw());
             begin(com.subhub.app.appmode.AppModeActivity.class);
             tap(view(GlobalSettingsActivity.class, R.id.nav_limits));
@@ -127,7 +127,7 @@ public class UiInputLatencyAndroidTest {
             tap(view(SettingsActivity.class, R.id.nav_home));
             report.put("censor_to_home_first_draw_ms", awaitDraw());
             begin(GlobalSettingsActivity.class);
-            tap(view(MainActivity.class, R.id.nav_settings));
+            tap(view(MainActivity.class, R.id.primary_header_settings));
             report.put("warm_home_to_settings_first_draw_ms", awaitDraw());
         } finally {
             app.unregisterActivityLifecycleCallbacks(observer);

@@ -61,7 +61,7 @@ public final class ProfilePreview extends LinearLayout {
         int avatarDp = roster ? 56 : AVATAR_DP;
         identity.addView(avatar, new LayoutParams(PersonUi.dp(context, avatarDp), PersonUi.dp(context, avatarDp)));
         LinearLayout copy = PersonUi.column(context);
-        LayoutParams copySize = new LayoutParams(0, -2, 1); copySize.setMarginStart(PersonUi.dp(context, 16));
+        LayoutParams copySize = new LayoutParams(0, -2, 1); copySize.setMarginStart(PersonUi.dp(context, 14));
         identity.addView(copy, copySize);
         TextView name = new TextView(context); name.setText(profile.name); name.setTag(prefix + "_name");
         name.setTextSize(roster ? 22 : 26); name.setTextColor(context.getColor(R.color.text_primary));
@@ -87,7 +87,7 @@ public final class ProfilePreview extends LinearLayout {
         if (!profile.about.isEmpty()) {
             if (!roster) {
                 TextView label = PersonUi.text(this, context.getString(R.string.profile_about), true);
-                label.setPadding(0, PersonUi.dp(context, 18), 0, PersonUi.dp(context, 6));
+                label.setPadding(0, PersonUi.dp(context, 10), 0, PersonUi.dp(context, 6));
             }
             about = PersonUi.text(this, profile.about, false); about.setTag(prefix + "_about");
             about.setTextSize(15); about.setTextColor(context.getColor(R.color.text_primary));

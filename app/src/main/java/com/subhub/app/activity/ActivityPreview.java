@@ -86,8 +86,7 @@ public final class ActivityPreview {
             setVisibility(DeviceRolePreferences.supportsDom(context) ? VISIBLE : GONE);
             setTag("activity_preview:" + (person == null ? "all" : person.value()));
             setBackgroundResource(overview ? R.drawable.bg_overview_card : R.drawable.bg_card);
-            int inset = PersonUi.dp(context, overview ? 14 : 16);
-            setPadding(inset, inset, inset, inset);
+            com.subhub.app.util.UiIdentity.cardPadding(this);
             if (overview) {
                 com.subhub.app.people.OverviewUi.heading(this, R.string.overview_activity, R.string.dom_activity_view_all, this::openAll);
                 android.view.ViewGroup header = (android.view.ViewGroup) getChildAt(getChildCount() - 1);

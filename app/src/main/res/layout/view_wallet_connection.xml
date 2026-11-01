@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/paypal_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="0dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="12dp">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/paypal_card" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="0dp" android:background="@drawable/bg_card" android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
     <TextView style="@style/Widget.SubHub.FieldHelp" android:layout_marginTop="@dimen/ui_gap_inline" android:text="@string/paypal_settings_help" />
     <TextView style="@style/Widget.SubHub.FieldLabel" android:text="@string/paypal_environment_label" android:layout_marginTop="8dp" />
     <com.subhub.app.util.CompactChoiceGroup android:id="@+id/paypal_environment" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">

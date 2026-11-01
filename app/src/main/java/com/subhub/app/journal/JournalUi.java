@@ -21,7 +21,7 @@ final class JournalUi {
     static LinearLayout surface(LinearLayout parent) {
         LinearLayout surface = PersonUi.card(parent);
         LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) surface.getLayoutParams();
-        size.bottomMargin = PersonUi.dp(parent.getContext(), 12); surface.setLayoutParams(size);
+        size.bottomMargin = parent.getResources().getDimensionPixelSize(R.dimen.ui_gap_group); surface.setLayoutParams(size);
         return surface;
     }
 
@@ -52,7 +52,7 @@ final class JournalUi {
     static void divider(LinearLayout parent) {
         View divider = new View(parent.getContext()); divider.setBackgroundColor(parent.getContext().getColor(R.color.outline_subtle));
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, PersonUi.dp(parent.getContext(), 1));
-        size.topMargin = PersonUi.dp(parent.getContext(), 18); size.bottomMargin = PersonUi.dp(parent.getContext(), 18);
+        size.topMargin = PersonUi.dp(parent.getContext(), 10); size.bottomMargin = PersonUi.dp(parent.getContext(), 10);
         parent.addView(divider, size);
     }
 

@@ -20,22 +20,33 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class AtmosphereContractTest {
-    @Test public void atmosphereIsACompactHomeCardInSubSpace() {
-        Context context = ApplicationProvider.getApplicationContext();
-        new FeatureModuleManager(context).save(true, true, true, true);
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subContractKeepsAtmosphereReadOnlyAndSettingsInTheSharedHeader() throws Exception {
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<MainActivity> scenario =
-                     ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<com.subhub.app.people.ContractActivity> scenario =
+                     ActivityScenario.launch(com.subhub.app.people.ContractActivity.class)) {
+            long deadline = android.os.SystemClock.uptimeMillis() + 10000;
+            java.util.concurrent.atomic.AtomicBoolean ready = new java.util.concurrent.atomic.AtomicBoolean();
+            do {
+                scenario.onActivity(activity -> ready.set(activity.findViewById(android.R.id.content)
+                        .findViewWithTag("contract_section:atmosphere") != null));
+                if (!ready.get()) android.os.SystemClock.sleep(30);
+            } while (!ready.get() && android.os.SystemClock.uptimeMillis() < deadline);
+            org.junit.Assert.assertTrue(ready.get());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
+                    org.hamcrest.Matchers.is((Object) "contract_section:atmosphere")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
             scenario.onActivity(activity -> {
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.sub_atmosphere_card).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_home).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.nav_atmosphere).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_settings).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(android.R.id.content)
+                        .findViewWithTag("contract_details:atmosphere").getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.primary_header_settings).getVisibility());
+                assertEquals(View.GONE, activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
             });
-        } finally {
-            ControllerPinManager.enterDomMode();
         }
     }
 
@@ -49,7 +60,7 @@ public final class AtmosphereContractTest {
                 assertNotNull(activity.findViewById(R.id.whispers_card));
                 assertNotNull(activity.findViewById(R.id.popup_storm_card));
                 assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.nav_atmosphere).getVisibility());
+                        activity.findViewById(R.id.primary_header_settings).getVisibility());
             });
         }
     }
