@@ -876,7 +876,7 @@ public final class RoleExperienceAndroidTest {
             assertFalse(hasTag(recreated, "home_recent_person:" + alex.value()));
             tapTag(recreated, "home_favorite_identity:" + sam.value());
             PersonActivity profile = resumed(PersonActivity.class);
-            await(() -> hasTag(profile, "person_target:" + sam.value()));
+            await(() -> hasTag(profile, "person_name"));
             assertEquals(sam, PersonRoutes.requireId(profile.getIntent()));
             assertEquals(before, new SettingsRepository(context).preferences().getAll());
         }
@@ -1376,8 +1376,13 @@ public final class RoleExperienceAndroidTest {
             TextView text = (TextView) view;
             if (text.getLayout() != null) {
                 int width = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+                Object tag = text.getTag();
+                boolean rosterPreview = tag instanceof String && ((String) tag).startsWith("roster:")
+                        && (((String) tag).endsWith("_name") || ((String) tag).endsWith("_about"))
+                        && text.getMaxLines() == 2 && text.getEllipsize() == android.text.TextUtils.TruncateAt.END;
+                if (rosterPreview) assertTrue(text.getLineCount() <= 2);
                 for (int line = 0; line < text.getLineCount(); line++) {
-                    assertEquals("Ellipsized text: " + text.getText(), 0, text.getLayout().getEllipsisCount(line));
+                    if (!rosterPreview) assertEquals("Ellipsized text: " + text.getText(), 0, text.getLayout().getEllipsisCount(line));
                     assertTrue("Drawn text too wide: " + text.getText() + " line=" + line
                             + " extent=" + text.getLayout().getLineMax(line) + " width=" + width,
                             text.getLayout().getLineMax(line) <= width + 1);

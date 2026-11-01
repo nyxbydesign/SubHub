@@ -336,6 +336,14 @@ public final class SubHubNavigation {
                         content.getPaddingEnd(), clearance);
             }
         }
+        // Subs keeps its roster below a fixed header, inside a nested pane.
+        View roster = page.findViewById(R.id.people_roster_scroll);
+        if (roster instanceof ScrollView && ((ScrollView) roster).getChildCount() > 0) {
+            View content = ((ScrollView) roster).getChildAt(0);
+            if (content.getPaddingBottom() != clearance)
+                content.setPaddingRelative(content.getPaddingStart(), content.getPaddingTop(),
+                        content.getPaddingEnd(), clearance);
+        }
         View activityList = page.findViewById(R.id.dom_activity_list);
         if (activityList instanceof android.widget.ListView && activityList.getPaddingBottom() != clearance)
             activityList.setPaddingRelative(activityList.getPaddingStart(), activityList.getPaddingTop(),
