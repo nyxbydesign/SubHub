@@ -36,39 +36,22 @@ public final class ProfileViews {
         View about = identity.findViewWithTag("person_about");
         if (about != null) about.setTag("person_about:" + person.id.value());
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
+        connectionSummary(hero, person, "person_connection:" + person.id.value());
         if (context instanceof android.app.Activity) {
             PersonId target = person.id.isLocal() ? new PersonId("journal_local_sub") : person.id;
             com.subhub.app.journal.JournalPreview.add(hero,
                     com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), target,
                     () -> com.subhub.app.journal.JournalRoutes.profile((android.app.Activity) context, person.id));
         }
-        TextView target = PersonUi.text(parent, targetDiscriminator(context, person), false);
-        target.setTag("person_target:" + person.id.value());
-        PersonUi.text(parent, PersonUi.connection(context, person), false);
     }
 
     public static LinearLayout person(LinearLayout parent, PersonSnapshot person, Runnable open) {
         Context context = parent.getContext();
         LinearLayout card = PersonUi.card(parent);
-        LinearLayout row = new LinearLayout(context);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(avatar(context, person.profile), new LinearLayout.LayoutParams(
-                PersonUi.dp(context, 44), PersonUi.dp(context, 44)));
-        LinearLayout content = PersonUi.column(context);
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
-        size.setMarginStart(PersonUi.dp(context, 14));
-        row.addView(content, size);
-        PersonUi.row(content, 0, person.name,
-                targetDiscriminator(context, person) + "\n" + PersonUi.connection(context, person), null);
-        TextView arrow = new TextView(context);
-        arrow.setText("›");
-        arrow.setTextSize(24);
-        arrow.setTextColor(context.getColor(R.color.text_secondary));
-        arrow.setGravity(Gravity.CENTER);
-        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        row.addView(arrow, new LinearLayout.LayoutParams(PersonUi.dp(context, 24), -2));
-        card.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(card, person.contractName, false);
+        card.setBackgroundResource(R.drawable.bg_home_composition_person);
+        String prefix = "roster:" + person.id.value();
+        card.addView(ProfilePreview.roster(context, person.profile, prefix), new LinearLayout.LayoutParams(-1, -2));
+        connectionSummary(card, person, prefix + "_connection");
         card.setOnClickListener(view -> open.run());
         card.setFocusable(true);
         card.setClickable(true);
@@ -78,6 +61,12 @@ public final class ProfileViews {
         card.setTag("person:" + person.id.value());
         ViewCompat.setScreenReaderFocusable(card, true);
         return card;
+    }
+
+    private static void connectionSummary(LinearLayout parent, PersonSnapshot person, String tag) {
+        if (person.connection == PersonSnapshot.Connection.LOCAL) return;
+        TextView state = PersonUi.text(parent, PersonUi.connection(parent.getContext(), person), false);
+        state.setTag(tag); state.setTextSize(12); state.setPadding(0, PersonUi.dp(parent.getContext(), 10), 0, 0);
     }
 
     public static View avatar(Context context, ProfileData profile) {

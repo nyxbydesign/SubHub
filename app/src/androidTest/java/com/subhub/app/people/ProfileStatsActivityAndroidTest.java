@@ -352,7 +352,7 @@ public final class ProfileStatsActivityAndroidTest {
                     && tag(profile, "activity_preview_entry:local:visual-local") != null);
             captureLocal(profile, "profile-top", null, () -> {
                 assertEquals(PersonId.LOCAL, PersonRoutes.requireId(profile.getIntent()));
-                assertNotNull(tag(profile, "person_target:local"));
+                assertNull(tag(profile, "person_target:local"));
                 assertLocalTextFits(profile.findViewById(R.id.role_page_body));
                 assertLocalTextFits(profile.findViewById(R.id.primary_header_title));
             });

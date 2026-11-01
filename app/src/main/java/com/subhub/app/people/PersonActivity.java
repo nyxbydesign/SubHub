@@ -163,7 +163,6 @@ public final class PersonActivity extends RolePage {
         if ("profile".equals(section)) {
             title(R.string.role_profile);
             ProfileViews.identity(body, person);
-            ProfileViews.allowedFeatures(body, person);
             session(person);
             LinearLayout destinations = PersonUi.card(body);
             destinations.setTag("person_destinations");
@@ -179,10 +178,14 @@ public final class PersonActivity extends RolePage {
         } else {
             title("connection".equals(section) ? R.string.role_connection : R.string.role_contract);
             PersonUi.text(body, person.name, true);
-            PersonUi.text(body, ProfileViews.targetDiscriminator(this, person), false)
-                    .setTag("person_target:" + person.id.value());
-            if ("connection".equals(section)) connection(person);
-            else contracts(person);
+            if ("connection".equals(section)) {
+                PersonUi.text(body, ProfileViews.targetDiscriminator(this, person), false)
+                        .setTag("person_target:" + person.id.value());
+                connection(person);
+            } else {
+                ProfileViews.allowedFeatures(body, person);
+                contracts(person);
+            }
         }
     }
 

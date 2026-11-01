@@ -235,7 +235,7 @@ public final class ProfileAndroidTest {
         }
     }
 
-    @Test @SdkSuppress(minSdkVersion = 29) public void pairedSubProfileShowsAllowancesWithoutGivingDomEditControls() throws Exception {
+    @Test @SdkSuppress(minSdkVersion = 29) public void pairedSubContractStartsWithReadOnlyAllowancesAndProfileHasNoDeviceFiller() throws Exception {
         ControllerPinManager.enterDomMode();
         PersonId id = new PersonId("remote_" + String.join("", Collections.nCopies(64, "a"))
                 + "_" + String.join("", Collections.nCopies(32, "b")));
@@ -259,15 +259,26 @@ public final class ProfileAndroidTest {
         Map<String, ?> choices = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()))) {
-            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
+            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_name") != null);
             await(scenario, a -> avatarReady(a.findViewById(android.R.id.content)));
             scenario.onActivity(a -> {
-                View root = a.findViewById(android.R.id.content), card = root.findViewWithTag("person_allowed_features");
-                assertReadOnly(card);
+                View root = a.findViewById(android.R.id.content);
+                assertNull(root.findViewWithTag("person_allowed_features"));
+                assertNull(root.findViewWithTag("person_target:" + id.value()));
                 assertNotNull(root.findViewWithTag("person_about:" + id.value()));
                 for (String key : SubFeaturePolicy.FEATURES) assertNull(root.findViewWithTag("sub_feature:" + key));
             });
             capture(scenario, "paired-sub-profile").recycle();
+            onView(tag("person_tab:contracts")).perform(revealAboveNavigation(), click());
+            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
+            scenario.onActivity(a -> {
+                View card = a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features");
+                assertReadOnly(card); ViewGroup parent = (ViewGroup) card.getParent();
+                for (int i = 0; i < parent.getChildCount(); i++) if (parent.getChildAt(i) instanceof ViewGroup) {
+                    assertSame(card, parent.getChildAt(i)); break;
+                }
+            });
+            capture(scenario, "paired-sub-contract-first-allowances").recycle();
             onView(tag("person_allowance:censor")).perform(revealAboveNavigation(), click());
             capture(scenario, "paired-sub-allowances").recycle();
             assertEquals(choices, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
@@ -434,7 +445,7 @@ public final class ProfileAndroidTest {
 
     @Test @SdkSuppress(minSdkVersion = 29) public void contractDomPreviewKeepsItsOwnIdentityBioAndRoundedAvatar() throws Exception {
         AtomicReference<ProfileData> owner = new AtomicReference<>(new ProfileData("Alexandra Morgan the contract owner",
-                String.join("", Collections.nCopies(12, "Clear expectations and a steady routine. ")), profileImage(Color.rgb(67, 135, 208))));
+                String.join("", Collections.nCopies(12, "Clear expectations and a steady routine. ")), profileImage(Color.rgb(67, 135, 208)), "Woman", 34));
         People.installLocalProjection(person -> person.withContractDom(owner.get()));
         try (ActivityScenario<ContractActivity> scenario = ActivityScenario.launch(ContractActivity.class)) {
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("contract_dom_name") != null);
@@ -443,6 +454,9 @@ public final class ProfileAndroidTest {
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content);
                 assertEquals(owner.get().name, ((TextView) root.findViewWithTag("contract_dom_name")).getText().toString());
+                TextView name = root.findViewWithTag("contract_dom_name"), details = root.findViewWithTag("contract_dom_details");
+                assertSame(name.getParent(), details.getParent()); assertEquals(name.getBottom(), details.getTop());
+                assertTrue(details.getText().toString().contains("34")); assertTrue(details.getText().toString().contains("Woman"));
                 assertEquals(owner.get().about, ((TextView) root.findViewWithTag("contract_dom_about")).getText().toString());
                 assertEquals(2, ((TextView) root.findViewWithTag("contract_dom_about")).getMaxLines());
                 assertNull(root.findViewWithTag("contract_name"));
@@ -473,6 +487,7 @@ public final class ProfileAndroidTest {
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup avatar = root.findViewWithTag("contract_dom_avatar");
                 assertNotEquals(View.VISIBLE, avatar.getChildAt(1).getVisibility());
+                assertEquals(a.getString(R.string.role_dom), ((TextView) root.findViewWithTag("contract_dom_details")).getText().toString());
                 assertEquals(View.GONE, root.findViewWithTag("contract_dom_about_expand").getVisibility()); textFits(root);
             });
         }
@@ -520,7 +535,7 @@ public final class ProfileAndroidTest {
         });
         Map<String, ?> beforeChoices = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
-                .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()))) {
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()).putExtra("person_section", "contracts"))) {
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
             onView(tag("person_allowance:popup")).perform(revealAboveNavigation());
             capture(scenario, "compact-readonly-unknown").recycle();
@@ -558,7 +573,7 @@ public final class ProfileAndroidTest {
             public PersonSnapshot load(PersonId requested) { assertEquals(id, requested); return paired; }
         });
         try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
-                .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()))) {
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, id.value()).putExtra("person_section", "contracts"))) {
             await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features") != null);
             settleNativeFrame(scenario); alignCardTop(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("person_allowed_features"));
             capture(scenario, "large-readonly-hardcore-context").recycle();
