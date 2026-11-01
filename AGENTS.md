@@ -64,6 +64,12 @@ before a transition, and restore the required capability mode before deleting th
 role-owned Journal entries. Keep rejected Sub changes as guard evidence rather than
 weakening the setter to satisfy fixture setup.
 
+Restore native SharedPreferences snapshots with `SharedPreferenceTestRestore` so
+profile ages, consent booleans, task-resume timestamps and string sets retain their
+actual types. Do not cast a whole preference store to strings or booleans during
+teardown. Keep a failed restore as evidence and reconcile any committed partial
+changes before resuming the unfinished checks.
+
 Use the measured unobscured ScrollView viewport to reveal a compound identity block.
 A scroll offset chosen for a small button can leave a taller name/details group behind
 floating navigation. Retain its bounds and rendered frame, then verify full clearance
