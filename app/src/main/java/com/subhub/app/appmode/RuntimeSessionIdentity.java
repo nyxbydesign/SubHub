@@ -14,7 +14,13 @@ public final class RuntimeSessionIdentity {
     public static final Object LOCK=new Object();
     private static volatile String idleFence=hash(java.util.UUID.randomUUID().toString());
     private RuntimeSessionIdentity(){}
-    public static void changed() { synchronized(LOCK) { idleFence=hash(java.util.UUID.randomUUID().toString()); } }
+    public static void changed() {
+        synchronized (LOCK) {
+            idleFence = hash(java.util.UUID.randomUUID().toString());
+            // Retained views keep their old draw scope; a new session must admit new tap geometry.
+            CensorTapTracker.shared().clear();
+        }
+    }
     /** Raw component ownership survives expiry and distinguishes replacement pacts sharing statistics. */
     public static String componentSignature(Context context) {
         return componentObservation(context).signature;

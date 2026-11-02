@@ -375,24 +375,42 @@ public final class PenanceManager {
 
     /** Rejection and acknowledged zero-cent batch progress are different outcomes. */
     public SourceDetectionResult recordSourceDetectionResult(int count, long nowMillis, StatsRepository.SessionStamp expected) {
+        return recordSourceDetectionResult(count, nowMillis, expected, () -> true);
+    }
+
+    public SourceDetectionResult recordSourceDetectionResult(int count, long nowMillis, StatsRepository.SessionStamp expected,
+            java.util.function.BooleanSupplier stillEligible) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             throw new IllegalStateException("Source ledger commit must be off main");
         }
         if (expected == null) return new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
-        return recordInfractionResult(PenanceInfraction.NEW_DETECTION, count, nowMillis, expected);
+        return recordInfractionResult(PenanceInfraction.NEW_DETECTION, count, nowMillis, expected, stillEligible);
     }
 
     /** One admitted viewport episode; same acknowledged/stamped result without detection batching. */
     public SourceDetectionResult recordSourceDwellResult(long nowMillis, StatsRepository.SessionStamp expected) {
+        return recordSourceDwellResult(1, nowMillis, expected, () -> true);
+    }
+
+    /** Capture may admit several dwell occurrences; preserve their original bounded charge count. */
+    public SourceDetectionResult recordSourceDwellResult(int count, long nowMillis, StatsRepository.SessionStamp expected,
+            java.util.function.BooleanSupplier stillEligible) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             throw new IllegalStateException("Source ledger commit must be off main");
         }
         if (expected == null) return new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
-        return recordInfractionResult(PenanceInfraction.CENSORED_DWELL, 1, nowMillis, expected);
+        return recordInfractionResult(PenanceInfraction.CENSORED_DWELL, count, nowMillis, expected, stillEligible);
     }
 
     private SourceDetectionResult recordInfractionResult(PenanceInfraction infraction, int count, long nowMillis,
             StatsRepository.SessionStamp sourceSession) {
+        return recordInfractionResult(infraction, count, nowMillis, sourceSession, () -> true);
+    }
+
+    /** Eligibility is a pure observation; ledger and statistics remain separately acknowledged stores. */
+    private SourceDetectionResult recordInfractionResult(PenanceInfraction infraction, int count, long nowMillis,
+            StatsRepository.SessionStamp sourceSession, java.util.function.BooleanSupplier stillEligible) {
+        java.util.Objects.requireNonNull(stillEligible);
         SourceDetectionResult rejected = new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
         SourceDetectionStatus written = sourceSession == null ? SourceDetectionStatus.APPLIED : SourceDetectionStatus.ACKNOWLEDGED;
         if ((infraction == PenanceInfraction.NEW_DETECTION
@@ -401,8 +419,9 @@ public final class PenanceManager {
         if (infraction == PenanceInfraction.TASK_FAILURE) return rejected;
         if (infraction == null || !isEnabled() || !isInfractionEnabled(infraction)
                 || !new AppModeManager(context).isArmed() || count <= 0) return rejected;
+        PenanceEvent assessed;
         synchronized (LOCK) {
-            if (sourceSession != null && !sourceSession.isCurrent()) return rejected;
+            if (!sourceEligible(sourceSession, stillEligible)) return rejected;
             SharedPreferences.Editor acknowledged = sourceSession == null ? null : preferences.edit();
             if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
                 HardcoreModeManager hardcore = new HardcoreModeManager(context);
@@ -416,36 +435,54 @@ public final class PenanceManager {
                 int batch = getDetectionBatch();
                 int accumulated = preferences.getInt(KEY_DETECTION_REMAINDER, 0) + count;
                 billableCount = accumulated / batch;
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
                 if (acknowledged == null) preferences.edit().putInt(KEY_DETECTION_REMAINDER, accumulated % batch).apply();
                 else acknowledged.putInt(KEY_DETECTION_REMAINDER, accumulated % batch);
-                if (billableCount <= 0) { acknowledge(acknowledged); return new SourceDetectionResult(written, 0); }
+                if (billableCount <= 0) {
+                    if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                    acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+                }
             }
             List<PenanceEvent> events = loadEvents();
             trimHistoryForInsertion(events);
-            if (events.size() >= MAX_EVENTS) { acknowledge(acknowledged); return new SourceDetectionResult(written, 0); }
+            if (events.size() >= MAX_EVENTS) {
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+            }
             int amount = PenancePolicy.boundedCharge(currentCurrencyEvents(events), nowMillis, billableCount,
                     getInfractionCents(infraction), getDailyCapCents(), getWeeklyCapCents(),
                     ZoneId.systemDefault());
-            if (amount <= 0) { acknowledge(acknowledged); return new SourceDetectionResult(written, 0); }
+            if (amount <= 0) {
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+            }
             long mercyEnds = nowMillis + getMercyMinutes() * 60_000L;
-            PenanceEvent assessed = new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
+            assessed = new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
                     amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency());
             events.add(assessed);
+            if (!sourceEligible(sourceSession, stillEligible)) return rejected;
             if (acknowledged == null) {
                 saveEvents(events);
                 new StatsRepository(context).recordTributeEvent(amount,
                         infraction == PenanceInfraction.TAMPER_ATTEMPT, getCurrency());
             } else {
                 acknowledge(acknowledged.putString(KEY_EVENTS, encodeEvents(events)));
-                new StatsRepository(context).recordSourceTribute(sourceSession, amount, getCurrency());
+                if (sourceEligible(sourceSession, stillEligible))
+                    new StatsRepository(context).recordSourceTribute(sourceSession, amount, getCurrency());
             }
             if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
                 preferences.edit().putLong(KEY_LAST_TAMPER_AT, nowMillis).apply();
             }
+        }
+        if (sourceEligible(sourceSession, stillEligible)) {
             HardcoreAutoPayManager.schedule(context);
             com.subhub.app.remote.RemoteActivityRecorder.tribute(assessed.getId());
-            return new SourceDetectionResult(written, amount);
         }
+        return new SourceDetectionResult(written, assessed.getAmountCents());
+    }
+
+    private static boolean sourceEligible(StatsRepository.SessionStamp source, java.util.function.BooleanSupplier eligible) {
+        return (source == null || source.isCurrent()) && eligible.getAsBoolean();
     }
 
     private static void acknowledge(SharedPreferences.Editor edit) {

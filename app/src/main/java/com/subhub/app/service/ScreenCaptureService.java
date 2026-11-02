@@ -30,6 +30,7 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.ForegroundAppState;
 import com.subhub.app.appmode.ProtectionSessionManager;
 import com.subhub.app.appmode.ResumeNotificationManager;
+import com.subhub.app.appmode.RuntimeSessionIdentity;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.capture.ScreenCaptureManager;
 import com.subhub.app.commitment.CommitmentManager;
@@ -45,6 +46,7 @@ import com.subhub.app.penance.DwellInfractionTracker;
 import com.subhub.app.penance.PenanceChargeNotifier;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
+import com.subhub.app.penance.HardcoreAutoPayManager;
 import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.security.ProtectionStopPolicy;
@@ -55,11 +57,13 @@ import com.subhub.app.stats.AchievementManager;
 import com.subhub.app.stats.StatsRepository;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Foreground pipeline: capture -> local ONNX inference -> tracking -> touch-through overlay. */
 public final class ScreenCaptureService extends Service {
@@ -68,19 +72,30 @@ public final class ScreenCaptureService extends Service {
     private static final int NOTIFICATION_ID = 1701;
     private static final String ACTION_START = "com.subhub.app.action.START";
     private static final String ACTION_STOP = "com.subhub.app.action.STOP";
+    private static final String ACTION_STOP_OWNED = "com.subhub.app.action.STOP_OWNED_CAPTURE";
     private static final String EXTRA_RESULT_CODE = "projection_result_code";
     private static final String EXTRA_RESULT_DATA = "projection_result_data";
     private static final String DIAGNOSTICS_MODE = "MediaProjection";
-    private static volatile boolean running;
+    private static final CaptureRunOwnership ownership = new CaptureRunOwnership();
+    private static volatile ScreenCaptureService liveInstance;
+    private final String instanceIdentity = UUID.randomUUID().toString();
+    private final Object resources = new Object();
+    private volatile CaptureRunOwnership.Token captureOwner;
+    private volatile boolean destroyed;
+    private volatile boolean destructionComplete;
+    private boolean resourceClosureFailed;
+    private volatile int lastStartId;
+    private PopupStormManager.ServiceParticipation popupParticipation;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean firstFrameReported = new AtomicBoolean();
     private final SharedPreferences.OnSharedPreferenceChangeListener settingsListener =
-            (preferences, key) -> {
+            (preferences, key) -> mainHandler.post(() -> {
+                if (destroyed) return;
                 if (DiagnosticsRepository.PREF_OVERLAY.equals(key)) {
                     refreshDiagnosticsOverlay();
                 } else reloadSettings();
-            };
+            });
     private ScheduledExecutorService executor;
     private ExecutorService inferenceExecutor;
     private LatestFrameBroker<ProjectionFrame> frameBroker;
@@ -112,7 +127,134 @@ public final class ScreenCaptureService extends Service {
         return new Intent(context, ScreenCaptureService.class).setAction(ACTION_STOP);
     }
 
-    public static boolean isRunning() { return running; }
+    public static boolean isRunning() { return ownership.isRunning(); }
+
+    /** An admitted capture effect, separate from peer authorization and the enclosing runtime identity. */
+    public static final class StopTarget {
+        private final CaptureRunOwnership.Token owner;
+        private StopTarget(CaptureRunOwnership.Token owner) { this.owner = owner; }
+        public String identity() { return owner.activation; }
+        /** Historical closure of this capture; it says nothing about a replacement runtime. */
+        public boolean isClosed() { return owner.isClosed(); }
+    }
+
+    /** Pure app-owned observation; the command controller captures this before committing End. */
+    @Nullable public static StopTarget observedStopTarget(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            CaptureRunOwnership.Token owner = ownership.current();
+            ScreenCaptureService service = liveInstance;
+            if (owner == null || service == null || service.destroyed || !owner.equals(service.captureOwner)) return null;
+            try { return owner.components.equals(components(context)) ? new StopTarget(owner) : null; }
+            catch (IllegalArgumentException | ClassCastException corrupt) { return null; }
+        }
+    }
+
+    /** Delivers only to the already observed instance; it never creates or globally stops a service. */
+    public static boolean requestStop(StopTarget target) {
+        if (target == null) return false;
+        if (Thread.holdsLock(RuntimeSessionIdentity.LOCK) || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK))
+            throw new IllegalStateException("Capture dispatch must follow authority validation");
+        ScreenCaptureService service = liveInstance;
+        return service != null && service.instanceIdentity.equals(target.owner.instance)
+                && service.mainHandler.post(() -> service.stopOwned(target.owner));
+    }
+
+    public static Intent targetedStopIntent(Context context, StopTarget target) {
+        if (target == null) throw new IllegalArgumentException("Missing capture stop target");
+        CaptureRunOwnership.Token owner = target.owner;
+        return new Intent(context, ScreenCaptureService.class).setAction(ACTION_STOP_OWNED)
+                .putExtra("capture_instance", owner.instance).putExtra("capture_activation", owner.activation)
+                .putExtra("capture_start_id", owner.startId).putExtra("capture_statistics", owner.components.statistics)
+                .putExtra("capture_pact", owner.components.pact).putExtra("capture_pause", owner.components.pause);
+    }
+
+    private static CaptureRunOwnership.Token stopTarget(Intent intent) {
+        return new CaptureRunOwnership.Token(intent.getStringExtra("capture_instance"), intent.getStringExtra("capture_activation"),
+                intent.getIntExtra("capture_start_id", 0), new CaptureRunOwnership.Components(
+                        intent.getStringExtra("capture_statistics"), intent.getStringExtra("capture_pact"), intent.getStringExtra("capture_pause")));
+    }
+
+    private static CaptureRunOwnership.Components components(Context context) {
+        SharedPreferences main = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        return new CaptureRunOwnership.Components(
+                context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).getString("active_session_identity", ""),
+                main.getString("commitment_session_identity", ""),
+                context.getSharedPreferences(PenanceManager.PREFS_NAME, 0).getString("paid_pause_session_identity", ""));
+    }
+
+    private boolean ownsRuntimeLocked() {
+        try { return !destroyed && ownership.mayAffectRuntime(captureOwner, components(this)); }
+        catch (IllegalArgumentException | ClassCastException corrupt) { return false; }
+    }
+
+    private boolean isInstanceRunning() { return !destroyed && ownership.owns(captureOwner) && !ownership.isStopping(captureOwner); }
+
+    private boolean ownsCurrentRuntime() {
+        synchronized (RuntimeSessionIdentity.LOCK) { return ownsFrameRuntimeLocked(); }
+    }
+
+    private boolean ownsFrameRuntimeLocked() {
+        try { return isInstanceRunning() && captureOwner.components.equals(components(this)); }
+        catch (IllegalArgumentException | ClassCastException corrupt) { return false; }
+    }
+
+    private void updateDiagnostics(Runnable update) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (ownsFrameRuntimeLocked()) update.run();
+        }
+    }
+
+    final class FrameScope {
+        private final CaptureRunOwnership.Token owner = captureOwner;
+        private final RuntimeSessionIdentity.ComponentObservation components = RuntimeSessionIdentity.componentObservation(ScreenCaptureService.this);
+        private final ForegroundAppState.Snapshot foreground;
+        final StatsRepository.SessionStamp statistics = stats.sessionStamp();
+        final long tapScope = tapTracker.scope();
+        private FrameScope(ForegroundAppState.Snapshot foreground) { this.foreground = foreground; }
+        boolean isCurrent() {
+            return !destroyed && ForegroundAppState.isCurrent(foreground) && components.isCurrent() && statistics != null && statistics.isCurrent()
+                    && ownership.owns(owner) && !ownership.isStopping(owner);
+        }
+    }
+
+    FrameScope observeFrameScope() {
+        return observeFrameScope(ForegroundAppState.snapshot());
+    }
+
+    private FrameScope observeFrameScope(ForegroundAppState.Snapshot foreground) {
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Frame admission requires runtime ownership");
+        return ownsFrameRuntimeLocked() && ForegroundAppState.isCurrent(foreground) ? new FrameScope(foreground) : null;
+    }
+
+    void postFramePublication(FrameScope scope, Runnable render, Runnable release) {
+        if (!mainHandler.post(() -> {
+            if (scope != null && scope.isCurrent()) render.run();
+            else release.run();
+        })) release.run();
+    }
+
+    private String popupSignature() {
+        CaptureRunOwnership.Components value = captureOwner.components;
+        return value.pact + ":" + value.pause + ":" + value.statistics;
+    }
+
+    private boolean stopOwned(CaptureRunOwnership.Token target) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (destroyed || !target.equals(captureOwner)) return false;
+            boolean affectRuntime;
+            try { affectRuntime = ownership.mayAffectRuntime(target, components(this)); }
+            catch (IllegalArgumentException | ClassCastException corrupt) { affectRuntime = false; }
+            if (!ownership.beginStop(target)) return false;
+            explicitlyStoppedByController = true;
+            if (affectRuntime) {
+                ProtectionSessionManager.markMediaProjectionExplicitlyStopped(this);
+                new AppModeManager(this).setArmed(false);
+            }
+        }
+        // Android start IDs fence later deliveries, while the activation token fences later ownership.
+        stopSelfResult(lastStartId);
+        return true;
+    }
 
     @Override
     public void onCreate() {
@@ -122,14 +264,22 @@ public final class ScreenCaptureService extends Service {
         inferenceExecutor = Executors.newSingleThreadExecutor();
         loadGovernor = new CaptureLoadGovernor(this);
         settings = new SettingsRepository(this);
-        stats = new StatsRepository(this);
+        stats = com.subhub.app.remote.RemoteSessionNative.statistics(this);
         penance = new PenanceManager(this);
         settings.preferences().registerOnSharedPreferenceChangeListener(settingsListener);
+        liveInstance = this;
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        lastStartId = startId;
         if (intent == null) return START_NOT_STICKY;
+        if (ACTION_STOP_OWNED.equals(intent.getAction())) {
+            try { stopOwned(stopTarget(intent)); }
+            catch (IllegalArgumentException | ClassCastException malformed) { Log.w(TAG, "Invalid capture stop target"); }
+            if (captureOwner == null) stopSelfResult(startId);
+            return START_NOT_STICKY;
+        }
         if (ACTION_STOP.equals(intent.getAction())) {
             if (ProtectionStopPolicy.decision(this)
                     != ProtectionStopPolicy.Decision.ALLOW) return START_STICKY;
@@ -140,7 +290,7 @@ public final class ScreenCaptureService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (!ACTION_START.equals(intent.getAction()) || running) return START_NOT_STICKY;
+        if (!ACTION_START.equals(intent.getAction()) || isRunning()) return START_NOT_STICKY;
         if (!MediaProjectionLeaseRegistry.acquire(
                 MediaProjectionLeaseRegistry.Owner.PROTECTION)) {
             explicitlyStoppedByController = true;
@@ -167,72 +317,88 @@ public final class ScreenCaptureService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        AtomicReference<CaptureRunOwnership.Token> projectionOwner = new AtomicReference<>();
         projection.registerCallback(new MediaProjection.Callback() {
             @Override
             public void onStop() {
-                stopSelf();
+                CaptureRunOwnership.Token owner = projectionOwner.get();
+                if (owner == null) stopSelf(startId);
+                else if (ownership.owns(owner) && owner.equals(captureOwner)) stopSelfResult(lastStartId);
             }
         }, mainHandler);
 
-        running = true;
-        ProtectionSessionManager.markMediaProjectionStarted(this);
-        new AppModeManager(this).setArmed(true);
-        stats.startSession();
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            ProtectionSessionManager.markMediaProjectionStarted(this);
+            new AppModeManager(this).setArmed(true);
+            stats.startSession();
+            CaptureRunOwnership.Components current = components(this);
+            if (new AppModeManager(this).isArmed() && !current.statistics.isEmpty()) {
+                captureOwner = ownership.activate(instanceIdentity, startId, current);
+                projectionOwner.set(captureOwner);
+            }
+        }
+        if (captureOwner == null) { stopSelfResult(startId); return START_NOT_STICKY; }
         overlay = new OverlayController(this);
         CensorAppearance appearance = settings.loadAppearance();
         overlayNeedsSourceFrame = appearance.requiresSourceFrame();
         overlay.setAppearance(appearance);
         overlay.setMaxExtrapolationMs(settings.loadDetectorConfig().getMaxExtrapolationMs());
         overlay.show();
-        PopupStormManager.get().start(this);
+        popupParticipation = PopupStormManager.get().startOwned(this, popupSignature());
         executor.execute(this::startPipeline);
         return START_NOT_STICKY;
     }
 
     private void startPipeline() {
-        try {
-            DetectorConfig config = settings.loadDetectorConfig();
-            detectorConfig = config;
-            DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution());
-            detector = new DetectionEngine(this, config);
-            detector.initialize();
-            DiagnosticsRepository.ready(DIAGNOSTICS_MODE, detector.getActiveProvider(),
-                    detector.getActiveModel(), config.getInferenceResolution());
-            tracker = new ObjectTracker(config);
+        synchronized (resources) {
+            try {
+                if (!isInstanceRunning()) return;
+                DetectorConfig config = settings.loadDetectorConfig();
+                detectorConfig = config;
+                updateDiagnostics(() -> DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution()));
+                detector = new DetectionEngine(this, config);
+                detector.initialize();
+                String provider = detector.getActiveProvider(), model = detector.getActiveModel();
+                updateDiagnostics(() -> DiagnosticsRepository.ready(DIAGNOSTICS_MODE, provider,
+                        model, config.getInferenceResolution()));
+                if (!isInstanceRunning()) return;
+                tracker = new ObjectTracker(config);
 
-            DisplayInfo display = displayInfo();
-            capture = new ScreenCaptureManager(
-                    projection,
-                    display.width,
-                    display.height,
-                    display.densityDpi,
-                    config.getInferenceResolution(),
-                    config.getCaptureScale());
-            capture.start();
-            frameBroker = new LatestFrameBroker<>(
-                    inferenceExecutor,
-                    this::processFrame,
-                    ProjectionFrame::close);
-            executor.scheduleWithFixedDelay(
-                    this::captureLatestFrame,
-                    0,
-                    16,
-                    TimeUnit.MILLISECONDS);
-        } catch (Exception error) {
-            DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
-            Log.e(TAG, "Could not start on-device protection", error);
-            stopSelf();
+                DisplayInfo display = displayInfo();
+                capture = new ScreenCaptureManager(
+                        projection,
+                        display.width,
+                        display.height,
+                        display.densityDpi,
+                        config.getInferenceResolution(),
+                        config.getCaptureScale());
+                capture.start();
+                frameBroker = new LatestFrameBroker<>(
+                        inferenceExecutor,
+                        this::processFrame,
+                        ProjectionFrame::close);
+                executor.scheduleWithFixedDelay(
+                        this::captureLatestFrame,
+                        0,
+                        16,
+                        TimeUnit.MILLISECONDS);
+            } catch (Exception error) {
+                updateDiagnostics(() -> DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error));
+                Log.e(TAG, "Could not start on-device protection", error);
+                mainHandler.post(() -> { if (ownership.owns(captureOwner)) stopSelfResult(lastStartId); });
+            }
         }
     }
 
     private void reloadSettings() {
+        if (!isInstanceRunning()) return;
         if (overlay != null) overlay.clearPersonCoverage();
         if (!censorConfigured()) {
             if (overlay != null) overlay.clear();
             if (tracker != null) tracker.clear();
-            tapTracker.clear();
+            synchronized (RuntimeSessionIdentity.LOCK) { if (ownsFrameRuntimeLocked()) tapTracker.clear(); }
             dwellTracker.clear();
-            PopupStormManager.get().updateDetections(java.util.Collections.emptyList());
+            if (ownsCurrentRuntime()) PopupStormManager.get().updateDetections(java.util.Collections.emptyList());
         }
         CensorAppearance appearance = settings.loadAppearance();
         overlayNeedsSourceFrame = appearance.requiresSourceFrame();
@@ -243,14 +409,15 @@ public final class ScreenCaptureService extends Service {
         if (overlay != null) overlay.setMaxExtrapolationMs(config.getMaxExtrapolationMs());
         if (detector != null) detector.setConfig(config);
         if (tracker != null) tracker.setConfig(config);
+        if (!ownsCurrentRuntime()) return;
         PopupStormManager.get().reloadSettings(this);
-        PopupStormManager.get().syncServiceParticipation(this,
-                running && new AppModeManager(this).shouldShowPopups(
-                                                ForegroundAppState.snapshot().packageName));
+        if (new AppModeManager(this).shouldShowPopups(ForegroundAppState.snapshot().packageName))
+            popupParticipation = PopupStormManager.get().startOwned(this, popupSignature());
+        else PopupStormManager.get().stopOwnedService(popupParticipation);
     }
 
     private void captureLatestFrame() {
-        if (!running || capture == null) return;
+        if (!isInstanceRunning() || capture == null) return;
         ForegroundAppState.Snapshot scope = ForegroundAppState.snapshot();
         if (!censorConfigured()) {
             if (clearedScope != scope) {
@@ -276,7 +443,7 @@ public final class ScreenCaptureService extends Service {
                 broker.submit(new ProjectionFrame(frame, capture, SystemClock.uptimeMillis(), scope));
             }
         } catch (Exception error) {
-            DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
+            updateDiagnostics(() -> DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error));
             Log.w(TAG, "Frame capture failed", error);
         }
     }
@@ -284,40 +451,47 @@ public final class ScreenCaptureService extends Service {
     private void processFrame(ProjectionFrame candidate) {
         Bitmap frame = candidate.bitmap();
         try {
-            if (!running || !censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)
+            if (!isInstanceRunning() || !censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)
                     || frame == null || frame.isRecycled()) return;
             if (processedScope != candidate.scope) {
                 tracker.clear();
-                tapTracker.clear();
+                synchronized (RuntimeSessionIdentity.LOCK) { if (ownsFrameRuntimeLocked()) tapTracker.clear(); }
                 dwellTracker.clear();
                 processedScope = candidate.scope;
             }
             List<Detection> detections = detector.detect(frame);
-            if (!censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)) return;
+            if (!ownsCurrentRuntime() || !censorConfigured() || !ForegroundAppState.isCurrent(candidate.scope)) return;
             List<TrackedObject> tracks = tracker.update(detections);
             DetectorConfig currentConfig = detectorConfig;
-            int recordedBlocks = stats.recordTracks(tracks, currentConfig == null
-                    ? null : currentConfig.getEnabledCategories());
+            int recordedBlocks;
+            FrameScope admitted;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                admitted = observeFrameScope(candidate.scope);
+                if (admitted == null) return;
+                recordedBlocks = stats.recordTracks(tracks, currentConfig == null ? null : currentConfig.getEnabledCategories());
+            }
             long now = System.currentTimeMillis();
             if (recordedBlocks > 0) {
-                int charged = penance.recordInfraction(
-                        PenanceInfraction.NEW_DETECTION, recordedBlocks, now);
+                int charged = penance.recordSourceDetectionResult(recordedBlocks, now, admitted.statistics, admitted::isCurrent).chargedCents;
                 PenanceChargeNotifier.show(this, penance,
-                        PenanceInfraction.NEW_DETECTION, charged, now);
-                new AchievementManager(this).checkAchievements(stats.load());
+                        PenanceInfraction.NEW_DETECTION, charged, now, admitted::isCurrent);
+                if (admitted.isCurrent()) new AchievementManager(this).checkAchievements(stats.load());
             }
             int dwellInfractions = dwellTracker.update(
                     tracks, now, penance.getDwellSeconds() * 1_000L);
             if (dwellInfractions > 0) {
-                int charged = penance.recordInfraction(
-                        PenanceInfraction.CENSORED_DWELL, dwellInfractions, now);
+                int charged = penance.recordSourceDwellResult(dwellInfractions, now, admitted.statistics, admitted::isCurrent).chargedCents;
                 PenanceChargeNotifier.show(this, penance,
-                        PenanceInfraction.CENSORED_DWELL, charged, now);
+                        PenanceInfraction.CENSORED_DWELL, charged, now, admitted::isCurrent);
             }
             int width = capture.getCaptureWidth();
             int height = capture.getCaptureHeight();
+            if (!ownsCurrentRuntime()) return;
             PopupStormManager.get().updateTrackedObjects(tracks, width, height);
-            DiagnosticsRepository.Snapshot diagnostics = DiagnosticsRepository.recordFrame(
+            DiagnosticsRepository.Snapshot diagnostics;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (!ownsFrameRuntimeLocked() || !admitted.isCurrent()) return;
+                diagnostics = DiagnosticsRepository.recordFrame(
                     DIAGNOSTICS_MODE,
                     detector.getLastInferenceMs(),
                     detector.getLastPreprocessMs(),
@@ -328,6 +502,7 @@ public final class ScreenCaptureService extends Service {
                     tracks.size(),
                     width,
                     height);
+            }
             String diagnosticText = diagnosticsOverlayText(diagnostics);
             Bitmap overlayFrame = overlayNeedsSourceFrame ? candidate.detachBitmap() : null;
             Runnable overlayFrameRelease = overlayFrame == null ? null
@@ -338,25 +513,28 @@ public final class ScreenCaptureService extends Service {
                         + " in " + detector.getLastInferenceMs() + " ms at "
                         + width + "x" + height);
             }
-            mainHandler.post(() -> {
-                if (overlay != null && censorConfigured()
+            Runnable releaseOverlayFrame = () -> {
+                if (overlayFrameRelease != null) overlayFrameRelease.run();
+                else if (overlayFrame != null) overlayFrame.recycle();
+            };
+            postFramePublication(admitted, () -> {
+                if (isInstanceRunning() && overlay != null && censorConfigured()
                                 && ForegroundAppState.isCurrent(candidate.scope)) {
                     publishDiagnostics(diagnosticText);
-                    overlay.setTapSourceLabOwned(false);
+                    overlay.setTapSource(false, admitted.tapScope);
                     if (overlayFrameRelease == null) {
                         overlay.update(tracks, width, height, overlayFrame);
                     } else {
                         overlay.updatePooledFrame(
                                 tracks, width, height, overlayFrame, overlayFrameRelease);
                     }
-                    DiagnosticsRepository.recordPublishDelay(DIAGNOSTICS_MODE,
-                            SystemClock.uptimeMillis() - candidate.capturedAtUptimeMillis);
+                    updateDiagnostics(() -> DiagnosticsRepository.recordPublishDelay(DIAGNOSTICS_MODE,
+                            SystemClock.uptimeMillis() - candidate.capturedAtUptimeMillis));
                 }
-                else if (overlayFrameRelease != null) overlayFrameRelease.run();
-                else if (overlayFrame != null) overlayFrame.recycle();
-            });
+                else releaseOverlayFrame.run();
+            }, releaseOverlayFrame);
         } catch (Exception error) {
-            DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
+            updateDiagnostics(() -> DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error));
             Log.w(TAG, "Frame processing failed", error);
         }
     }
@@ -439,45 +617,94 @@ public final class ScreenCaptureService extends Service {
 
     @Override
     public void onDestroy() {
-        running = false;
-        new AppModeManager(this).setArmed(false);
-        DiagnosticsRepository.stop(DIAGNOSTICS_MODE);
-        if (stats != null) stats.endSession();
+        if (destroyed) return;
+        CaptureRunOwnership.Token original = captureOwner;
+        boolean cleanup;
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            cleanup = ownsRuntimeLocked();
+            destroyed = true;
+            if (cleanup) {
+                new AppModeManager(this).setArmed(false);
+                if (stats != null && original.components.statistics.equals(stats.activeSessionIdentity()))
+                    stats.endSessionForIdentity(original.components.statistics);
+                DiagnosticsRepository.stop(DIAGNOSTICS_MODE);
+                tapTracker.clear();
+            }
+            ownership.release(original);
+            if (liveInstance == this) liveInstance = null;
+        }
         if (settings != null) {
             settings.preferences().unregisterOnSharedPreferenceChangeListener(settingsListener);
         }
         if (executor != null) executor.shutdownNow();
-        if (frameBroker != null) frameBroker.close();
-        frameBroker = null;
         if (inferenceExecutor != null) {
             inferenceExecutor.shutdownNow();
             try {
-                inferenceExecutor.awaitTermination(2, TimeUnit.SECONDS);
+                if (!inferenceExecutor.awaitTermination(2, TimeUnit.SECONDS)) resourceClosureFailed = true;
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                resourceClosureFailed = true;
             }
         }
-        if (capture != null) capture.close();
-        if (loadGovernor != null) loadGovernor.close();
-        loadGovernor = null;
-        if (detector != null) detector.close();
-        dwellTracker.clear();
-        tapTracker.clear();
-        OverlayController activeOverlay = overlay;
-        overlay = null;
-        if (activeOverlay != null) activeOverlay.close();
-        PopupStormManager.get().stop();
-        if (projection != null) projection.stop();
-        if (projectionLeaseHeld.compareAndSet(true, false)) {
-            MediaProjectionLeaseRegistry.release(
-                    MediaProjectionLeaseRegistry.Owner.PROTECTION);
+        synchronized (resources) {
+            if (frameBroker != null) releaseResource("frame broker", frameBroker::close);
+            frameBroker = null;
+            if (capture != null) releaseResource("capture", capture::close);
+            capture = null;
+            if (loadGovernor != null) releaseResource("load governor", loadGovernor::close);
+            loadGovernor = null;
+            if (detector != null) releaseResource("detector", detector::close);
+            detector = null;
+            dwellTracker.clear();
+            OverlayController activeOverlay = overlay;
+            overlay = null;
+            if (activeOverlay != null) releaseResource("overlay", activeOverlay::close);
+            PopupStormManager.get().stopOwnedService(popupParticipation);
+            popupParticipation = null;
+            if (projection != null) releaseResource("projection", projection::stop);
+            projection = null;
+            if (projectionLeaseHeld.compareAndSet(true, false)) {
+                MediaProjectionLeaseRegistry.release(
+                        MediaProjectionLeaseRegistry.Owner.PROTECTION);
+            }
+        }
+        if (executor != null) {
+            try { if (!executor.awaitTermination(2, TimeUnit.SECONDS)) resourceClosureFailed = true; }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); resourceClosureFailed = true; }
         }
         stopForeground(STOP_FOREGROUND_REMOVE);
-        if (!explicitlyStoppedByController) {
-            CommitmentManager.reinforceProtection(this);
-            new HardcoreModeManager(this).applyBootPolicy();
-        }
+        if (cleanup && !explicitlyStoppedByController) reinforceOwnedRuntime(original);
         super.onDestroy();
+        if (original != null && !resourceClosureFailed) original.acknowledgeClosure();
+        destructionComplete = true;
+    }
+
+    private void releaseResource(String name, Runnable release) {
+        try { release.run(); }
+        catch (RuntimeException failure) { resourceClosureFailed = true; Log.w(TAG, "Could not close owned " + name, failure); }
+    }
+
+    /** Observe Android outside Runtime, then fence the only rearming write to the original components. */
+    private void reinforceOwnedRuntime(CaptureRunOwnership.Token original) {
+        boolean hardcore = new HardcoreModeManager(this).isEnabled();
+        com.subhub.app.remote.RemoteSessionClock.Sample clock = new com.subhub.app.remote.RemoteSessionClock.Sample(
+                System.currentTimeMillis(), SystemClock.elapsedRealtime(),
+                android.provider.Settings.Global.getInt(getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1));
+        RuntimeSessionIdentity.ComponentObservation notificationScope;
+        boolean notify;
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (ownership.isRunning()) return;
+            try { if (!original.components.permitsCleanupOf(components(this))) return; }
+            catch (IllegalArgumentException | ClassCastException corrupt) { return; }
+            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(this, clock);
+            boolean pactRearm = current.pact && !current.paused;
+            if (pactRearm) new AppModeManager(this).setArmed(true);
+            notify = pactRearm || hardcore && new AppModeManager(this).isArmed() && !current.paused;
+            notificationScope = RuntimeSessionIdentity.componentObservation(this);
+        }
+        if (!notificationScope.isCurrent()) return;
+        if (notify) ResumeNotificationManager.show(this);
+        if (hardcore && notificationScope.isCurrent()) HardcoreAutoPayManager.schedule(this);
     }
 
     private static final class DisplayInfo {

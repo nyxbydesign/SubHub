@@ -93,6 +93,24 @@ public final class CensorTapScopeOwnershipAndroidTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void runtimeTransitionRevokesRetainedSourcesAndAdmitsOnlyNewCurrentText() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.main(() -> { f.view.setTapSource(false, f.taps.scope()); f.visual(VISUAL); f.text(); });
+            f.frame("runtime-initial", VISUAL, TEXT);
+            assertTrue(f.hit(VISUAL)); assertTrue(f.hit(TEXT));
+            long oldScope = f.taps.scope();
+            f.main(com.subhub.app.appmode.RuntimeSessionIdentity::changed);
+            assertNotEquals("A native runtime transition must revoke retained tap provenance", oldScope, f.taps.scope());
+            f.main(() -> f.foreign(new Object()));
+            f.frame("runtime-stale-redraw", VISUAL, TEXT);
+            assertTrue(f.foreignHit()); assertFalse(f.hit(VISUAL)); assertFalse(f.hit(TEXT));
+            f.main(() -> { f.view.setTapSource(false, f.taps.scope()); f.text(); });
+            f.frame("runtime-current-text", VISUAL, TEXT);
+            assertFalse(f.hit(VISUAL)); assertTrue(f.hit(TEXT));
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final CensorTapTracker taps = CensorTapTracker.shared();
         final ActivityScenario<CensorTapFixtureActivity> page;
