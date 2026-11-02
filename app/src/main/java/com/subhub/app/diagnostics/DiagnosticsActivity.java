@@ -62,6 +62,7 @@ public final class DiagnosticsActivity extends AppCompatActivity {
         return thread;
     });
     private boolean labBusy;
+    private boolean renderingOverlay;
     private boolean shareWhenReady;
     private String startMarkerSession;
     private String renderedLabFailure;
@@ -129,9 +130,12 @@ public final class DiagnosticsActivity extends AppCompatActivity {
         }
         binding.switchDiagnosticsOverlay.setChecked(settings.preferences().getBoolean(
                 DiagnosticsRepository.PREF_OVERLAY, false));
-        binding.switchDiagnosticsOverlay.setOnCheckedChangeListener((button, checked) ->
-                settings.preferences().edit().putBoolean(
-                        DiagnosticsRepository.PREF_OVERLAY, checked).apply());
+        binding.switchDiagnosticsOverlay.setOnCheckedChangeListener((button, checked) -> {
+            if (renderingOverlay) return;
+            if (checked && !mayEnableOverlay()) { renderOverlayControl(); return; }
+            settings.preferences().edit().putBoolean(DiagnosticsRepository.PREF_OVERLAY, checked).apply();
+            renderOverlayControl();
+        });
         boolean candidateAvailable = com.subhub.app.censor.android.ProductCensorQualification.candidateSupported();
         binding.replacementCandidateControls.setVisibility(candidateAvailable ? View.VISIBLE : View.GONE);
         binding.switchReplacementCandidate.setChecked(
@@ -145,15 +149,36 @@ public final class DiagnosticsActivity extends AppCompatActivity {
         });
         if (ControllerPinManager.isDomModeActive()) {
             editMode = ControllerEditMode.bind(this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> {
-                binding.switchDiagnosticsOverlay.setEnabled(editing);
+                renderOverlayControl();
                 binding.switchReplacementCandidate.setEnabled(editing && candidateAvailable);
             });
         } else {
             PrimaryHeader.editLockButton(binding.getRoot()).setVisibility(android.view.View.GONE);
-            binding.switchDiagnosticsOverlay.setEnabled(false);
+            renderOverlayControl();
             binding.switchReplacementCandidate.setEnabled(false);
         }
         render();
+    }
+
+    private boolean mayEnableOverlay() {
+        return editMode != null && editMode.isEditing();
+    }
+
+    private void renderOverlayControl() {
+        if (binding == null) return;
+        boolean visible = settings.preferences().getBoolean(DiagnosticsRepository.PREF_OVERLAY, false);
+        renderingOverlay = true;
+        try {
+            binding.switchDiagnosticsOverlay.setChecked(visible);
+            binding.switchDiagnosticsOverlay.setEnabled(visible || mayEnableOverlay());
+        } finally { renderingOverlay = false; }
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        renderingOverlay = true;
+        try { super.onRestoreInstanceState(state); }
+        finally { renderingOverlay = false; }
+        renderOverlayControl();
     }
 
     @Override protected void onResume() {
@@ -181,6 +206,7 @@ public final class DiagnosticsActivity extends AppCompatActivity {
 
     private void render() {
         if (binding == null) return;
+        renderOverlayControl();
         DiagnosticsRepository.Snapshot live = DiagnosticsRepository.snapshot();
         String state = live.isRunning() ? (live.isReady() ? "RUNNING" : "INITIALIZING") : "IDLE";
         binding.runtimeStatus.setText(String.format(Locale.ROOT,

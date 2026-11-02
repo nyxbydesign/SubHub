@@ -261,6 +261,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private boolean productQualificationRoute;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener listener =
             (preferences, key) -> {
+                if (DiagnosticsRepository.PREF_OVERLAY.equals(key)) {
+                    refreshDiagnosticsOverlay();
+                    return;
+                }
                 if (productQualificationRoute) reloadProductSettings(key);
                 else reloadSettings();
             };
@@ -2978,7 +2982,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                         + " cameras=" + requestedScrollX + ',' + requestedScrollY + ','
                         + alignment.scrollX + ',' + alignment.scrollY + ',' + current.scrollX + ',' + current.scrollY
                         + " " + faceGeometry + " spatial=" + faceSourcePose);
-                overlay.setDiagnostics(diagnosticText);
+                publishDiagnostics(diagnosticText);
                 if (overlay.ensureShown()) {
                     CensorLabLog.i(TAG, "OVERLAY_REATTACH reason=missing-window"
                             + " sourceFastSequence=" + candidate.fastSubmissionSequence
@@ -5065,7 +5069,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 CensorAppearance appearance = settings.loadAppearance();
                 overlayNeedsSourceFrame = appearance.requiresSourceFrame();
                 overlay.setAppearance(appearance);
-                overlay.setDiagnostics(diagnosticsOverlayText());
+                publishDiagnostics(diagnosticsOverlayText());
             }
         });
         DetectorConfig config = settings.loadDetectorConfig();
@@ -6104,7 +6108,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             overlay.setAppearance(appearance);
             DetectorConfig config = settings.loadDetectorConfig();
             overlay.setMaxExtrapolationMs(0f);
-            overlay.setDiagnostics(diagnosticsOverlayText());
+            publishDiagnostics(diagnosticsOverlayText());
             overlay.show();
             LatestFrameBroker<PendingScenePresentation> oldPresenter = scenePresenter;
             if (oldPresenter != null) oldPresenter.close();
@@ -6228,6 +6232,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     public void onInterrupt() {
         // Android may temporarily interrupt feedback; the scheduled capture loop remains owned
         // here.
+    }
+
+    private void refreshDiagnosticsOverlay() {
+        main.post(() -> { if (overlay != null) publishDiagnostics(diagnosticsOverlayText()); });
+    }
+
+    /** A delayed frame must not restore diagnostics after visibility was switched off. */
+    private void publishDiagnostics(String value) {
+        if (overlay != null) overlay.setDiagnostics(settings != null && settings.preferences()
+                .getBoolean(DiagnosticsRepository.PREF_OVERLAY, false) ? value : "");
     }
 
     private String diagnosticsOverlayText() {

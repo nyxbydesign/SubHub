@@ -76,7 +76,11 @@ public final class ScreenCaptureService extends Service {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean firstFrameReported = new AtomicBoolean();
     private final SharedPreferences.OnSharedPreferenceChangeListener settingsListener =
-            (preferences, key) -> reloadSettings();
+            (preferences, key) -> {
+                if (DiagnosticsRepository.PREF_OVERLAY.equals(key)) {
+                    refreshDiagnosticsOverlay();
+                } else reloadSettings();
+            };
     private ScheduledExecutorService executor;
     private ExecutorService inferenceExecutor;
     private LatestFrameBroker<ProjectionFrame> frameBroker;
@@ -233,7 +237,7 @@ public final class ScreenCaptureService extends Service {
         CensorAppearance appearance = settings.loadAppearance();
         overlayNeedsSourceFrame = appearance.requiresSourceFrame();
         if (overlay != null) overlay.setAppearance(appearance);
-        if (overlay != null) overlay.setDiagnostics(diagnosticsOverlayText());
+        if (overlay != null) publishDiagnostics(diagnosticsOverlayText());
         DetectorConfig config = settings.loadDetectorConfig();
         detectorConfig = config;
         if (overlay != null) overlay.setMaxExtrapolationMs(config.getMaxExtrapolationMs());
@@ -337,7 +341,7 @@ public final class ScreenCaptureService extends Service {
             mainHandler.post(() -> {
                 if (overlay != null && censorConfigured()
                                 && ForegroundAppState.isCurrent(candidate.scope)) {
-                    overlay.setDiagnostics(diagnosticText);
+                    publishDiagnostics(diagnosticText);
                     overlay.setTapSourceLabOwned(false);
                     if (overlayFrameRelease == null) {
                         overlay.update(tracks, width, height, overlayFrame);
@@ -375,6 +379,16 @@ public final class ScreenCaptureService extends Service {
         @SuppressWarnings("deprecation")
         Intent value = source.getParcelableExtra(EXTRA_RESULT_DATA);
         return value;
+    }
+
+    private void refreshDiagnosticsOverlay() {
+        mainHandler.post(() -> { if (overlay != null) publishDiagnostics(diagnosticsOverlayText()); });
+    }
+
+    /** A delayed frame must not restore diagnostics after visibility was switched off. */
+    private void publishDiagnostics(String value) {
+        if (overlay != null) overlay.setDiagnostics(settings != null && settings.preferences()
+                .getBoolean(DiagnosticsRepository.PREF_OVERLAY, false) ? value : "");
     }
 
     private String diagnosticsOverlayText() {
