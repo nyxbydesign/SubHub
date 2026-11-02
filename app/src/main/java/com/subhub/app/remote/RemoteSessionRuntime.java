@@ -7,6 +7,7 @@ import org.json.JSONObject;
 /** Admission and journal vocabulary only; this version has no session-application implementation. */
 public final class RemoteSessionRuntime {
     public static final int HARDCORE_START_CONSENT_VERSION = 1;
+    private static final String PROCESS = java.util.UUID.randomUUID().toString();
     private RemoteSessionRuntime() { }
 
     public enum Direction { OUTGOING, INCOMING }
@@ -56,14 +57,71 @@ public final class RemoteSessionRuntime {
         public final String dom, recipient, generation, domName, policyDigest;
         public final int consentVersion;
         public final long policyRevision, createdAt;
+        public final long preparedElapsed;
+        public final int boot;
+        public final String reviewId;
+        private final String process = PROCESS;
         HardcoreReview(String dom, String recipient, String generation, String domName,
                 String policyDigest, long policyRevision, long createdAt) {
+            this(dom, recipient, generation, domName, policyDigest, policyRevision,
+                    new RemoteSessionClock.Sample(createdAt, -1, -1));
+        }
+        HardcoreReview(String dom, String recipient, String generation, String domName,
+                String policyDigest, long policyRevision, RemoteSessionClock.Sample clock) {
             this.dom = RemoteProtocol.peerId(dom); this.recipient = RemoteProtocol.peerId(recipient);
             this.generation = RemoteProtocol.identifier(generation); this.domName = Objects.requireNonNull(domName);
             RemoteSessionCommands.digest(policyDigest); this.policyDigest = policyDigest;
-            this.policyRevision = policyRevision; this.createdAt = createdAt;
+            if (dom.equals(recipient)) throw new IllegalArgumentException("A peer is required");
+            this.policyRevision = policyRevision; this.createdAt = clock.wall;
+            this.preparedElapsed = clock.elapsed; this.boot = clock.boot;
+            this.reviewId = java.util.UUID.randomUUID().toString();
             this.consentVersion = HARDCORE_START_CONSENT_VERSION;
         }
+        public boolean currentProcess() { return PROCESS.equals(process); }
+    }
+
+    /** A native observation captured outside consent/authority locks; never decoded from the wire. */
+    public static final class SystemObservation {
+        public final String self;
+        public final boolean adminActive;
+        public final RemoteSessionClock.Sample clock;
+        SystemObservation(String self, boolean adminActive, RemoteSessionClock.Sample clock) {
+            this.self = RemoteProtocol.peerId(self); this.adminActive = adminActive; this.clock = Objects.requireNonNull(clock);
+        }
+    }
+
+    static HardcoreReview reviewHardcore(android.content.Context context, RemoteStore store, String self,
+            RemoteSessionClock.Sample now) throws JSONException {
+        com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(context, store);
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (store) {
+                requireSubWorkspace(context);
+                if (now.wall <= 0 || now.elapsed < 0 || now.boot < 0) throw new IllegalStateException("Local clock unavailable");
+                RemoteStore.Peer peer = assignedDom(store);
+                if (peer == null) return null;
+                return new HardcoreReview(peer.identity, self, peer.generation, peer.name,
+                        com.subhub.app.security.SubFeaturePolicy.hardcoreReviewDigest(context),
+                        com.subhub.app.security.SubFeaturePolicy.hardcoreReviewRevision(context), now);
+            }
+        }
+    }
+
+    static RemoteStore.Peer assignedDom(RemoteStore store) {
+        synchronized (store) {
+            RemoteStore.Peer found = null;
+            for (RemoteStore.Peer peer : store.peers(false)) {
+                if (peer.localRole != RemoteProtocol.Role.SUB || peer.state != RemoteStore.State.ACTIVE) continue;
+                if (found != null) throw new IllegalStateException("Ambiguous Dom authority");
+                found = peer;
+            }
+            return found;
+        }
+    }
+
+    private static void requireSubWorkspace(android.content.Context context) {
+        if (!com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
+                || com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context))
+            throw new SecurityException("Local Sub review required");
     }
 
     /** Stored locally after the Sub reviews current Hardcore consent; never accepted from a peer. */
@@ -122,9 +180,12 @@ public final class RemoteSessionRuntime {
         public final Direction direction;
         public final RemoteSessionCommands.Request request;
         public final RemoteSessionCommands.Result result;
-        Record(Direction direction, RemoteSessionCommands.Request request, RemoteSessionCommands.Result result) {
+        public final RemoteSessionClock.Bounds lifetime;
+        Record(Direction direction, RemoteSessionCommands.Request request, RemoteSessionCommands.Result result,
+                RemoteSessionClock.Bounds lifetime) {
             this.direction = Objects.requireNonNull(direction); this.request = Objects.requireNonNull(request);
             this.result = Objects.requireNonNull(result);
+            this.lifetime = Objects.requireNonNull(lifetime);
         }
     }
 

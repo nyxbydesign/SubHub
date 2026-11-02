@@ -162,6 +162,44 @@ public class RemoteSessionControlsAndroidTest {
         }
     }
 
+    @Test public void actualDurationDraftAndPendingApplyFenceTheSharedStartControls() throws Exception {
+        Gateway gateway = new Gateway();
+        try (ActivityScenario<PersonActivity> page = open()) {
+            bindSharedDuration(page, gateway);
+            await(() -> enabled(page, "remote_session_start"));
+            onView(withTagValue(is("remote_duration_choice"))).perform(scrollTo(), click());
+            androidx.test.espresso.Espresso.onData(org.hamcrest.Matchers.anything()).atPosition(2).perform(click());
+            tap("remote_session_refresh");
+            await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
+            page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
+            assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+            page.recreate(); bindSharedDuration(page, gateway);
+            await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
+            page.onActivity(a -> assertEquals(2, ((android.widget.Spinner) tag(a, "remote_duration_choice")).getSelectedItemPosition()));
+            tap("remote_duration_apply");
+            await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
+            tap("remote_session_refresh");
+            page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
+            assertEquals(RemoteStore.CommandState.QUEUED, feature.store.latestCommand(peer.identity, peer.generation).state);
+            assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+        }
+    }
+
+    private void bindSharedDuration(ActivityScenario<PersonActivity> page, Gateway gateway) throws Exception {
+        await(() -> hasTag(page, "remote_duration_apply") && hasTag(page, "remote_session_controls"));
+        PersonSnapshot person = new RemotePersonRepository(context, feature).load(RemotePersonRepository.id(peer));
+        page.onActivity(a -> {
+            View actions = tag(a, "remote_session_controls"), oldDuration = tag(a, "remote_session_duration");
+            LinearLayout parent = (LinearLayout) actions.getParent();
+            assertSame(parent, oldDuration.getParent()); parent.removeView(actions); parent.removeView(oldDuration);
+            RemoteDurationControls duration = new RemoteDurationControls(a, parent, person); duration.bind();
+            new RemoteSessionControls(a, parent, person, duration::hasUnappliedDraft, gateway).bind();
+        });
+        await(() -> hasTag(page, "remote_duration_apply"));
+        tap("remote_session_refresh");
+    }
+
     @Test @SdkSuppress(minSdkVersion = 29)
     public void nativeStartStopControlsFitAndKeepTheirAppliedDurationVisible() throws Exception {
         Gateway gateway = new Gateway();
@@ -224,14 +262,16 @@ public class RemoteSessionControlsAndroidTest {
         }
         void receipt(RemoteSessionCommands.Request request, RemoteSessionCommands.State state, RemoteSessionCommands.Proof proof) throws Exception {
             record = new RemoteSessionRuntime.Record(RemoteSessionRuntime.Direction.OUTGOING, request,
-                    new RemoteSessionCommands.Result(request, state, RemoteSessionCommands.Reason.NONE, System.currentTimeMillis(), proof));
+                    new RemoteSessionCommands.Result(request, state, RemoteSessionCommands.Reason.NONE, System.currentTimeMillis(), proof),
+                    new RemoteSessionClock.Bounds(request.issuedAt, android.os.SystemClock.elapsedRealtime(), 1,
+                            android.os.SystemClock.elapsedRealtime() + 120_000));
         }
     }
     private RemoteSessionRuntime.Review review(RemoteSessionCommands.Action action, String witness) throws Exception {
         long now = System.currentTimeMillis(); String id = UUID.randomUUID().toString();
         RemoteSessionCommands.Request request = action == RemoteSessionCommands.Action.START
-                ? RemoteSessionCommands.Request.start(id, DOM, SUB, peer.generation, 1, now, now + 120_000, IDLE, service)
-                : RemoteSessionCommands.Request.stop(id, DOM, SUB, peer.generation, 1, now, now + 120_000, repeat('e'));
+                ? RemoteSessionCommands.Request.start(id, DOM, SUB, peer.generation, 1, 1, now, now + 120_000, IDLE, service)
+                : RemoteSessionCommands.Request.stop(id, DOM, SUB, peer.generation, 1, 1, now, now + 120_000, repeat('e'));
         return new RemoteSessionRuntime.Review(request, witness, now);
     }
     private ActivityScenario<PersonActivity> open() {

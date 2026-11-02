@@ -62,16 +62,16 @@ public final class RemoteSessionCommands {
     public static final class Request {
         public final String id, sender, recipient, generation, idleFence, sessionIdentity;
         public final Action action;
-        public final long appliedRevision, issuedAt, expiresAt;
+        public final long sequence, appliedRevision, issuedAt, expiresAt;
         public final Duration service;
         private Request(String id, Action action, String sender, String recipient, String generation,
-                long appliedRevision, long issuedAt, long expiresAt, String idleFence,
+                long sequence, long appliedRevision, long issuedAt, long expiresAt, String idleFence,
                 String sessionIdentity, Duration service) {
             this.id = RemoteProtocol.identifier(id); this.action = Objects.requireNonNull(action);
             this.sender = RemoteProtocol.peerId(sender); this.recipient = RemoteProtocol.peerId(recipient);
             this.generation = RemoteProtocol.identifier(generation);
             if (sender.equals(recipient)) throw new IllegalArgumentException("Session control requires a peer");
-            if (appliedRevision < 0 || issuedAt <= 0 || expiresAt <= issuedAt
+            if (sequence <= 0 || appliedRevision < 0 || issuedAt <= 0 || expiresAt <= issuedAt
                     || expiresAt - issuedAt > LIFETIME_MILLIS)
                 throw new IllegalArgumentException("Invalid session-control bounds");
             if (action == Action.START) {
@@ -81,23 +81,23 @@ public final class RemoteSessionCommands {
                 RemoteSessionCommands.digest(sessionIdentity); if (!idleFence.isEmpty() || service != null)
                     throw new IllegalArgumentException("Invalid Stop fence");
             }
-            this.appliedRevision = appliedRevision; this.issuedAt = issuedAt; this.expiresAt = expiresAt;
+            this.sequence = sequence; this.appliedRevision = appliedRevision; this.issuedAt = issuedAt; this.expiresAt = expiresAt;
             this.idleFence = idleFence; this.sessionIdentity = sessionIdentity; this.service = service;
         }
         public static Request start(String id, String sender, String recipient, String generation,
-                long revision, long issuedAt, long expiresAt, String idleFence, Duration service) {
-            return new Request(id, Action.START, sender, recipient, generation, revision, issuedAt,
+                long sequence, long revision, long issuedAt, long expiresAt, String idleFence, Duration service) {
+            return new Request(id, Action.START, sender, recipient, generation, sequence, revision, issuedAt,
                     expiresAt, idleFence, "", service);
         }
         public static Request stop(String id, String sender, String recipient, String generation,
-                long revision, long issuedAt, long expiresAt, String sessionIdentity) {
-            return new Request(id, Action.STOP, sender, recipient, generation, revision, issuedAt,
+                long sequence, long revision, long issuedAt, long expiresAt, String sessionIdentity) {
+            return new Request(id, Action.STOP, sender, recipient, generation, sequence, revision, issuedAt,
                     expiresAt, "", sessionIdentity, null);
         }
         public JSONObject json() throws JSONException {
             JSONObject value = new JSONObject().put("schema", VERSION).put("type", "session_control")
                     .put("action", action.name()).put("id", id).put("sender", sender)
-                    .put("recipient", recipient).put("generation", generation)
+                    .put("recipient", recipient).put("generation", generation).put("sequence", sequence)
                     .put("appliedRevision", appliedRevision).put("issuedAt", issuedAt).put("expiresAt", expiresAt);
             if (action == Action.START) value.put("idleFence", idleFence).put("service", service.json());
             else value.put("sessionIdentity", sessionIdentity);
@@ -109,7 +109,7 @@ public final class RemoteSessionCommands {
         public static Request parse(JSONObject value) throws JSONException {
             String action = text(value, "action");
             Set<String> fields = new HashSet<>(Arrays.asList("schema", "type", "action", "id", "sender",
-                    "recipient", "generation", "appliedRevision", "issuedAt", "expiresAt"));
+                    "recipient", "generation", "sequence", "appliedRevision", "issuedAt", "expiresAt"));
             if ("START".equals(action)) fields.addAll(Arrays.asList("idleFence", "service"));
             else if ("STOP".equals(action)) fields.add("sessionIdentity");
             else throw new JSONException("Unsupported session action");
@@ -120,9 +120,9 @@ public final class RemoteSessionCommands {
                     generation = text(value, "generation");
             long revision = integer(value, "appliedRevision"), issued = integer(value, "issuedAt"), expires = integer(value, "expiresAt");
             return "START".equals(action)
-                    ? start(id, sender, recipient, generation, revision, issued, expires,
+                    ? start(id, sender, recipient, generation, integer(value, "sequence"), revision, issued, expires,
                             text(value, "idleFence"), Duration.parse(value.getJSONObject("service")))
-                    : stop(id, sender, recipient, generation, revision, issued, expires, text(value, "sessionIdentity"));
+                    : stop(id, sender, recipient, generation, integer(value, "sequence"), revision, issued, expires, text(value, "sessionIdentity"));
         }
     }
 
@@ -170,7 +170,8 @@ public final class RemoteSessionCommands {
         public Result(Request request, State state, Reason reason, long observedAt, Proof proof) throws JSONException {
             this.id = request.id; this.requestDigest = request.digest(); this.state = Objects.requireNonNull(state);
             this.reason = Objects.requireNonNull(reason); this.observedAt = observedAt; this.proof = proof;
-            if (observedAt <= 0) throw new IllegalArgumentException("Missing result clock");
+            if (observedAt <= 0 && reason != Reason.CLOCK_CHANGED)
+                throw new IllegalArgumentException("Missing result clock");
             boolean failure = state.terminal() && state != State.APPLIED;
             if (failure == (reason == Reason.NONE)) throw new IllegalArgumentException("Invalid result reason");
             if (state == State.APPLIED) {
@@ -199,7 +200,7 @@ public final class RemoteSessionCommands {
             if (!id.equals(previous.id) || !requestDigest.equals(previous.requestDigest)) return false;
             if (previous.state.terminal() || state == previous.state)
                 return RemoteProtocol.canonical(json()).equals(RemoteProtocol.canonical(previous.json()));
-            if (observedAt < previous.observedAt) return false;
+            // QUEUED and receiver results use different device clocks; eligibility uses local journal bounds.
             return state.terminal() || rank(state) > rank(previous.state);
         }
     }

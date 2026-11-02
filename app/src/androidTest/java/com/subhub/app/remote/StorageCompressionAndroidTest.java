@@ -51,7 +51,7 @@ public class StorageCompressionAndroidTest {
     static void legacy(Context context,String name,boolean sub,int records)throws Exception {
         RemoteStore schema=new RemoteStore(context,name);SQLiteDatabase db=SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name),null);
         try {
-            schema.onCreate(db);db.execSQL("DROP TABLE payload_maintenance");db.execSQL("DROP TABLE session_controls");
+            schema.onCreate(db);db.execSQL("DROP TABLE payload_maintenance");db.execSQL("DROP TABLE session_controls");db.execSQL("DROP TABLE session_control_journal");
             db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,?,?)",new Object[]{sub?DOM:SUB,GENERATION,"Synthetic",sub?"SUB":"DOM","ACTIVE"});
             for(int i=1;i<=records;i++){
                 String body=fact(i),id=new JSONObject(body).getString("id");

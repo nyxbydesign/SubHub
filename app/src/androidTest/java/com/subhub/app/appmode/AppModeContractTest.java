@@ -127,24 +127,44 @@ public class AppModeContractTest {
     }
 
     @Test
-    public void formerAllScopeBecomesCurrentLauncherPackagesAndThenExplicitExclusionsPersist() {
-        preferences
-                .edit()
-                .remove(AppModeManager.KEY_INCLUDED_PACKAGES)
-                .putString("app_mode_kind", "always")
-                .putBoolean("app_mode_kind_explicit_v2", true)
-                .putBoolean(AppModeManager.KEY_ARMED, false)
-                .commit();
-        AppModeManager mode = new AppModeManager(context);
-        android.content.Intent launcher = new android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_LAUNCHER);
-        for (android.content.pm.ResolveInfo info :
-                context.getPackageManager()
-                        .queryIntentActivities(launcher, android.content.pm.PackageManager.MATCH_ALL))
-            if (info.activityInfo != null
-                    && !context.getPackageName().equals(info.activityInfo.packageName))
-                assertTrue(mode.getIncludedPackages().contains(info.activityInfo.packageName));
-        mode.saveIncludedPackages(Set.of("chosen.app"));
-                        assertEquals(Set.of("chosen.app"), new AppModeManager(context).getIncludedPackages());
-        assertFalse(mode.isArmed());
-                        }
-                    }
+    public void formerAllScopePreservesSelectionBeneathTheRefreshedOverride() {
+        for (boolean hasModernSnapshot : new boolean[]{false, true}) {
+            String name = "all-migration-" + UUID.randomUUID();
+            android.content.ContextWrapper isolated = new android.content.ContextWrapper(context) {
+                @Override public Context getApplicationContext() { return this; }
+                @Override public SharedPreferences getSharedPreferences(String requested, int flags) {
+                    assertEquals(SettingsRepository.PREFERENCES_NAME, requested);
+                    return context.getSharedPreferences(name, flags);
+                }
+            };
+            SharedPreferences saved = isolated.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+            try {
+                SharedPreferences.Editor legacy = saved.edit()
+                        .putString("app_mode_kind", "always").putBoolean("app_mode_kind_explicit_v2", true)
+                        .putStringSet("app_mode_selected_packages", Set.of("retained.app"))
+                        .putBoolean(AppModeManager.KEY_ARMED, false);
+                if (hasModernSnapshot) legacy.putBoolean(AppModeManager.KEY_ALL_APPS, false)
+                        .putStringSet("app_include_all_packages_v1", Set.of("old.snapshot"));
+                assertTrue(legacy.commit());
+                AppModeManager mode = new AppModeManager(isolated);
+                assertTrue(mode.isAllApps());
+                assertEquals(Set.of("retained.app"), mode.getSelectedPackages());
+                assertEquals(hasModernSnapshot ? Set.of("old.snapshot") : Set.of("retained.app"), mode.getIncludedPackages());
+                Set<String> discovered = Set.of("installed.one", "installed.two");
+                long revision = mode.scopeRevision();
+                assertTrue(mode.refreshAllApps(revision, discovered));
+                assertEquals(discovered, mode.getIncludedPackages());
+                mode.saveIncludedPackages(Set.of("chosen.app"));
+                assertTrue(mode.isAllApps());
+                assertEquals(Set.of("chosen.app"), new AppModeManager(isolated).getSelectedPackages());
+                assertEquals(discovered, new AppModeManager(isolated).getIncludedPackages());
+                mode.setAllAppsEnabled(false);
+                assertFalse(mode.refreshAllApps(revision, Set.of("stale.app")));
+                assertEquals(Set.of("chosen.app"), mode.getIncludedPackages());
+                assertFalse(mode.isArmed());
+                assertFalse(saved.contains("app_mode_kind"));
+                assertFalse(saved.contains("app_mode_selected_packages"));
+            } finally { assertTrue(saved.edit().clear().commit()); }
+        }
+    }
+}

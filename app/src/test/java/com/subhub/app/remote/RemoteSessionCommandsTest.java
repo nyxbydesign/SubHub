@@ -12,8 +12,8 @@ public class RemoteSessionCommandsTest {
     private static final String DOM = repeat("a"), SUB = repeat("b"), FENCE = repeat("c"), SESSION = repeat("d");
     private static final Duration SERVICE = new Duration(3_600_000, MIN_DURATION_MILLIS, MAX_DURATION_MILLIS, false);
     private static String repeat(String value) { return String.join("", Collections.nCopies(64, value)); }
-    private static Request start() { return Request.start("start", DOM, SUB, "generation", 7, 1000, 121000, FENCE, SERVICE); }
-    private static Request stop() { return Request.stop("stop", DOM, SUB, "generation", 7, 1000, 121000, SESSION); }
+    private static Request start() { return Request.start("start", DOM, SUB, "generation", 1, 7, 1000, 121000, FENCE, SERVICE); }
+    private static Request stop() { return Request.stop("stop", DOM, SUB, "generation", 1, 7, 1000, 121000, SESSION); }
     private static Facts facts(boolean active, boolean hc, HardcoreConsent consent, String fence, String session,
             long revision, Readiness readiness) {
         return new Facts(SUB, DOM, "generation", RemoteProtocol.Role.SUB, true, true, true, VERSION,
@@ -33,10 +33,10 @@ public class RemoteSessionCommandsTest {
     }
 
     @Test public void lifetimeAndRecipientCannotBeExpanded() {
-        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, DOM, "g", 0, 1, 2, FENCE, SERVICE));
-        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, SUB, "g", 0, 1, 120002, FENCE, SERVICE));
-        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, SUB, "g", 0, 2, 2, FENCE, SERVICE));
-        assertThrows(IllegalArgumentException.class, () -> Request.stop("id", DOM, SUB, "g", 0, 1, 2, ""));
+        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, DOM, "g", 1, 0, 1, 2, FENCE, SERVICE));
+        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, SUB, "g", 1, 0, 1, 120002, FENCE, SERVICE));
+        assertThrows(IllegalArgumentException.class, () -> Request.start("id", DOM, SUB, "g", 1, 0, 2, 2, FENCE, SERVICE));
+        assertThrows(IllegalArgumentException.class, () -> Request.stop("id", DOM, SUB, "g", 1, 0, 1, 2, ""));
     }
 
     @Test public void optionalCapabilityNeverGrantsApplication() throws Exception {
@@ -95,5 +95,39 @@ public class RemoteSessionCommandsTest {
         assertFalse(new Result(start(),State.FAILED,Reason.APPLICATION_FAILED,1004,null).mayFollow(failed));
         assertFalse(new Result(start(),State.ACKNOWLEDGED,Reason.NONE,1004,null).mayFollow(ack));
         assertThrows(IllegalArgumentException.class, () -> new Result(start(),State.REJECTED,Reason.NONE,1003,null));
+    }
+
+    @Test public void originalElapsedAnchorExpiresDespiteSmallRepeatedWallCorrections() {
+        RemoteSessionClock.Bounds bound=RemoteSessionClock.Bounds.begin(start(),new RemoteSessionClock.Sample(1001,500,2));
+        assertEquals(Reason.NONE,bound.check(start(),new RemoteSessionClock.Sample(2001,1500,2)));
+        assertEquals(Reason.CLOCK_CHANGED,bound.check(start(),new RemoteSessionClock.Sample(2002,5500,2)));
+        assertEquals(Reason.EXPIRED,bound.check(start(),new RemoteSessionClock.Sample(121001,120500,2)));
+        assertEquals(120499,bound.deadlineElapsed);
+    }
+
+    @Test public void rollbackRebootUnknownClockAndElapsedResetCannotExtendLifetime() {
+        RemoteSessionClock.Bounds bound=RemoteSessionClock.Bounds.begin(start(),new RemoteSessionClock.Sample(1001,500,2));
+        assertEquals(Reason.CLOCK_CHANGED,bound.check(start(),new RemoteSessionClock.Sample(1000,501,2)));
+        assertEquals(Reason.CLOCK_CHANGED,bound.check(start(),new RemoteSessionClock.Sample(1002,501,3)));
+        assertEquals(Reason.CLOCK_CHANGED,bound.check(start(),new RemoteSessionClock.Sample(1002,499,2)));
+        RemoteSessionClock.Sample unknown=new RemoteSessionClock.Sample(1001,500,-1);
+        assertEquals(Reason.CLOCK_CHANGED,RemoteSessionClock.Bounds.begin(start(),unknown).check(start(),unknown));
+    }
+
+    @Test public void clockChangedTerminalPersistsActualRegressedOrNonpositiveWallTime() throws Exception {
+        Result ack=new Result(start(),State.ACKNOWLEDGED,Reason.NONE,1001,null);
+        Result changed=new Result(start(),State.REJECTED,Reason.CLOCK_CHANGED,-100,null);
+        assertTrue(changed.mayFollow(ack));
+        assertEquals(-100,Result.parse(start(),changed.json()).observedAt);
+        assertTrue(new Result(start(),State.REJECTED,Reason.AUTHORITY_CHANGED,1000,null).mayFollow(ack));
+        assertTrue(new Result(start(),State.ACKNOWLEDGED,Reason.NONE,900,null)
+                .mayFollow(new Result(start(),State.QUEUED,Reason.NONE,1001,null)));
+    }
+
+    @Test public void wireRequiresPositiveSequenceAndDigestBindsIt() throws Exception {
+        assertThrows(Exception.class,()->Request.parse(start().json().put("sequence",0)));
+        JSONObject old=start().json();old.remove("sequence");
+        assertThrows(Exception.class,()->Request.parse(old));
+        assertNotEquals(start().digest(),Request.parse(start().json().put("sequence",2)).digest());
     }
 }

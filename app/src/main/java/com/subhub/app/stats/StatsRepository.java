@@ -22,6 +22,10 @@ import java.util.function.Supplier;
 /** Process-safe local counters compatible with the recovered statistics preference store. */
 public final class StatsRepository {
     public static final String PREFS_NAME = "betablocker_stats";
+    public static final String NATIVE_OWNER_KEY = "remote_session_stats_owner_v1";
+    private static final String NATIVE_STARTED = "remote_native_started_identity";
+    private static final String NATIVE_STARTED_FACT = "remote_native_started_fact";
+    private static final String NATIVE_ENDED = "remote_native_ended_identity";
     private static final String KEY_ACTIVE_DATES = "active_dates";
     private static final String KEY_ALL_CATEGORIES_CENSORS = "all_categories_censors";
     private static final String KEY_BORDER_COLOR_CHANGED = "border_color_changed";
@@ -74,6 +78,7 @@ public final class StatsRepository {
     private static long sessionStartMs;
     private static int sessionBlocks;
     private static volatile SessionStamp activeStamp;
+    private static String memoryIdentity = "";
 
     /** Reporting time is deliberately not this process-local session's ABA authority. */
     public static final class SessionStamp {
@@ -100,17 +105,20 @@ public final class StatsRepository {
 
     private final SharedPreferences preferences;
     private final Context app;
+    private final boolean recordDaily;
 
     public StatsRepository(Context context) { this(context, true); }
 
     StatsRepository(Context context, boolean recordDaily) {
         app = context.getApplicationContext();
+        this.recordDaily = recordDaily;
         preferences = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         if (recordDaily) synchronized (SESSION_LOCK) { syncDaily(); }
     }
 
     public void startSession() {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(app)) return;
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs != 0) return;
@@ -133,9 +141,176 @@ public final class StatsRepository {
                     .putInt(KEY_SESSIONS_COUNT, preferences.getInt(KEY_SESSIONS_COUNT, 0) + 1)
                     );
             updateStreak();
-            DailyDurationRecorder.changed();
+            memoryIdentity = preferences.getString("active_session_identity", "");
+            com.subhub.app.appmode.RuntimeSessionIdentity.changed();
+            durationChanged();
         }
             }
+    }
+
+    public static final class NativeSession {
+        public final String identity, zone;
+        public final long startedAt;
+        public NativeSession(String identity, long startedAt, String zone) {
+            requireSessionIdentity(identity);
+            if (startedAt <= 0) throw new IllegalArgumentException("Invalid native session clock");
+            if (zone == null || zone.length() > 100) throw new IllegalArgumentException("Invalid session zone");
+            java.time.ZoneId.of(zone);
+            this.identity = identity; this.startedAt = startedAt; this.zone = zone;
+        }
+        private String fact() { return identity + ";" + startedAt + ";" + zone; }
+    }
+
+    /** Main's committed marker owns this UUID; recovery updates bookkeeping without arming protection. */
+    public boolean ensureNativeSession(NativeSession session) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                if (!session.identity.equals(app.getSharedPreferences(
+                        com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0).getString(NATIVE_OWNER_KEY, "")))
+                    return false;
+                if (session.identity.equals(preferences.getString(NATIVE_STARTED, ""))) {
+                    if (!session.fact().equals(preferences.getString(NATIVE_STARTED_FACT, ""))) return false;
+                    boolean saved = flushNativeState(); refreshSessionMemory(); if (saved) syncDaily(); return saved;
+                }
+                if (session.identity.equals(preferences.getString(NATIVE_ENDED, ""))) return false;
+                String active = preferences.getString("active_session_identity", "");
+                if (!active.isEmpty() || preferences.getLong(KEY_ACTIVE_SESSION_START, 0) != 0) return false;
+                SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
+                        .putString("active_session_identity", session.identity)
+                        .putLong(KEY_ACTIVE_SESSION_START, session.startedAt)
+                        .putInt(KEY_ACTIVE_SESSION_BLOCKS, 0)
+                        .putInt(KEY_SESSIONS_COUNT, (int) Math.min(Integer.MAX_VALUE,
+                                Math.max(0L, preferences.getInt(KEY_SESSIONS_COUNT, 0)) + 1))
+                        .putString(NATIVE_STARTED, session.identity)
+                        .putString(NATIVE_STARTED_FACT, session.fact())
+                        .putLong(DailyStatsStore.STAMP, session.startedAt).putString(DailyStatsStore.ZONE, session.zone);
+                nativeStartStreak(edit, session);
+                boolean saved = edit.commit(); refreshSessionMemory();
+                if (saved) { syncDaily(); durationChanged(); }
+                return saved;
+            }
+        }
+    }
+
+    public String activeSessionIdentity() {
+        synchronized (SESSION_LOCK) { return preferences.getString("active_session_identity", ""); }
+    }
+
+    /** A known main-side start followed by End can be counted and closed without opening a phantom active session. */
+    public boolean finishNativeSession(NativeSession session, long observedAt, long durationSeconds) {
+        if (durationSeconds < 0) throw new IllegalArgumentException("Invalid session duration");
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                if (!session.identity.equals(app.getSharedPreferences(
+                        com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0).getString(NATIVE_OWNER_KEY, ""))) return false;
+                if (session.identity.equals(preferences.getString(NATIVE_STARTED, ""))) {
+                    if (!session.fact().equals(preferences.getString(NATIVE_STARTED_FACT, ""))) return false;
+                    return endSessionForIdentity(session.identity, observedAt, durationSeconds);
+                }
+                if (!preferences.getString("active_session_identity", "").isEmpty()
+                        || preferences.getLong(KEY_ACTIVE_SESSION_START, 0) != 0
+                        || session.identity.equals(preferences.getString(NATIVE_ENDED, ""))) return false;
+                SessionEntry entry = new SessionEntry(session.startedAt, durationSeconds, 0);
+                SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
+                        .putInt(KEY_SESSIONS_COUNT, (int) Math.min(Integer.MAX_VALUE,
+                                Math.max(0L, preferences.getInt(KEY_SESSIONS_COUNT, 0)) + 1))
+                        .putString(NATIVE_STARTED, session.identity).putString(NATIVE_STARTED_FACT, session.fact())
+                        .putString(NATIVE_ENDED, session.identity).putLong("remote_native_ended_at", observedAt)
+                        .putLong(KEY_TOTAL_SESSION_TIME, safeAdd(preferences.getLong(KEY_TOTAL_SESSION_TIME, 0), durationSeconds))
+                        .putLong(KEY_TOTAL_PROTECTED_TIME, safeAdd(preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0), durationSeconds))
+                        .putLong(KEY_LONGEST_SESSION, Math.max(preferences.getLong(KEY_LONGEST_SESSION, 0), durationSeconds))
+                        .putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry))
+                        .putLong(DailyStatsStore.STAMP, observedAt).putString(DailyStatsStore.ZONE, session.zone);
+                nativeStartStreak(edit, session);
+                boolean saved = edit.commit(); refreshSessionMemory();
+                if (saved) { syncDaily(); durationChanged(); }
+                return saved;
+            }
+        }
+    }
+
+    public boolean endSessionForIdentity(String expected) {
+        requireSessionIdentity(expected);
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                long now = System.currentTimeMillis(), start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0);
+                return endSessionForIdentity(expected, now, now >= start && start > 0 ? (now - start) / 1000 : 0);
+            }
+        }
+    }
+
+    /** History, totals, the closure receipt and active-field removal share one checked preference commit. */
+    public boolean endSessionForIdentity(String expected, long observedAt, long durationSeconds) {
+        requireSessionIdentity(expected);
+        if (durationSeconds < 0) throw new IllegalArgumentException("Invalid session duration");
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                if (expected.equals(preferences.getString(NATIVE_ENDED, ""))) {
+                    boolean saved = flushNativeState(); refreshSessionMemory(); if (saved) syncDaily(); return saved;
+                }
+                if (!expected.equals(preferences.getString("active_session_identity", ""))) return false;
+                long started = preferences.getLong(KEY_ACTIVE_SESSION_START, 0);
+                if (started <= 0) return false;
+                SessionEntry entry = new SessionEntry(started, durationSeconds,
+                        Math.max(0, preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0)),
+                        activeLong(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS), activeLong(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS),
+                        activeLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS), activeLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS),
+                        activeLong(KEY_ACTIVE_SESSION_SUBLIMINALS), activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS),
+                        activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS));
+                SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
+                        .putLong(KEY_TOTAL_SESSION_TIME, safeAdd(preferences.getLong(KEY_TOTAL_SESSION_TIME, 0), durationSeconds))
+                        .putLong(KEY_TOTAL_PROTECTED_TIME, safeAdd(preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0), durationSeconds))
+                        .putLong(KEY_LONGEST_SESSION, Math.max(preferences.getLong(KEY_LONGEST_SESSION, 0), durationSeconds))
+                        .putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry))
+                        .putString(NATIVE_ENDED, expected).putLong("remote_native_ended_at", observedAt)
+                        .putLong(DailyStatsStore.STAMP, observedAt)
+                        .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
+                boolean saved = edit.commit(); refreshSessionMemory();
+                if (saved) { syncDaily(); durationChanged(); }
+                return saved;
+            }
+        }
+    }
+
+    private void nativeStartStreak(SharedPreferences.Editor edit, NativeSession session) {
+        String date = java.time.Instant.ofEpochMilli(session.startedAt).atZone(java.time.ZoneId.of(session.zone))
+                .toLocalDate().toString();
+        String previous = preferences.getString(KEY_LAST_SESSION_DATE, "");
+        int old = Math.max(0, preferences.getInt(KEY_CURRENT_STREAK, 0));
+        int streak = date.equals(previous) ? old
+                : java.time.LocalDate.parse(date).minusDays(1).toString().equals(previous)
+                        ? old == Integer.MAX_VALUE ? old : old + 1 : 1;
+        edit.putInt(KEY_CURRENT_STREAK, streak).putString(KEY_LAST_SESSION_DATE, date);
+    }
+
+    private boolean flushNativeState() {
+        // A new scalar forces a disk barrier even if a prior commit changed memory but was unacknowledged.
+        return preferences.edit().putString("remote_native_commit_fence", java.util.UUID.randomUUID().toString()).commit();
+    }
+
+    private SharedPreferences.Editor clearActiveSession(SharedPreferences.Editor edit) {
+        return edit.remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START).remove(KEY_ACTIVE_SESSION_BLOCKS)
+                .remove(KEY_ACTIVE_SESSION_SUBLIMINALS).remove(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS)
+                .remove(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS).remove(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS)
+                .remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS).remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS + "_USD")
+                .remove(KEY_ACTIVE_SESSION_TAMPER_EVENTS).remove(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS);
+    }
+
+    private void refreshSessionMemory() {
+        String identity = preferences.getString("active_session_identity", "");
+        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0);
+        if (start <= 0) {
+            sessionStartMs = 0; sessionBlocks = 0; activeStamp = null; memoryIdentity = ""; SEEN_TRACK_IDS.clear();
+        } else {
+            if (!identity.equals(memoryIdentity) || sessionStartMs != start) { activeStamp = new SessionStamp(); SEEN_TRACK_IDS.clear(); }
+            sessionStartMs = start; sessionBlocks = Math.max(0, preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0));
+            memoryIdentity = identity;
+        }
+    }
+
+    private static void requireSessionIdentity(String value) {
+        if (value == null || !value.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            throw new IllegalArgumentException("Invalid native session identity");
     }
 
     public boolean onTracks(List<TrackedObject> tracks) {
@@ -229,6 +404,9 @@ public final class StatsRepository {
 
     public void endSession() {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (com.subhub.app.remote.RemoteSessionNative.handlesStatisticsEnd(app)) {
+            com.subhub.app.remote.RemoteSessionNative.reconcile(app); return;
+        }
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs == 0) return;
@@ -264,8 +442,10 @@ public final class StatsRepository {
             sessionStartMs = 0;
             sessionBlocks = 0;
             activeStamp = null;
+            memoryIdentity = "";
+            com.subhub.app.appmode.RuntimeSessionIdentity.changed();
             SEEN_TRACK_IDS.clear();
-            DailyDurationRecorder.changed();
+            durationChanged();
         }
             }
     }
@@ -331,19 +511,23 @@ public final class StatsRepository {
     }
 
     private void restoreActiveSession() {
-        if (sessionStartMs != 0) return;
+        String identity = preferences.getString("active_session_identity", "");
+        if (sessionStartMs != 0 && identity.equals(memoryIdentity)) return;
         long stored = preferences.getLong(KEY_ACTIVE_SESSION_START, 0);
         long now = System.currentTimeMillis();
         // Discard impossible/corrupt timestamps instead of displaying an unbounded timer.
-        if (stored <= 0 || stored > now
-                || now - stored > 366L * 24L * 60L * 60L * 1000L) {
+        boolean nativeKnown = !identity.isEmpty() && identity.equals(preferences.getString(NATIVE_STARTED, ""));
+        if (stored <= 0 || !nativeKnown && (stored > now
+                || now - stored > 366L * 24L * 60L * 60L * 1000L)) {
             if (stored != 0) preferences.edit().remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START)
                     .remove(KEY_ACTIVE_SESSION_BLOCKS).apply();
+            sessionStartMs = 0; sessionBlocks = 0; activeStamp = null; memoryIdentity = ""; SEEN_TRACK_IDS.clear();
             return;
         }
         sessionStartMs = stored;
         sessionBlocks = Math.max(0, preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0));
         activeStamp = new SessionStamp();
+        memoryIdentity = identity;
     }
 
     public List<SessionEntry> getSessionHistory() {
@@ -475,6 +659,10 @@ public final class StatsRepository {
     }
 
     private void appendSessionHistory(SessionEntry entry) {
+        preferences.edit().putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry)).apply();
+    }
+
+    private String appendedSessionHistory(SessionEntry entry) {
         List<String> entries = new ArrayList<>();
         String raw = preferences.getString(KEY_SESSION_HISTORY, "");
         if (raw != null) for (String item : raw.split(";")) {
@@ -488,7 +676,7 @@ public final class StatsRepository {
                 Long.toString(entry.subliminals), Long.toString(entry.popupImpressions),
                 Long.toString(entry.tamperEvents)));
         while (entries.size() > SESSION_HISTORY_MAX) entries.remove(0);
-        preferences.edit().putString(KEY_SESSION_HISTORY, String.join(";", entries)).apply();
+        return String.join(";", entries);
     }
 
     private void addToSet(String key, String value) {
@@ -553,7 +741,9 @@ public final class StatsRepository {
                 .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).apply();
         syncDaily();
     }
+    private void durationChanged() { if (recordDaily) DailyDurationRecorder.changed(); }
     private void syncDaily() {
+        if (!recordDaily) return;
         try { DailyStatsStore.get(app).queueStats(preferences); }
         catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Counter checkpoint pending"); }
     }

@@ -26,6 +26,26 @@ public final class CommitmentManager {
 
     private CommitmentManager() {}
 
+    /** Adds the chosen native pact to the same editor as its armed intent and application marker. */
+    public static void appendNativeStart(SharedPreferences.Editor edit,
+            com.subhub.app.remote.RemoteSessionNative.PreparedStart prepared) {
+        if (!Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK))
+            throw new IllegalStateException("Native runtime transaction required");
+        edit.remove(KEY_SALT).remove(KEY_HASH);
+        if (prepared.selectedDuration == -1) {
+            edit.remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
+                    .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
+                    .remove("commitment_ends_elapsed").remove("commitment_boot");
+        } else {
+            edit.putString("commitment_session_identity", prepared.pactIdentity)
+                    .putLong(KEY_STARTED_AT, prepared.statistics.startedAt).putLong(KEY_ENDS_AT, prepared.endsAt)
+                    .putLong(KEY_DURATION, prepared.selectedDuration).putBoolean("commitment_hide_countdown", prepared.request.service.hidden)
+                    .putLong("commitment_range_min", prepared.request.service.minimum)
+                    .putLong("commitment_range_max", prepared.request.service.maximum)
+                    .putLong("commitment_ends_elapsed", prepared.endsElapsed).putInt("commitment_boot", prepared.boot);
+        }
+    }
+
     public static boolean start(Context context, long requestedDurationMs) {
         long duration = Math.max(MIN_DURATION_MS,
                 Math.min(MAX_DURATION_MS, requestedDurationMs));
@@ -35,6 +55,7 @@ public final class CommitmentManager {
     /** Selects once; neither UI recreation nor reboot draws another duration. */
     public static boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
         if (isActive(context)) return false;
         long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
         long now = System.currentTimeMillis();
@@ -51,6 +72,7 @@ public final class CommitmentManager {
                 .remove(KEY_SALT).remove(KEY_HASH)
                 .commit();
         if (!saved) return false;
+        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
         scheduleExpiry(context, endsAt);
         reinforceProtection(context);
         HardcoreAutoPayManager.schedule(context);
@@ -139,11 +161,14 @@ public final class CommitmentManager {
 
     static void expire(Context context) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        preferences(context).edit()
+        SharedPreferences.Editor edit = preferences(context).edit()
                 .remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
                 .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                 .remove("commitment_ends_elapsed").remove("commitment_boot")
-                .remove(KEY_SALT).remove(KEY_HASH).apply();
+                .remove(KEY_SALT).remove(KEY_HASH);
+        com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+        edit.commit();
+        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
         cancelExpiry(context);
         new AppModeManager(context).setArmed(false);
         context.stopService(new Intent(context, ScreenCaptureService.class));

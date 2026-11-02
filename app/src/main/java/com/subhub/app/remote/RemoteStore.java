@@ -17,7 +17,8 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
-    static final int DATABASE_VERSION = 5;
+    static final int DATABASE_VERSION = 6;
+    static final int MAX_SESSION_PENDING = 16, MAX_SESSION_RECORDS = 128, MAX_SESSION_GLOBAL = 4096;
     private final Context context;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
@@ -90,6 +91,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         RemoteActivityStore.create(db);
         StoredPayloads.createProgress(db);
         createSessionControls(db);
+        createSessionClockJournal(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 1 || oldVersion >= newVersion || newVersion > DATABASE_VERSION)
@@ -102,6 +104,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (oldVersion < 3 && newVersion >= 3) RemoteActivityStore.create(db);
         if (oldVersion < 4 && newVersion >= 4) StoredPayloads.createProgress(db);
         if (oldVersion < 5 && newVersion >= 5) createSessionControls(db);
+        if (oldVersion < 6 && newVersion >= 6) createSessionClockJournal(db);
     }
 
     private static void createSessionControls(SQLiteDatabase db) {
@@ -111,11 +114,97 @@ public final class RemoteStore extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX pending_session_controls ON session_controls(peer,generation,direction,state,updated)");
     }
 
+    private static void createSessionClockJournal(SQLiteDatabase db) {
+        // Preserve the inactive v5 journal verbatim; clockless entries can never acquire new authority.
+        db.execSQL("CREATE TABLE session_control_journal(peer TEXT NOT NULL,generation TEXT NOT NULL,id TEXT NOT NULL,"
+                + "direction TEXT NOT NULL,request_digest TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL,"
+                + "state TEXT NOT NULL,updated INTEGER NOT NULL,sequence INTEGER NOT NULL,received_wall INTEGER NOT NULL,"
+                + "received_elapsed INTEGER NOT NULL,received_boot INTEGER NOT NULL,deadline_elapsed INTEGER NOT NULL,"
+                + "PRIMARY KEY(peer,generation,id,direction),UNIQUE(peer,generation,direction,sequence))");
+        db.execSQL("CREATE INDEX pending_session_journal ON session_control_journal(peer,generation,direction,state,updated)");
+    }
+
+    synchronized long allocateSessionSequence(String identity, String generation) {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            if (active(db, identity, generation).localRole != RemoteProtocol.Role.DOM)
+                throw new SecurityException("Only the paired Dom issues session commands");
+            long sequence = Math.addExact(Math.max(Long.parseLong(metadata(identity, generation, "session_control_allocated", "0")),
+                    Long.parseLong(metadata(identity, generation, "session_control_OUTGOING_floor", "0"))), 1);
+            putMetadata(identity, generation, "session_control_allocated", Long.toString(sequence));
+            db.setTransactionSuccessful(); return sequence;
+        } finally { db.endTransaction(); }
+    }
+
+    public synchronized void clearHardcoreStartAcknowledgements() {
+        getWritableDatabase().delete("remote_metadata", "name=?", new String[]{"hardcore_start_review_ack"});
+    }
+
+    public synchronized void acknowledgeHardcoreStartReview(String identity, String generation, String reviewId) {
+        if (!Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
+                || active(getWritableDatabase(), identity, generation).localRole != RemoteProtocol.Role.SUB)
+            throw new SecurityException("Receiver consent transaction required");
+        RemoteProtocol.identifier(reviewId);
+        putMetadata(identity, generation, "hardcore_start_review_ack", reviewId);
+    }
+
+    private static void requireSessionCapacity(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction) {
+        try (Cursor rows = db.rawQuery("SELECT COUNT(*),COALESCE(SUM(CASE WHEN state IN ('QUEUED','ACKNOWLEDGED','APPLYING')"
+                        + " THEN 1 ELSE 0 END),0) FROM session_control_journal WHERE peer=? AND generation=? AND direction=?",
+                new String[]{identity, generation, direction.name()})) {
+            if (!rows.moveToFirst() || rows.getInt(0) >= MAX_SESSION_RECORDS || rows.getInt(1) >= MAX_SESSION_PENDING)
+                throw new IllegalStateException("Session command queue full");
+        }
+        try (Cursor rows = db.rawQuery("SELECT COUNT(*) FROM session_control_journal", null)) {
+            if (!rows.moveToFirst() || rows.getInt(0) >= MAX_SESSION_GLOBAL)
+                throw new IllegalStateException("Session journal full");
+        }
+    }
+
+    private static void pruneSessionControls(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction, RemoteSessionClock.Sample now) {
+        List<String> expired = new ArrayList<>();
+        try (Cursor rows = db.rawQuery("SELECT id,received_wall,received_elapsed,received_boot,deadline_elapsed"
+                        + " FROM session_control_journal WHERE peer=? AND generation=? AND direction=?"
+                        + " AND state NOT IN ('QUEUED','ACKNOWLEDGED','APPLYING')",
+                new String[]{identity, generation, direction.name()})) {
+            while (rows.moveToNext()) {
+                RemoteSessionClock.Bounds lifetime = new RemoteSessionClock.Bounds(rows.getLong(1), rows.getLong(2), rows.getInt(3), rows.getLong(4));
+                if (lifetime.retentionElapsed(now)) expired.add(rows.getString(0));
+            }
+        }
+        for (String id : expired) db.delete("session_control_journal", "peer=? AND generation=? AND direction=? AND id=?",
+                new String[]{identity, generation, direction.name(), id});
+    }
+
+    synchronized RemoteSessionRuntime.Record checkSessionControlClock(String identity, String generation,
+            RemoteSessionRuntime.Direction direction, String id, RemoteSessionClock.Sample now) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            RemoteSessionRuntime.Record current = sessionControl(db, identity, generation, direction, id);
+            if (current == null) throw new SecurityException("Unknown session command");
+            requireSessionControlPeer(db, identity, generation, direction, current.request);
+            // APPLYING may already have a committed native effect; reconcile its marker before classifying it.
+            if (!current.result.state.terminal() && current.result.state != RemoteSessionCommands.State.APPLYING) {
+                RemoteSessionCommands.Reason reason = current.lifetime.check(current.request, now);
+                if (reason != RemoteSessionCommands.Reason.NONE) {
+                    RemoteSessionCommands.Result expired = new RemoteSessionCommands.Result(current.request,
+                            reason == RemoteSessionCommands.Reason.EXPIRED ? RemoteSessionCommands.State.EXPIRED
+                                    : RemoteSessionCommands.State.REJECTED, reason, now.wall, null);
+                    current = advanceSessionControl(identity, generation, direction, id, expired.json());
+                }
+            }
+            db.setTransactionSuccessful(); return current;
+        } finally { db.endTransaction(); }
+    }
+
     /** Durable receipt only. Neither inserting nor reading this journal applies a runtime operation. */
     synchronized RemoteSessionRuntime.Record rememberSessionControl(String identity, String generation,
-            RemoteSessionRuntime.Direction direction, RemoteSessionCommands.Request request, long now)
+            RemoteSessionRuntime.Direction direction, RemoteSessionCommands.Request request, RemoteSessionClock.Sample clock)
             throws JSONException {
-        if (now <= 0) throw new IllegalArgumentException("Missing journal clock");
+        java.util.Objects.requireNonNull(clock);
+        long now = clock.wall;
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try {
             requireSessionControlPeer(db, identity, generation, direction, request);
@@ -125,15 +214,40 @@ public final class RemoteStore extends SQLiteOpenHelper {
                     throw new SecurityException("Session command identity reused with different content");
                 db.setTransactionSuccessful(); return previous;
             }
-            RemoteSessionCommands.Result result = new RemoteSessionCommands.Result(request,
-                    direction == RemoteSessionRuntime.Direction.OUTGOING ? RemoteSessionCommands.State.QUEUED
-                            : RemoteSessionCommands.State.ACKNOWLEDGED,
-                    RemoteSessionCommands.Reason.NONE, now, null);
-            db.execSQL("INSERT INTO session_controls(peer,generation,id,direction,request_digest,request,result,state,updated)"
-                            + " VALUES(?,?,?,?,?,?,?,?,?)", new Object[]{identity, generation, request.id, direction.name(),
-                    request.digest(), StoredPayloads.bind(RemoteProtocol.canonical(request.json())),
-                    StoredPayloads.bind(RemoteProtocol.canonical(result.json())), result.state.name(), now});
-            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, request, result);
+            try (Cursor legacy = db.rawQuery("SELECT 1 FROM session_controls WHERE peer=? AND generation=? AND id=? AND direction=?",
+                    new String[]{identity, generation, request.id, direction.name()})) {
+                if (legacy.moveToFirst()) throw new SecurityException("Clockless legacy session command cannot be replayed");
+            }
+            String floorKey = "session_control_" + direction.name() + "_floor";
+            long floor = Long.parseLong(metadata(identity, generation, floorKey, "0"));
+            if (request.sequence <= floor) throw new SecurityException("Session command sequence already retired");
+            List<String> pending = new ArrayList<>();
+            try (Cursor rows = db.rawQuery("SELECT id FROM session_control_journal WHERE peer=? AND generation=? AND direction=?"
+                            + " AND state IN ('QUEUED','ACKNOWLEDGED')",
+                    new String[]{identity, generation, direction.name()})) {
+                while (rows.moveToNext()) pending.add(rows.getString(0));
+            }
+            for (String id : pending) checkSessionControlClock(identity, generation, direction, id, clock);
+            pruneSessionControls(db, identity, generation, direction, clock);
+            requireSessionCapacity(db, identity, generation, direction);
+            String requestBody = RemoteProtocol.canonical(request.json());
+            if (requestBody.getBytes(StandardCharsets.UTF_8).length > 2048)
+                throw new IllegalArgumentException("Session command too large");
+            RemoteSessionClock.Bounds lifetime = RemoteSessionClock.Bounds.begin(request, clock);
+            RemoteSessionCommands.Reason clockReason = lifetime.check(request, clock);
+            RemoteSessionCommands.State initial = clockReason == RemoteSessionCommands.Reason.NONE
+                    ? direction == RemoteSessionRuntime.Direction.OUTGOING ? RemoteSessionCommands.State.QUEUED
+                            : RemoteSessionCommands.State.ACKNOWLEDGED
+                    : clockReason == RemoteSessionCommands.Reason.EXPIRED ? RemoteSessionCommands.State.EXPIRED
+                            : RemoteSessionCommands.State.REJECTED;
+            RemoteSessionCommands.Result result = new RemoteSessionCommands.Result(request, initial, clockReason, now, null);
+            db.execSQL("INSERT INTO session_control_journal(peer,generation,id,direction,request_digest,request,result,state,updated,"
+                            + "sequence,received_wall,received_elapsed,received_boot,deadline_elapsed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    new Object[]{identity, generation, request.id, direction.name(), request.digest(), StoredPayloads.bind(requestBody),
+                    StoredPayloads.bind(RemoteProtocol.canonical(result.json())), result.state.name(), now, request.sequence,
+                    lifetime.receivedWall, lifetime.receivedElapsed, lifetime.boot, lifetime.deadlineElapsed});
+            putMetadata(identity, generation, floorKey, Long.toString(request.sequence));
+            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, request, result, lifetime);
         } finally { db.endTransaction(); }
     }
 
@@ -146,16 +260,18 @@ public final class RemoteStore extends SQLiteOpenHelper {
     private static RemoteSessionRuntime.Record sessionControl(SQLiteDatabase db, String identity, String generation,
             RemoteSessionRuntime.Direction direction, String id) throws JSONException {
         RemoteProtocol.identifier(id); java.util.Objects.requireNonNull(direction);
-        try (Cursor rows = db.rawQuery("SELECT request,result,request_digest,state FROM session_controls"
+        try (Cursor rows = db.rawQuery("SELECT request,result,request_digest,state,sequence,received_wall,received_elapsed,received_boot,deadline_elapsed FROM session_control_journal"
                         + " WHERE peer=? AND generation=? AND direction=? AND id=?",
                 new String[]{identity, generation, direction.name(), id})) {
             if (!rows.moveToFirst()) return null;
             RemoteSessionCommands.Request request = RemoteSessionCommands.Request.parse(new JSONObject(StoredPayloads.read(rows, 0)));
             RemoteSessionCommands.Result result = RemoteSessionCommands.Result.parse(request, new JSONObject(StoredPayloads.read(rows, 1)));
             if (!id.equals(request.id) || !generation.equals(request.generation)
-                    || !request.digest().equals(rows.getString(2)) || !result.state.name().equals(rows.getString(3)))
+                    || !request.digest().equals(rows.getString(2)) || !result.state.name().equals(rows.getString(3))
+                    || request.sequence != rows.getLong(4))
                 throw new SecurityException("Session journal content mismatch");
-            return new RemoteSessionRuntime.Record(direction, request, result);
+            return new RemoteSessionRuntime.Record(direction, request, result,
+                    new RemoteSessionClock.Bounds(rows.getLong(5), rows.getLong(6), rows.getInt(7), rows.getLong(8)));
         }
     }
 
@@ -166,16 +282,18 @@ public final class RemoteStore extends SQLiteOpenHelper {
             RemoteSessionRuntime.Record previous = sessionControl(db, identity, generation, direction, id);
             if (previous == null) throw new SecurityException("Unknown session command");
             requireSessionControlPeer(db, identity, generation, direction, previous.request);
+            if (RemoteProtocol.canonical(value).getBytes(StandardCharsets.UTF_8).length > 2048)
+                throw new IllegalArgumentException("Session result too large");
             RemoteSessionCommands.Result result = RemoteSessionCommands.Result.parse(previous.request, value);
             if (!result.mayFollow(previous.result)) throw new SecurityException("Invalid session result transition");
             ContentValues values = new ContentValues();
             StoredPayloads.put(values, "result", RemoteProtocol.canonical(result.json()));
             values.put("state", result.state.name()); values.put("updated", result.observedAt);
-            if (db.update("session_controls", values,
+            if (db.update("session_control_journal", values,
                     "peer=? AND generation=? AND direction=? AND id=? AND state=?",
                     new String[]{identity, generation, direction.name(), id, previous.result.state.name()}) != 1)
                 throw new IllegalStateException("Session journal changed during transaction");
-            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, previous.request, result);
+            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, previous.request, result, previous.lifetime);
         } finally { db.endTransaction(); }
     }
 
@@ -184,7 +302,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (maximum < 1 || maximum > 128) throw new IllegalArgumentException("Invalid session command bound");
         active(getReadableDatabase(), identity, generation); java.util.Objects.requireNonNull(direction);
         List<RemoteSessionRuntime.Record> result = new ArrayList<>();
-        try (Cursor rows = getReadableDatabase().rawQuery("SELECT id FROM session_controls"
+        try (Cursor rows = getReadableDatabase().rawQuery("SELECT id FROM session_control_journal"
                         + " WHERE peer=? AND generation=? AND direction=? AND state IN ('QUEUED','ACKNOWLEDGED','APPLYING')"
                         + " ORDER BY updated,id LIMIT ?", new String[]{identity, generation, direction.name(), Integer.toString(maximum)})) {
             while (rows.moveToNext()) result.add(sessionControl(getReadableDatabase(), identity, generation, direction, rows.getString(0)));

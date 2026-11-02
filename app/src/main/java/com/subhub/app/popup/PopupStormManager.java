@@ -79,8 +79,15 @@ public final class PopupStormManager {
     /** Foreground/service reevaluation must not reset a preview or restart image I/O each event. */
     public void syncServiceParticipation(Context source, boolean eligible) {
         if (eligible) {
-            if (!ownership.isService()) start(source);
-        } else if (ownership.isService()) stop();
+            startOwned(source);
+        } else {
+            long stopped;
+            synchronized (ownership) {
+                stopped = ownership.isService() ? ownership.stop() : 0;
+                if (stopped != 0) startRequested = false;
+            }
+            if (stopped != 0) stopAfterClaim(stopped);
+        }
     }
     public long remainingPreviewMillis() {
         return ownership.remainingPreviewMillis(SystemClock.uptimeMillis());
@@ -107,23 +114,58 @@ public final class PopupStormManager {
     }
 
     public void start(Context source) {
+        startOwned(source);
+    }
+
+    /** An opaque participation token cannot acquire a replacement runtime during late cleanup. */
+    public static final class ServiceParticipation {
+        private final long token;
+        private final String signature;
+        private ServiceParticipation(long token, String signature) { this.token = token; this.signature = signature; }
+    }
+
+    public ServiceParticipation startOwned(Context source) {
+        return startOwned(source, com.subhub.app.appmode.RuntimeSessionIdentity.componentSignature(source));
+    }
+
+    /** A capture instance passes its original signature rather than adopting whatever replaced it. */
+    public ServiceParticipation startOwned(Context source, String expectedSignature) {
         // Claim before posting so an already queued preview timeout cannot stop
         // an effect that a real service has adopted from another thread.
         long token;
+        com.subhub.app.appmode.RuntimeSessionIdentity.ComponentObservation observed =
+                com.subhub.app.appmode.RuntimeSessionIdentity.componentObservation(source);
+        if (!observed.signature.equals(expectedSignature)) return null;
         synchronized (ownership) {
-            token = ownership.adoptService();
+            // Runtime is released before this lock, which also guards Android rendering callbacks.
+            if (!observed.isCurrent()) return null;
+            token = ownership.serviceToken(expectedSignature);
+            if (token != 0) return new ServiceParticipation(token, expectedSignature);
+            token = ownership.adoptService(expectedSignature);
             startRequested = true;
         }
+        ServiceParticipation participation = new ServiceParticipation(token, expectedSignature);
         initialize(source);
         settings = PopupStormSettings.load(source);
         rescanAsync();
         main.post(() -> {
             synchronized (ownership) {
-                if (!ownership.isService(token)) return;
+                if (!ownership.isService(participation.token)) return;
                 cancelPreviewTimeout();
                 startIfReady();
             }
         });
+        return participation;
+    }
+
+    public void stopOwnedService(ServiceParticipation participation) {
+        if (participation == null) return;
+        long stopped;
+        synchronized (ownership) {
+            stopped = ownership.stopService(participation.token);
+            if (stopped != 0) startRequested = false;
+        }
+        if (stopped != 0) stopAfterClaim(stopped);
     }
 
     /** Starts at most ten seconds of editor preview without changing service state. */
@@ -161,6 +203,10 @@ public final class PopupStormManager {
             token = ownership.stop();
             startRequested = false;
         }
+        stopAfterClaim(token);
+    }
+
+    private void stopAfterClaim(long token) {
         Runnable stopRequest = () -> {
             synchronized (ownership) {
                 // An older queued stop must not remove a newly owned effect.

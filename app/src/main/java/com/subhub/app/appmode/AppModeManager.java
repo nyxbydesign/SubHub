@@ -41,8 +41,13 @@ public final class AppModeManager {
 
     public void setArmed(boolean armed) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
         boolean wasArmed = isArmed();
-        preferences.edit().putBoolean(KEY_ARMED, armed).commit();
+        SharedPreferences.Editor edit = preferences.edit().putBoolean(KEY_ARMED, armed);
+        if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+        edit.commit();
+        RuntimeSessionIdentity.changed();
+        if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
         syncProtectionSession(wasArmed, armed);
             }
     }
@@ -121,17 +126,21 @@ public final class AppModeManager {
 
     public void save(boolean armed, Set<String> packages) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
         boolean wasArmed = isArmed();
         synchronized (AppModeManager.class) {
-        preferences.edit()
+        SharedPreferences.Editor edit = preferences.edit()
                 .putBoolean(KEY_ARMED, armed)
                 .putStringSet(
                         KEY_INCLUDED_PACKAGES,
                         new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
                 .putBoolean(KEY_ALL_APPS, false)
-                .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1)
-                .commit();
+                .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1);
+        if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+        edit.commit();
         }
+        RuntimeSessionIdentity.changed();
+        if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
         syncProtectionSession(wasArmed, armed);
             }
     }
@@ -263,7 +272,7 @@ public final class AppModeManager {
     /** One statistics session follows the explicit armed lifetime, not foreground app changes. */
     private void syncProtectionSession(boolean wasArmed, boolean armed) {
         if (wasArmed == armed) return;
-        StatsRepository stats = new StatsRepository(context);
+        StatsRepository stats = com.subhub.app.remote.RemoteSessionNative.statistics(context);
         if (armed) stats.startSession();
         else stats.endSession();
     }

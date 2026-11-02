@@ -43,6 +43,7 @@ public final class RemoteFeature {
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
     RemoteFeature(Context context,RemoteStore store) {
         this.context=context.getApplicationContext();this.store=store;secrets=new RemoteSecrets(this.context);
+        com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
         activity=new RemoteActivityRepository(this.context,store,this::changed);
         store.onActivityReceived(activity::received);
@@ -144,16 +145,21 @@ public final class RemoteFeature {
             if (!com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
                     || com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context))
                 throw new SecurityException("Local Sub review required");
-            synchronized (store) {
-                for (RemoteStore.Peer peer : store.peers(false))
-                    if (peer.localRole == RemoteProtocol.Role.SUB && peer.state == RemoteStore.State.ACTIVE)
-                        throw new UnsupportedOperationException("Hardcore Start review unavailable");
-                return null;
-            }
+            if (RemoteSessionRuntime.assignedDom(store) == null) return null;
+            String self = transport().localIdentity();
+            return RemoteSessionRuntime.reviewHardcore(context, store, self, RemoteSessionClock.observe(context));
         });
     }
     public CompletableFuture<Boolean> acceptHardcoreStartReview(RemoteSessionRuntime.HardcoreReview review) {
-        return submit(() -> { java.util.Objects.requireNonNull(review); return false; });
+        return submit(() -> {
+            java.util.Objects.requireNonNull(review);
+            if (!recoveryReady()) throw new IllegalStateException("Relationship recovery unavailable");
+            String self = transport().localIdentity();
+            boolean admin = new com.subhub.app.security.HardcoreModeManager(context).isAdminActive();
+            RemoteSessionRuntime.SystemObservation observed = new RemoteSessionRuntime.SystemObservation(self, admin,
+                    RemoteSessionClock.observe(context));
+            return com.subhub.app.security.SubFeaturePolicy.acceptHardcoreStartReview(context, store, review, observed);
+        });
     }
     public void cancel(String invitation) {
         requireKeyholder();store.cancelInvite(invitation);secrets.removePending(invitation);changed();
@@ -365,7 +371,8 @@ public final class RemoteFeature {
     }
     void shutdownForTest() throws Exception {
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
-        acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();store.close();
+        acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();
+        com.subhub.app.security.SubFeaturePolicy.unregisterHardcoreAuthority(context, store);store.close();
     }
     private static long remaining(long deadline) throws SocketTimeoutException {long millis=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());if(millis<=0)throw new SocketTimeoutException("Sync window expired");return millis;}
     private static void close(AutoCloseable value){try{value.close();}catch(Exception ignored){}}

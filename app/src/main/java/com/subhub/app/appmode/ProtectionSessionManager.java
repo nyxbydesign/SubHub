@@ -14,13 +14,17 @@ public final class ProtectionSessionManager {
 
     public static void markMediaProjectionStarted(Context context) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
         preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, true).apply();
+        RuntimeSessionIdentity.changed();
             }
     }
 
     public static void markMediaProjectionExplicitlyStopped(Context context) {
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, false).apply();
+        android.content.SharedPreferences.Editor edit=preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, false);
+        com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context,edit);
+        edit.commit();RuntimeSessionIdentity.changed();
             }
     }
 

@@ -1,0 +1,231 @@
+package com.subhub.app.remote;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.RuntimeSessionIdentity;
+import com.subhub.app.commitment.CommitmentManager;
+import com.subhub.app.commitment.PactDuration;
+import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.stats.StatsRepository;
+import java.time.ZoneId;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+/** Native application markers are app-owned data; none of these methods decode peer authority. */
+public final class RemoteSessionNative implements AutoCloseable {
+    public static final String MAIN_KEY = "remote_session_native_v1";
+    private static final String PROCESS = UUID.randomUUID().toString();
+    private static final ConcurrentHashMap<Context, RemoteSessionNative> scopes = new ConcurrentHashMap<>();
+    private final Context context;
+    private final SharedPreferences main;
+    private final Supplier<StatsRepository> statsFactory;
+    private StatsRepository statistics;
+
+    private RemoteSessionNative(Context context, Supplier<StatsRepository> statsFactory) {
+        this.context = context.getApplicationContext(); this.statsFactory = Objects.requireNonNull(statsFactory);
+        main = this.context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+    }
+    public static RemoteSessionNative get(Context context) {
+        Context app = context.getApplicationContext();
+        return scopes.computeIfAbsent(app, key -> new RemoteSessionNative(key, () -> new StatsRepository(key)));
+    }
+    static RemoteSessionNative installFixture(Context context, Supplier<StatsRepository> factory) {
+        RemoteSessionNative value = new RemoteSessionNative(context, factory);
+        if (scopes.putIfAbsent(value.context, value) != null) throw new IllegalStateException("Native scope already installed");
+        return value;
+    }
+    private StatsRepository stats() { if (statistics == null) statistics = statsFactory.get(); return statistics; }
+    public static StatsRepository statistics(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) { return get(context).stats(); }
+    }
+    @Override public void close() { scopes.remove(context, this); }
+
+    public static final class PreparedStart {
+        public final RemoteSessionCommands.Request request;
+        public final StatsRepository.NativeSession statistics;
+        public final String requestDigest, pactIdentity, process;
+        public final long selectedDuration, startedElapsed, endsAt, endsElapsed;
+        public final int boot;
+        private PreparedStart(RemoteSessionCommands.Request request, String statistics, String pact, long selected,
+                RemoteSessionClock.Sample clock, String zone, String process) throws JSONException {
+            if (request.action != RemoteSessionCommands.Action.START || !request.service.permits(selected)
+                    || clock.wall <= 0 || clock.elapsed < 0 || clock.boot < 0)
+                throw new IllegalArgumentException("Invalid prepared native start");
+            uuid(process); if (selected != -1) uuid(pact); else if (!pact.isEmpty()) throw new IllegalArgumentException("Unexpected pact");
+            this.request = request; this.requestDigest = request.digest(); this.pactIdentity = pact; this.process = process;
+            this.statistics = new StatsRepository.NativeSession(statistics, clock.wall, zone);
+            this.selectedDuration = selected; this.startedElapsed = clock.elapsed; this.boot = clock.boot;
+            this.endsAt = selected == -1 ? 0 : Math.addExact(clock.wall, selected);
+            this.endsElapsed = selected == -1 ? 0 : Math.addExact(clock.elapsed, selected);
+        }
+        JSONObject json() throws JSONException {
+            return new JSONObject().put("schema", 1).put("request", request.json()).put("requestDigest", requestDigest)
+                    .put("statistics", statistics.identity).put("pact", pactIdentity).put("selected", selectedDuration)
+                    .put("startedAt", statistics.startedAt).put("elapsed", startedElapsed).put("boot", boot)
+                    .put("zone", statistics.zone).put("process", process);
+        }
+        static PreparedStart parse(JSONObject value) throws JSONException {
+            RemoteSessionCommands.keys(value, "schema", "request", "requestDigest", "statistics", "pact", "selected",
+                    "startedAt", "elapsed", "boot", "zone", "process");
+            if (RemoteProtocol.integer(value, "schema") != 1) throw new JSONException("Unsupported native preparation");
+            PreparedStart prepared = new PreparedStart(RemoteSessionCommands.Request.parse(value.getJSONObject("request")),
+                    RemoteSessionCommands.text(value, "statistics"), RemoteSessionCommands.text(value, "pact"),
+                    RemoteProtocol.integer(value, "selected"), new RemoteSessionClock.Sample(RemoteProtocol.integer(value, "startedAt"),
+                            RemoteProtocol.integer(value, "elapsed"), boot(value, "boot")),
+                    RemoteSessionCommands.text(value, "zone"), RemoteSessionCommands.text(value, "process"));
+            if (!prepared.requestDigest.equals(RemoteSessionCommands.text(value, "requestDigest")))
+                throw new SecurityException("Native preparation digest changed");
+            return prepared;
+        }
+    }
+
+    static PreparedStart prepare(RemoteSessionCommands.Request request, RemoteSessionClock.Sample now) throws JSONException {
+        if (request.action != RemoteSessionCommands.Action.START) throw new IllegalArgumentException("Start preparation required");
+        long chosen = request.service.duration == -2
+                ? PactDuration.choose(request.service.minimum, request.service.maximum, new java.security.SecureRandom())
+                : request.service.duration;
+        return new PreparedStart(request, UUID.randomUUID().toString(), chosen == -1 ? "" : UUID.randomUUID().toString(),
+                chosen, now, ZoneId.systemDefault().getId(), PROCESS);
+    }
+
+    static final class Marker {
+        final PreparedStart prepared;
+        final boolean ended, statisticsReady;
+        final RemoteSessionClock.Sample end;
+        final long durationSeconds;
+        Marker(PreparedStart prepared, boolean ended, boolean ready, RemoteSessionClock.Sample end, long durationSeconds) {
+            this.prepared = prepared; this.ended = ended; this.statisticsReady = ready; this.end = end; this.durationSeconds = durationSeconds;
+        }
+        JSONObject json() throws JSONException {
+            JSONObject value = new JSONObject().put("schema", 1).put("prepared", prepared.json())
+                    .put("ended", ended).put("statisticsReady", statisticsReady);
+            if (ended) value.put("end", new JSONObject().put("wall", end.wall).put("elapsed", end.elapsed)
+                    .put("boot", end.boot).put("durationSeconds", durationSeconds));
+            return value;
+        }
+        static Marker parse(JSONObject value) throws JSONException {
+            if (!(value.get("ended") instanceof Boolean) || !(value.get("statisticsReady") instanceof Boolean))
+                throw new JSONException("Invalid native marker flags");
+            boolean ended = value.getBoolean("ended");
+            RemoteSessionCommands.keys(value, ended ? new String[]{"schema", "prepared", "ended", "statisticsReady", "end"}
+                    : new String[]{"schema", "prepared", "ended", "statisticsReady"});
+            if (RemoteProtocol.integer(value, "schema") != 1) throw new JSONException("Unsupported native marker");
+            RemoteSessionClock.Sample end = null; long duration = 0;
+            if (ended) {
+                JSONObject clock = value.getJSONObject("end"); RemoteSessionCommands.keys(clock, "wall", "elapsed", "boot", "durationSeconds");
+                duration = RemoteProtocol.integer(clock, "durationSeconds");
+                if (duration < 0 || RemoteProtocol.integer(clock, "elapsed") < 0) throw new JSONException("Invalid closure clock");
+                end = new RemoteSessionClock.Sample(RemoteProtocol.integer(clock, "wall"), RemoteProtocol.integer(clock, "elapsed"), boot(clock, "boot"));
+            }
+            return new Marker(PreparedStart.parse(value.getJSONObject("prepared")), ended, value.getBoolean("statisticsReady"), end, duration);
+        }
+    }
+
+    Marker marker() throws JSONException {
+        String value = main.getString(MAIN_KEY, "");
+        if (value.isEmpty()) return null;
+        if (value.length() > 8192) throw new SecurityException("Native marker too large");
+        return Marker.parse(new JSONObject(value));
+    }
+    private boolean flushMain() { return main.edit().putString("remote_native_main_fence", UUID.randomUUID().toString()).commit(); }
+
+    /** Caller has already persisted this preparation and validated peer, consent, configuration and readiness. */
+    boolean commitPreparedStart(PreparedStart prepared, RemoteSessionClock.Sample now) throws JSONException {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            Marker existing = marker();
+            if (existing != null && existing.prepared.request.id.equals(prepared.request.id)
+                    && existing.prepared.request.sender.equals(prepared.request.sender)
+                    && existing.prepared.request.generation.equals(prepared.request.generation)) {
+                if (!RemoteProtocol.canonical(existing.prepared.json()).equals(RemoteProtocol.canonical(prepared.json())))
+                    throw new SecurityException("Prepared native identity reused");
+                return reconcileLocked() && !existing.ended;
+            }
+            if (!PROCESS.equals(prepared.process) || !reconcileLocked()) return false;
+            long elapsed = android.os.SystemClock.elapsedRealtime();
+            if (elapsed < now.elapsed || elapsed - now.elapsed > 5000) return false;
+            RemoteSessionClock.Sample current = new RemoteSessionClock.Sample(System.currentTimeMillis(), elapsed, now.boot);
+            if (RemoteSessionClock.Bounds.begin(prepared.request,
+                    new RemoteSessionClock.Sample(prepared.statistics.startedAt, prepared.startedElapsed, prepared.boot))
+                    .check(prepared.request, current) != RemoteSessionCommands.Reason.NONE) return false;
+            RuntimeSessionIdentity.Observed observed = RuntimeSessionIdentity.observe(context, current);
+            if (observed.active || !observed.statsIdentity.isEmpty() || !prepared.request.idleFence.equals(observed.idleFence)) return false;
+            SharedPreferences.Editor edit = main.edit().putBoolean(AppModeManager.KEY_ARMED, true)
+                    .putString(StatsRepository.NATIVE_OWNER_KEY, prepared.statistics.identity)
+                    .putString(MAIN_KEY, RemoteProtocol.canonical(new Marker(prepared, false, false, null, 0).json()));
+            CommitmentManager.appendNativeStart(edit, prepared);
+            boolean saved = edit.commit(); RuntimeSessionIdentity.changed();
+            return saved && reconcileLocked();
+        }
+    }
+
+    private boolean reconcileLocked() throws JSONException {
+        Marker value = marker(); if (value == null) return true;
+        PreparedStart prepared = value.prepared;
+        if (value.ended && value.statisticsReady) return true;
+        if (!prepared.statistics.identity.equals(main.getString(StatsRepository.NATIVE_OWNER_KEY, ""))) return false;
+        if (!value.ended && (!main.getBoolean(AppModeManager.KEY_ARMED, false)
+                || !prepared.pactIdentity.isEmpty() && !prepared.pactIdentity.equals(main.getString("commitment_session_identity", "")))) return false;
+        if (value.statisticsReady) return prepared.statistics.identity.equals(stats().activeSessionIdentity());
+        if (!flushMain()) return false;
+        boolean saved = value.ended ? stats().finishNativeSession(prepared.statistics, value.end.wall, value.durationSeconds)
+                : stats().ensureNativeSession(prepared.statistics);
+        if (!saved) return false;
+        SharedPreferences.Editor edit = main.edit().putString(MAIN_KEY, RemoteProtocol.canonical(
+                new Marker(prepared, value.ended, true, value.end, value.durationSeconds).json()));
+        if (value.ended) edit.remove(StatsRepository.NATIVE_OWNER_KEY);
+        // Readiness is a recomputable cache; the required main marker and statistics commits already succeeded.
+        edit.commit(); return true;
+    }
+
+    public static boolean reconcile(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            try { return get(context).reconcileLocked(); }
+            catch (JSONException | RuntimeException invalid) { return false; }
+        }
+    }
+    public static boolean beforeLocalStart(Context context) { return reconcile(context); }
+    public static boolean handlesStatisticsEnd(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            try {
+                RemoteSessionNative owner = get(context); Marker value = owner.marker();
+                if (value == null || !value.ended) return false;
+                String active = owner.stats().activeSessionIdentity();
+                return active.isEmpty() || active.equals(value.prepared.statistics.identity);
+            } catch (JSONException | RuntimeException invalid) { return false; }
+        }
+    }
+    public static void appendLocalEnd(Context context, SharedPreferences.Editor edit) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            try {
+                RemoteSessionNative owner = get(context); Marker value = owner.marker();
+                if (value == null || value.ended || !value.prepared.statistics.identity.equals(
+                        owner.main.getString(StatsRepository.NATIVE_OWNER_KEY, ""))) return;
+                String currentStatistics = owner.stats().activeSessionIdentity();
+                if (!currentStatistics.isEmpty() && !currentStatistics.equals(value.prepared.statistics.identity)) return;
+                if (!value.prepared.pactIdentity.isEmpty() && !value.prepared.pactIdentity.equals(
+                        owner.main.getString("commitment_session_identity", ""))) return;
+                RemoteSessionClock.Sample end = RemoteSessionClock.local(); PreparedStart prepared = value.prepared;
+                long duration = end.boot >= 0 && end.boot == prepared.boot && end.elapsed >= prepared.startedElapsed
+                        ? (end.elapsed - prepared.startedElapsed) / 1000
+                        : end.wall >= prepared.statistics.startedAt ? (end.wall - prepared.statistics.startedAt) / 1000 : 0;
+                edit.putString(MAIN_KEY, RemoteProtocol.canonical(new Marker(prepared, true, false, end, duration).json()));
+            } catch (JSONException | RuntimeException invalid) {
+                // An unparseable old marker must not prevent an explicit local stop or create a new session.
+            }
+        }
+    }
+    private static void uuid(String value) {
+        if (value == null || !value.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            throw new IllegalArgumentException("Invalid native UUID");
+    }
+    private static int boot(JSONObject value, String key) throws JSONException {
+        long boot = RemoteProtocol.integer(value, key);
+        if (boot < -1 || boot > Integer.MAX_VALUE) throw new JSONException("Invalid boot identity");
+        return (int) boot;
+    }
+}
