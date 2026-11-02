@@ -43,6 +43,14 @@ public final class CommitmentManager {
         }
     }
 
+    /** A native Stop clears the pact in the same main-preference commit as its application marker. */
+    public static void appendNativeStop(SharedPreferences.Editor edit) {
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime transaction required");
+        edit.remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
+                .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
+                .remove("commitment_ends_elapsed").remove("commitment_boot").remove(KEY_SALT).remove(KEY_HASH);
+    }
+
     public static boolean start(Context context, long requestedDurationMs) {
         long duration = Math.max(MIN_DURATION_MS,
                 Math.min(MAX_DURATION_MS, requestedDurationMs));
@@ -183,10 +191,8 @@ public final class CommitmentManager {
         ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
         String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
                 .getString("active_session_identity", "");
-        SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false)
-                .remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
-                .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
-                .remove("commitment_ends_elapsed").remove("commitment_boot").remove(KEY_SALT).remove(KEY_HASH);
+        SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
+        appendNativeStop(edit);
         com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
         boolean saved = edit.commit();
         RuntimeSessionIdentity.changed();

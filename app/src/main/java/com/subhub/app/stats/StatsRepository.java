@@ -288,6 +288,17 @@ public final class StatsRepository {
         return preferences.edit().putString("remote_native_commit_fence", java.util.UUID.randomUUID().toString()).commit();
     }
 
+    /** A native operation with no recorded statistics UUID still needs a durable empty-state witness. */
+    public boolean acknowledgeInactiveSession() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                if (!preferences.getString("active_session_identity", "").isEmpty()
+                        || preferences.getLong(KEY_ACTIVE_SESSION_START, 0L) != 0L) return false;
+                boolean saved = flushNativeState(); refreshSessionMemory(); if (saved) syncDaily(); return saved;
+            }
+        }
+    }
+
     private SharedPreferences.Editor clearActiveSession(SharedPreferences.Editor edit) {
         return edit.remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START).remove(KEY_ACTIVE_SESSION_BLOCKS)
                 .remove(KEY_ACTIVE_SESSION_SUBLIMINALS).remove(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS)

@@ -19,12 +19,14 @@ import org.json.JSONObject;
 /** Native application markers are app-owned data; none of these methods decode peer authority. */
 public final class RemoteSessionNative implements AutoCloseable {
     public static final String MAIN_KEY = "remote_session_native_v1";
+    static final String STOP_MAIN_KEY = "remote_session_native_stop_v1";
     private static final String PROCESS = UUID.randomUUID().toString();
     private static final ConcurrentHashMap<Context, RemoteSessionNative> scopes = new ConcurrentHashMap<>();
     private final Context context;
     private final SharedPreferences main;
     private final Supplier<StatsRepository> statsFactory;
     private StatsRepository statistics;
+    private com.subhub.app.service.ScreenCaptureService.StopTarget stopCapture;
 
     private RemoteSessionNative(Context context, Supplier<StatsRepository> statsFactory) {
         this.context = context.getApplicationContext(); this.statsFactory = Objects.requireNonNull(statsFactory);
@@ -91,6 +93,148 @@ public final class RemoteSessionNative implements AutoCloseable {
                 : request.service.duration;
         return new PreparedStart(request, UUID.randomUUID().toString(), chosen == -1 ? "" : UUID.randomUUID().toString(),
                 chosen, now, ZoneId.systemDefault().getId(), PROCESS);
+    }
+
+    static final class PreparedStop {
+        final RemoteSessionCommands.Request request;
+        final String requestDigest, statistics, pact, pause, capture, process;
+        final RemoteSessionClock.Sample clock;
+        private PreparedStop(RemoteSessionCommands.Request request, String statistics, String pact, String pause,
+                String capture, RemoteSessionClock.Sample clock, String process) throws JSONException {
+            if (request.action != RemoteSessionCommands.Action.STOP || clock.wall <= 0 || clock.elapsed < 0 || clock.boot < 0)
+                throw new IllegalArgumentException("Invalid prepared native stop");
+            for (String identity : new String[]{statistics, pact, pause, capture}) if (!identity.isEmpty()) uuid(identity);
+            uuid(process); this.request = request; requestDigest = request.digest(); this.statistics = statistics;
+            this.pact = pact; this.pause = pause; this.capture = capture; this.clock = clock; this.process = process;
+        }
+        JSONObject json() throws JSONException {
+            return new JSONObject().put("schema", 1).put("request", request.json()).put("requestDigest", requestDigest)
+                    .put("statistics", statistics).put("pact", pact).put("pause", pause).put("capture", capture)
+                    .put("wall", clock.wall).put("elapsed", clock.elapsed).put("boot", clock.boot).put("process", process);
+        }
+        static PreparedStop parse(JSONObject value) throws JSONException {
+            RemoteSessionCommands.keys(value, "schema", "request", "requestDigest", "statistics", "pact", "pause", "capture",
+                    "wall", "elapsed", "boot", "process");
+            if (RemoteProtocol.integer(value, "schema") != 1) throw new JSONException("Unsupported native stop preparation");
+            PreparedStop result = new PreparedStop(RemoteSessionCommands.Request.parse(value.getJSONObject("request")),
+                    RemoteSessionCommands.text(value, "statistics"), RemoteSessionCommands.text(value, "pact"),
+                    RemoteSessionCommands.text(value, "pause"), RemoteSessionCommands.text(value, "capture"),
+                    new RemoteSessionClock.Sample(RemoteProtocol.integer(value, "wall"), RemoteProtocol.integer(value, "elapsed"),
+                            boot(value, "boot")), RemoteSessionCommands.text(value, "process"));
+            if (!result.requestDigest.equals(RemoteSessionCommands.text(value, "requestDigest")))
+                throw new SecurityException("Native stop preparation digest changed");
+            return result;
+        }
+    }
+
+    PreparedStop prepareStop(RemoteSessionCommands.Request request, RemoteSessionClock.Sample clock) throws JSONException {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, clock);
+            if (!current.active || !request.sessionIdentity.equals(current.identity))
+                throw new IllegalStateException("Session target changed");
+            com.subhub.app.service.ScreenCaptureService.StopTarget capture =
+                    com.subhub.app.service.ScreenCaptureService.observedStopTarget(context);
+            if (current.screenCapture && capture == null) throw new IllegalStateException("Capture target unavailable");
+            return new PreparedStop(request, current.statsIdentity, current.pactIdentity, current.pauseIdentity,
+                    capture == null ? "" : capture.identity(), clock, PROCESS);
+        }
+    }
+
+    static final class StopMarker {
+        final PreparedStop prepared;
+        final boolean ready;
+        StopMarker(PreparedStop prepared, boolean ready) { this.prepared = prepared; this.ready = ready; }
+        JSONObject json() throws JSONException {
+            return new JSONObject().put("schema", 1).put("prepared", prepared.json()).put("ready", ready);
+        }
+        static StopMarker parse(JSONObject value) throws JSONException {
+            RemoteSessionCommands.keys(value, "schema", "prepared", "ready");
+            if (RemoteProtocol.integer(value, "schema") != 1 || !(value.get("ready") instanceof Boolean))
+                throw new JSONException("Invalid native stop marker");
+            return new StopMarker(PreparedStop.parse(value.getJSONObject("prepared")), value.getBoolean("ready"));
+        }
+    }
+    StopMarker stopMarker() throws JSONException {
+        String encoded = main.getString(STOP_MAIN_KEY, "");
+        if (encoded.isEmpty()) return null;
+        if (encoded.length() > 8192) throw new SecurityException("Native stop marker too large");
+        return StopMarker.parse(new JSONObject(encoded));
+    }
+
+    /** Caller persists the exact preparation and revalidates authority before this native-only commit. */
+    boolean commitPreparedStop(PreparedStop prepared, RemoteSessionClock.Sample now) throws JSONException {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            StopMarker existing = stopMarker();
+            if (existing != null && existing.prepared.request.id.equals(prepared.request.id)
+                    && existing.prepared.request.sender.equals(prepared.request.sender)
+                    && existing.prepared.request.generation.equals(prepared.request.generation)) {
+                if (!RemoteProtocol.canonical(existing.prepared.json()).equals(RemoteProtocol.canonical(prepared.json())))
+                    throw new SecurityException("Prepared stop identity reused");
+                return reconcileLocked();
+            }
+            if (!PROCESS.equals(prepared.process) || !reconcileLocked()) return false;
+            long elapsed = android.os.SystemClock.elapsedRealtime();
+            if (elapsed < now.elapsed || elapsed - now.elapsed > 5000) return false;
+            RemoteSessionClock.Sample currentClock = new RemoteSessionClock.Sample(System.currentTimeMillis(), elapsed, now.boot);
+            if (RemoteSessionClock.Bounds.begin(prepared.request, prepared.clock)
+                    .check(prepared.request, currentClock) != RemoteSessionCommands.Reason.NONE) return false;
+            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, currentClock);
+            if (!current.active || !prepared.request.sessionIdentity.equals(current.identity)
+                    || !prepared.statistics.equals(current.statsIdentity) || !prepared.pact.equals(current.pactIdentity)
+                    || !prepared.pause.equals(current.pauseIdentity)) return false;
+            com.subhub.app.service.ScreenCaptureService.StopTarget capture =
+                    com.subhub.app.service.ScreenCaptureService.observedStopTarget(context);
+            if (!prepared.capture.equals(capture == null ? "" : capture.identity())) return false;
+            stopCapture = capture;
+            SharedPreferences.Editor edit = main.edit().putBoolean(AppModeManager.KEY_ARMED, false)
+                    .putBoolean("media_projection_session_desired", false)
+                    .putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, false).json()));
+            appendLocalEnd(context, edit); CommitmentManager.appendNativeStop(edit);
+            boolean saved = edit.commit(); RuntimeSessionIdentity.changed();
+            if (!saved) return false;
+            com.subhub.app.appmode.SessionExpiryAlarms.update(context, com.subhub.app.appmode.SessionExpiryAlarms.Kind.PACT,
+                    prepared.pact, "", 0L);
+            return reconcileLocked();
+        }
+    }
+
+    com.subhub.app.service.ScreenCaptureService.StopTarget stopCapture(PreparedStop prepared) throws JSONException {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            StopMarker marker = stopMarker();
+            return marker != null && marker.prepared.requestDigest.equals(prepared.requestDigest) && stopCapture != null
+                    && prepared.capture.equals(stopCapture.identity()) ? stopCapture : null;
+        }
+    }
+
+    private boolean reconcileStopLocked() throws JSONException {
+        StopMarker marker = stopMarker(); if (marker == null) return true;
+        PreparedStop prepared = marker.prepared;
+        if (marker.ready) return true;
+        if (main.getBoolean(AppModeManager.KEY_ARMED, false) || main.getBoolean("media_projection_session_desired", false)
+                || !main.getString("commitment_session_identity", "").isEmpty() || !flushMain()) return false;
+        com.subhub.app.appmode.SessionExpiryAlarms.update(context, com.subhub.app.appmode.SessionExpiryAlarms.Kind.PACT,
+                prepared.pact, "", 0L);
+        String activeStatistics = stats().activeSessionIdentity();
+        if (!activeStatistics.isEmpty() && !prepared.statistics.equals(activeStatistics)) return false;
+        if (!new com.subhub.app.penance.PaidPauseManager(context).finishNativeStop(prepared.pause)) return false;
+        if (!(prepared.statistics.isEmpty() ? stats().acknowledgeInactiveSession()
+                : stats().endSessionForIdentity(prepared.statistics))) return false;
+        // All required commits already succeeded; this bit is only a recomputable reconciliation cache.
+        main.edit().putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, true).json())).commit();
+        return true;
+    }
+
+    /** Pending or unknown native Stop state cannot supply an ordinary pause's automatic rearm. */
+    public static boolean requiresNonRearmingPauseCleanup(Context context, String identity) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            try {
+                StopMarker marker = get(context).stopMarker();
+                return marker != null && !marker.ready && !identity.isEmpty() && identity.equals(marker.prepared.pause);
+            } catch (JSONException | RuntimeException invalid) {
+                // Unknown native state must never turn an old pause's rearm flag into a fresh Start.
+                return true;
+            }
+        }
     }
 
     static final class Marker {
@@ -164,6 +308,10 @@ public final class RemoteSessionNative implements AutoCloseable {
     }
 
     private boolean reconcileLocked() throws JSONException {
+        return reconcileStartLocked() && reconcileStopLocked();
+    }
+
+    private boolean reconcileStartLocked() throws JSONException {
         Marker value = marker(); if (value == null) return true;
         PreparedStart prepared = value.prepared;
         if (value.ended && value.statisticsReady) return true;

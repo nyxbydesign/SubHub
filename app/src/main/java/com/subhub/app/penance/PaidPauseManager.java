@@ -149,6 +149,26 @@ public final class PaidPauseManager {
         return finishMatching(expectedIdentity, 0L, true);
     }
 
+    /** Native Stop bookkeeping can remove only its recorded pause and must never re-arm protection. */
+    public boolean finishNativeStop(String expectedIdentity) {
+        if (expectedIdentity == null || !expectedIdentity.isEmpty() && !SessionExpiryAlarms.validIdentity(expectedIdentity))
+            throw new IllegalArgumentException("Pause identity required");
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            String current = preferences.getString("paid_pause_session_identity", "");
+            long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
+            if (current.isEmpty() && until == 0L) {
+                // A failed commit may already have removed the pause from memory, but not from disk.
+                return preferences.edit().putString("remote_native_pause_fence", java.util.UUID.randomUUID().toString()).commit();
+            }
+            if (expectedIdentity.isEmpty() || !expectedIdentity.equals(current)) return false;
+            boolean saved = preferences.edit().remove("paid_pause_session_identity")
+                    .remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
+            RuntimeSessionIdentity.changed();
+            if (saved) SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, expectedIdentity, "", 0L);
+            return saved;
+        }
+    }
+
     private boolean finishMatching(String expectedIdentity, long expectedUntil, boolean dueOnly) {
         Boolean hardcore = null;
         if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)
@@ -168,6 +188,9 @@ public final class PaidPauseManager {
         if (until <= 0L || expectedIdentity != null && !expectedIdentity.equals(identity)
                 || expectedUntil > 0L && expectedUntil != until
                 || dueOnly && until > System.currentTimeMillis()) return false;
+        if (com.subhub.app.remote.RemoteSessionNative.requiresNonRearmingPauseCleanup(context, identity)) {
+            return finishNativeStop(identity) && com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+        }
         boolean rearm = preferences.getBoolean(KEY_REARM, false);
         boolean saved = preferences.edit().remove("paid_pause_session_identity")
                 .remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
