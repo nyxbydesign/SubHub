@@ -109,6 +109,12 @@ endpoint as well. Use an owned unpaired store for no-Dom assertions; the applica
 can have independent pending work. Capture the live original before constructing its replacement,
 publish and restore under the singleton's class monitor, and close only the owned endpoint/database.
 Verify that the restored original endpoint remains live.
+Consent UI fixtures must also swap and restore the registered Hardcore authority under the policy
+lock and verify that the original store's consent receipts are unchanged. Replacing the endpoint
+singleton alone does not redirect consent receipt writes.
+When a fixture injects a synthetic transport endpoint, retain an owned endpoint lease across its
+queries and release it before shutdown. Each submitted query can otherwise suspend an idle endpoint
+and let a later query open the normal transport; assert the intended identity throughout the fixture.
 
 For native click fixtures, initialize `UiAutomation` before creating the target Views,
 then drain the target main queue before the first click so AccessibilityManager receives
