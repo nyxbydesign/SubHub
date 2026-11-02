@@ -27,6 +27,8 @@ public final class SessionExpiryAlarms {
     }
     private static final Object LOCK = new Object();
     private static final EnumMap<Kind, Slot> SLOTS = new EnumMap<>(Kind.class);
+    private static final java.util.List<java.util.concurrent.CompletableFuture<Void>> IDLE_WAITERS = new java.util.ArrayList<>();
+    private static boolean idleQueued;
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "session-expiry-alarms"); thread.setDaemon(true); return thread;
     });
@@ -44,6 +46,44 @@ public final class SessionExpiryAlarms {
         boolean running;
     }
     private SessionExpiryAlarms() { }
+    /** FIFO completion follows the currently queued drains without waiting under Runtime or on main. */
+    public static java.util.concurrent.CompletableFuture<Void> whenIdle() {
+        java.util.concurrent.CompletableFuture<Void> completion = new java.util.concurrent.CompletableFuture<>();
+        completion.whenComplete((ignored, failure) -> {
+            synchronized (LOCK) { IDLE_WAITERS.remove(completion); }
+        });
+        java.util.List<java.util.concurrent.CompletableFuture<Void>> rejected = null;
+        RuntimeException failure = null;
+        synchronized (LOCK) {
+            IDLE_WAITERS.removeIf(java.util.concurrent.CompletableFuture::isDone);
+            if (IDLE_WAITERS.size() >= 32) {
+                completion.completeExceptionally(new IllegalStateException("Timer completion capacity exceeded"));
+                return completion;
+            }
+            IDLE_WAITERS.add(completion);
+            if (!idleQueued) {
+                idleQueued = true;
+                try { WORKER.execute(SessionExpiryAlarms::completeIdle); }
+                catch (RuntimeException unavailable) {
+                    idleQueued = false; rejected = new java.util.ArrayList<>(IDLE_WAITERS); IDLE_WAITERS.clear(); failure = unavailable;
+                }
+            }
+        }
+        if (rejected != null) for (java.util.concurrent.CompletableFuture<Void> waiter : rejected) waiter.completeExceptionally(failure);
+        return completion;
+    }
+    private static void completeIdle() {
+        java.util.List<java.util.concurrent.CompletableFuture<Void>> completed;
+        synchronized (LOCK) {
+            IDLE_WAITERS.removeIf(java.util.concurrent.CompletableFuture::isDone);
+            if (!IDLE_WAITERS.isEmpty() && SLOTS.values().stream().anyMatch(slot -> slot.running)) {
+                // A later producer can queue a drain behind this shared barrier. Follow that drain too.
+                WORKER.execute(SessionExpiryAlarms::completeIdle); return;
+            }
+            idleQueued = false; completed = new java.util.ArrayList<>(IDLE_WAITERS); IDLE_WAITERS.clear();
+        }
+        for (java.util.concurrent.CompletableFuture<Void> waiter : completed) waiter.complete(null);
+    }
     public static boolean validIdentity(String identity) {
         return identity != null && identity.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
     }
