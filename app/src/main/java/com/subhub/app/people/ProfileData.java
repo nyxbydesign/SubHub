@@ -12,12 +12,19 @@ public final class ProfileData {
     public final String name, about, avatar, gender;
     /** Zero means not entered; no date of birth or age inference is retained. */
     public final int age;
+    /** Presentation of the owner's Both usage; never a relationship authority. */
+    public final boolean isSwitch;
 
     public ProfileData(String name, String about, String avatar) {
         this(name, about, avatar, "", 0);
     }
 
     public ProfileData(String name, String about, String avatar, String gender, int age) {
+        this(name, about, avatar, gender, age, false);
+    }
+
+    public ProfileData(String name, String about, String avatar, String gender, int age, boolean isSwitch) {
+        this.isSwitch = isSwitch;
         this.name = ProfileNames.clean(name).trim();
         this.about = cleanAbout(about);
         this.gender = cleanGender(gender);
@@ -69,7 +76,7 @@ public final class ProfileData {
         if (!(other instanceof ProfileData)) return false;
         ProfileData value = (ProfileData) other;
         return name.equals(value.name) && about.equals(value.about) && avatar.equals(value.avatar)
-                && gender.equals(value.gender) && age == value.age;
+                && gender.equals(value.gender) && age == value.age && isSwitch == value.isSwitch;
     }
-    @Override public int hashCode() { return Objects.hash(name, about, avatar, gender, age); }
+    @Override public int hashCode() { return Objects.hash(name, about, avatar, gender, age, isSwitch); }
 }

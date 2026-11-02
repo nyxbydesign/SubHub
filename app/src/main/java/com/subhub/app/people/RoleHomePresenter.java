@@ -298,6 +298,7 @@ public final class RoleHomePresenter {
         PersonUi.text(domFavorite, activity.getString(R.string.role_loading), false);
         com.subhub.app.activity.ActivityPreview.addOverview(domBody, data, "home-activity-preview");
         domAchievements = achievementPreview(domBody);
+        helpSafety(domBody, "home_help:dom");
     }
 
     static List<PersonSnapshot> recentAdditions(List<PersonSnapshot> people, PersonSnapshot favorite) {
@@ -441,8 +442,12 @@ public final class RoleHomePresenter {
         tasks.setTag("home_tasks"); subTasksDetail = tasks.findViewWithTag("overview_row_value");
         subUsage = PersonUi.column(activity); subBody.addView(subUsage, new LinearLayout.LayoutParams(-1, -2));
         subAchievements = achievementPreview(subBody);
-        OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_tab_help, activity.getString(R.string.role_help_safety), "",
-                () -> activity.startActivity(new Intent(activity, HelpActivity.class))).setTag("home_help");
+        helpSafety(subBody, "home_help");
+    }
+
+    private void helpSafety(LinearLayout parent, String tag) {
+        OverviewUi.row(OverviewUi.compactCard(parent), R.drawable.ic_tab_help, activity.getString(R.string.role_help_safety), "",
+                () -> activity.startActivity(new Intent(activity, HelpActivity.class))).setTag(tag);
     }
 
     private com.subhub.app.stats.AchievementPreviewView achievementPreview(LinearLayout parent) {

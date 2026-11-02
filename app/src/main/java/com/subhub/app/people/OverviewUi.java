@@ -76,7 +76,7 @@ public final class OverviewUi {
         TextView name = text(context, profile.name, 20, true); name.setTag(prefix + "_name");
         copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
         List<String> values = new ArrayList<>();
-        values.add(context.getString(dom ? R.string.role_dom : R.string.role_sub));
+        values.add(context.getString(profile.isSwitch ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub));
         if (profile.age != 0) values.add(context.getResources().getQuantityString(R.plurals.profile_age_value, profile.age, profile.age));
         if (!profile.gender.isEmpty()) values.add(profile.gender);
         TextView details = text(context, String.join(" · ", values), 13, false); details.setTag(prefix + "_details");

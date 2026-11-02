@@ -146,17 +146,22 @@ public final class PermissionSetupAndroidTest {
     }
 
     @Test
-    public void existingSubModeCanReadGuideButCannotOpenPermissionActions() {
+    public void existingSubModeCanOpenAndroidPermissionActions() {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<PermissionSetupActivity> scenario =
                 ActivityScenario.launch(PermissionSetupActivity.class)) {
             scenario.onActivity(
                     a -> {
-                        assertEquals(.45f, a.findViewById(R.id.permission_step_one_open).getAlpha(), .01f);
+                        assertEquals(1f, a.findViewById(R.id.permission_step_one_open).getAlpha(), .01f);
                         assertFalse(a.findViewById(R.id.permission_step_two_open).isEnabled());
                         assertFalse(a.findViewById(R.id.permission_step_three_open).isEnabled());
                         assertTrue(a.findViewById(R.id.permission_step_one_body).isShown());
                     });
+            onView(withId(R.id.permission_step_one_open)).perform(scrollTo(), click());
+            UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+            assertTrue(device.wait(Until.hasObject(By.pkg("com.android.settings")), 5000));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            device.pressBack();
         }
     }
 

@@ -116,11 +116,36 @@ public final class HelpReworkAndroidTest {
             scenario.recreate();
             scenario.onActivity(activity -> {
                 assertTrue(activity.findViewById(R.id.button_language).isShown());
-                assertEquals(.45f, activity.findViewById(R.id.button_language).getAlpha(), .01f);
+                assertEquals(1f, activity.findViewById(R.id.button_language).getAlpha(), .01f);
                 assertTrue(activity.findViewById(R.id.button_fix_permissions).isShown());
                 assertNotNull(activity.findViewById(R.id.help_diagnostics));
                 assertTrue(activity.findViewById(R.id.button_accessibility).isShown());
             });
+        }
+    }
+
+    @Test public void subCanChooseLanguageWithoutChangingControllerOrFeatureConsent() throws Exception {
+        android.content.Context context = androidx.test.core.app.ApplicationProvider.getApplicationContext();
+        String previous = com.subhub.app.util.LocaleHelper.getLanguage(context);
+        java.util.Map<String, ?> choices = new java.util.LinkedHashMap<>(context.getSharedPreferences(
+                com.subhub.app.security.SubFeaturePolicy.STORE, 0).getAll());
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<HelpActivity> scenario = ActivityScenario.launch(HelpActivity.class)) {
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_language))
+                    .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.language_german))
+                    .perform(androidx.test.espresso.action.ViewActions.click());
+            assertEquals("de", com.subhub.app.util.LocaleHelper.getLanguage(context));
+            scenario.recreate();
+            scenario.onActivity(a -> {
+                assertEquals("de", com.subhub.app.util.LocaleHelper.getLanguage(a));
+                assertEquals(1f, a.findViewById(R.id.button_language).getAlpha(), .01f);
+            });
+            assertFalse(ControllerPinManager.isDomModeActive());
+            assertEquals(choices, context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE, 0).getAll());
+        } finally {
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                    () -> com.subhub.app.util.LocaleHelper.setLanguage(context, previous));
         }
     }
 

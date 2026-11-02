@@ -152,6 +152,68 @@ public final class OverviewReferenceAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
+    public void bothOverviewHelpCardsAreIdenticalLastAndOpenTheSameHelp() throws Exception {
+        for (boolean dom : new boolean[]{true, false}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+                MainActivity activity = resumed(MainActivity.class);
+                String tag = dom ? "home_help:dom" : "home_help";
+                await(() -> tagged(activity, tag) != null);
+                scenario.onActivity(a -> {
+                    View row = tagged(a, tag);
+                    View card = (View) row.getParent();
+                    ViewGroup body = (ViewGroup) card.getParent();
+                    assertSame(card, body.getChildAt(body.getChildCount() - 1));
+                    assertTrue(hasText(row, a.getString(R.string.role_help_safety)));
+                    assertEquals(48, Math.round(row.getMinimumHeight() / a.getResources().getDisplayMetrics().density));
+                    assertEquals(3, ((ViewGroup) row).getChildCount());
+                });
+                captureVisible(activity, dom ? "overview-dom-help-last" : "overview-sub-help-last", tag);
+                tap(tag);
+                com.subhub.app.help.HelpActivity help = resumed(com.subhub.app.help.HelpActivity.class);
+                onMain(help::finish); resumed(MainActivity.class);
+                scenario.recreate();
+                MainActivity again = resumed(MainActivity.class);
+                await(() -> tagged(again, tag) != null);
+                assertEquals(dom, ControllerPinManager.isDomModeActive());
+            }
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void partnerSwitchLabelsFollowTheOwnerAcrossOverviewProfileAndContract() throws Exception {
+        PersonSnapshot original = people.get().get(0);
+        ProfileData switchSub = new ProfileData("Milo", "Owner uses Both.", "", "Man", 29, true);
+        people.set(List.of(original.withProfile(switchSub, original.featureConsent), people.get().get(1)));
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+            MainActivity activity = resumed(MainActivity.class);
+            String details = "home_favorite:" + original.id.value() + "_details";
+            await(() -> tagged(activity, details) != null);
+            assertTrue(((TextView) tagged(activity, details)).getText().toString().startsWith(context.getString(R.string.profile_role_switch)));
+            captureVisible(activity, "partner-switch-overview", "home_favorite_identity:" + original.id.value());
+            tap("home_favorite_identity:" + original.id.value());
+            PersonActivity partner = resumed(PersonActivity.class);
+            await(() -> tagged(partner, "person_details") != null);
+            assertTrue(((TextView) tagged(partner, "person_details")).getText().toString().startsWith(context.getString(R.string.profile_role_switch)));
+            captureVisible(partner, "partner-switch-sub-profile", "person_identity");
+            onMain(partner::finish); resumed(MainActivity.class);
+        }
+        ControllerPinManager.enterSubMode();
+        ownerOverride.set(new ProfileData("Nova", "Owner uses Both.", "", "Woman", 34, true));
+        try (ActivityScenario<ContractActivity> scenario = ActivityScenario.launch(ContractActivity.class)) {
+            ContractActivity activity = resumed(ContractActivity.class);
+            await(() -> tagged(activity, "contract_dom_details") != null);
+            assertTrue(((TextView) tagged(activity, "contract_dom_details")).getText().toString().startsWith(context.getString(R.string.profile_role_switch)));
+            captureVisible(activity, "partner-switch-dom-contract", "contract_dom_identity");
+            scenario.recreate();
+            ContractActivity again = resumed(ContractActivity.class);
+            await(() -> tagged(again, "contract_dom_details") != null);
+            assertTrue(((TextView) tagged(again, "contract_dom_details")).getText().toString().startsWith(context.getString(R.string.profile_role_switch)));
+            assertFalse(ControllerPinManager.isDomModeActive());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
     public void domOverviewUsesItsOwnJournalAndRecordedFactsAndOpensTheFavoriteIdentity() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
@@ -633,6 +695,64 @@ public final class OverviewReferenceAndroidTest {
             assertTrue(paint.descent() - paint.ascent() <= clock.getHeight() + 1);
         } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
     }
+    /** Bind the scrolled target and a content-layer draw witness to the actual screenshot. */
+    private static void captureVisible(Activity activity, String label, String targetTag) throws Exception {
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run");
+        File folder = new File(activity.getFilesDir(), "ui-v3/" + run);
+        assertTrue(folder.isDirectory() || folder.mkdirs());
+        android.graphics.drawable.ColorDrawable marker = new android.graphics.drawable.ColorDrawable();
+        AtomicReference<View> target = new AtomicReference<>();
+        AtomicReference<android.graphics.Rect> screen = new AtomicReference<>();
+        AtomicReference<android.widget.ScrollView> scrolling = new AtomicReference<>();
+        AtomicInteger requested = new AtomicInteger(), observedScroll = new AtomicInteger();
+        int drawIdentity = (int) (SystemClock.uptimeMillis() & 0x7fffffff);
+        int color = Color.rgb(40 + drawIdentity % 160, 48 + drawIdentity / 7 % 160, 56 + drawIdentity / 11 % 160);
+        marker.setColor(color);
+        Bitmap pixels = null;
+        org.json.JSONObject witness = new org.json.JSONObject().put("target", targetTag).put("drawIdentity", drawIdentity).put("expectedArgb", color);
+        long deadline = SystemClock.uptimeMillis() + 10_000L;
+        boolean composed = false;
+        try {
+            do {
+                onView(withTagValue(is(targetTag))).perform(NativeUiActions.revealAboveNavigation());
+                com.subhub.app.UiRefreshWitness.frame(activity);
+                onMain(() -> {
+                    View view = tagged(activity, targetTag); target.set(view);
+                    android.widget.ScrollView scroll = com.subhub.app.UiRefreshWitness.scroll(view); scrolling.set(scroll);
+                    android.graphics.Rect rect = new android.graphics.Rect(); view.getGlobalVisibleRect(rect);
+                    int[] location = new int[2]; view.getLocationOnScreen(location);
+                    assertEquals(view.getHeight(), rect.height());
+                    assertEquals(view.getWidth(), rect.width());
+                    android.graphics.Rect nav = new android.graphics.Rect();
+                    activity.findViewById(R.id.bottom_navigation).getGlobalVisibleRect(nav);
+                    assertTrue(rect.bottom <= nav.top);
+                    int size = Math.max(6, PersonUi.dp(activity, 6));
+                    int x = view.getWidth() - size - PersonUi.dp(activity, 3), y = view.getHeight() / 2 - size / 2;
+                    marker.setBounds(x, y, x + size, y + size);
+                    screen.set(new android.graphics.Rect(location[0] + x, location[1] + y, location[0] + x + size, location[1] + y + size));
+                    requested.set(scroll.getScrollY()); view.getOverlay().add(marker); view.invalidate();
+                });
+                com.subhub.app.UiRefreshWitness.frame(activity);
+                if (pixels != null) pixels.recycle();
+                pixels = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot(); assertNotNull(pixels);
+                android.graphics.Rect rect = screen.get(); int observed = pixels.getPixel(rect.centerX(), rect.centerY());
+                onMain(() -> observedScroll.set(scrolling.get().getScrollY()));
+                composed = observed == color && observedScroll.get() == requested.get();
+                witness.put("screenBounds", rect.flattenToString()).put("scrollY", requested.get()).put("observedScrollY", observedScroll.get())
+                        .put("observedArgb", observed).put("composed", composed);
+                File first = new File(folder, label + "-first-frame.png");
+                if (composed || !first.exists()) try (java.io.FileOutputStream output = new java.io.FileOutputStream(
+                        composed ? new File(folder, label + ".png") : first)) { assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, output)); }
+                onMain(() -> target.get().getOverlay().remove(marker));
+            } while (!composed && SystemClock.uptimeMillis() < deadline);
+            Files.write(new File(folder, label + ".composition.json").toPath(), witness.toString(2).getBytes(StandardCharsets.UTF_8));
+            assertTrue("Current target must appear in composed pixels: " + witness, composed);
+        } finally {
+            if (target.get() != null) onMain(() -> target.get().getOverlay().remove(marker));
+            if (pixels != null) pixels.recycle();
+        }
+    }
+
     private static void capture(Activity activity, String label, String target) throws Exception {
         if (activity instanceof MainActivity) {
             AtomicReference<Boolean> notice = new AtomicReference<>(false);

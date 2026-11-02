@@ -190,6 +190,42 @@ public class RemoteSessionAndroidTest {
         assertEquals("Name from a later legacy hello", RemoteProfiles.read(dom, beforeRename).name);
     }
 
+    @Test public void ownerSwitchNegotiatesIndependentlyInBothDirectionsAndClears() throws Exception {
+        dh.profiles = true; sh.profiles = true;
+        for (boolean details : new boolean[]{false, true}) {
+            dh.details = details; sh.details = details;
+            for (boolean supported : new boolean[]{false, true}) {
+                dh.roleIdentity = true; sh.roleIdentity = supported;
+                dh.profile = new com.subhub.app.people.ProfileData("Switch Dom", "Bio", "", "Woman", 32, true);
+                sh.profile = new com.subhub.app.people.ProfileData("Switch Sub", "Bio", "", "Man", 29, true);
+                for (boolean outgoingDom : new boolean[]{true, false}) {
+                    exchange(outgoingDom, false);
+                    assertEquals((details ? 6 : 4) + (supported ? 1 : 0), dh.lastSentFields);
+                    assertEquals(dh.lastSentFields, sh.lastSentFields);
+                    assertEquals(supported, RemoteProfiles.read(dom, dom.peer(st.localIdentity(), generation)).isSwitch);
+                    assertEquals(supported, RemoteProfiles.read(sub, sub.peer(dt.localIdentity(), generation)).isSwitch);
+                    assertEquals(RemoteProtocol.Role.DOM, dom.peer(st.localIdentity(), generation).localRole);
+                    assertEquals(RemoteProtocol.Role.SUB, sub.peer(dt.localIdentity(), generation).localRole);
+                }
+            }
+        }
+        dom.close(); dom = new RemoteStore(context, domName);
+        RemoteStore.Peer peer = dom.peer(st.localIdentity(), generation);
+        assertTrue(RemoteProfiles.read(dom, peer).isSwitch);
+        dom.updateDisplayName(peer.identity, peer.generation, "Renamed Switch");
+        assertTrue(RemoteProfiles.read(dom, peer).isSwitch);
+        assertEquals("Renamed Switch", RemoteProfiles.read(dom, peer).name);
+        sh.profile = new com.subhub.app.people.ProfileData("Single Sub", "Bio", "", "Man", 29);
+        exchange(false, false);
+        assertFalse(RemoteProfiles.read(dom, peer).isSwitch);
+        JSONObject role = RemoteProfiles.encode(dh.profile, RemoteProtocol.Role.SUB, true, true);
+        assertThrows(org.json.JSONException.class, () -> RemoteProfiles.receive(dom, peer, role, true));
+        assertEquals("Single Sub", RemoteProfiles.read(dom, peer).name);
+        dom.revoke(peer.identity, peer.generation);
+        assertThrows(SecurityException.class, () -> RemoteProfiles.receive(dom, peer, role, true, true));
+        assertFalse(RemoteProfiles.read(dom, peer).isSwitch);
+    }
+
     @Test public void optionalProfileDetailsNegotiateInBothDirectionsPersistAndClear() throws Exception {
         dh.profiles = true; sh.profiles = true; dh.details = true; sh.details = true;
         dh.profile = new com.subhub.app.people.ProfileData("Fixture Dom", "Dom bio", "", "Woman", 32);
@@ -282,11 +318,12 @@ public class RemoteSessionAndroidTest {
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
         final RemoteStore store;final RemoteAssets assets;int prepares;
-        boolean profiles, details; int profileCalls, lastSentFields;
+        boolean profiles, details, roleIdentity; int profileCalls, lastSentFields;
         com.subhub.app.people.ProfileData profile = com.subhub.app.people.ProfileData.empty("Fixture");
         FixtureHooks(RemoteStore store,RemoteAssets assets){this.store=store;this.assets=assets;}
         public int profileVersion() { return profiles ? 1 : 0; }
         public int profileDetailsVersion() { return details ? 1 : 0; }
+        public int profileRoleVersion() { return roleIdentity ? 1 : 0; }
         public String displayName(RemoteStore.Peer peer) { return profiles ? profile.name : ""; }
         public JSONObject profile(RemoteStore.Peer peer) throws Exception {
             profileCalls++; return RemoteProfiles.encode(profile, peer.localRole);
@@ -294,6 +331,12 @@ public class RemoteSessionAndroidTest {
         public JSONObject profile(RemoteStore.Peer peer, boolean includeDetails) throws Exception {
             profileCalls++;
             JSONObject value = RemoteProfiles.encode(profile, peer.localRole, includeDetails);
+            lastSentFields = value.length();
+            return value;
+        }
+        public JSONObject profile(RemoteStore.Peer peer, boolean includeDetails, boolean includeRole) throws Exception {
+            profileCalls++;
+            JSONObject value = RemoteProfiles.encode(profile, peer.localRole, includeDetails, includeRole);
             lastSentFields = value.length();
             return value;
         }

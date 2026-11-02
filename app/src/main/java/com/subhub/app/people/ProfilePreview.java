@@ -43,8 +43,7 @@ public final class ProfilePreview extends LinearLayout {
     }
 
     public static ProfilePreview own(Context context, ProfileData profile, boolean dom) {
-        int role = com.subhub.app.security.DeviceRolePreferences.get(context)
-                == com.subhub.app.security.DeviceRolePreferences.Mode.BOTH
+        int role = profile.isSwitch
                 ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub;
         return new ProfilePreview(context, profile, dom, "self_profile", false, null, false, role);
     }
@@ -55,7 +54,7 @@ public final class ProfilePreview extends LinearLayout {
 
     private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
             boolean expanded, Consumer<Boolean> expansion, boolean roster) {
-        this(context, profile, dom, prefix, expanded, expansion, roster, dom ? R.string.role_dom : R.string.role_sub);
+        this(context, profile, dom, prefix, expanded, expansion, roster, profile.isSwitch ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub);
     }
 
     private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,

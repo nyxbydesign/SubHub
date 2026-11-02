@@ -237,6 +237,7 @@ public final class RemoteFeature {
             }
             @Override public int profileVersion() { return 1; }
             @Override public int profileDetailsVersion() { return 1; }
+            @Override public int profileRoleVersion() { return 1; }
             @Override public JSONObject profile(RemoteStore.Peer peer) throws Exception {
                 requireActive(peer);
                 return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
@@ -246,6 +247,11 @@ public final class RemoteFeature {
                 requireActive(peer);
                 return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
                         peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details);
+            }
+            @Override public JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception {
+                requireActive(peer);
+                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details, roleIdentity);
             }
             @Override public int tasksVersion() { return 1; }
             @Override public int taskCancelVersion() { return 1; }

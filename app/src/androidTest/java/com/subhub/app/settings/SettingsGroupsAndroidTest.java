@@ -110,10 +110,11 @@ public class SettingsGroupsAndroidTest {
             com.subhub.app.UiRefreshWitness.capture(resumed(GlobalSettingsActivity.class), "sub-settings-language");
             onView(withTagValue(org.hamcrest.Matchers.is((Object)"settings_language"))).perform(click());
             com.subhub.app.help.HelpActivity help=resumed(com.subhub.app.help.HelpActivity.class);
-            com.subhub.app.UiRefreshWitness.capture(help, "sub-language-existing-guard");
+            com.subhub.app.UiRefreshWitness.capture(help, "sub-language-maintenance");
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_language)).perform(click());
             assertEquals(language,com.subhub.app.util.LocaleHelper.getLanguage(context));
             assertFalse(ControllerPinManager.isDomModeActive());
+            androidx.test.espresso.Espresso.pressBack();
             androidx.test.espresso.Espresso.pressBack();resumed(GlobalSettingsActivity.class);awaitFocusedFrame(page);
             onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.tour_replay)).perform(revealAboveNavigation(),click());
             com.subhub.app.onboarding.OnboardingActivity setup=resumed(com.subhub.app.onboarding.OnboardingActivity.class);

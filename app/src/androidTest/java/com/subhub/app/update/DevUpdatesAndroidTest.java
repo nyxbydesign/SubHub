@@ -129,18 +129,27 @@ public final class DevUpdatesAndroidTest {
         }
     }
 
-    @Test public void subModeCannotChangeTheDevelopmentChannel() {
+    @Test public void subModeCanChangeUpdaterPreferencesWithNativeTapsAndRecreation() throws Exception {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<UpdatesActivity> scenario = ActivityScenario.launch(UpdatesActivity.class)) {
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.automatic_checks))
+                    .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
+            assertTrue(state.automaticChecks());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.dev_updates))
+                    .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
+            assertTrue(state.devUpdates());
+            scenario.recreate();
             scenario.onActivity(activity -> {
-                CompoundButton toggle = activity.findViewById(R.id.dev_updates);
-                assertFalse(toggle.isEnabled());
-                assertFalse(toggle.isChecked());
-                assertEquals(activity.getString(R.string.update_dev_dom_help),
+                assertTrue(((CompoundButton) activity.findViewById(R.id.dev_updates)).isChecked());
+                assertTrue(((CompoundButton) activity.findViewById(R.id.automatic_checks)).isChecked());
+                assertEquals(activity.getString(R.string.update_dev_help),
                         ((android.widget.TextView) activity.findViewById(R.id.dev_updates_help)).getText().toString());
             });
+            assertFalse(ControllerPinManager.isDomModeActive());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.automatic_checks))
+                    .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
+            assertFalse(state.automaticChecks());
         }
-        assertFalse(state.devUpdates());
     }
 
     @Test public void realHttpCheckFindsStableOutsideDevFeedAndRechecksAfterChannelSwitch() throws Exception {

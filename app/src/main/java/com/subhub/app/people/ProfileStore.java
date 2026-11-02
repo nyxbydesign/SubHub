@@ -28,8 +28,9 @@ public final class ProfileStore {
         Object storedAge = values.get(key + "_age");
         int age = storedAge instanceof Integer && (Integer) storedAge >= 1 && (Integer) storedAge <= ProfileData.MAX_AGE
                 ? (Integer) storedAge : 0;
-        try { return new ProfileData(name, about, string(values, key + "_avatar"), gender, age); }
-        catch (IllegalArgumentException invalid) { return new ProfileData(name, about, "", gender, age); }
+        boolean isSwitch = DeviceRolePreferences.get(context) == DeviceRolePreferences.Mode.BOTH;
+        try { return new ProfileData(name, about, string(values, key + "_avatar"), gender, age, isSwitch); }
+        catch (IllegalArgumentException invalid) { return new ProfileData(name, about, "", gender, age, isSwitch); }
     }
 
     public static boolean save(Context context, boolean dom, String name, String about, String avatar) {

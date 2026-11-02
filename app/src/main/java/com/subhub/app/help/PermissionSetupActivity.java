@@ -79,14 +79,13 @@ public final class PermissionSetupActivity extends AppCompatActivity {
 
     private void renderGuide() {
         if (binding == null) return;
-        boolean editing = actionsAllowed();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         binding.permissionStepOneOpen.setEnabled(true);
         binding.permissionStepTwoOpen.setEnabled(availableStep >= 2);
         binding.permissionStepThreeOpen.setEnabled(availableStep >= 3);
-        binding.permissionStepOneOpen.setAlpha(editing ? 1f : .45f);
-        binding.permissionStepTwoOpen.setAlpha(editing ? 1f : .45f);
-        binding.permissionStepThreeOpen.setAlpha(editing ? 1f : .45f);
+        binding.permissionStepOneOpen.setAlpha(1f);
+        binding.permissionStepTwoOpen.setAlpha(1f);
+        binding.permissionStepThreeOpen.setAlpha(1f);
         binding.permissionStepTwo.setAlpha(availableStep >= 2 ? 1f : .5f);
         binding.permissionStepThree.setAlpha(availableStep >= 3 ? 1f : .5f);
         binding.permissionSetupStatus.setText(
@@ -95,15 +94,7 @@ public final class PermissionSetupActivity extends AppCompatActivity {
                         : R.string.permission_setup_not_allowed);
     }
 
-    private boolean actionsAllowed() {
-        // First-run setup already owns permission requests, before its Dom handoff is complete.
-        return ControllerPinManager.isDomModeActive()
-                || (com.subhub.app.onboarding.OnboardingState.inProgress(this)
-                        && !com.subhub.app.onboarding.OnboardingState.completed(this));
-    }
-
     private void openSettings(Intent intent, int step) {
-        if (!actionsAllowed()) { ControllerPinGate.notifyLocked(this); return; }
         if (availableStep < step) return;
         try {
             startActivity(intent);

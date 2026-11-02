@@ -209,12 +209,9 @@ public final class HelpActivity extends AppCompatActivity {
     }
 
     private void renderEditableActions() {
-        boolean dom = ControllerPinManager.isDomModeActive();
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         binding.buttonFixPermissions.setVisibility(View.VISIBLE);
         binding.buttonLanguage.setVisibility(View.VISIBLE);
-        ControllerPinGate.markLocked(binding.buttonFixPermissions);
-        ControllerPinGate.markLocked(binding.buttonLanguage);
     }
 
     private static final class Question {
@@ -237,7 +234,6 @@ public final class HelpActivity extends AppCompatActivity {
     }
 
     private void repairNextPermission() {
-        if (!ControllerPinManager.isDomModeActive()) { ControllerPinGate.notifyLocked(this); return; }
         if (new com.subhub.app.settings.FeatureModuleManager(this).hasRuntimeFeature()
                 && !new com.subhub.app.appmode.AppModeManager(this).isAccessibilityEnabled()) {
             startActivity(new Intent(this, PermissionSetupActivity.class));
@@ -276,7 +272,6 @@ public final class HelpActivity extends AppCompatActivity {
     }
 
     private void showLanguageChooser() {
-        if (!ControllerPinManager.isDomModeActive()) { ControllerPinGate.notifyLocked(this); return; }
         List<String> codes = LocaleHelper.SUPPORTED;
         String[] labels = new String[]{
                 getString(R.string.language_system_default), getString(R.string.language_english),
@@ -289,8 +284,7 @@ public final class HelpActivity extends AppCompatActivity {
         com.subhub.app.util.ThemedDialogs.builder(this)
                 .setTitle(R.string.settings_language)
                 .setSingleChoiceItems(labels, selected, (dialog, which) -> {
-                    if (ControllerPinManager.isDomModeActive())
-                        LocaleHelper.setLanguage(this, codes.get(which));
+                    LocaleHelper.setLanguage(this, codes.get(which));
                     dialog.dismiss();
                 })
                 .setNegativeButton(android.R.string.cancel, null)

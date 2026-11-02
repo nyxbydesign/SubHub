@@ -22,7 +22,6 @@ import androidx.core.content.FileProvider;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityUpdatesBinding;
-import com.subhub.app.security.ControllerPinManager;
 
 import java.io.File;
 import java.text.DateFormat;
@@ -81,13 +80,13 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.automaticChecks.setChecked(state.automaticChecks());
         changingAutomatic = false;
         binding.automaticChecks.setOnCheckedChangeListener((button, checked) -> {
-            if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
+            if (changingAutomatic) return;
             state.setAutomaticChecks(checked);
             UpdateScheduler.synchronize(this);
         });
         binding.devUpdates.setChecked(state.devUpdates());
         binding.devUpdates.setOnCheckedChangeListener((button, checked) -> {
-            if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
+            if (changingAutomatic) return;
             state.setDevUpdates(checked);
             UpdateScheduler.synchronize(this, false);
             render();
@@ -156,19 +155,16 @@ public final class UpdatesActivity extends AppCompatActivity {
                 : getString(R.string.update_last_checked,
                         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(new Date(last))));
-        boolean dom = ControllerPinManager.isDomModeActive();
         binding.automaticChecks.setText(state.devUpdates()
                 ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle);
-        binding.automaticChecks.setEnabled(dom);
-        binding.devUpdates.setEnabled(dom && !checking);
-        binding.automaticHelp.setText(dom
-                ? R.string.update_automatic_help : R.string.update_automatic_dom_help);
+        binding.automaticChecks.setEnabled(true);
+        binding.devUpdates.setEnabled(!checking);
+        binding.automaticHelp.setText(R.string.update_automatic_help);
         changingAutomatic = true;
         binding.automaticChecks.setChecked(state.automaticChecks());
         binding.devUpdates.setChecked(state.devUpdates());
         changingAutomatic = false;
-        binding.devUpdatesHelp.setText(dom
-                ? R.string.update_dev_help : R.string.update_dev_dom_help);
+        binding.devUpdatesHelp.setText(R.string.update_dev_help);
         List<ReleaseHistoryItem> history = state.releaseHistory();
         if (history.isEmpty()) history = ReleaseHistoryCatalog.bundled(this);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);

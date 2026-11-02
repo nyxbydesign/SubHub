@@ -30,4 +30,23 @@ public final class RemoteProfileDetailsTest {
         JSONObject missingGender = new JSONObject(valid.toString()); missingGender.remove("gender");
         assertThrows(org.json.JSONException.class, () -> RemoteProfiles.parse(missingGender, RemoteProtocol.Role.SUB));
     }
+
+    @Test public void switchRoleIsExplicitAndIndependentOfDetailsAndWireAuthority() throws Exception {
+        ProfileData owner = new ProfileData("Alex", "About", "", "Woman", 32, true);
+        assertNotEquals(owner, new ProfileData("Alex", "About", "", "Woman", 32));
+        for (RemoteProtocol.Role role : RemoteProtocol.Role.values()) {
+            for (boolean details : new boolean[]{false, true}) {
+                for (boolean supported : new boolean[]{false, true}) {
+                    JSONObject body = RemoteProfiles.encode(owner, role, details, supported);
+                    assertEquals((details ? 6 : 4) + (supported ? 1 : 0), body.length());
+                    assertEquals(role.name(), body.getString("role"));
+                    assertEquals(supported, RemoteProfiles.parse(body, role).isSwitch);
+                    if (supported) for (Object malformed : new Object[]{"true", 1, JSONObject.NULL}) {
+                        JSONObject invalid = new JSONObject(body.toString()).put("isSwitch", malformed);
+                        assertThrows(org.json.JSONException.class, () -> RemoteProfiles.parse(invalid, role));
+                    }
+                }
+            }
+        }
+    }
 }
