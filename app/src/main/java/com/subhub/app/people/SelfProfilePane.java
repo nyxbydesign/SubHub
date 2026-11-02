@@ -28,7 +28,7 @@ public final class SelfProfilePane {
         LinearLayout hero = PersonUi.card(content);
         hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         hero.setTag(dom ? "self_profile:dom" : "self_profile:sub");
-        hero.addView(new ProfilePreview(activity, profile, dom, "self_profile", false, null), new LinearLayout.LayoutParams(-1, -2));
+        hero.addView(ProfilePreview.own(activity, profile, dom), new LinearLayout.LayoutParams(-1, -2));
         if (!dom) {
             LinearLayout features = PersonUi.column(activity); features.setTag("self_profile_features");
             hero.addView(features, new LinearLayout.LayoutParams(-1, -2));

@@ -18,6 +18,7 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
@@ -182,6 +183,24 @@ public final class OverviewReferenceAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
+    public void collapsedAtmosphereRightStatusesHaveCurrentNativeCapture() throws Exception {
+        ControllerPinManager.enterSubMode();
+        try(ActivityScenario<ContractActivity> scenario=ActivityScenario.launch(ContractActivity.class)) {
+            ContractActivity activity=resumed(ContractActivity.class);
+            await(()->tagged(activity,"contract_section:atmosphere")!=null);
+            capture(activity,"atmosphere-right-statuses","contract_section:atmosphere");
+            scenario.onActivity(a->{
+                View header=tagged(a,"contract_section:atmosphere");TextView status=header.findViewWithTag("overview_row_value");
+                LinearLayout copy=(LinearLayout)status.getParent();TextView title=(TextView)copy.getChildAt(0);
+                assertEquals(LinearLayout.HORIZONTAL,copy.getOrientation());
+                assertTrue("Atmosphere title keeps a readable wrap",title.getLineCount()<=2);
+                assertTrue(status.getText().toString().contains("\n"));
+                assertEquals(android.view.Gravity.END,status.getGravity() & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK);
+            });
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
     public void subOverviewUsesAuthorizedDomActualTimerOwnJournalAndConfiguredAppUsage() throws Exception {
         assertTrue(CommitmentManager.start(context, 5_040_000L, 5_040_000L, false));
         ControllerPinManager.enterSubMode();
@@ -250,12 +269,22 @@ public final class OverviewReferenceAndroidTest {
             });
             tap("contract_section:apps");
             capture(activity, "contract-sub-features", "person_contract_features");
+            capture(activity, "contract-sub-atmosphere-collapsed", "contract_section:atmosphere");
             onMain(() -> {
                 assertTrue(hasText(tagged(activity,"person_contract_identity"),activity.getString(R.string.overview_your_dom)));
                 View header=tagged(activity,"contract_section:atmosphere");
                 TextView summary=header.findViewWithTag("overview_row_value");
                 assertTrue(summary.getText().toString().contains("\n"));
                 assertTrue(summary.getLineCount()>=2);
+                LinearLayout copy=(LinearLayout)summary.getParent();
+                assertEquals(LinearLayout.HORIZONTAL,copy.getOrientation());
+                assertEquals(android.view.Gravity.END,summary.getGravity() & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK);
+                TextView title=(TextView)copy.getChildAt(0);
+                int[] titlePoint=new int[2],statusPoint=new int[2],arrowPoint=new int[2];
+                title.getLocationOnScreen(titlePoint);summary.getLocationOnScreen(statusPoint);
+                ((ViewGroup)header).getChildAt(((ViewGroup)header).getChildCount()-1).getLocationOnScreen(arrowPoint);
+                assertTrue(statusPoint[0]>=titlePoint[0]+title.getWidth());
+                assertTrue(statusPoint[0]+summary.getWidth()<=arrowPoint[0]);
             });
             scenario.onActivity(a -> {
                 View body = a.findViewById(R.id.role_page_body); assertReadOnly(body);

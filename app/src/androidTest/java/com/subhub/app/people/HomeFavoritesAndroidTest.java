@@ -54,6 +54,8 @@ public final class HomeFavoritesAndroidTest {
     private ActivityRepository originalActivity;
     private final AtomicInteger peopleReads = new AtomicInteger(), localReads = new AtomicInteger();
     private final AtomicInteger activityReads = new AtomicInteger(), recentLimit = new AtomicInteger();
+    private final AtomicInteger recentReads = new AtomicInteger(), markedReads = new AtomicInteger();
+    private volatile java.util.concurrent.CountDownLatch recentStarted, releaseRecent;
     private List<PersonSnapshot> roster;
     private FavoriteSubStore favorites;
     private volatile List<ActivityEntry> fixedEvents;
@@ -89,9 +91,15 @@ public final class HomeFavoritesAndroidTest {
             public Page load(String before, int limit) { return new Page(events(limit), null); }
             public Page locate(String key, int limit) { return load(null, limit); }
             public int unreadCount() { activityReads.incrementAndGet(); return 0; }
-            public void markRead(List<String> keys) { }
+            public void markRead(List<String> keys) { markedReads.addAndGet(keys.size()); }
             public List<ActivityEntry> recent(PersonId person, int limit) {
-                activityReads.incrementAndGet(); recentLimit.set(limit); return events(limit);
+                activityReads.incrementAndGet(); recentReads.incrementAndGet(); recentLimit.set(limit);
+                if (recentStarted != null) {
+                    recentStarted.countDown();
+                    try { if (!releaseRecent.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Preview fixture timeout"); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
+                }
+                return events(limit);
             }
         });
     }
@@ -206,7 +214,9 @@ public final class HomeFavoritesAndroidTest {
                 assertNotNull(sessions);
                 assertTrue(devices.isClickable());
                 assertTrue(sessions.isClickable());
-                assertTrue(contains(devices, "1 online · 1 offline"));
+                TextView caption=devices.findViewWithTag("home_subs_label");
+                assertEquals(activity.getString(R.string.home_subs_total)+" · "+activity.getString(R.string.home_local_sub_count,1)+" · "+activity.getString(R.string.home_devices_counts,1,1),caption.getText().toString());
+                assertEquals(1,((ViewGroup)devices).getChildCount());
                 assertTrue(contains(sessions, activity.getString(R.string.home_in_session)));
                 assertTrue("Unknown sessions are not reported as zero", contains(sessions, activity.getString(R.string.overview_unknown)));
                 assertTrue("Confirmed subset remains explicit", contains(sessions, "1 confirmed active"));
@@ -217,6 +227,7 @@ public final class HomeFavoritesAndroidTest {
                 assertFalse(lastOnline.isSingleLine());
             });
             MainActivity home = resumed(MainActivity.class);
+            ProfileStatsActivityAndroidTest.captureNativeProfile(home, "subs-inline-presence", "home_devices");
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
                     home.findViewById(R.id.primary_header).setTag("home_header_capture"));
             ProfileStatsActivityAndroidTest.captureNativeProfile(home, "home-header", "home_header_capture");
@@ -229,6 +240,27 @@ public final class HomeFavoritesAndroidTest {
                         "home_recent_connection:" + roster.get(1).id.value());
             }
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subsTileKeepsLocalStateInsideItsSmallLabelLine() throws Exception {
+        roster.clear();
+        com.subhub.app.appmode.AppModeManager appMode=new com.subhub.app.appmode.AppModeManager(context);
+        appMode.setArmed(true);
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(home())) {
+            awaitTag(scenario,"home_subs_label");
+            MainActivity activity=resumed(MainActivity.class);
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity,"subs-inline-local","home_devices");
+            scenario.onActivity(a->{
+                ViewGroup tile=a.findViewById(R.id.home_dom_overview).findViewWithTag("home_devices");
+                TextView caption=tile.findViewWithTag("home_subs_label");
+                assertEquals(a.getString(R.string.home_subs_total)+" · "+a.getString(R.string.home_local_sub_count,1),caption.getText().toString());
+                assertEquals(1,tile.getChildCount());
+                assertTrue(caption.getTextSize()<=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,12,a.getResources().getDisplayMetrics())+.1f);
+                if(a.getResources().getConfiguration().fontScale<1.3f && a.getResources().getConfiguration().screenWidthDp>=360)assertEquals(1,caption.getLineCount());
+                assertTextFits(caption,false);
+            });
+        } finally { appMode.setArmed(false); }
     }
 
     @Test public void homeCountsLocalActiveSubAndDeduplicatesRemoteIdentity() {
@@ -244,9 +276,9 @@ public final class HomeFavoritesAndroidTest {
                 View root = activity.findViewById(R.id.home_dom_overview);
                 assertTrue(contains(root.findViewWithTag("home_in_session"), "2"));
                 View devices = root.findViewWithTag("home_devices");
-                assertTrue(contains(devices, "1 online · 0 offline"));
-                assertTrue(contains(devices, "1 local"));
-                assertTrue(contains(devices, activity.getString(R.string.home_subs_total)));
+                TextView caption=devices.findViewWithTag("home_subs_label");
+                assertEquals(activity.getString(R.string.home_subs_total)+" · "+activity.getString(R.string.home_local_sub_count,1)+" · "+activity.getString(R.string.home_devices_counts,1,0),caption.getText().toString());
+                assertEquals(1,((ViewGroup)devices).getChildCount());
                 ViewGroup row = (ViewGroup) ((ViewGroup) devices).getChildAt(0);
                 ViewGroup copy = (ViewGroup) row.getChildAt(1);
                 assertEquals("2", ((TextView) copy.getChildAt(0)).getText().toString());
@@ -307,6 +339,90 @@ public final class HomeFavoritesAndroidTest {
                 assertTrue(action.isShown() && action.isEnabled() && action.isClickable());
                 assertTrue(action.getHeight() >= PersonUi.dp(a, 48));
             });
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subsPreviewShowsThreeLatestFactsAndKeepsFullFeedBackAndHiddenReads() throws Exception {
+        fixedEvents=events(6);
+        try(ActivityScenario<PeopleActivity> scenario=ActivityScenario.launch(PeopleActivity.class)) {
+            awaitTag(scenario,"activity_preview_entry:fact-2");
+            PeopleActivity rosterHost=resumed(PeopleActivity.class);
+            scenario.onActivity(a->{
+                View preview=a.findViewById(android.R.id.content).findViewWithTag("activity_preview:all");
+                assertEquals(java.util.Arrays.asList("activity_preview_entry:fact-0","activity_preview_entry:fact-1","activity_preview_entry:fact-2"),tags(preview,"activity_preview_entry:"));
+                assertTrue(contains(preview,a.getString(R.string.people_show_all_activity)));
+                assertEquals(3,recentLimit.get());assertEquals(0,markedReads.get());
+            });
+            ProfileStatsActivityAndroidTest.captureNativeProfile(rosterHost,"subs-preview-three","activity_preview:all");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(rosterHost,"subs-preview-show-all","people_activity_open");
+            onView(withTagValue(is("people_activity_open"))).perform(NativeUiActions.revealAboveNavigation());
+            AtomicInteger position=new AtomicInteger();scenario.onActivity(a->position.set(a.findViewById(R.id.people_roster_scroll).getScrollY()));
+            onView(withTagValue(is("people_activity_open"))).perform(click());
+            com.subhub.app.activity.DomActivityActivity feed=resumed(com.subhub.app.activity.DomActivityActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->assertFalse(feed.getIntent().hasExtra(com.subhub.app.activity.DomActivityActivity.EXTRA_ENTRY_KEY)));
+            int pausedReads=recentReads.get();ActivitySources.changed();InstrumentationRegistry.getInstrumentation().waitForIdleSync();assertEquals(pausedReads,recentReads.get());
+            androidx.test.espresso.Espresso.pressBack();assertSame(rosterHost,resumed(PeopleActivity.class));awaitTag(scenario,"activity_preview_entry:fact-2");
+            awaitView(scenario,root->root.findViewById(R.id.people_roster_scroll).getScrollY()==position.get());
+            scenario.recreate();awaitTag(scenario,"activity_preview_entry:fact-2");
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void emptySubsPreviewKeepsAnExplicitStateAndFullFeedRoute() throws Exception {
+        fixedEvents=Collections.emptyList();
+        try(ActivityScenario<PeopleActivity> scenario=ActivityScenario.launch(PeopleActivity.class)) {
+            awaitView(scenario,root->contains(root.findViewWithTag("activity_preview:all"),context.getString(R.string.dom_activity_empty)));
+            PeopleActivity rosterHost=resumed(PeopleActivity.class);
+            ProfileStatsActivityAndroidTest.captureNativeProfile(rosterHost,"subs-preview-empty","activity_preview:all");
+            onView(withTagValue(is("people_activity_open"))).perform(NativeUiActions.revealAboveNavigation(),click());
+            com.subhub.app.activity.DomActivityActivity feed=resumed(com.subhub.app.activity.DomActivityActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->assertFalse(feed.getIntent().hasExtra(com.subhub.app.activity.DomActivityActivity.EXTRA_ENTRY_KEY)));
+            androidx.test.espresso.Espresso.pressBack();assertSame(rosterHost,resumed(PeopleActivity.class));
+        }
+    }
+
+    @Test public void subsPreviewDropsALockedInFlightReadAndKeepsLoadingExplicit() throws Exception {
+        recentStarted=new java.util.concurrent.CountDownLatch(1);releaseRecent=new java.util.concurrent.CountDownLatch(1);
+        try(ActivityScenario<PeopleActivity> scenario=ActivityScenario.launch(PeopleActivity.class)) {
+            assertTrue(recentStarted.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            AtomicReference<View> preview=new AtomicReference<>();
+            scenario.onActivity(a->{preview.set(a.findViewById(android.R.id.content).findViewWithTag("activity_preview:all"));assertTrue(contains(preview.get(),a.getString(R.string.role_loading)));});
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{ControllerPinManager.enterSubMode();ActivitySources.changed();});
+            releaseRecent.countDown();
+            long deadline=SystemClock.uptimeMillis()+5000;
+            AtomicReference<Boolean> hidden=new AtomicReference<>(false);
+            while(SystemClock.uptimeMillis()<deadline&&!hidden.get()) {
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(()->hidden.set(!preview.get().isShown()));
+                SystemClock.sleep(20);
+            }
+            assertTrue(hidden.get());assertEquals(1,recentReads.get());assertEquals(0,markedReads.get());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->assertTrue(tags(preview.get(),"activity_preview_entry:").isEmpty()));
+        } finally { releaseRecent.countDown(); }
+    }
+
+    private static <T extends Activity> void awaitView(ActivityScenario<T> scenario,java.util.function.Predicate<View> ready) {
+        long deadline=SystemClock.uptimeMillis()+6000;
+        AtomicReference<Boolean> result=new AtomicReference<>(false);
+        do { scenario.onActivity(a->result.set(ready.test(a.findViewById(android.R.id.content))));if(result.get())return;SystemClock.sleep(20); } while(SystemClock.uptimeMillis()<deadline);
+        throw new AssertionError("Native Subs preview state did not settle");
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void compactSubsSummaryAndRecentEntriesHaveCurrentNativeCaptures() throws Exception {
+        List<PersonSnapshot> remote=new ArrayList<>(roster);roster.clear();
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(home())) {
+            awaitTag(scenario,"home_subs_label");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(resumed(MainActivity.class),"subs-label-local","home_devices");
+        }
+        roster=remote;fixedEvents=events(6);
+        try(ActivityScenario<PeopleActivity> scenario=ActivityScenario.launch(PeopleActivity.class)) {
+            awaitTag(scenario,"activity_preview_entry:fact-2");PeopleActivity activity=resumed(PeopleActivity.class);
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity,"subs-recent-three","activity_preview:all");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity,"subs-show-all-activity","people_activity_open");
+            fixedEvents=Collections.emptyList();ActivitySources.changed();
+            awaitView(scenario,root->contains(root.findViewWithTag("activity_preview:all"),context.getString(R.string.dom_activity_empty)));
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity,"subs-recent-empty","activity_preview:all");
         }
     }
 

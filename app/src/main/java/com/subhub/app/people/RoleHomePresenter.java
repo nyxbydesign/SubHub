@@ -239,17 +239,20 @@ public final class RoleHomePresenter {
                 activity.getString(R.string.home_status_unknown, unknownSessions), false);
         if (unknownSessions > 0 && sessions > 0) PersonUi.text(inSession,
                 activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
-        LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
-                R.string.home_subs_total, Integer.toString(subs));
-        pairedSubs.setTag("home_devices");
         List<String> status = new ArrayList<>();
         if (local > 0) status.add(activity.getString(R.string.home_local_sub_count, local));
         if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
         if (unknownDevices > 0) status.add(activity.getString(R.string.home_status_unknown, unknownDevices));
-        if (!status.isEmpty()) PersonUi.text(pairedSubs, String.join(" · ", status), false).setTextSize(12);
+        LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
+                R.string.home_subs_total, Integer.toString(subs), String.join(" · ", status));
+        pairedSubs.setTag("home_devices");
     }
 
     private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value) {
+        return summary(parent, stacked, icon, label, value, "");
+    }
+
+    private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value, String status) {
         LinearLayout tile = PersonUi.column(activity);
         tile.setBackgroundResource(R.drawable.bg_overview_card); tile.setPadding(dp(14), dp(10), dp(14), dp(10));
         LinearLayout.LayoutParams size = stacked ? new LinearLayout.LayoutParams(-1, -2)
@@ -266,7 +269,10 @@ public final class RoleHomePresenter {
         LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1); copySize.setMarginStart(dp(12));
         row.addView(copy, copySize);
         copy.addView(OverviewUi.text(activity, value, 22, true), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(OverviewUi.text(activity, activity.getString(label), 12, false), new LinearLayout.LayoutParams(-1, -2));
+        String subtitle = activity.getString(label) + (status.isEmpty() ? "" : " · " + status);
+        TextView caption = OverviewUi.text(activity, subtitle, 12, false);
+        if (label == R.string.home_subs_total) caption.setTag("home_subs_label");
+        copy.addView(caption, new LinearLayout.LayoutParams(-1, -2));
         tile.addView(row, new LinearLayout.LayoutParams(-1, -2));
         OverviewUi.click(tile, () -> {
             if (domWorkspace() && ControllerPinManager.isDomModeActive())

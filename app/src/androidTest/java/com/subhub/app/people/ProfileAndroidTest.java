@@ -785,6 +785,32 @@ public final class ProfileAndroidTest {
         return directory;
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void bothRoleProfileCardsUseSwitchAndSingleRolesKeepTheirIdentity() throws Exception {
+        for(DeviceRolePreferences.Mode mode:new DeviceRolePreferences.Mode[]{DeviceRolePreferences.Mode.BOTH,DeviceRolePreferences.Mode.DOM_ONLY,DeviceRolePreferences.Mode.SUB_ONLY}) {
+            ControllerPinManager.enterDomMode();assertTrue(DeviceRolePreferences.set(context,mode));
+            for(boolean dom:new boolean[]{false,true}) {
+                if(dom&&mode==DeviceRolePreferences.Mode.SUB_ONLY || !dom&&mode==DeviceRolePreferences.Mode.DOM_ONLY)continue;
+                if(dom)ControllerPinManager.enterDomMode();else ControllerPinManager.enterSubMode();
+                assertTrue(ProfileStore.save(context,dom,dom?"Own Dom":"Own Sub","Clear communication.",""));
+                try(ActivityScenario<ProfileActivity> scenario=ActivityScenario.launch(ProfileActivity.class)) {
+                    scenario.onActivity(a->{
+                        TextView details=a.findViewById(android.R.id.content).findViewWithTag("self_profile_details");
+                        String role=a.getString(mode==DeviceRolePreferences.Mode.BOTH?R.string.profile_role_switch:dom?R.string.role_dom:R.string.role_sub);
+                        assertTrue(details.getText().toString().equals(role)||details.getText().toString().startsWith(role+" · "));
+                        assertEquals(dom,DeviceRolePreferences.isDomWorkspace(a));
+                    });
+                    if(mode==DeviceRolePreferences.Mode.BOTH) {
+                        java.util.concurrent.atomic.AtomicReference<ProfileActivity> activity=new java.util.concurrent.atomic.AtomicReference<>();scenario.onActivity(activity::set);
+                        ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),dom?"switch-own-dom":"switch-own-sub","profile_preview:"+(dom?"dom":"sub"));
+                    }
+                    scenario.recreate();
+                    scenario.onActivity(a->assertTrue(((TextView)a.findViewById(android.R.id.content).findViewWithTag("self_profile_details")).getText().toString().startsWith(a.getString(mode==DeviceRolePreferences.Mode.BOTH?R.string.profile_role_switch:dom?R.string.role_dom:R.string.role_sub))));
+                }
+            }
+        }
+    }
+
     @Test @SdkSuppress(minSdkVersion = 29) public void profileSelectorsUseEqualHalvesOrAReadableStack() throws Exception {
         for (boolean dom : new boolean[]{false, true}) {
             if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
