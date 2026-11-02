@@ -91,7 +91,9 @@ public final class ProfileEditorActivity extends PreferencePage {
         if (!dom) {
             features = new com.subhub.app.security.SubFeatureControls.Draft(this, state);
             LinearLayout choices = card(page); choices.setTag("profile_edit_features");
-            com.subhub.app.security.SubFeatureControls.bindDraft(this, choices, features);
+            LinearLayout controls = PersonUi.column(this);
+            choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+            com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
         }
         save = PersonUi.action(page, R.string.profile_save, this::save, true); save.setTag("profile_save");
         PersonUi.action(page, android.R.string.cancel, this::finish, false).setTag("profile_cancel");
