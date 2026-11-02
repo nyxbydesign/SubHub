@@ -586,9 +586,15 @@ public final class ProfileAndroidTest {
         try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(new Intent(context, ProfileEditorActivity.class)
                 .putExtra(ProfileEditorActivity.EXTRA_DOM, false))) {
             onView(tag("sub_feature:popup")).perform(revealAboveNavigation());
-            capture(scenario, "compact-editable-allowances").recycle();
+            captureEditorFeatures(scenario, "compact-editable-allowances");
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup grid = root.findViewWithTag("feature_consent_grid");
+                View card = root.findViewWithTag("profile_edit_features");
+                assertTrue(card.getPaddingStart() > 0 && card.getPaddingEnd() > 0);
+                int[] cardPoint = new int[2], gridPoint = new int[2];
+                card.getLocationOnScreen(cardPoint); grid.getLocationOnScreen(gridPoint);
+                assertTrue(gridPoint[0] >= cardPoint[0] + card.getPaddingLeft());
+                assertTrue(gridPoint[0] + grid.getWidth() <= cardPoint[0] + card.getWidth() - card.getPaddingRight());
                 assertEquals(6, grid.getChildCount());
                 for (String key : SubFeaturePolicy.FEATURES) {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
@@ -680,6 +686,24 @@ public final class ProfileAndroidTest {
             onView(tag("contract_dom_about_expand")).perform(click());
             scenario.onActivity(a -> assertEquals(2, ((TextView) a.findViewById(android.R.id.content).findViewWithTag("contract_dom_about")).getMaxLines()));
         }
+    }
+
+    private void captureEditorFeatures(ActivityScenario<ProfileEditorActivity> scenario, String name) throws Exception {
+        alignCardTop(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("profile_edit_features"));
+        Bitmap previous = null;
+        long deadline = SystemClock.uptimeMillis() + 7000, stableSince = 0;
+        try {
+            do {
+                Bitmap current = capture(scenario, name);
+                long now = SystemClock.uptimeMillis();
+                boolean same = previous != null && previous.sameAs(current);
+                if (!same) stableSince = now;
+                if (previous != null) previous.recycle();
+                previous = current;
+                if (same && now - stableSince >= 200) return;
+            } while (SystemClock.uptimeMillis() < deadline);
+            throw new AssertionError("Editor feature card compositor did not settle");
+        } finally { if (previous != null) previous.recycle(); }
     }
 
     private <A extends Activity> void settleNativeFrame(ActivityScenario<A> scenario) throws Exception {
