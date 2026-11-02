@@ -112,6 +112,8 @@ Verify that the restored original endpoint remains live.
 Consent UI fixtures must also swap and restore the registered Hardcore authority under the policy
 lock and verify that the original store's consent receipts are unchanged. Replacing the endpoint
 singleton alone does not redirect consent receipt writes.
+Complete mandatory restoration and owned shutdown even when a receipt assertion fails; exercise
+that failure path rather than relying only on normal teardown.
 When a fixture injects a synthetic transport endpoint, retain an owned endpoint lease across its
 queries and release it before shutdown. Each submitted query can otherwise suspend an idle endpoint
 and let a later query open the normal transport; assert the intended identity throughout the fixture.
