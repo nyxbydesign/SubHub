@@ -12,6 +12,60 @@ public final class RemoteSessionRuntime {
     public enum Direction { OUTGOING, INCOMING }
     public enum Readiness { APP_MODE_READY, NEEDS_SUB_ACTION, UNAVAILABLE }
 
+    /** Immutable UI projection. Its availability flags are never receiver authorization. */
+    public static final class Snapshot {
+        public final String peer, generation, idleFence, sessionIdentity, sourceWitness;
+        public final boolean supported, canStart, canStop;
+        public final long appliedRevision;
+        public final RemoteSessionCommands.Duration service;
+        public final Readiness readiness;
+        public final RemoteSessionCommands.Reason reason;
+        public final Record latestRecord;
+        public final RemoteSessionCommands.Result latestResult;
+        Snapshot(String peer, String generation, boolean supported, boolean canStart, boolean canStop,
+                long appliedRevision, RemoteSessionCommands.Duration service, String idleFence,
+                String sessionIdentity, Readiness readiness, RemoteSessionCommands.Reason reason,
+                String sourceWitness, Record latestRecord) {
+            this.peer = RemoteProtocol.peerId(peer); this.generation = RemoteProtocol.identifier(generation);
+            this.supported = supported; this.canStart = canStart; this.canStop = canStop;
+            this.appliedRevision = appliedRevision; this.service = service;
+            this.idleFence = Objects.requireNonNull(idleFence); this.sessionIdentity = Objects.requireNonNull(sessionIdentity);
+            this.readiness = Objects.requireNonNull(readiness); this.reason = Objects.requireNonNull(reason);
+            this.sourceWitness = Objects.requireNonNull(sourceWitness); this.latestRecord = latestRecord;
+            this.latestResult = latestRecord == null ? null : latestRecord.result;
+        }
+        static Snapshot unsupported(RemoteStore.Peer peer) {
+            return new Snapshot(peer.identity, peer.generation, false, false, false, 0, null, "", "",
+                    Readiness.UNAVAILABLE, RemoteSessionCommands.Reason.UNSUPPORTED, "", null);
+        }
+    }
+
+    /** An exact local review; confirmation still revalidates its source and current keyholder. */
+    public static final class Review {
+        public final RemoteSessionCommands.Request request;
+        public final String requestDigest, sourceWitness;
+        public final long preparedAt;
+        Review(RemoteSessionCommands.Request request, String sourceWitness, long preparedAt) throws JSONException {
+            this.request = Objects.requireNonNull(request); this.requestDigest = request.digest();
+            this.sourceWitness = Objects.requireNonNull(sourceWitness); this.preparedAt = preparedAt;
+        }
+    }
+
+    /** A receiver-owned compare-on-accept review, never a credential accepted from a peer. */
+    public static final class HardcoreReview {
+        public final String dom, recipient, generation, domName, policyDigest;
+        public final int consentVersion;
+        public final long policyRevision, createdAt;
+        HardcoreReview(String dom, String recipient, String generation, String domName,
+                String policyDigest, long policyRevision, long createdAt) {
+            this.dom = RemoteProtocol.peerId(dom); this.recipient = RemoteProtocol.peerId(recipient);
+            this.generation = RemoteProtocol.identifier(generation); this.domName = Objects.requireNonNull(domName);
+            RemoteSessionCommands.digest(policyDigest); this.policyDigest = policyDigest;
+            this.policyRevision = policyRevision; this.createdAt = createdAt;
+            this.consentVersion = HARDCORE_START_CONSENT_VERSION;
+        }
+    }
+
     /** Stored locally after the Sub reviews current Hardcore consent; never accepted from a peer. */
     public static final class HardcoreConsent {
         public final String dom, recipient, generation;

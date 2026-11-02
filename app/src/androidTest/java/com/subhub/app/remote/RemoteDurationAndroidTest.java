@@ -35,7 +35,7 @@ public class RemoteDurationAndroidTest {
         String dom=String.join("",Collections.nCopies(64,"a")),sub=String.join("",Collections.nCopies(64,"b"));
         PairingInvite invite=PairingInvite.create(dom,"fixture",1000);feature.store.saveInvite(invite);feature.store.bindInvite(invite.id,sub,invite.tokenHash(),1001);
         feature.store.approveInvite(invite.id,sub,"Fixture Sub",1001);feature.store.activate(sub,invite.id);source.acceptInvite(invite,"Dom");source.activate(dom,invite.id);peer=feature.store.peer(sub,invite.id);
-        original=RemoteConfigurationAndroidTest.configuration();source.publish(dom,invite.id,RemoteProtocol.Stream.BASELINE,"active",original,false,1);feature.store.receive(sub,source.nextBatch(dom,invite.id,RemoteProtocol.Stream.BASELINE));
+        original=RemoteConfiguration.active(RemoteConfigurationAndroidTest.configuration());source.publish(dom,invite.id,RemoteProtocol.Stream.BASELINE,"active",original,false,1);feature.store.receive(sub,source.nextBatch(dom,invite.id,RemoteProtocol.Stream.BASELINE));
         singleton=RemoteFeature.class.getDeclaredField("instance");singleton.setAccessible(true);previous=(RemoteFeature)singleton.get(null);singleton.set(null,feature);
         People.installRemoteRepository(new RemotePersonRepository(context,feature));People.installConnectionUi(new RemoteUi());People.installRemoteAuthority(feature::controlsLocal);
     }
@@ -54,7 +54,10 @@ public class RemoteDurationAndroidTest {
             RemoteStore.Command command=feature.store.latestCommand(peer.identity,peer.generation);JSONObject queued=new JSONObject(command.body).getJSONObject("configuration");
             assertEquals(3_600_000,queued.getJSONObject("service").getLong("duration"));
             assertEquals(RemoteProtocol.canonical(original.getJSONObject("apps")),RemoteProtocol.canonical(queued.getJSONObject("apps")));
-            assertEquals(RemoteProtocol.canonical(original.getJSONObject("contract")),RemoteProtocol.canonical(queued.getJSONObject("contract")));
+            JSONObject compatible = com.subhub.app.tasks.TaskContractFields.forPeer(original, false, false);
+            assertEquals(RemoteProtocol.canonical(compatible.getJSONObject("contract")), RemoteProtocol.canonical(queued.getJSONObject("contract")));
+            assertEquals(RemoteProtocol.canonical(original.getJSONObject("contract")),
+                    RemoteProtocol.canonical(RemoteConfiguration.active(queued).getJSONObject("contract")));
             assertEquals(RemoteStore.CommandState.QUEUED,command.state);
         }
     }

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_session_start_action">Start</string>
+    <string name="remote_session_stop">Stop</string>
+    <string name="remote_session_unsupported">This Sub’s version does not support Start.</string>
+    <string name="remote_session_queued">Queued</string>
+    <string name="remote_session_received">Received by Sub</string>
+    <string name="remote_session_applying">Applying</string>
+    <string name="remote_session_applied">Applied by Sub</string>
+    <string name="remote_session_rejected">Rejected</string>
+    <string name="remote_session_expired">Expired</string>
+    <string name="remote_session_needs_action">Sub action required</string>
+    <string name="remote_session_failed">Failed</string>
+    <string name="remote_session_consent_required">The Sub must review Hardcore consent for this Dom.</string>
+    <string name="remote_session_hardcore_required">Start requires Hardcore on the Sub.</string>
+    <string name="remote_session_changed">Session or configuration changed. Refresh before trying again.</string>
+    <string name="remote_session_apply_duration">Apply the duration changes and wait for the Sub before starting.</string>
+    <string name="remote_session_applied_duration">Applied duration: %1$s</string>
+    <string name="remote_session_refresh">Refresh</string>
+    <string name="hardcore_review_body">Hardcore guards protected uninstall and data-clear actions. Your Dom can release these restrictions.</string>
+    <string name="hardcore_review_consent">Review consent</string>
+    <string name="hardcore_accept_consent">Accept</string>
+    <string name="hardcore_remote_start_consent">%1$s may start service remotely using your applied service duration while Hardcore is on. This consent applies to this Dom and connection. Your linked Dom may stop the exact current session even when Hardcore is off.</string>
+    <string name="hardcore_unpaired_start_consent">A future linked Dom needs a new local consent review before they can start service remotely.</string>
+    <string name="hardcore_review_unavailable">Consent review unavailable. Try again after the connection recovers.</string>
+    <string name="hardcore_review_saving">Saving consent…</string>
+    <string name="hardcore_review_changed">Remote Start consent could not be confirmed. Review consent again.</string>
+</resources>

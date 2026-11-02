@@ -122,6 +122,39 @@ public final class RemoteFeature {
         requireKeyholder();pairing(transport()).approve(invitation,candidate,fingerprint,System.currentTimeMillis());changed();return null;
     });}
     public CompletableFuture<String> endSession(RemoteStore.Peer peer,String expected){return submit(()->{requireKeyholder();String id=endCommands.queue(peer,expected,System.currentTimeMillis());changed();return id;});}
+    public CompletableFuture<RemoteSessionRuntime.Snapshot> sessionSnapshot(RemoteStore.Peer peer) {
+        return submit(() -> {
+            requireKeyholder();
+            RemoteStore.Peer current = store.peer(peer.identity, peer.generation);
+            if (current == null || current.state != RemoteStore.State.ACTIVE || current.localRole != RemoteProtocol.Role.DOM)
+                throw new SecurityException("Current Sub relationship required");
+            return RemoteSessionRuntime.Snapshot.unsupported(current);
+        });
+    }
+    public CompletableFuture<RemoteSessionRuntime.Review> reviewSession(RemoteStore.Peer peer,
+            RemoteSessionCommands.Action action) {
+        return submit(() -> { requireKeyholder(); throw new UnsupportedOperationException("Session control unavailable"); });
+    }
+    public CompletableFuture<String> confirmSession(RemoteSessionRuntime.Review review) {
+        return submit(() -> { requireKeyholder(); throw new UnsupportedOperationException("Session control unavailable"); });
+    }
+    public CompletableFuture<RemoteSessionRuntime.HardcoreReview> reviewHardcoreStart() {
+        return submit(() -> {
+            if (!recoveryReady()) throw new IllegalStateException("Relationship recovery unavailable");
+            if (!com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
+                    || com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context))
+                throw new SecurityException("Local Sub review required");
+            synchronized (store) {
+                for (RemoteStore.Peer peer : store.peers(false))
+                    if (peer.localRole == RemoteProtocol.Role.SUB && peer.state == RemoteStore.State.ACTIVE)
+                        throw new UnsupportedOperationException("Hardcore Start review unavailable");
+                return null;
+            }
+        });
+    }
+    public CompletableFuture<Boolean> acceptHardcoreStartReview(RemoteSessionRuntime.HardcoreReview review) {
+        return submit(() -> { java.util.Objects.requireNonNull(review); return false; });
+    }
     public void cancel(String invitation) {
         requireKeyholder();store.cancelInvite(invitation);secrets.removePending(invitation);changed();
     }

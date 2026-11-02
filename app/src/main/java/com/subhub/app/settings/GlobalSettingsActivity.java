@@ -29,6 +29,13 @@ import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
+import com.subhub.app.util.AsyncUiScope;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.remote.RemoteSessionRuntime;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /** Device role, privacy and Android access settings are grouped inline. */
 public final class GlobalSettingsActivity extends AppCompatActivity {
@@ -41,6 +48,16 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
     private boolean updatingHardcore, restoreSubAfterHardcore, hardcoreAwaitingAndroid;
     private String requestedGroup;
+    private TextView reviewConsent;
+    private HardcoreReviewState hardcoreReview;
+    private AsyncUiScope consentWork;
+
+    public static final class HardcoreReviewState extends ViewModel {
+        RemoteSessionRuntime.HardcoreReview review;
+        boolean dialogPending, accepted;
+        CompletableFuture<Boolean> accepting;
+    }
+
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -50,9 +67,11 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         restoreSubAfterHardcore = saved != null && saved.getBoolean("hardcore_restore_sub", false);
         hardcoreAwaitingAndroid = saved != null && saved.getBoolean("hardcore_awaiting_android", false);
         hardcore = new HardcoreModeManager(this);
+        hardcoreReview = new ViewModelProvider(this).get(HardcoreReviewState.class);
+        consentWork = AsyncUiScope.forPage(this);
         hardcoreActivation = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), ignored -> {
             hardcore.finishActivation();
-            finishHardcoreFlow();
+            completeHardcoreActivation();
         });
         hardcoreAccessibility = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), ignored -> {
             if (new AppModeManager(this).isAccessibilityEnabled()) hardcoreActivation.launch(hardcore.activationIntent());
@@ -63,6 +82,11 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             }
         });
         arrangeSettings();
+        if (hardcoreReview.accepting != null) observeHardcoreAcceptance();
+        else if (hardcoreReview.dialogPending) binding.getRoot().post(() -> {
+            if (hardcoreReview.review != null) showHardcoreConsent();
+            else loadHardcoreReview();
+        });
         requestedGroup = getIntent().getStringExtra("settings_group");
         PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> toggleController());
         if (restoreSubAfterHardcore && !hardcoreAwaitingAndroid) finishHardcoreFlow();
@@ -104,6 +128,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         binding.switchHardcoreMode.setOnCheckedChangeListener((control, enabled) -> {
             if (!updatingHardcore) requestHardcoreChange(enabled);
         });
+        reviewConsent = PersonUi.action(binding.hardcoreCard, R.string.hardcore_review_consent,
+                this::loadHardcoreReview, false);
+        reviewConsent.setTag("hardcore_review_consent");
         permissions = PersonUi.card(body);
         action(permissions, R.string.settings_notifications,
                 () -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -239,31 +266,107 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                     new android.graphics.Rect(0, 0, anchor.getWidth(), anchor.getHeight()), false));
         }
     }
+    private boolean localSubConsent() {
+        return binding != null && !isFinishing() && !isDestroyed()
+                && DeviceRolePreferences.supportsSub(this) && !DeviceRolePreferences.isDomWorkspace(this);
+    }
+
     private void requestHardcoreChange(boolean enabled) {
         refreshHardcoreState();
-        if (!DeviceRolePreferences.supportsSub(this) || DeviceRolePreferences.isDomWorkspace(this)) return;
-            androidx.appcompat.app.AlertDialog.Builder dialog = com.subhub.app.util.ThemedDialogs.builder(this)
-                    .setTitle(enabled ? R.string.hardcore_consent_title : R.string.hardcore_release_title)
-                    .setMessage(enabled ? R.string.hardcore_consent_body : R.string.hardcore_release_body)
-                    .setNegativeButton(android.R.string.cancel, (which, ignored) -> finishHardcoreFlow())
-                    .setOnCancelListener(ignored -> finishHardcoreFlow())
-                    .setPositiveButton(enabled ? R.string.hardcore_consent_enable : R.string.hardcore_release, (which, ignored) -> {
-                        if (!DeviceRolePreferences.supportsSub(this) || DeviceRolePreferences.isDomWorkspace(this)) {
-                            finishHardcoreFlow(); return;
-                        }
-                        if (enabled) {
-                            if (!com.subhub.app.security.SubFeaturePolicy.consentHardcore(this, true)) { finishHardcoreFlow(); return; }
-                            hardcore.beginActivation();
-                            hardcoreAwaitingAndroid = true;
-                            if (new AppModeManager(this).isAccessibilityEnabled()) hardcoreActivation.launch(hardcore.activationIntent());
-                            else hardcoreAccessibility.launch(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                        } else {
-                            hardcore.disable();
-                            finishHardcoreFlow();
-                        }
-                    });
-            dialog.show();
+        if (!localSubConsent()) return;
+        if (enabled) { loadHardcoreReview(); return; }
+        com.subhub.app.util.ThemedDialogs.builder(this)
+                .setTitle(R.string.hardcore_release_title).setMessage(R.string.hardcore_release_body)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.hardcore_release, (dialog, ignored) -> {
+                    if (!localSubConsent()) return;
+                    hardcoreReview.review = null; hardcoreReview.accepted = false;
+                    hardcore.disable(); finishHardcoreFlow();
+                }).show();
     }
+
+    private void loadHardcoreReview() {
+        if (!localSubConsent() || hardcoreReview.accepting != null
+                || consentWork.isPending("hardcore-review")) return;
+        hardcoreReview.dialogPending = true;
+        RemoteFeature backend = RemoteFeature.get(getApplicationContext());
+        consentWork.load("hardcore-review", () -> backend.reviewHardcoreStart().get(15, TimeUnit.SECONDS), review -> {
+            if (!localSubConsent() || !hardcoreReview.dialogPending) return;
+            hardcoreReview.review = review;
+            showHardcoreConsent();
+        }, failure -> {
+            Throwable cause = failure;
+            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+            android.util.Log.w("HardcoreConsent", "Local review unavailable: " + cause.getClass().getSimpleName());
+            hardcoreReview.dialogPending = false; hardcoreReview.review = null;
+            if (localSubConsent()) {
+                android.widget.Toast.makeText(this, R.string.hardcore_review_unavailable, android.widget.Toast.LENGTH_LONG).show();
+                refreshHardcoreState();
+            }
+        });
+    }
+
+    private void showHardcoreConsent() {
+        if (!localSubConsent() || !hardcoreReview.dialogPending) return;
+        boolean existing = hardcore.isEnabled();
+        RemoteSessionRuntime.HardcoreReview reviewed = hardcoreReview.review;
+        String scope = reviewed == null ? getString(R.string.hardcore_unpaired_start_consent)
+                : getString(R.string.hardcore_remote_start_consent, reviewed.domName);
+        com.subhub.app.util.ThemedDialogs.builder(this)
+                .setTitle(existing ? R.string.hardcore_review_consent : R.string.hardcore_consent_title)
+                .setMessage(getString(existing ? R.string.hardcore_review_body : R.string.hardcore_consent_body) + "\n\n" + scope)
+                .setNegativeButton(android.R.string.cancel, (dialog, ignored) -> cancelHardcoreReview())
+                .setOnCancelListener(ignored -> cancelHardcoreReview())
+                .setPositiveButton(existing ? R.string.hardcore_accept_consent : R.string.hardcore_consent_enable,
+                        (dialog, ignored) -> {
+                    if (!localSubConsent() || hardcoreReview.review != reviewed) { cancelHardcoreReview(); return; }
+                    hardcoreReview.dialogPending = false; hardcoreReview.accepted = true;
+                    if (hardcore.isEnabled()) { completeHardcoreActivation(); return; }
+                    // A linked review must keep its policy revision unchanged through Android's flow.
+                    if (reviewed == null && !com.subhub.app.security.SubFeaturePolicy.consentHardcore(this, true)) {
+                        cancelHardcoreReview(); return;
+                    }
+                    hardcore.beginActivation(); hardcoreAwaitingAndroid = true;
+                    if (new AppModeManager(this).isAccessibilityEnabled()) hardcoreActivation.launch(hardcore.activationIntent());
+                    else hardcoreAccessibility.launch(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                }).show();
+    }
+
+    private void cancelHardcoreReview() {
+        hardcoreReview.dialogPending = false; hardcoreReview.accepted = false; hardcoreReview.review = null;
+        if (localSubConsent()) refreshHardcoreState();
+    }
+
+    private void completeHardcoreActivation() {
+        if (!localSubConsent()) { finishHardcoreFlow(); return; }
+        if (!hardcore.isEnabled() || !hardcoreReview.accepted) {
+            if (hardcore.isEnabled()) android.widget.Toast.makeText(this, R.string.hardcore_review_changed,
+                    android.widget.Toast.LENGTH_LONG).show();
+            cancelHardcoreReview(); finishHardcoreFlow(); return;
+        }
+        if (hardcoreReview.review == null) { cancelHardcoreReview(); finishHardcoreFlow(); return; }
+        if (hardcoreReview.accepting == null)
+            hardcoreReview.accepting = RemoteFeature.get(getApplicationContext()).acceptHardcoreStartReview(hardcoreReview.review);
+        observeHardcoreAcceptance();
+    }
+
+    private void observeHardcoreAcceptance() {
+        CompletableFuture<Boolean> accepted = hardcoreReview.accepting;
+        if (accepted == null) return;
+        if (localSubConsent()) refreshHardcoreState();
+        consentWork.load("hardcore-accept", accepted::get, saved -> {
+            hardcoreReview.accepting = null;
+            if (!Boolean.TRUE.equals(saved) && localSubConsent()) android.widget.Toast.makeText(this,
+                    R.string.hardcore_review_changed, android.widget.Toast.LENGTH_LONG).show();
+            cancelHardcoreReview(); finishHardcoreFlow();
+        }, failure -> {
+            hardcoreReview.accepting = null;
+            if (localSubConsent()) android.widget.Toast.makeText(this, R.string.hardcore_review_changed,
+                    android.widget.Toast.LENGTH_LONG).show();
+            cancelHardcoreReview(); finishHardcoreFlow();
+        });
+    }
+
     private void finishHardcoreFlow() {
         if (restoreSubAfterHardcore) ControllerPinManager.enterSubMode();
         restoreSubAfterHardcore = false;
@@ -277,8 +380,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         updatingHardcore = true;
         try {
             binding.switchHardcoreMode.setChecked(hardcore.isEnabled() || hardcore.isRequested());
-            binding.switchHardcoreMode.setEnabled(true);
-            int status = hardcore.isRequested() && !new AppModeManager(this).isAccessibilityEnabled()
+            boolean waiting = hardcoreAwaitingAndroid || hardcoreReview.accepting != null;
+            binding.switchHardcoreMode.setEnabled(!waiting);
+            reviewConsent.setVisibility(hardcore.isEnabled() ? View.VISIBLE : View.GONE);
+            reviewConsent.setEnabled(!waiting);
+            int status = hardcoreReview.accepting != null ? R.string.hardcore_review_saving
+                    : hardcore.isRequested() && !new AppModeManager(this).isAccessibilityEnabled()
                     ? R.string.hardcore_status_accessibility : hardcore.isRequested() && !hardcore.isGuardReady()
                     ? R.string.hardcore_status_pending : 0;
             binding.hardcoreStatus.setText(status == 0 ? "" : getString(status));

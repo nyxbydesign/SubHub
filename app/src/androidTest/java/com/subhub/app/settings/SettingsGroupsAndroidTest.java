@@ -229,8 +229,13 @@ public class SettingsGroupsAndroidTest {
 
     @Test public void hardcoreConsentIsLocalAndDoesNotRequireAControllerUnlock() throws Exception {
         ControllerPinManager.enterSubMode();
-        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+        android.content.Context fixtureContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try(com.subhub.app.remote.RemoteUnpairedUiFixture endpoint = new com.subhub.app.remote.RemoteUnpairedUiFixture(fixtureContext);
+                ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_hardcore_mode)).perform(revealAboveNavigation(),click());
+            assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).wait(
+                    Until.hasObject(By.text(InstrumentationRegistry.getInstrumentation().getTargetContext()
+                            .getString(R.string.hardcore_consent_title))), 15_000));
             onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.hardcore_consent_title))
                     .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
             assertFalse(ControllerPinManager.isDomModeActive());
@@ -238,6 +243,127 @@ public class SettingsGroupsAndroidTest {
             assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(InstrumentationRegistry.getInstrumentation().getTargetContext()));
         }
     }
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void hardcoreConsentRecreationAndCancelPreserveTheLocalChoice() throws Exception {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.content.SharedPreferences consent = context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE, 0);
+        android.content.SharedPreferences settings = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        Map<String, ?> before = new HashMap<>(consent.getAll());
+        long revision = settings.getLong("sub_feature_policy_revision", 0);
+        com.subhub.app.security.HardcoreModeManager hardcore = new com.subhub.app.security.HardcoreModeManager(context);
+        boolean requested = hardcore.isRequested(), enabled = hardcore.isEnabled();
+        assertFalse(requested); assertFalse(enabled); ControllerPinManager.enterSubMode();
+        UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        try (com.subhub.app.remote.RemoteUnpairedUiFixture endpoint = new com.subhub.app.remote.RemoteUnpairedUiFixture(context);
+                ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.switch_hardcore_mode))
+                    .perform(revealAboveNavigation(), click());
+            boolean shown = device.wait(Until.hasObject(By.text(context.getString(R.string.hardcore_consent_title))), 15_000);
+            if (!shown) {
+                com.subhub.app.UiRefreshWitness.capture(resumed(GlobalSettingsActivity.class), "hardcore-review-failure");
+                com.subhub.app.remote.RemoteFeature.get(context).reviewHardcoreStart().get(15, java.util.concurrent.TimeUnit.SECONDS);
+            }
+            assertTrue("Local Hardcore consent dialog must open", shown);
+            assertTrue(device.hasObject(By.textContains(context.getString(R.string.hardcore_unpaired_start_consent))));
+            page.recreate();
+            assertTrue(device.wait(Until.hasObject(By.text(context.getString(R.string.hardcore_consent_title))), 15_000));
+            captureHardcoreConsent(page, device);
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(android.R.string.cancel)).perform(click());
+            assertEquals(before, consent.getAll()); assertEquals(revision, settings.getLong("sub_feature_policy_revision", 0));
+            assertEquals(requested, hardcore.isRequested()); assertEquals(enabled, hardcore.isEnabled());
+            assertFalse(ControllerPinManager.isDomModeActive());
+        }
+    }
+
+    @Test public void pendingHardcoreAcceptanceSurvivesTheWaitBudgetAndRecreation() throws Exception {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.content.SharedPreferences settings = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        ControllerPinManager.enterSubMode(); long revision = settings.getLong("sub_feature_policy_revision", 0);
+        java.util.concurrent.CompletableFuture<Boolean> pending = new java.util.concurrent.CompletableFuture<>();
+        try (com.subhub.app.remote.RemoteUnpairedUiFixture endpoint = new com.subhub.app.remote.RemoteUnpairedUiFixture(context);
+                ActivityScenario<GlobalSettingsActivity> page = ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            page.onActivity(a -> {
+                GlobalSettingsActivity.HardcoreReviewState state = new androidx.lifecycle.ViewModelProvider(a)
+                        .get(GlobalSettingsActivity.HardcoreReviewState.class);
+                state.accepting = pending;
+                try {
+                    java.lang.reflect.Method observe = GlobalSettingsActivity.class.getDeclaredMethod("observeHardcoreAcceptance");
+                    observe.setAccessible(true); observe.invoke(a);
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+            long until = android.os.SystemClock.elapsedRealtime() + 16_000;
+            while (android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(100);
+            assertFalse(pending.isDone()); assertEquals(revision, settings.getLong("sub_feature_policy_revision", 0));
+            page.recreate(); page.onActivity(a -> {
+                GlobalSettingsActivity.HardcoreReviewState state = new androidx.lifecycle.ViewModelProvider(a)
+                        .get(GlobalSettingsActivity.HardcoreReviewState.class);
+                assertSame(pending, state.accepting); assertFalse(a.findViewById(R.id.switch_hardcore_mode).isEnabled());
+                assertEquals(context.getString(R.string.hardcore_review_saving),
+                        ((android.widget.TextView) a.findViewById(R.id.hardcore_status)).getText().toString());
+            });
+            page.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED);
+            pending.complete(false); InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals("A detached observer must not finish the synthetic flow", revision,
+                    settings.getLong("sub_feature_policy_revision", 0));
+            assertFalse(new com.subhub.app.security.HardcoreModeManager(context).isRequested());
+            assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
+        }
+    }
+
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    private void captureHardcoreConsent(ActivityScenario<GlobalSettingsActivity> page, UiDevice device) throws Exception {
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run", "refresh");
+        java.util.concurrent.atomic.AtomicReference<android.widget.TextView> message = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<android.view.View> scrolling = new java.util.concurrent.atomic.AtomicReference<>();
+        android.graphics.Rect viewport = new android.graphics.Rect();
+        onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.message)).check((view, error) -> {
+            if (error != null) throw error;
+            message.set((android.widget.TextView) view);
+            for (android.view.ViewParent parent = view.getParent(); parent != null; parent = parent.getParent()) {
+                if (parent instanceof android.widget.ScrollView || parent instanceof androidx.core.widget.NestedScrollView) {
+                    android.view.View scroll = (android.view.View) parent;
+                    viewport.set(com.subhub.app.TextFrameWitness.screenClip(scroll));
+                    scrolling.set(scroll); return;
+                }
+            }
+            fail("Consent message requires its native scroll container");
+        });
+        com.subhub.app.TextFrameWitness.capture(message.get(), scrolling.get(), run, "hardcore-consent-review");
+        onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.message)).check((view, error) -> {
+            if (error != null) throw error; assertDialogTextFits(view.getRootView());
+        });
+        java.util.concurrent.atomic.AtomicBoolean more = new java.util.concurrent.atomic.AtomicBoolean();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> more.set(scrolling.get().canScrollVertically(1)));
+        boolean needed = more.get();
+        for (int attempt = 0; more.get() && attempt < 4; attempt++) {
+            int inset = Math.min(12, viewport.height() / 4);
+            assertTrue(device.swipe(viewport.centerX(), viewport.bottom - inset,
+                    viewport.centerX(), viewport.top + inset, 20));
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> more.set(scrolling.get().canScrollVertically(1)));
+        }
+        if (more.get()) com.subhub.app.UiRefreshWitness.capture(resumed(GlobalSettingsActivity.class), "hardcore-consent-scope-incomplete");
+        assertFalse("The complete consent scope must be reachable", more.get());
+        if (needed) com.subhub.app.TextFrameWitness.capture(message.get(), scrolling.get(), run, "hardcore-consent-scope");
+    }
+
+    private static void assertDialogTextFits(android.view.View view) {
+        if (view.getVisibility() != android.view.View.VISIBLE) return;
+        if (view instanceof android.widget.TextView) {
+            android.widget.TextView text = (android.widget.TextView) view; android.text.Layout layout = text.getLayout();
+            if (layout != null) for (int line = 0; line < layout.getLineCount(); line++) {
+                assertEquals("Dialog text must not be ellipsized: " + text.getText(), 0, layout.getEllipsisCount(line));
+                int available = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+                if (layout.getLineWidth(line) > available + 1) android.util.Log.i("DialogTextFit",
+                        InstrumentationRegistry.getArguments().getString("evidence_run", "refresh") + " line=" + line
+                        + " withWhitespace=" + layout.getLineWidth(line) + " visible=" + layout.getLineMax(line) + " available=" + available);
+                assertTrue("Dialog text must fit its width: " + text.getText(), layout.getLineMax(line) <= available + 1);
+            }
+        }
+        if (view instanceof android.view.ViewGroup) for (int index = 0; index < ((android.view.ViewGroup) view).getChildCount(); index++)
+            assertDialogTextFits(((android.view.ViewGroup) view).getChildAt(index));
+    }
+
     @androidx.annotation.RequiresApi(29)
     private void capture(ActivityScenario<GlobalSettingsActivity> page,String name) throws Exception {
         java.util.concurrent.CountDownLatch frame=new java.util.concurrent.CountDownLatch(1);

@@ -79,7 +79,7 @@
     <string name="global_diagnostics">Diagnostics</string>
     <string name="global_security">Service lock &amp; control</string>
     <string name="hardcore_title">Hardcore Mode</string>
-    <string name="hardcore_body">A firmer hold: adds friction to quitting and guards protected App Info actions for the Sub. It never starts service by itself.</string>
+    <string name="hardcore_body">Adds friction to quitting and guards protected App Info actions. Remote Start requires your consent for the current Dom.</string>
     <string name="hardcore_toggle">Use Hardcore Mode</string>
     <string name="hardcore_status_off">Off · ordinary Android controls remain available</string>
     <string name="hardcore_status_pending">Approve Device Admin on Android’s next screen</string>
@@ -92,8 +92,8 @@
     <string name="hardcore_open_accessibility">Open Accessibility</string>
     <string name="hardcore_open_restricted">Open App Info</string>
     <string name="hardcore_consent_title">Turn on Hardcore Mode?</string>
-    <string name="hardcore_consent_body">Android will ask for Accessibility and Device Admin. Both are required to cover protected uninstall and data-clear controls for the Sub; the Dom can always release them.</string>
-    <string name="hardcore_consent_enable">Continue to Android</string>
+    <string name="hardcore_consent_body">Hardcore needs Accessibility and Device Admin to guard uninstall and data-clear actions. Your Dom can release these restrictions.</string>
+    <string name="hardcore_consent_enable">Continue</string>
     <string name="hardcore_release_title">Turn off Hardcore Mode?</string>
     <string name="hardcore_release_body">This removes Device Admin and restores ordinary App Info controls. Your censor, limits, and Wallet setup stay unchanged.</string>
     <string name="hardcore_release">Turn off</string>

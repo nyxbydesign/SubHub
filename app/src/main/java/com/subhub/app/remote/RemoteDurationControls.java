@@ -127,6 +127,22 @@ public final class RemoteDurationControls {
         },true);apply.setTag("remote_duration_apply");apply.setEnabled(!pending);
     }
 
+    boolean hasUnappliedDraft() {
+        if (configuration == null || fingerprint == null || desired != applied
+                || !fingerprint.equals(draft.state.get("fingerprint"))) return true;
+        try {
+            JSONObject service = configuration.getJSONObject("service");
+            Integer selected = draft.state.get("choice");
+            if (selected == null || selected < 0 || selected >= OPTIONS.length) return true;
+            long value = OPTIONS[selected];
+            if (value != service.getLong("duration")
+                    || Boolean.TRUE.equals(draft.state.get("hidden")) != service.getBoolean("hidden")) return true;
+            return value == -2 && (Math.multiplyExact(Long.parseLong(draft.state.get("minimum")), 60_000)
+                    != service.getLong("minimum") || Math.multiplyExact(Long.parseLong(draft.state.get("maximum")), 60_000)
+                    != service.getLong("maximum"));
+        } catch (Exception invalid) { return true; }
+    }
+
     private void save(LinearLayout controls,JSONObject snapshot,TextView status) {
         String expected=fingerprint;long expectedDesired=desired,expectedApplied=applied;RemoteFeature backend=feature;RemoteStore.Peer selected=peer;android.content.Context app=application;
         work.load(request+":save",()->{

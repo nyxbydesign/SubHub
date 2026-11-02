@@ -35,8 +35,12 @@ public final class RemoteUi implements ConnectionUi {
         open(activity,id,RemoteConnectionActivity.class);
     }
     public void openStats(Activity activity,PersonId id){open(activity,id,com.subhub.app.stats.StatsActivity.class);}
-    @Override public void bindSessionDuration(Activity activity,android.widget.LinearLayout parent,PersonSnapshot person){
-        if(!person.id.isLocal())new RemoteDurationControls(activity,parent,person).bind();
+    @Override public boolean bindSessionControls(Activity activity,android.widget.LinearLayout parent,PersonSnapshot person) {
+        if (person.id.isLocal()) return false;
+        RemoteDurationControls duration = new RemoteDurationControls(activity,parent,person);
+        duration.bind();
+        new RemoteSessionControls(activity,parent,person,duration::hasUnappliedDraft).bind();
+        return true;
     }
     @Override public boolean canEditSection(PersonId id, String section) {
         try { RemoteFeature feature = RemoteFeature.get((android.content.Context) application);

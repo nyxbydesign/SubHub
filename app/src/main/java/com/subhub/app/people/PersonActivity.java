@@ -211,18 +211,18 @@ public final class PersonActivity extends RolePage {
                     ? getString(R.string.role_unknown_data) : person.serviceLabel, false);
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
             ConnectionUi remote = People.connectionUi();
+            if (remote == null) return;
+            remote.bindSessionDuration(this, session, person);
+            if (remote.bindSessionControls(this, session, person)) return;
             if (person.serviceActive && person.sync.runtime == PersonSnapshot.Freshness.CURRENT
-                    && person.can(PersonSnapshot.Capability.END_SESSION)
-                    && !person.sessionIdentity.isEmpty() && People.connectionUi() != null) {
-                TextView end = PersonUi.action(session, R.string.role_end_session, () -> {
-                    if (!guardTarget()) return;
-                    ConnectionUi ui = People.connectionUi();
-                    if (ui != null) ui.endSession(this, person.id, person.sessionIdentity);
+                    && person.can(PersonSnapshot.Capability.END_SESSION) && !person.sessionIdentity.isEmpty()) {
+                TextView end = PersonUi.action(session, R.string.remote_session_stop, () -> {
+                    if (!guardTarget() || remote != People.connectionUi()) return;
+                    remote.endSession(this, person.id, person.sessionIdentity);
                 }, false);
                 end.setId(R.id.person_session_action);
                 end.setTag("person_session:" + person.id.value());
             }
-            if (remote != null) remote.bindSessionDuration(this, session, person);
             return;
         }
         if (person.id.isLocal()) {
