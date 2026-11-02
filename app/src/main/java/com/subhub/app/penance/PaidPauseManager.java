@@ -1,13 +1,13 @@
 package com.subhub.app.penance;
 
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.ResumeNotificationManager;
+import com.subhub.app.appmode.RuntimeSessionIdentity;
+import com.subhub.app.appmode.SessionExpiryAlarms;
+import com.subhub.app.appmode.SessionExpiryEffects;
+import com.subhub.app.remote.RemoteSessionClock;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.service.ScreenCaptureService;
@@ -28,7 +28,6 @@ public final class PaidPauseManager {
     private static final String KEY_DURATION_MINUTES = "paid_pause_duration_minutes";
     private static final String KEY_ACTIVE_UNTIL = "paid_pause_active_until";
     private static final String KEY_REARM = "paid_pause_rearm";
-    private static final int EXPIRY_REQUEST = 8349;
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -59,17 +58,26 @@ public final class PaidPauseManager {
     }
 
     public boolean isActive() {
-        long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
-        if (until <= 0L) return false;
-        if (!new PenanceManager(context).isEnabled()) {
-            finish();
-            return false;
+        String identity;
+        long until;
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
+            if (until <= 0L) return false;
+            identity = preferences.getString("paid_pause_session_identity", "");
         }
         if (until <= System.currentTimeMillis()) {
-            finish();
+            finishMatching(identity, until, true);
             return false;
         }
-        return true;
+        // A nested runtime observation must not introduce an Android policy lookup under Runtime.
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK) && !new PenanceManager(context).isEnabled()) {
+            finishMatching(identity, until, false);
+            return false;
+        }
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            return until == preferences.getLong(KEY_ACTIVE_UNTIL, 0L)
+                    && identity.equals(preferences.getString("paid_pause_session_identity", ""));
+        }
     }
 
     /** A history read must not call finish(), re-arm capture or cancel payment state. */
@@ -95,66 +103,92 @@ public final class PaidPauseManager {
 
     /** Called only after the matching checkout is recorded as paid. */
     public boolean activate() {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
-        if (!canPurchase()) return false;
-        boolean rearm = isProtectionRunning();
-        long until = System.currentTimeMillis() + getDurationMinutes() * 60_000L;
-        preferences.edit().putLong(KEY_ACTIVE_UNTIL, until)
-                .putString("paid_pause_session_identity",java.util.UUID.randomUUID().toString())
-                .putBoolean(KEY_REARM, rearm).commit();
-        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
-        new AppModeManager(context).setArmed(false);
-        context.stopService(new Intent(context, ScreenCaptureService.class));
-        ResumeNotificationManager.cancel(context);
-        schedule(until);
-        return true;
-            }
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
+            if (!canPurchase()) return false;
+            boolean rearm = isProtectionRunning();
+            long until = System.currentTimeMillis() + getDurationMinutes() * 60_000L;
+            String retired = preferences.getString("paid_pause_session_identity", "");
+            String identity = java.util.UUID.randomUUID().toString();
+            ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+            if (!preferences.edit().putLong(KEY_ACTIVE_UNTIL, until)
+                    .putString("paid_pause_session_identity", identity).putBoolean(KEY_REARM, rearm).commit()) return false;
+            RuntimeSessionIdentity.changed();
+            new AppModeManager(context).setArmed(false);
+            SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, retired, identity, until);
+            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+            return true;
+        }
     }
 
     public void applyBootPolicy() {
         if (!isActive()) return;
-        new AppModeManager(context).setArmed(false);
-        ResumeNotificationManager.cancel(context);
-        schedule(preferences.getLong(KEY_ACTIVE_UNTIL, 0L));
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
+            if (until <= System.currentTimeMillis()) return;
+            String identity = preferences.getString("paid_pause_session_identity", "");
+            if (!SessionExpiryAlarms.validIdentity(identity)) {
+                identity = java.util.UUID.randomUUID().toString();
+                if (!preferences.edit().putString("paid_pause_session_identity", identity).commit()) return;
+                RuntimeSessionIdentity.changed();
+            }
+            ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+            new AppModeManager(context).setArmed(false);
+            SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, "", identity, until);
+            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+        }
     }
 
+    /** Explicit local recovery may finish a future pause; alarms use finishIfDue instead. */
     public void finish() {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        boolean rearm = preferences.getBoolean(KEY_REARM, false);
-        preferences.edit().remove("paid_pause_session_identity").remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
-        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
-        cancel();
-        if (rearm && (CommitmentManager.isActive(context)
-                || new HardcoreModeManager(context).isEnabled())) {
-            new AppModeManager(context).setArmed(true);
-            ResumeNotificationManager.show(context);
+        finishMatching(null, 0L, false);
+    }
+
+    public boolean finishIfDue(String expectedIdentity) {
+        if (expectedIdentity != null && !SessionExpiryAlarms.validIdentity(expectedIdentity)) return false;
+        return finishMatching(expectedIdentity, 0L, true);
+    }
+
+    private boolean finishMatching(String expectedIdentity, long expectedUntil, boolean dueOnly) {
+        Boolean hardcore = null;
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)
+                && !Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)) {
+            // Android admin status is an observation, never a query made inside the runtime transaction.
+            hardcore = context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
+                    .getBoolean(HardcoreModeManager.KEY_REQUESTED, false) && new HardcoreModeManager(context).isEnabled();
         }
-            }
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            return finishLocked(expectedIdentity, expectedUntil, dueOnly, hardcore);
+        }
+    }
+
+    private boolean finishLocked(String expectedIdentity, long expectedUntil, boolean dueOnly, Boolean hardcore) {
+        String identity = preferences.getString("paid_pause_session_identity", "");
+        long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
+        if (until <= 0L || expectedIdentity != null && !expectedIdentity.equals(identity)
+                || expectedUntil > 0L && expectedUntil != until
+                || dueOnly && until > System.currentTimeMillis()) return false;
+        boolean rearm = preferences.getBoolean(KEY_REARM, false);
+        boolean saved = preferences.edit().remove("paid_pause_session_identity")
+                .remove(KEY_ACTIVE_UNTIL).remove(KEY_REARM).commit();
+        RuntimeSessionIdentity.changed();
+        if (!saved) return false;
+        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, identity, "", 0L);
+        boolean pact = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).pact;
+        boolean observedHardcore = Boolean.TRUE.equals(hardcore)
+                && context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
+                        .getBoolean(HardcoreModeManager.KEY_REQUESTED, false);
+        boolean arm = rearm && (pact || observedHardcore);
+        if (arm) new AppModeManager(context).setArmed(true);
+        SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null,
+                rearm && !pact && hardcore == null, arm);
+        return true;
     }
 
     private boolean isProtectionRunning() {
         return ScreenCaptureService.isRunning()
                 || ScreenshotAccessibilityService.isRecognitionActive()
                 || new AppModeManager(context).isArmed();
-    }
-
-    private void schedule(long until) {
-        AlarmManager alarm = context.getSystemService(AlarmManager.class);
-        if (alarm != null) alarm.setAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, until, expiryIntent());
-    }
-
-    private void cancel() {
-        AlarmManager alarm = context.getSystemService(AlarmManager.class);
-        if (alarm != null) alarm.cancel(expiryIntent());
-    }
-
-    private PendingIntent expiryIntent() {
-        Intent intent = new Intent(context, PaidPauseExpiryReceiver.class)
-                .setAction("com.subhub.app.action.PAID_PAUSE_EXPIRED");
-        return PendingIntent.getBroadcast(context, EXPIRY_REQUEST, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     public static int clampPrice(int cents) {

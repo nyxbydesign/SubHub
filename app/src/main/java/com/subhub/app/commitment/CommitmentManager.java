@@ -1,15 +1,13 @@
 package com.subhub.app.commitment;
 
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.ResumeNotificationManager;
-import com.subhub.app.penance.HardcoreAutoPayManager;
-import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.appmode.RuntimeSessionIdentity;
+import com.subhub.app.appmode.SessionExpiryAlarms;
+import com.subhub.app.appmode.SessionExpiryEffects;
+import com.subhub.app.remote.RemoteSessionClock;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.settings.SettingsRepository;
 
@@ -22,7 +20,6 @@ public final class CommitmentManager {
     private static final String KEY_SALT = "commitment_code_salt";
     private static final String KEY_HASH = "commitment_code_hash";
     private static final String KEY_DURATION = "commitment_duration";
-    private static final int EXPIRY_REQUEST = 8317;
 
     private CommitmentManager() {}
 
@@ -54,30 +51,25 @@ public final class CommitmentManager {
 
     /** Selects once; neither UI recreation nor reboot draws another duration. */
     public static boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
-        if (isActive(context)) return false;
-        long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
-        long now = System.currentTimeMillis();
-        long endsAt = now + duration;
-        boolean saved = preferences(context).edit()
-                .putLong(KEY_STARTED_AT, now)
-                .putString("commitment_session_identity",java.util.UUID.randomUUID().toString())
-                .putLong(KEY_ENDS_AT, endsAt)
-                .putLong(KEY_DURATION, duration)
-                .putBoolean("commitment_hide_countdown", hideCountdown)
-                .putLong("commitment_range_min", minimum).putLong("commitment_range_max", maximum)
-                .putLong("commitment_ends_elapsed", android.os.SystemClock.elapsedRealtime() + duration)
-                .putInt("commitment_boot", android.provider.Settings.Global.getInt(context.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1))
-                .remove(KEY_SALT).remove(KEY_HASH)
-                .commit();
-        if (!saved) return false;
-        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
-        scheduleExpiry(context, endsAt);
-        reinforceProtection(context);
-        HardcoreAutoPayManager.schedule(context);
-        return true;
-            }
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context) || isActive(context)) return false;
+            long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
+            RemoteSessionClock.Sample now = RemoteSessionClock.local();
+            String identity = java.util.UUID.randomUUID().toString();
+            String retired = preferences(context).getString("commitment_session_identity", "");
+            boolean saved = preferences(context).edit()
+                    .putLong(KEY_STARTED_AT, now.wall).putString("commitment_session_identity", identity)
+                    .putLong(KEY_ENDS_AT, now.wall + duration).putLong(KEY_DURATION, duration)
+                    .putBoolean("commitment_hide_countdown", hideCountdown)
+                    .putLong("commitment_range_min", minimum).putLong("commitment_range_max", maximum)
+                    .putLong("commitment_ends_elapsed", now.elapsed + duration).putInt("commitment_boot", now.boot)
+                    .remove(KEY_SALT).remove(KEY_HASH).commit();
+            if (!saved) return false;
+            RuntimeSessionIdentity.changed();
+            scheduleExpiry(context, retired);
+            reinforceProtection(context);
+            return true;
+        }
     }
 
     /** Compatibility for older callers; keeper codes are no longer part of a pact. */
@@ -86,32 +78,32 @@ public final class CommitmentManager {
     }
 
     public static boolean isActive(Context context) {
-        SharedPreferences values = preferences(context);
-        long end = values.getLong(KEY_ENDS_AT, 0L);
-        if (remaining(values, context) <= 0) {
-            if (end != 0L) expire(context);
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            if (remaining(values, RemoteSessionClock.local()) > 0) return true;
+            if (values.getLong(KEY_ENDS_AT, 0L) != 0L)
+                expireLocked(context, values.getString("commitment_session_identity", ""), true);
             return false;
         }
-        return true;
     }
 
     /** Statistics may observe expiry without releasing a pact or running its cleanup effects. */
     public static boolean observedActive(Context context) {
-        return remaining(preferences(context), context) > 0;
+        return remaining(preferences(context), RemoteSessionClock.local()) > 0;
     }
 
     public static long remainingMillis(Context context) {
-        return isActive(context)
-                ? Math.max(0L, remaining(preferences(context), context))
-                : 0L;
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            return isActive(context) ? Math.max(0L, remaining(preferences(context), RemoteSessionClock.local())) : 0L;
+        }
     }
 
-    private static long remaining(SharedPreferences values, Context context) {
-        if (values.getLong(KEY_ENDS_AT, 0L) == 0) return 0;
-        int boot = android.provider.Settings.Global.getInt(context.getContentResolver(), android.provider.Settings.Global.BOOT_COUNT, -1);
-        if (boot >= 0 && values.contains("commitment_ends_elapsed") && values.getInt("commitment_boot", -2) == boot)
-            return values.getLong("commitment_ends_elapsed", 0) - android.os.SystemClock.elapsedRealtime();
-        return values.getLong(KEY_ENDS_AT, 0) - System.currentTimeMillis();
+    private static long remaining(SharedPreferences values, RemoteSessionClock.Sample clock) {
+        if (values.getLong(KEY_ENDS_AT, 0L) == 0L) return 0L;
+        if (clock.boot >= 0 && values.contains("commitment_ends_elapsed")
+                && values.getInt("commitment_boot", -2) == clock.boot)
+            return values.getLong("commitment_ends_elapsed", 0L) - clock.elapsed;
+        return values.getLong(KEY_ENDS_AT, 0L) - clock.wall;
     }
 
     public static boolean isCountdownHidden(Context context) {
@@ -139,16 +131,27 @@ public final class CommitmentManager {
 
     /** Re-arms the persistent capture path when Android has already granted it. */
     public static void reinforceProtection(Context context) {
-        if (!isActive(context) || new PaidPauseManager(context).isActive()) return;
-        new AppModeManager(context).setArmed(true);
-        ResumeNotificationManager.show(context);
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local());
+            if (!current.pact || current.paused) return;
+            new AppModeManager(context).setArmed(true);
+            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null, false, true);
+        }
     }
 
     /** A sealed pact always re-arms; otherwise App Mode retains its stored state. */
     public static void applyBootPolicy(Context context) {
-        if (!isActive(context)) return;
-        scheduleExpiry(context, preferences(context).getLong(KEY_ENDS_AT, 0L));
-        reinforceProtection(context);
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!isActive(context)) return;
+            String identity = preferences(context).getString("commitment_session_identity", "");
+            if (!SessionExpiryAlarms.validIdentity(identity)) {
+                identity = java.util.UUID.randomUUID().toString();
+                if (!preferences(context).edit().putString("commitment_session_identity", identity).commit()) return;
+                RuntimeSessionIdentity.changed();
+            }
+            scheduleExpiry(context, "");
+            reinforceProtection(context);
+        }
     }
 
     public static long originalDurationMillis(Context context) {
@@ -159,48 +162,52 @@ public final class CommitmentManager {
         return preferences(context).getLong(KEY_STARTED_AT, 0L);
     }
 
+    /** A delayed or legacy alarm can end only a currently due pact. */
+    public static boolean expireIfDue(Context context, String expectedIdentity) {
+        if (expectedIdentity != null && !SessionExpiryAlarms.validIdentity(expectedIdentity)) return false;
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            return expireLocked(context, expectedIdentity, true);
+        }
+    }
+
     static void expire(Context context) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        SharedPreferences.Editor edit = preferences(context).edit()
+        synchronized (RuntimeSessionIdentity.LOCK) { expireLocked(context, null, false); }
+    }
+
+    private static boolean expireLocked(Context context, String expectedIdentity, boolean dueOnly) {
+        SharedPreferences values = preferences(context);
+        String identity = values.getString("commitment_session_identity", "");
+        if (expectedIdentity != null && !expectedIdentity.equals(identity)) return false;
+        if (dueOnly && (values.getLong(KEY_ENDS_AT, 0L) == 0L
+                || remaining(values, RemoteSessionClock.local()) > 0L)) return false;
+        ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+        String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
+                .getString("active_session_identity", "");
+        SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false)
                 .remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
                 .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
-                .remove("commitment_ends_elapsed").remove("commitment_boot")
-                .remove(KEY_SALT).remove(KEY_HASH);
+                .remove("commitment_ends_elapsed").remove("commitment_boot").remove(KEY_SALT).remove(KEY_HASH);
         com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
-        edit.commit();
-        com.subhub.app.appmode.RuntimeSessionIdentity.changed();
-        cancelExpiry(context);
-        new AppModeManager(context).setArmed(false);
-        context.stopService(new Intent(context, ScreenCaptureService.class));
-        ResumeNotificationManager.cancel(context);
-        HardcoreAutoPayManager.cancel(context);
-            }
+        boolean saved = edit.commit();
+        RuntimeSessionIdentity.changed();
+        if (!saved) return false;
+        com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+        if (SessionExpiryAlarms.validIdentity(statistics))
+            com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
+        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
+        SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+        return true;
     }
 
     private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(
-                SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
     }
 
-    private static void scheduleExpiry(Context context, long endsAt) {
-        alarm(context).setAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                android.os.SystemClock.elapsedRealtime() + Math.max(0, remaining(preferences(context), context)),
-                expiryIntent(context));
-    }
-
-    private static void cancelExpiry(Context context) {
-        alarm(context).cancel(expiryIntent(context));
-    }
-
-    private static AlarmManager alarm(Context context) {
-        return (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-    }
-
-    private static PendingIntent expiryIntent(Context context) {
-        Intent intent = new Intent(context, CommitmentExpiryReceiver.class)
-                .setAction("com.subhub.app.action.PACT_EXPIRED");
-        return PendingIntent.getBroadcast(context, EXPIRY_REQUEST, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    private static void scheduleExpiry(Context context, String retired) {
+        SharedPreferences values = preferences(context);
+        RemoteSessionClock.Sample clock = RemoteSessionClock.local();
+        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, retired,
+                values.getString("commitment_session_identity", ""),
+                clock.elapsed + Math.max(0L, remaining(values, clock)));
     }
 }
