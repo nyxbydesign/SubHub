@@ -149,33 +149,51 @@ public final class RemoteStore extends SQLiteOpenHelper {
         putMetadata(identity, generation, "hardcore_start_review_ack", reviewId);
     }
 
-    private static void requireSessionCapacity(SQLiteDatabase db, String identity, String generation,
-            RemoteSessionRuntime.Direction direction) {
-        try (Cursor rows = db.rawQuery("SELECT COUNT(*),COALESCE(SUM(CASE WHEN state IN ('QUEUED','ACKNOWLEDGED','APPLYING')"
-                        + " THEN 1 ELSE 0 END),0) FROM session_control_journal WHERE peer=? AND generation=? AND direction=?",
+    private void requireSessionCapacity(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction) throws JSONException {
+        try (Cursor rows = db.rawQuery("SELECT COUNT(*) FROM session_control_journal WHERE peer=? AND generation=? AND direction=?",
                 new String[]{identity, generation, direction.name()})) {
-            if (!rows.moveToFirst() || rows.getInt(0) >= MAX_SESSION_RECORDS || rows.getInt(1) >= MAX_SESSION_PENDING)
-                throw new IllegalStateException("Session command queue full");
+            if (!rows.moveToFirst() || rows.getInt(0) >= MAX_SESSION_RECORDS) throw new IllegalStateException("Session journal full");
         }
+        requireSessionOutstandingCapacity(db, identity, generation, direction);
         try (Cursor rows = db.rawQuery("SELECT COUNT(*) FROM session_control_journal", null)) {
             if (!rows.moveToFirst() || rows.getInt(0) >= MAX_SESSION_GLOBAL)
                 throw new IllegalStateException("Session journal full");
         }
     }
+    private void requireSessionOutstandingCapacity(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction) throws JSONException {
+        int outstanding = 0;
+        try (Cursor rows = db.rawQuery("SELECT id,state FROM session_control_journal WHERE peer=? AND generation=? AND direction=?",
+                new String[]{identity, generation, direction.name()})) {
+            while (rows.moveToNext()) {
+                RemoteSessionCommands.State state = RemoteSessionCommands.State.valueOf(rows.getString(1));
+                String id = rows.getString(0);
+                if (!state.terminal() || wireAwaitingAck(identity, generation, direction, id)) outstanding++;
+            }
+        }
+        if (outstanding >= MAX_SESSION_PENDING)
+            throw new IllegalStateException("Session command queue full");
+    }
 
-    private static void pruneSessionControls(SQLiteDatabase db, String identity, String generation,
-            RemoteSessionRuntime.Direction direction, RemoteSessionClock.Sample now) {
+    private void pruneSessionControls(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction, RemoteSessionClock.Sample now) throws JSONException {
         List<String> expired = new ArrayList<>();
         try (Cursor rows = db.rawQuery("SELECT id,received_wall,received_elapsed,received_boot,deadline_elapsed"
                         + " FROM session_control_journal WHERE peer=? AND generation=? AND direction=?"
                         + " AND state NOT IN ('QUEUED','ACKNOWLEDGED','APPLYING')",
                 new String[]{identity, generation, direction.name()})) {
             while (rows.moveToNext()) {
+                String id = rows.getString(0);
+                if (wireAwaitingAck(identity, generation, direction, id)) continue;
                 RemoteSessionClock.Bounds lifetime = new RemoteSessionClock.Bounds(rows.getLong(1), rows.getLong(2), rows.getInt(3), rows.getLong(4));
                 if (lifetime.retentionElapsed(now)) expired.add(rows.getString(0));
             }
         }
         for (String id : expired) {
+            for (String field : new String[]{"protected", "acked", "ackPending", "timeout"})
+                db.delete("remote_metadata", "peer=? AND generation=? AND name=?",
+                        new String[]{identity, generation, wireKey(direction, id, field)});
             db.delete("session_control_journal", "peer=? AND generation=? AND direction=? AND id=?",
                     new String[]{identity, generation, direction.name(), id});
             if (direction == RemoteSessionRuntime.Direction.INCOMING)
@@ -195,6 +213,11 @@ public final class RemoteStore extends SQLiteOpenHelper {
             if (!current.result.state.terminal() && current.result.state != RemoteSessionCommands.State.APPLYING) {
                 RemoteSessionCommands.Reason reason = current.lifetime.check(current.request, now);
                 if (reason != RemoteSessionCommands.Reason.NONE) {
+                    if (direction == RemoteSessionRuntime.Direction.OUTGOING && wireProtected(identity, generation, direction, id)) {
+                        // Delivery uncertainty is not an authoritative receiver outcome.
+                        putMetadata(identity, generation, wireKey(direction, id, "timeout"), reason.name());
+                        db.setTransactionSuccessful(); return current;
+                    }
                     RemoteSessionCommands.Result expired = new RemoteSessionCommands.Result(current.request,
                             reason == RemoteSessionCommands.Reason.EXPIRED ? RemoteSessionCommands.State.EXPIRED
                                     : RemoteSessionCommands.State.REJECTED, reason, now.wall, null);
@@ -218,6 +241,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
             if (previous != null) {
                 if (!previous.request.digest().equals(request.digest()))
                     throw new SecurityException("Session command identity reused with different content");
+                if (direction == RemoteSessionRuntime.Direction.INCOMING && !previous.result.state.terminal()
+                        && "1".equals(metadata(identity, generation, "session_control_version", "0"))
+                        && !wireProtected(identity, generation, direction, request.id))
+                    throw new SecurityException("Legacy receipt has no negotiated provenance");
                 db.setTransactionSuccessful(); return previous;
             }
             try (Cursor legacy = db.rawQuery("SELECT 1 FROM session_controls WHERE peer=? AND generation=? AND id=? AND direction=?",
@@ -252,6 +279,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
                     new Object[]{identity, generation, request.id, direction.name(), request.digest(), StoredPayloads.bind(requestBody),
                     StoredPayloads.bind(RemoteProtocol.canonical(result.json())), result.state.name(), now, request.sequence,
                     lifetime.receivedWall, lifetime.receivedElapsed, lifetime.boot, lifetime.deadlineElapsed});
+            if ("1".equals(metadata(identity, generation, "session_control_version", "0"))
+                    && (direction == RemoteSessionRuntime.Direction.INCOMING || !result.state.terminal()))
+                putMetadata(identity, generation, wireKey(direction, request.id, "protected"), request.digest());
             putMetadata(identity, generation, floorKey, Long.toString(request.sequence));
             db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, request, result, lifetime);
         } finally { db.endTransaction(); }
@@ -356,6 +386,137 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 : RemoteSessionNative.PreparedStop.parse(prepared).requestDigest;
         if (!request.digest().equals(digest)) throw new SecurityException("Native preparation request mismatch");
         return body;
+    }
+
+    private static String wireKey(RemoteSessionRuntime.Direction direction, String id, String field) {
+        RemoteProtocol.identifier(id);
+        return "session_control_wire:" + direction.name() + ":" + id + ":" + field;
+    }
+    synchronized void protectSessionControlOffer(String identity, String generation, String id) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase();
+        if (!db.inTransaction()) throw new IllegalStateException("Offer provenance requires transaction");
+        RemoteSessionRuntime.Record record = sessionControl(db, identity, generation, RemoteSessionRuntime.Direction.OUTGOING, id);
+        if (record == null || record.result.state.terminal()) throw new SecurityException("Pending offer required");
+        requireSessionControlPeer(db, identity, generation, record.direction, record.request);
+        if (!wireProtected(identity, generation, record.direction, id))
+            putMetadata(identity, generation, wireKey(record.direction, id, "protected"), record.request.digest());
+    }
+
+    /** Queries cannot create a first delivery or initiate application of a known unprepared intent. */
+    synchronized RemoteSessionRuntime.Record reconcileSessionControlReceipt(String identity, String generation,
+            RemoteSessionCommands.Request request, RemoteSessionClock.Sample clock) throws JSONException {
+        if (!getWritableDatabase().inTransaction()) throw new IllegalStateException("Reconciliation requires transaction");
+        RemoteSessionRuntime.Direction direction = RemoteSessionRuntime.Direction.INCOMING;
+        RemoteSessionRuntime.Record previous = sessionControl(getWritableDatabase(), identity, generation, direction, request.id);
+        if (previous == null) throw new SecurityException("Original delivery result unavailable");
+        RemoteSessionRuntime.Record record = rememberSessionControl(identity, generation, direction, request, clock);
+        if (record.result.state.terminal() || record.result.state == RemoteSessionCommands.State.APPLYING) return record;
+        return advanceSessionControl(identity, generation, direction, request.id,
+                new RemoteSessionCommands.Result(request, RemoteSessionCommands.State.EXPIRED,
+                        RemoteSessionCommands.Reason.EXPIRED, clock.wall, null).json());
+    }
+    private String wireValue(String identity, String generation, RemoteSessionRuntime.Direction direction, String id, String field) {
+        return metadata(identity, generation, wireKey(direction, id, field), "");
+    }
+    private boolean wireProtected(String identity, String generation, RemoteSessionRuntime.Direction direction, String id) {
+        String value = wireValue(identity, generation, direction, id, "protected");
+        if (value.isEmpty()) return false;
+        RemoteSessionCommands.digest(value);
+        try (Cursor rows = getReadableDatabase().rawQuery("SELECT request_digest FROM session_control_journal WHERE peer=? AND generation=? AND direction=? AND id=?",
+                new String[]{identity, generation, direction.name(), id})) {
+            if (!rows.moveToFirst() || !value.equals(rows.getString(0))) throw new SecurityException("Changed wire provenance");
+        }
+        return true;
+    }
+    private boolean wireAwaitingAck(String identity, String generation, RemoteSessionRuntime.Direction direction, String id) throws JSONException {
+        if (!wireProtected(identity, generation, direction, id)) return false;
+        RemoteSessionRuntime.Record record = sessionControl(getReadableDatabase(), identity, generation, direction, id);
+        if (record == null) throw new SecurityException("Missing protected command");
+        if (!record.result.state.terminal()) return true;
+        boolean incoming = direction == RemoteSessionRuntime.Direction.INCOMING;
+        String digest = wireValue(identity, generation, direction, id, incoming ? "acked" : "ackPending");
+        if (digest.isEmpty()) return incoming;
+        if (!digest.equals(RemoteSessionControlAck.digest(record.result))) throw new SecurityException("Changed acknowledgment retention");
+        return !incoming;
+    }
+
+    /** Called inside the sender's result transaction, before any result acknowledgment is emitted. */
+    synchronized void retainSessionControlAck(String identity, String generation, String id) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase();
+        if (!db.inTransaction()) throw new IllegalStateException("Result acknowledgment requires transaction");
+        RemoteSessionRuntime.Direction direction = RemoteSessionRuntime.Direction.OUTGOING;
+        RemoteSessionRuntime.Record record = sessionControl(db, identity, generation, direction, id);
+        if (record == null) throw new SecurityException("Unknown terminal command");
+        requireSessionControlPeer(db, identity, generation, direction, record.request);
+        if (!wireProtected(identity, generation, direction, id)) throw new SecurityException("Unnegotiated terminal command");
+        RemoteSessionControlAck ack = RemoteSessionControlAck.of(record);
+        String pending = wireValue(identity, generation, direction, id, "ackPending");
+        if (!pending.isEmpty()) {
+            if (!pending.equals(ack.resultDigest)) throw new SecurityException("Changed pending terminal acknowledgment");
+            return;
+        }
+        requireSessionOutstandingCapacity(db, identity, generation, direction);
+        putMetadata(identity, generation, wireKey(direction, id, "ackPending"), ack.resultDigest);
+    }
+
+    synchronized List<RemoteSessionControlAck> pendingSessionControlAcks(String identity, String generation) throws JSONException {
+        RemoteSessionRuntime.Direction direction = RemoteSessionRuntime.Direction.OUTGOING;
+        if (active(getReadableDatabase(), identity, generation).localRole != RemoteProtocol.Role.DOM)
+            throw new SecurityException("Only the sender acknowledges results");
+        List<RemoteSessionControlAck> result = new ArrayList<>();
+        try (Cursor rows = getReadableDatabase().rawQuery("SELECT id FROM session_control_journal WHERE peer=? AND generation=? AND direction=? ORDER BY sequence",
+                new String[]{identity, generation, direction.name()})) {
+            while (rows.moveToNext()) {
+                String id = rows.getString(0), pending = wireValue(identity, generation, direction, id, "ackPending");
+                if (pending.isEmpty()) continue;
+                RemoteSessionRuntime.Record record = sessionControl(getReadableDatabase(), identity, generation, direction, id);
+                RemoteSessionControlAck ack = RemoteSessionControlAck.of(record);
+                if (!wireProtected(identity, generation, direction, id) || !ack.resultDigest.equals(pending))
+                    throw new SecurityException("Changed terminal acknowledgment");
+                result.add(ack);
+                if (result.size() > MAX_SESSION_PENDING) throw new SecurityException("Too many terminal acknowledgments");
+            }
+        }
+        return result;
+    }
+
+    /** The authenticated batch caller supplies the current capability/generation fence in the same transaction. */
+    synchronized void acknowledgeSessionControl(String identity, String generation, RemoteSessionControlAck ack) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase();
+        if (!db.inTransaction()) throw new IllegalStateException("Acknowledgment requires transaction");
+        RemoteSessionRuntime.Direction direction = RemoteSessionRuntime.Direction.INCOMING;
+        if (active(db, identity, generation).localRole != RemoteProtocol.Role.SUB)
+            throw new SecurityException("Only the receiver retires results");
+        RemoteSessionRuntime.Record record = sessionControl(db, identity, generation, direction, ack.id);
+        if (record == null) {
+            long floor = Long.parseLong(metadata(identity, generation, "session_control_INCOMING_floor", "0"));
+            if (ack.sequence > floor) throw new SecurityException("Unknown terminal acknowledgment");
+            // Receipt-only idempotence. No result, proof or execution authority is reconstructed.
+            return;
+        }
+        requireSessionControlPeer(db, identity, generation, direction, record.request);
+        if (record.request.sequence != ack.sequence || !record.request.digest().equals(ack.requestDigest)
+                || !RemoteSessionControlAck.of(record).resultDigest.equals(ack.resultDigest))
+            throw new SecurityException("Terminal acknowledgment mismatch");
+        // Legacy first-receipt provenance is immutable. Its known result can be received, never upgraded.
+        if (wireProtected(identity, generation, direction, ack.id))
+            putMetadata(identity, generation, wireKey(direction, ack.id, "acked"), ack.resultDigest);
+    }
+
+    synchronized void clearSessionControlAck(String identity, String generation, RemoteSessionControlAck ack) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase();
+        if (!db.inTransaction()) throw new IllegalStateException("Acknowledgment echo requires transaction");
+        RemoteSessionRuntime.Direction direction = RemoteSessionRuntime.Direction.OUTGOING;
+        RemoteSessionRuntime.Record record = sessionControl(db, identity, generation, direction, ack.id);
+        if (record == null) throw new SecurityException("Missing local terminal evidence");
+        requireSessionControlPeer(db, identity, generation, direction, record.request);
+        RemoteSessionControlAck known = RemoteSessionControlAck.of(record);
+        if (known.sequence != ack.sequence || !known.requestDigest.equals(ack.requestDigest)
+                || !known.resultDigest.equals(ack.resultDigest)
+                || !ack.resultDigest.equals(wireValue(identity, generation, direction, ack.id, "ackPending")))
+            throw new SecurityException("Changed acknowledgment echo");
+        db.delete("remote_metadata", "peer=? AND generation=? AND name=?",
+                new String[]{identity, generation, wireKey(direction, ack.id, "ackPending")});
     }
 
     synchronized List<RemoteSessionRuntime.Record> pendingSessionControls(String identity, String generation,

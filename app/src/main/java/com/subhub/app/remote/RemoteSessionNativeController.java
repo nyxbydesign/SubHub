@@ -39,6 +39,13 @@ final class RemoteSessionNativeController {
 
     /** Polling retries use the journal identity; they cannot supply new native preparations or authority. */
     RemoteSessionRuntime.Record advance(String peer, String generation, String id) throws JSONException {
+        return advance(peer, generation, id, false);
+    }
+    /** A timed-out delivery may acknowledge committed effects, but cannot initiate a prepared-only effect. */
+    RemoteSessionRuntime.Record reconcile(String peer, String generation, String id) throws JSONException {
+        return advance(peer, generation, id, true);
+    }
+    private RemoteSessionRuntime.Record advance(String peer, String generation, String id, boolean reconcileOnly) throws JSONException {
         RemoteSessionRuntime.Record recorded = store.sessionControl(peer, generation, INCOMING, id);
         if (recorded == null) throw new SecurityException("Unknown session command");
         boolean stopping = recorded.request.action == Action.STOP;
@@ -60,6 +67,7 @@ final class RemoteSessionNativeController {
                         if (stopping && !observed.fresh(now)) return current.result.state == State.APPLYING
                                 ? failed(current, Reason.CLOCK_CHANGED, now) : reject(current, Reason.CLOCK_CHANGED, now);
                         if (current.result.state == State.ACKNOWLEDGED) {
+                            if (reconcileOnly) return reject(current, Reason.EXPIRED, now);
                             Reason reason = RemoteSessionRuntime.validateIncoming(current.request, facts(current.request, observed, now), now.wall);
                             if (reason != Reason.NONE) return reject(current, reason, now);
                             RuntimeSessionIdentity.Observed runtime = RuntimeSessionIdentity.observe(context, now);
@@ -81,8 +89,8 @@ final class RemoteSessionNativeController {
                                 now = RemoteSessionClock.local();
                                 RemoteSessionRuntime.Facts facts = facts(current.request, observed, now);
                                 result = current.request.action == Action.START
-                                        ? start(current, RemoteSessionNative.PreparedStart.parse(prepared), facts, observed, now, effects)
-                                        : stop(current, RemoteSessionNative.PreparedStop.parse(prepared), facts, observed, now, effects);
+                                        ? start(current, RemoteSessionNative.PreparedStart.parse(prepared), facts, observed, now, effects, reconcileOnly)
+                                        : stop(current, RemoteSessionNative.PreparedStop.parse(prepared), facts, observed, now, effects, reconcileOnly);
                             } else result = current;
                             db.setTransactionSuccessful();
                         } finally { db.endTransaction(); }
@@ -123,10 +131,11 @@ final class RemoteSessionNativeController {
 
     private RemoteSessionRuntime.Record start(RemoteSessionRuntime.Record record, RemoteSessionNative.PreparedStart prepared,
             RemoteSessionRuntime.Facts facts, RemoteSessionReadiness.Observation observed, RemoteSessionClock.Sample now,
-            Effects effects) throws JSONException {
+            Effects effects, boolean reconcileOnly) throws JSONException {
         RemoteSessionNative.Marker marker = nativeSession.marker();
         boolean owns = marker != null && same(prepared.json(), marker.prepared.json());
         if (!owns) {
+            if (reconcileOnly) return reject(record, Reason.EXPIRED, now);
             if (!RemoteSessionNative.currentProcess(prepared.process)) return reject(record, Reason.PROCESS_RESTARTED, now);
             Reason reason = record.lifetime.check(record.request, now);
             if (reason == Reason.NONE) reason = RemoteSessionRuntime.validateIncoming(record.request, facts, now.wall);
@@ -183,13 +192,14 @@ final class RemoteSessionNativeController {
 
     private RemoteSessionRuntime.Record stop(RemoteSessionRuntime.Record record, RemoteSessionNative.PreparedStop prepared,
             RemoteSessionRuntime.Facts facts, RemoteSessionReadiness.Observation observed, RemoteSessionClock.Sample now,
-            Effects effects) throws JSONException {
+            Effects effects, boolean reconcileOnly) throws JSONException {
         RemoteSessionNative.StopMarker marker = nativeSession.stopMarker();
         boolean owns = marker != null && same(prepared.json(), marker.prepared.json());
         Reason authority = commonAuthority(record.request, facts);
         if (authority != Reason.NONE) return reject(record, authority, now);
         if (!observed.fresh(now)) return failed(record, Reason.CLOCK_CHANGED, now);
         if (!owns) {
+            if (reconcileOnly) return reject(record, Reason.EXPIRED, now);
             if (!RemoteSessionNative.currentProcess(prepared.process)) return reject(record, Reason.PROCESS_RESTARTED, now);
             Reason reason = record.lifetime.check(record.request, now);
             if (reason == Reason.NONE) reason = RemoteSessionRuntime.validateIncoming(record.request, facts, now.wall);
