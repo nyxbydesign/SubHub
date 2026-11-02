@@ -129,6 +129,10 @@ Seed fixed-count fixtures with explicit entries; iterating a production enum can
 change the asserted scenario as new features arrive.
 For scroll captures, compare the target's full screen bounds with the unobscured viewport.
 A clipped `getGlobalVisibleRect` result cannot establish that the complete target is visible.
+For dialogs and other floating windows, `getGlobalVisibleRect` uses root-view coordinates.
+Translate that clip through the root's `getLocationOnScreen` origin before screenshot samples or
+native screen-coordinate swipes. Retain local/root clips, screen origin and expected/observed pixel before
+asserting; see the [View coordinate contract](https://developer.android.com/reference/android/view/View#getGlobalVisibleRect(android.graphics.Rect)).
 Give native evidence writers candidate-specific log paths and refuse to overwrite an existing log.
 When reusing a helper, qualify its output paths before starting the workload.
 
