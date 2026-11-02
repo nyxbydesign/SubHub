@@ -17,6 +17,7 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
+    static final int DATABASE_VERSION = 5;
     private final Context context;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
@@ -45,7 +46,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
 
     public RemoteStore(Context context) { this(context, "remote_sync_v1.db"); }
     public RemoteStore(Context context, String databaseName) {
-        super(context.getApplicationContext(), databaseName, null, 4);
+        super(context.getApplicationContext(), databaseName, null, DATABASE_VERSION);
         this.context=context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
@@ -88,16 +89,118 @@ public final class RemoteStore extends SQLiteOpenHelper {
         createMetadata(db);
         RemoteActivityStore.create(db);
         StoredPayloads.createProgress(db);
+        createSessionControls(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 1 || oldVersion > 3 || newVersion != 4) throw new IllegalStateException("Unsupported remote database version");
-        if (oldVersion == 1) {
+        if (oldVersion < 1 || oldVersion >= newVersion || newVersion > DATABASE_VERSION)
+            throw new IllegalStateException("Unsupported remote database version");
+        if (oldVersion < 2 && newVersion >= 2) {
             db.execSQL("ALTER TABLE peers ADD COLUMN route TEXT NOT NULL DEFAULT ''");
             db.execSQL("ALTER TABLE invites ADD COLUMN candidate_name TEXT NOT NULL DEFAULT ''");
             createMetadata(db);
         }
-        if (oldVersion < 3) RemoteActivityStore.create(db);
-        StoredPayloads.createProgress(db);
+        if (oldVersion < 3 && newVersion >= 3) RemoteActivityStore.create(db);
+        if (oldVersion < 4 && newVersion >= 4) StoredPayloads.createProgress(db);
+        if (oldVersion < 5 && newVersion >= 5) createSessionControls(db);
+    }
+
+    private static void createSessionControls(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE session_controls(peer TEXT NOT NULL,generation TEXT NOT NULL,id TEXT NOT NULL,"
+                + "direction TEXT NOT NULL,request_digest TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL,"
+                + "state TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(peer,generation,id,direction))");
+        db.execSQL("CREATE INDEX pending_session_controls ON session_controls(peer,generation,direction,state,updated)");
+    }
+
+    /** Durable receipt only. Neither inserting nor reading this journal applies a runtime operation. */
+    synchronized RemoteSessionRuntime.Record rememberSessionControl(String identity, String generation,
+            RemoteSessionRuntime.Direction direction, RemoteSessionCommands.Request request, long now)
+            throws JSONException {
+        if (now <= 0) throw new IllegalArgumentException("Missing journal clock");
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            requireSessionControlPeer(db, identity, generation, direction, request);
+            RemoteSessionRuntime.Record previous = sessionControl(db, identity, generation, direction, request.id);
+            if (previous != null) {
+                if (!previous.request.digest().equals(request.digest()))
+                    throw new SecurityException("Session command identity reused with different content");
+                db.setTransactionSuccessful(); return previous;
+            }
+            RemoteSessionCommands.Result result = new RemoteSessionCommands.Result(request,
+                    direction == RemoteSessionRuntime.Direction.OUTGOING ? RemoteSessionCommands.State.QUEUED
+                            : RemoteSessionCommands.State.ACKNOWLEDGED,
+                    RemoteSessionCommands.Reason.NONE, now, null);
+            db.execSQL("INSERT INTO session_controls(peer,generation,id,direction,request_digest,request,result,state,updated)"
+                            + " VALUES(?,?,?,?,?,?,?,?,?)", new Object[]{identity, generation, request.id, direction.name(),
+                    request.digest(), StoredPayloads.bind(RemoteProtocol.canonical(request.json())),
+                    StoredPayloads.bind(RemoteProtocol.canonical(result.json())), result.state.name(), now});
+            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, request, result);
+        } finally { db.endTransaction(); }
+    }
+
+    synchronized RemoteSessionRuntime.Record sessionControl(String identity, String generation,
+            RemoteSessionRuntime.Direction direction, String id) throws JSONException {
+        active(getReadableDatabase(), identity, generation);
+        return sessionControl(getReadableDatabase(), identity, generation, direction, id);
+    }
+
+    private static RemoteSessionRuntime.Record sessionControl(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction, String id) throws JSONException {
+        RemoteProtocol.identifier(id); java.util.Objects.requireNonNull(direction);
+        try (Cursor rows = db.rawQuery("SELECT request,result,request_digest,state FROM session_controls"
+                        + " WHERE peer=? AND generation=? AND direction=? AND id=?",
+                new String[]{identity, generation, direction.name(), id})) {
+            if (!rows.moveToFirst()) return null;
+            RemoteSessionCommands.Request request = RemoteSessionCommands.Request.parse(new JSONObject(StoredPayloads.read(rows, 0)));
+            RemoteSessionCommands.Result result = RemoteSessionCommands.Result.parse(request, new JSONObject(StoredPayloads.read(rows, 1)));
+            if (!id.equals(request.id) || !generation.equals(request.generation)
+                    || !request.digest().equals(rows.getString(2)) || !result.state.name().equals(rows.getString(3)))
+                throw new SecurityException("Session journal content mismatch");
+            return new RemoteSessionRuntime.Record(direction, request, result);
+        }
+    }
+
+    synchronized RemoteSessionRuntime.Record advanceSessionControl(String identity, String generation,
+            RemoteSessionRuntime.Direction direction, String id, JSONObject value) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            RemoteSessionRuntime.Record previous = sessionControl(db, identity, generation, direction, id);
+            if (previous == null) throw new SecurityException("Unknown session command");
+            requireSessionControlPeer(db, identity, generation, direction, previous.request);
+            RemoteSessionCommands.Result result = RemoteSessionCommands.Result.parse(previous.request, value);
+            if (!result.mayFollow(previous.result)) throw new SecurityException("Invalid session result transition");
+            ContentValues values = new ContentValues();
+            StoredPayloads.put(values, "result", RemoteProtocol.canonical(result.json()));
+            values.put("state", result.state.name()); values.put("updated", result.observedAt);
+            if (db.update("session_controls", values,
+                    "peer=? AND generation=? AND direction=? AND id=? AND state=?",
+                    new String[]{identity, generation, direction.name(), id, previous.result.state.name()}) != 1)
+                throw new IllegalStateException("Session journal changed during transaction");
+            db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, previous.request, result);
+        } finally { db.endTransaction(); }
+    }
+
+    synchronized List<RemoteSessionRuntime.Record> pendingSessionControls(String identity, String generation,
+            RemoteSessionRuntime.Direction direction, int maximum) throws JSONException {
+        if (maximum < 1 || maximum > 128) throw new IllegalArgumentException("Invalid session command bound");
+        active(getReadableDatabase(), identity, generation); java.util.Objects.requireNonNull(direction);
+        List<RemoteSessionRuntime.Record> result = new ArrayList<>();
+        try (Cursor rows = getReadableDatabase().rawQuery("SELECT id FROM session_controls"
+                        + " WHERE peer=? AND generation=? AND direction=? AND state IN ('QUEUED','ACKNOWLEDGED','APPLYING')"
+                        + " ORDER BY updated,id LIMIT ?", new String[]{identity, generation, direction.name(), Integer.toString(maximum)})) {
+            while (rows.moveToNext()) result.add(sessionControl(getReadableDatabase(), identity, generation, direction, rows.getString(0)));
+        }
+        return result;
+    }
+
+    private static void requireSessionControlPeer(SQLiteDatabase db, String identity, String generation,
+            RemoteSessionRuntime.Direction direction, RemoteSessionCommands.Request request) {
+        java.util.Objects.requireNonNull(direction); java.util.Objects.requireNonNull(request);
+        Peer peer = active(db, identity, generation);
+        if (!generation.equals(request.generation)
+                || (direction == RemoteSessionRuntime.Direction.OUTGOING
+                        ? peer.localRole != RemoteProtocol.Role.DOM || !identity.equals(request.recipient)
+                        : peer.localRole != RemoteProtocol.Role.SUB || !identity.equals(request.sender)))
+            throw new SecurityException("Wrong session command authority");
     }
 
     private static void createMetadata(SQLiteDatabase db) {

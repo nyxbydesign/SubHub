@@ -51,7 +51,7 @@ public class StorageCompressionAndroidTest {
     static void legacy(Context context,String name,boolean sub,int records)throws Exception {
         RemoteStore schema=new RemoteStore(context,name);SQLiteDatabase db=SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name),null);
         try {
-            schema.onCreate(db);db.execSQL("DROP TABLE payload_maintenance");
+            schema.onCreate(db);db.execSQL("DROP TABLE payload_maintenance");db.execSQL("DROP TABLE session_controls");
             db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,?,?)",new Object[]{sub?DOM:SUB,GENERATION,"Synthetic",sub?"SUB":"DOM","ACTIVE"});
             for(int i=1;i<=records;i++){
                 String body=fact(i),id=new JSONObject(body).getString("id");
@@ -79,7 +79,7 @@ public class StorageCompressionAndroidTest {
     @Test public void legacyAndNewPayloadsKeepLocalFactsAndOfflineReplayAcrossReopen()throws Exception {
         String sourceName=name(),targetName=name();legacy(context,sourceName,true,1);legacy(context,targetName,false,0);
         try(RemoteStore source=new RemoteStore(context,sourceName);RemoteStore target=new RemoteStore(context,targetName)){
-            assertEquals(4,source.getReadableDatabase().getVersion());assertEquals(1,count(source.getReadableDatabase(),"activity_source","typeof(body)='text'"));
+            assertEquals(RemoteStore.DATABASE_VERSION,source.getReadableDatabase().getVersion());assertEquals(1,count(source.getReadableDatabase(),"activity_source","typeof(body)='text'"));
             String second=fact(2);source.publish(DOM,GENERATION,RemoteProtocol.Stream.EVENTS,new JSONObject(second).getString("id"),new JSONObject(second),false,1767225602000L);
             assertEquals(1,count(source.getReadableDatabase(),"local_objects","typeof(body)='blob'"));
             RemoteProtocol.Batch batch=source.nextBatch(DOM,GENERATION,RemoteProtocol.Stream.EVENTS);assertEquals(2,batch.changes.size());assertEquals(fact(1),batch.changes.get(0).body);assertEquals(second,batch.changes.get(1).body);

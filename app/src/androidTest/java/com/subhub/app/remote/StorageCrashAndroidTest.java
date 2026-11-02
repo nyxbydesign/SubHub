@@ -48,7 +48,7 @@ public class StorageCrashAndroidTest {
             assertEquals(0,StorageCompressionAndroidTest.count(raw,"activity_source","typeof(body)='blob'"));
         }
         try(RemoteStore reopened=new RemoteStore(context,DATABASE)) {
-            assertEquals(4,reopened.getReadableDatabase().getVersion());assertEquals(ready.getString("logicalBefore"),StorageCompressionAndroidTest.digest(reopened.getReadableDatabase()));
+            assertEquals(RemoteStore.DATABASE_VERSION,reopened.getReadableDatabase().getVersion());assertEquals(ready.getString("logicalBefore"),StorageCompressionAndroidTest.digest(reopened.getReadableDatabase()));
             int n;do{n=reopened.compactStoredPayloads(7);}while(n>0);
             assertEquals(ready.getString("logicalBefore"),StorageCompressionAndroidTest.digest(reopened.getReadableDatabase()));
         }
