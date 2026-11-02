@@ -252,7 +252,7 @@ public final class ScreenCaptureService extends Service {
             }
         }
         // Android start IDs fence later deliveries, while the activation token fences later ownership.
-        stopSelfResult(lastStartId);
+        if (!stopSelfResult(lastStartId)) Log.d(TAG, "Capture retirement awaits a newer start delivery");
         return true;
     }
 
@@ -273,6 +273,11 @@ public final class ScreenCaptureService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         lastStartId = startId;
+        // AMS may register this ID before an earlier targeted Stop sees its delivery.
+        if (!destroyed && ownership.isStopping(captureOwner)) {
+            stopSelfResult(startId);
+            return START_NOT_STICKY;
+        }
         if (intent == null) return START_NOT_STICKY;
         if (ACTION_STOP_OWNED.equals(intent.getAction())) {
             try { stopOwned(stopTarget(intent)); }

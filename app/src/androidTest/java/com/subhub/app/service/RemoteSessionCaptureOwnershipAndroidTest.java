@@ -381,4 +381,43 @@ public class RemoteSessionCaptureOwnershipAndroidTest {
             seedReplacementWitness(); assertReplacementWitness();
         } finally { com.subhub.app.commitment.CommitmentManager.emergencyRelease(context); }
     }
+    @Test public void pendingRetirementDrainsARegisteredButNotYetDeliveredAndroidStart() throws Exception {
+        CaptureRunOwnership.Token owner = admitSyntheticCapture(); ScreenCaptureService.StopTarget target = ScreenCaptureService.observedStopTarget(context);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync(); int priorStart = (Integer) field(service, "lastStartId");
+        AtomicReference<Throwable> failure = new AtomicReference<>(); AtomicBoolean posted = new AtomicBoolean(), registered = new AtomicBoolean();
+        Thread stop = new Thread(() -> {
+            try { posted.set(ScreenCaptureService.requestStop(target)); } catch (Throwable error) { failure.set(error); }
+        });
+        Thread start = new Thread(() -> {
+            try {
+                Intent incoming = "start".equals(InstrumentationRegistry.getArguments().getString("drain_start"))
+                        ? ScreenCaptureService.startIntent(context, 0, new Intent())
+                        : new Intent(context, ScreenCaptureService.class).setAction("com.subhub.app.action.OWNERSHIP_PROBE");
+                registered.set(context.startService(incoming) != null);
+            }
+            catch (Throwable error) { failure.set(error); }
+        });
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            stop.start(); stop.join(3000); assertFalse(stop.isAlive()); assertTrue(posted.get());
+            Thread main = android.os.Looper.getMainLooper().getThread();
+            await(() -> main.getState() == Thread.State.BLOCKED && java.util.Arrays.stream(main.getStackTrace())
+                    .anyMatch(frame -> frame.getClassName().equals(ScreenCaptureService.class.getName()) && frame.getMethodName().equals("stopOwned")));
+            start.start(); start.join(3000); assertFalse(start.isAlive()); assertTrue(registered.get()); assertNull(failure.get());
+            assertEquals(priorStart, (int) (Integer) field(service, "lastStartId"));
+        }
+        boolean expectDrained = !"false".equals(InstrumentationRegistry.getArguments().getString("expect_drained"));
+        if (expectDrained) awaitDestroyed();
+        else {
+            await(() -> { try { return (Integer) field(service, "lastStartId") > priorStart; } catch (Exception error) { throw new AssertionError(error); } });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertSame(service, live()); assertTrue(registry.isStopping(owner)); assertFalse(target.isClosed());
+        }
+        android.os.Bundle observed = new android.os.Bundle();
+        observed.putInt("capture_prior_start", priorStart); observed.putInt("capture_delivered_start", (Integer) field(service, "lastStartId"));
+        observed.putBoolean("capture_closed", target.isClosed()); observed.putBoolean("capture_still_live", live() == service);
+        observed.putBoolean("capture_expected_drained", expectDrained);
+        InstrumentationRegistry.getInstrumentation().sendStatus(42, observed);
+        assertFalse(new AppModeManager(context).isArmed()); assertEquals("", stats.activeSessionIdentity());
+        if (expectDrained) { assertTrue(target.isClosed()); assertNull(field(service, "projection")); assertOwnResourcesClosed(); }
+    }
 }
