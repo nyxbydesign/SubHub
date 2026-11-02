@@ -104,6 +104,12 @@ For first-launch or unkeyed onboarding tests, add `-e controller_fixture false`.
 The runner otherwise prepares a PIN before activity creation, which changes the
 fresh-setup behavior being tested. Keep the fixture enabled for ordinary screen tests.
 
+UI fixtures that replace `People` presentation hooks must isolate any queried `RemoteFeature`
+endpoint as well. Use an owned unpaired store for no-Dom assertions; the application's endpoint
+can have independent pending work. Capture the live original before constructing its replacement,
+publish and restore under the singleton's class monitor, and close only the owned endpoint/database.
+Verify that the restored original endpoint remains live.
+
 For native click fixtures, initialize `UiAutomation` before creating the target Views,
 then drain the target main queue before the first click so AccessibilityManager receives
 the connection state. For pixel assertions, exclude fixture window transitions and await
