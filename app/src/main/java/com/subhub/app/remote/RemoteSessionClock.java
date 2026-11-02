@@ -9,7 +9,14 @@ public final class RemoteSessionClock {
         if (boot >= 0) observedBoot = boot;
         return new Sample(System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), boot);
     }
-    static Sample local() { return new Sample(System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), observedBoot); }
+    static void observeAtStartup(android.content.Context context) {
+        if (observedBoot >= 0 || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
+                || Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK)) return;
+        try { observe(context); }
+        catch (RuntimeException unavailable) { android.util.Log.w("SessionClock", "Boot observation unavailable"); }
+    }
+    /** Pure clock snapshot; startup observes the process-stable boot counter outside authority locks. */
+    public static Sample local() { return new Sample(System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), observedBoot); }
     public static final class Sample {
         public final long wall, elapsed;
         public final int boot;

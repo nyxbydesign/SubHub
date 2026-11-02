@@ -43,6 +43,7 @@ public final class RemoteFeature {
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
     RemoteFeature(Context context,RemoteStore store) {
         this.context=context.getApplicationContext();this.store=store;secrets=new RemoteSecrets(this.context);
+        if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
         activity=new RemoteActivityRepository(this.context,store,this::changed);
