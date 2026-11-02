@@ -21,6 +21,7 @@ public final class RemoteSessionNative implements AutoCloseable {
     public static final String MAIN_KEY = "remote_session_native_v1";
     static final String STOP_MAIN_KEY = "remote_session_native_stop_v1";
     private static final String PROCESS = UUID.randomUUID().toString();
+    static boolean currentProcess(String process) { return PROCESS.equals(process); }
     private static final ConcurrentHashMap<Context, RemoteSessionNative> scopes = new ConcurrentHashMap<>();
     private final Context context;
     private final SharedPreferences main;
