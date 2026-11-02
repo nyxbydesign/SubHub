@@ -38,6 +38,7 @@ public class RemoteSessionPairedConsentUiAndroidTest {
     private java.util.concurrent.atomic.AtomicInteger endpointLeases;
     private boolean authorityReplaced;
     private Map<String, String> originalAcknowledgements;
+    private boolean cleaned;
 
     @Before public void setup() throws Exception {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -80,38 +81,88 @@ public class RemoteSessionPairedConsentUiAndroidTest {
         }
     }
 
-    @After public void cleanup() throws Exception {
-        synchronized (SubFeaturePolicy.LOCK) {
-            if (consent != null) com.subhub.app.settings.SharedPreferenceTestRestore.restore(
-                    context.getSharedPreferences(SubFeaturePolicy.STORE, 0), consent);
-            if (authorityReplaced) {
-                assertSame(feature.store, registeredAuthority());
-                SubFeaturePolicy.unregisterHardcoreAuthority(context, feature.store);
-                SubFeaturePolicy.registerHardcoreAuthority(context, original.store);
-                assertSame(original.store, registeredAuthority());
-                assertEquals("The fixture must preserve the application's consent receipts",
-                        originalAcknowledgements, acknowledgements(original.store));
+    @After public void cleanup() throws Throwable { cleanupOwned(() -> { }); }
+
+    private void cleanupOwned(Runnable receiptWitness) throws Throwable {
+        if (cleaned) return;
+        cleaned = true;
+        List<Throwable> failures = new ArrayList<>();
+        clean(failures, () -> {
+            synchronized (SubFeaturePolicy.LOCK) {
+                if (consent != null) com.subhub.app.settings.SharedPreferenceTestRestore.restore(
+                        context.getSharedPreferences(SubFeaturePolicy.STORE, 0), consent);
             }
-        }
-        if (singleton != null) synchronized (RemoteFeature.class) {
-            assertSame(feature, singleton.get(null)); singleton.set(null, original);
-        }
-        if (feature != null) {
-            try {
-                feature.submit(() -> null).get(15, TimeUnit.SECONDS);
-                if (endpointLeases != null) {
-                    long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
-                    while (endpointLeases.get() != 1 && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(10);
-                    assertEquals(0, endpointLeases.decrementAndGet());
+        });
+        clean(failures, () -> {
+            synchronized (SubFeaturePolicy.LOCK) {
+                if (authorityReplaced) {
+                    Object observed = registeredAuthority();
+                    if (observed == feature.store) {
+                        SubFeaturePolicy.unregisterHardcoreAuthority(context, feature.store);
+                        SubFeaturePolicy.registerHardcoreAuthority(context, original.store);
+                    }
+                    assertSame(feature.store, observed);
+                    assertSame(original.store, registeredAuthority());
+                    assertEquals("The fixture must preserve the application's consent receipts",
+                            originalAcknowledgements, acknowledgements(original.store));
+                    receiptWitness.run();
                 }
-            } finally { feature.shutdownForTest(); }
+            }
+        });
+        clean(failures, () -> {
+            if (singleton != null) synchronized (RemoteFeature.class) {
+                Object observed = singleton.get(null);
+                if (observed == feature) singleton.set(null, original);
+                assertSame(feature, observed);
+            }
+        });
+        clean(failures, () -> {
+            if (feature != null) {
+                try {
+                    feature.submit(() -> null).get(15, TimeUnit.SECONDS);
+                    if (endpointLeases != null) {
+                        long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
+                        while (endpointLeases.get() != 1 && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(10);
+                        assertEquals(0, endpointLeases.decrementAndGet());
+                    }
+                } finally { feature.shutdownForTest(); }
+            }
+        });
+        clean(failures, () -> {
+            if (database != null) assertTrue(context.deleteDatabase(database));
+        });
+        clean(failures, () -> {
+            if (original != null) {
+                assertSame(original, RemoteFeature.get(context));
+                Field sessions = RemoteFeature.class.getDeclaredField("sessions"); sessions.setAccessible(true);
+                assertFalse(((java.util.concurrent.ThreadPoolExecutor) sessions.get(original)).isShutdown());
+            }
+        });
+        if (!failures.isEmpty()) {
+            Throwable first = failures.get(0);
+            for (int index = 1; index < failures.size(); index++) first.addSuppressed(failures.get(index));
+            throw first;
         }
-        if (database != null) assertTrue(context.deleteDatabase(database));
-        if (original != null) {
-            assertSame(original, RemoteFeature.get(context));
-            Field sessions = RemoteFeature.class.getDeclaredField("sessions"); sessions.setAccessible(true);
-            assertFalse(((java.util.concurrent.ThreadPoolExecutor) sessions.get(original)).isShutdown());
-        }
+    }
+
+    private interface CleanupAction { void run() throws Throwable; }
+    private static void clean(List<Throwable> failures, CleanupAction action) {
+        try { action.run(); } catch (Throwable failure) { failures.add(failure); }
+    }
+
+    @Test public void failedReceiptWitnessStillRestoresAndClosesOnlyTheOwnedEndpoint() throws Throwable {
+        AssertionError rejected = assertThrows(AssertionError.class, () -> cleanupOwned(() -> {
+            throw new AssertionError("Deliberate receipt observer refusal");
+        }));
+        assertEquals("Deliberate receipt observer refusal", rejected.getMessage());
+        assertEquals(0, rejected.getSuppressed().length);
+        assertSame(original, RemoteFeature.get(context)); assertSame(original.store, registeredAuthority());
+        assertEquals(originalAcknowledgements, acknowledgements(original.store));
+        assertEquals(consent, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+        assertFalse(context.getDatabasePath(database).exists());
+        Field sessions = RemoteFeature.class.getDeclaredField("sessions"); sessions.setAccessible(true);
+        assertTrue(((java.util.concurrent.ThreadPoolExecutor) sessions.get(feature)).isTerminated());
+        assertFalse(((java.util.concurrent.ThreadPoolExecutor) sessions.get(original)).isShutdown());
     }
 
     private Object registeredAuthority() throws Exception {
