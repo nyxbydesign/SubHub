@@ -16,6 +16,7 @@ public final class ProfileEditorActivity extends PreferencePage {
     public static final String EXTRA_DOM = "profile_dom";
     private boolean dom, importing;
     private String avatar;
+    private com.subhub.app.security.SubFeatureControls.Draft features;
     private EditText name, about, gender, age;
     private LinearLayout portrait;
     private TextView save, change, remove;
@@ -87,6 +88,11 @@ public final class ProfileEditorActivity extends PreferencePage {
         about.setTag("profile_about"); about.setContentDescription(getString(R.string.profile_about));
         about.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileData.MAX_ABOUT_LENGTH)});
         about.setText(state == null ? profile.about : state.getString("profile_about", profile.about));
+        if (!dom) {
+            features = new com.subhub.app.security.SubFeatureControls.Draft(this, state);
+            LinearLayout choices = card(page); choices.setTag("profile_edit_features");
+            com.subhub.app.security.SubFeatureControls.bindDraft(this, choices, features);
+        }
         save = PersonUi.action(page, R.string.profile_save, this::save, true); save.setTag("profile_save");
         PersonUi.action(page, android.R.string.cancel, this::finish, false).setTag("profile_cancel");
         renderAvatar(); buttons();
@@ -116,6 +122,9 @@ public final class ProfileEditorActivity extends PreferencePage {
                 gender.getText().toString(), enteredAge)) {
             notice(getString(R.string.profile_save_failed)); return;
         }
+        if (features != null && !features.apply(this)) {
+            notice(getString(R.string.profile_save_failed)); return;
+        }
         com.subhub.app.remote.RemoteFeature.get(this).changed();
         finish();
     }
@@ -133,6 +142,7 @@ public final class ProfileEditorActivity extends PreferencePage {
             state.putString("profile_age", age.getText().toString());
             state.putString("profile_avatar", avatar);
         }
+        if (features != null) features.saveState(state);
         super.onSaveInstanceState(state);
     }
 }

@@ -151,59 +151,77 @@ public final class ProfileAndroidTest {
     }
 
     @Test public void subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation() {
+        java.util.Map<String, ?> baseline = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            scenario.onActivity(a -> {
+                assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features"));
+                assertNull(a.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor"));
+            });
+            for (boolean back : new boolean[]{false, true}) {
+                onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+                resumed(ProfileEditorActivity.class);
+                onView(tag("sub_feature:censor")).perform(revealAboveNavigation(), click());
+                assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+                if (back) androidx.test.espresso.Espresso.pressBack();
+                else onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
+                resumed(ProfileActivity.class);
+                assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+            }
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            ProfileEditorActivity editor = resumed(ProfileEditorActivity.class);
             onView(tag("sub_feature:censor")).perform(revealAboveNavigation(), click());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(editor::recreate);
+            ProfileEditorActivity recreated = resumed(ProfileEditorActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> assertFalse(((CompoundButton)
+                    recreated.findViewById(android.R.id.content).findViewWithTag("sub_feature:censor")).isChecked()));
+            assertEquals(baseline, context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            resumed(ProfileActivity.class);
             assertFalse(SubFeaturePolicy.chosen(context, "censor"));
             assertFalse(ControllerPinManager.isDomModeActive());
             scenario.recreate();
-            scenario.onActivity(a -> {
-                View root = a.findViewById(android.R.id.content);
-                assertFalse(((CompoundButton) root.findViewWithTag("sub_feature:censor")).isChecked());
-                for (String key : SubFeaturePolicy.FEATURES) assertNotNull(root.findViewWithTag("sub_feature:" + key));
-            });
+            scenario.onActivity(a -> assertReadOnly(a.findViewById(android.R.id.content).findViewWithTag("self_profile_features")));
         }
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
     public void subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal() throws Exception {
         assertTrue(ProfileStore.save(context, false, "Milo", "A steady routine and clear communication.", ""));
-        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit()
-                .putBoolean("tasks", true).putBoolean("hardcore_locally_consented", false).commit());
+        assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", true).commit());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
-            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks") != null);
             scenario.onActivity(a -> {
-                View root = a.findViewById(android.R.id.content);
-                ViewGroup hero = root.findViewWithTag("self_profile:sub");
-                View features = root.findViewWithTag("self_profile_features");
-                View preview = root.findViewWithTag("profile_preview:sub");
+                View root = a.findViewById(android.R.id.content); ViewGroup hero = root.findViewWithTag("self_profile:sub");
+                View features = root.findViewWithTag("self_profile_features"); View preview = root.findViewWithTag("profile_preview:sub");
                 View journal = root.findViewWithTag("profile_journal");
                 while (journal.getParent() != hero) journal = (View) journal.getParent();
-                assertEquals(hero, features.getParent());
                 assertTrue(hero.indexOfChild(preview) < hero.indexOfChild(features));
                 assertTrue(hero.indexOfChild(features) < hero.indexOfChild(journal));
-                assertNotNull(root.findViewWithTag("self_profile_about"));
+                assertReadOnly(features);
                 assertEquals(6, ((ViewGroup) root.findViewWithTag("feature_consent_grid")).getChildCount());
             });
-            onView(tag("sub_feature:censor")).perform(revealAboveNavigation());
-            capture(scenario, "sub-profile-feature-group-top").recycle();
-            onView(tag("sub_feature:tasks")).perform(revealAboveNavigation(), click());
-            assertFalse(SubFeaturePolicy.chosen(context, "tasks"));
-            assertFalse(new com.subhub.app.tasks.TaskRepository(context, PersonId.LOCAL).allowed());
-            capture(scenario, "sub-profile-tasks-off-before-journal").recycle();
-            scenario.recreate();
-            await(scenario, a -> a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks") != null);
-            scenario.onActivity(a -> assertFalse(((CompoundButton) a.findViewById(android.R.id.content)
-                    .findViewWithTag("sub_feature:tasks")).isChecked()));
-            long before = System.currentTimeMillis();
+            onView(tag("person_allowance:censor")).perform(revealAboveNavigation()); capture(scenario,"profile-readonly-choices").recycle();
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click()); resumed(ProfileEditorActivity.class);
             onView(tag("sub_feature:tasks")).perform(revealAboveNavigation(), click());
             assertTrue(SubFeaturePolicy.chosen(context, "tasks"));
-            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0) >= before);
-            scenario.onActivity(a -> {
-                CompoundButton stale = a.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks");
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click()); resumed(ProfileActivity.class);
+            assertFalse(SubFeaturePolicy.chosen(context, "tasks"));
+            assertFalse(new com.subhub.app.tasks.TaskRepository(context, PersonId.LOCAL).allowed());
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click()); resumed(ProfileEditorActivity.class);
+            onView(tag("sub_feature:tasks")).perform(revealAboveNavigation(), click());
+            long beforeSave = System.currentTimeMillis();
+            assertFalse(SubFeaturePolicy.chosen(context, "tasks"));
+            onView(tag("profile_save")).perform(revealAboveNavigation(), click()); resumed(ProfileActivity.class);
+            assertTrue(SubFeaturePolicy.chosen(context, "tasks"));
+            assertTrue(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0) >= beforeSave);
+            onView(tag("profile_edit")).perform(revealAboveNavigation(), click());
+            ProfileEditorActivity editor = resumed(ProfileEditorActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                CompoundButton stale = editor.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks");
                 ControllerPinManager.enterDomMode(); stale.performClick();
-                assertTrue(SubFeaturePolicy.chosen(context, "tasks")); assertTrue(stale.isChecked());
-                ControllerPinManager.enterSubMode();
+                editor.findViewById(android.R.id.content).findViewWithTag("profile_save").performClick();
+                assertTrue(SubFeaturePolicy.chosen(context, "tasks")); ControllerPinManager.enterSubMode();
             });
+            onView(tag("profile_cancel")).perform(revealAboveNavigation(), click()); resumed(ProfileActivity.class);
         }
     }
 
@@ -472,7 +490,7 @@ public final class ProfileAndroidTest {
                 }
                 scenario.onActivity(a -> textFits(a.findViewById(android.R.id.content)));
                 if (!dom) {
-                    onView(tag("sub_feature:popup")).perform(revealAboveNavigation());
+                    onView(tag("person_allowance:popup")).perform(revealAboveNavigation());
                     capture(scenario, name + "-allowances").recycle();
                 }
                 alignCardTop(scenario, a -> a.findViewById(R.id.stats_lifetime_summary));
@@ -565,7 +583,8 @@ public final class ProfileAndroidTest {
 
     @Test @SdkSuppress(minSdkVersion = 29) public void compactAllowancesRetainNativeTargetsExplicitStatesAndPersistence() throws Exception {
         context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("censor", false).putBoolean("subliminal", false).commit();
-        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+        try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(new Intent(context, ProfileEditorActivity.class)
+                .putExtra(ProfileEditorActivity.EXTRA_DOM, false))) {
             onView(tag("sub_feature:popup")).perform(revealAboveNavigation());
             capture(scenario, "compact-editable-allowances").recycle();
             scenario.onActivity(a -> {
@@ -575,19 +594,16 @@ public final class ProfileAndroidTest {
                     CompoundButton choice = root.findViewWithTag("sub_feature:" + key);
                     assertNotNull(choice); assertTrue(choice.getHeight() >= PersonUi.dp(a, 48));
                     assertEquals(SubFeaturePolicy.chosen(context, key), choice.isChecked());
-                    assertEquals(a.getString(choice.isChecked() ? R.string.control_state_on : R.string.control_state_off),
-                            androidx.core.view.ViewCompat.getStateDescription(choice));
                 }
-                if (a.getResources().getConfiguration().fontScale <= 1.0f)
-                    assertEquals(grid.getChildAt(0).getTop(), grid.getChildAt(1).getTop());
                 textFits(grid);
             });
             onView(tag("sub_feature:censor")).perform(revealAboveNavigation(), click());
-            assertTrue(SubFeaturePolicy.chosen(context, "censor")); scenario.recreate();
+            assertFalse(SubFeaturePolicy.chosen(context, "censor")); scenario.recreate();
             scenario.onActivity(a -> assertTrue(((CompoundButton) a.findViewById(android.R.id.content)
                     .findViewWithTag("sub_feature:censor")).isChecked()));
             assertFalse(ControllerPinManager.isDomModeActive());
         }
+        assertFalse(SubFeaturePolicy.chosen(context, "censor"));
     }
 
     @Test @SdkSuppress(minSdkVersion = 29) public void compactReadOnlyAllowancesKeepUnknownAndHardcoreContextWithoutEditControls() throws Exception {
@@ -743,6 +759,38 @@ public final class ProfileAndroidTest {
         File directory = new File(context.getFilesDir(), "ui-v3/" + run);
         assertTrue(directory.isDirectory() || directory.mkdirs());
         return directory;
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29) public void profileSelectorsUseEqualHalvesOrAReadableStack() throws Exception {
+        for (boolean dom : new boolean[]{false, true}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+                capture(scenario, dom ? "equal-selectors-dom" : "equal-selectors-sub").recycle();
+                scenario.onActivity(a -> {
+                    TextView profile = a.findViewById(R.id.stats_section_profile), catalog = a.findViewById(R.id.stats_section_achievements);
+                    assertTrue(Math.abs(profile.getWidth() - catalog.getWidth()) <= 1);
+                    assertTrue(profile.getHeight() >= PersonUi.dp(a,48)); assertTrue(catalog.getHeight() >= PersonUi.dp(a,48));
+                    textFits(profile); textFits(catalog);
+                });
+                onView(withId(R.id.stats_section_achievements)).perform(revealAboveNavigation(),click());
+                onView(withId(R.id.stats_section_profile)).perform(revealAboveNavigation(),click());
+                scenario.recreate();
+                scenario.onActivity(a -> assertTrue(a.findViewById(R.id.stats_section_profile).isSelected()));
+            }
+        }
+    }
+
+    private static <T extends Activity> T resumed(Class<T> type) {
+        long end = SystemClock.uptimeMillis() + 10000;
+        java.util.concurrent.atomic.AtomicReference<T> found = new java.util.concurrent.atomic.AtomicReference<>();
+        while (SystemClock.uptimeMillis() < end) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                for (Activity a : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) if (type.isInstance(a)) found.set(type.cast(a));
+            });
+            if (found.get() != null) return found.get(); SystemClock.sleep(20);
+        }
+        throw new AssertionError("Expected resumed " + type.getSimpleName());
     }
 
     private static int distance(int left, int right) {

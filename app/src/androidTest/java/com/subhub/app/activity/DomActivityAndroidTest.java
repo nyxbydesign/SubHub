@@ -1,5 +1,6 @@
 package com.subhub.app.activity;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -212,42 +213,18 @@ public final class DomActivityAndroidTest {
             awaitUi(page, DomActivityAndroidTest::ready);
             onView(withTagValue(org.hamcrest.Matchers.is((Object) "activity_group:switch-first"))).perform(click());
             awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:switch-second") != null);
-            final View[] retained = new View[1];
-            page.onActivity(a -> retained[0] = a.findViewById(R.id.dom_activity_list));
-            for (int count = 0; count < 3; count++) {
-                onView(withId(R.id.people_section_people)).perform(click());
-                page.onActivity(a -> {
-                    assertEquals(DomActivityActivity.class, a.getClass());
-                    assertTrue(a.findViewById(R.id.people_section_people).isSelected());
-                    assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
-                });
-                int loads = repository.loads.size();
-                ActivitySources.changed();
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-                assertEquals("Hidden feed has no active source observer", loads, repository.loads.size());
-                assertTrue("Hidden feed does not acknowledge facts", repository.read.isEmpty());
-                onView(withId(R.id.people_section_activity)).perform(click());
-                awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:switch-second") != null);
-                page.onActivity(a -> {
-                    assertSame(retained[0], a.findViewById(R.id.dom_activity_list));
-                    assertTrue(a.findViewById(R.id.people_section_activity).isSelected());
-                });
-            }
-            onView(withId(R.id.people_section_people)).perform(click());
+            page.recreate();
+            awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:switch-second") != null);
+            onView(withId(R.id.nav_people)).perform(click());
+            com.subhub.app.people.PeopleActivity roster = resumed(com.subhub.app.people.PeopleActivity.class);
             int hiddenLoads = repository.loads.size();
             repository.latest = List.of(entry("hidden-unread", ActivityEvent.Kind.APP_OPENED, true),
-                    entry("switch-first", ActivityEvent.Kind.APP_OPENED, false),
-                    entry("switch-second", ActivityEvent.Kind.APP_OPENED, false));
-            ActivitySources.changed();
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-            assertEquals(hiddenLoads, repository.loads.size());
-            assertFalse(repository.read.contains("hidden-unread"));
-            page.recreate();
-            page.onActivity(a -> {
-                assertTrue(a.findViewById(R.id.people_section_people).isSelected());
-                assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
-            });
-            onView(withId(R.id.people_section_activity)).perform(click());
+                    entry("switch-first", ActivityEvent.Kind.APP_OPENED, false), entry("switch-second", ActivityEvent.Kind.APP_OPENED, false));
+            ActivitySources.changed(); InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals(hiddenLoads, repository.loads.size()); assertFalse(repository.read.contains("hidden-unread"));
+            onView(withTagValue(org.hamcrest.Matchers.is((Object) "people_activity_open")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            resumed(DomActivityActivity.class);
             awaitUi(page, a -> ready(a) && repository.read.contains("hidden-unread"));
             assertTrue(ControllerPinManager.isDomModeActive());
             assertEquals(APPS, new AppModeManager(context).getSelectedPackages());
@@ -527,7 +504,11 @@ public final class DomActivityAndroidTest {
 
     private void capture(ActivityScenario<DomActivityActivity> page, String name) throws Exception {
         float scale = context.getResources().getConfiguration().fontScale;
-        File output = new File(context.getFilesDir(), "activity-" + name + "-font-" + scale + ".png");
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run", "activity-native");
+        assertTrue(run.matches("[A-Za-z0-9_-]+"));
+        File folder = new File(context.getFilesDir(), "ui-v3/" + run);
+        assertTrue(folder.isDirectory() || folder.mkdirs());
+        File output = new File(folder, "activity-" + name + "-font-" + scale + ".png");
         Bitmap previous = null;
         long deadline = SystemClock.uptimeMillis() + 7000, stableSince = 0;
         try {
@@ -574,7 +555,7 @@ public final class DomActivityAndroidTest {
                 if (previous == null) previous = InstrumentationRegistry.getInstrumentation()
                         .getUiAutomation(android.app.UiAutomation.FLAG_DONT_USE_ACCESSIBILITY).takeScreenshot();
                 if (previous != null) try (FileOutputStream stream = new FileOutputStream(new File(
-                        context.getFilesDir(), "activity-" + name + "-font-" + scale
+                        folder, "activity-" + name + "-font-" + scale
                         + "-compositor-failure-" + SystemClock.uptimeMillis() + ".png"))) {
                     assertTrue(previous.compress(Bitmap.CompressFormat.PNG, 100, stream));
                 }
@@ -613,6 +594,18 @@ public final class DomActivityAndroidTest {
         return value.toString();
     }
 
+    private static <T extends Activity> T resumed(Class<T> type) {
+        long end=android.os.SystemClock.uptimeMillis()+10000;
+        java.util.concurrent.atomic.AtomicReference<T> found=new java.util.concurrent.atomic.AtomicReference<>();
+        while(android.os.SystemClock.uptimeMillis()<end) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()-> {
+                for(Activity a:androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(
+                        androidx.test.runner.lifecycle.Stage.RESUMED)) if(type.isInstance(a)) found.set(type.cast(a));
+            });
+            if(found.get()!=null)return found.get();android.os.SystemClock.sleep(20);
+        }
+        throw new AssertionError("Missing resumed "+type.getSimpleName());
+    }
     static final class FeedRepository implements ActivityRepository {
         volatile List<ActivityEntry> latest = List.of(), history = List.of();
         volatile List<ActivityEntry> localLatest = List.of(), localHistory = List.of();

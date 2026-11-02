@@ -32,7 +32,7 @@ public final class SelfProfilePane {
         if (!dom) {
             LinearLayout features = PersonUi.column(activity); features.setTag("self_profile_features");
             hero.addView(features, new LinearLayout.LayoutParams(-1, -2));
-            com.subhub.app.security.SubFeatureControls.bind(activity, features);
+            com.subhub.app.security.SubFeatureControls.bindReadOnly(activity, features);
         }
         com.subhub.app.journal.JournalPreview.add(hero, dom, PersonId.LOCAL,
                 () -> com.subhub.app.journal.JournalRoutes.own(activity, dom));

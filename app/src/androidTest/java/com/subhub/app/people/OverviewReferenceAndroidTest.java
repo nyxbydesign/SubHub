@@ -250,6 +250,13 @@ public final class OverviewReferenceAndroidTest {
             });
             tap("contract_section:apps");
             capture(activity, "contract-sub-features", "person_contract_features");
+            onMain(() -> {
+                assertTrue(hasText(tagged(activity,"person_contract_identity"),activity.getString(R.string.overview_your_dom)));
+                View header=tagged(activity,"contract_section:atmosphere");
+                TextView summary=header.findViewWithTag("overview_row_value");
+                assertTrue(summary.getText().toString().contains("\n"));
+                assertTrue(summary.getLineCount()>=2);
+            });
             scenario.onActivity(a -> {
                 View body = a.findViewById(R.id.role_page_body); assertReadOnly(body);
                 assertFalse(hasText(body, "A good day to slow down."));

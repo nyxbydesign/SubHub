@@ -19,6 +19,7 @@ import org.junit.*;
 import java.util.*;
 
 public class SettingsGroupsAndroidTest {
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     private Map<String,?> namesBefore,consentBefore;
@@ -89,6 +90,58 @@ public class SettingsGroupsAndroidTest {
                 assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
             });
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subSettingsLanguageSetupAndUpdatesKeepExistingGuardsAndBackRoutes() throws Exception {
+        android.content.Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        ControllerPinManager.enterSubMode();
+        String language=com.subhub.app.util.LocaleHelper.getLanguage(context);
+        Map<String,?> choices=new HashMap<>(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+        com.subhub.app.security.HardcoreModeManager hardcore=new com.subhub.app.security.HardcoreModeManager(context);
+        boolean enabled=hardcore.isEnabled(),requested=hardcore.isRequested();
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            page.onActivity(a->{
+                assertTrue(a.findViewById(R.id.button_accessibility_settings).isEnabled());
+                assertNotNull(a.findViewById(R.id.switch_hardcore_mode));
+                assertTrue(a.findViewById(R.id.switch_hardcore_mode).isEnabled());
+            });
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"settings_language"))).perform(revealAboveNavigation());
+            com.subhub.app.UiRefreshWitness.capture(resumed(GlobalSettingsActivity.class), "sub-settings-language");
+            onView(withTagValue(org.hamcrest.Matchers.is((Object)"settings_language"))).perform(click());
+            com.subhub.app.help.HelpActivity help=resumed(com.subhub.app.help.HelpActivity.class);
+            com.subhub.app.UiRefreshWitness.capture(help, "sub-language-existing-guard");
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.button_language)).perform(click());
+            assertEquals(language,com.subhub.app.util.LocaleHelper.getLanguage(context));
+            assertFalse(ControllerPinManager.isDomModeActive());
+            androidx.test.espresso.Espresso.pressBack();resumed(GlobalSettingsActivity.class);awaitFocusedFrame(page);
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.tour_replay)).perform(revealAboveNavigation(),click());
+            com.subhub.app.onboarding.OnboardingActivity setup=resumed(com.subhub.app.onboarding.OnboardingActivity.class);
+            assertTrue(setup.getIntent().getBooleanExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY,false));
+            com.subhub.app.UiRefreshWitness.capture(setup, "sub-setup-replay");
+            androidx.test.espresso.Espresso.pressBack();resumed(GlobalSettingsActivity.class);awaitFocusedFrame(page);
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.settings_updates)).perform(revealAboveNavigation(),click());
+            com.subhub.app.UiRefreshWitness.capture(resumed(com.subhub.app.update.UpdatesActivity.class), "sub-updates");
+            assertFalse(ControllerPinManager.isDomModeActive());
+            androidx.test.espresso.Espresso.pressBack();resumed(GlobalSettingsActivity.class);awaitFocusedFrame(page);
+            assertEquals(choices,context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+            assertEquals(enabled,hardcore.isEnabled());assertEquals(requested,hardcore.isRequested());
+            assertEquals(language,com.subhub.app.util.LocaleHelper.getLanguage(context));
+            page.recreate();page.onActivity(a->assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("settings_language")));
+        }
+    }
+
+    private static <T extends android.app.Activity> T resumed(Class<T> type) {
+        long end=android.os.SystemClock.uptimeMillis()+10000;
+        java.util.concurrent.atomic.AtomicReference<T> found=new java.util.concurrent.atomic.AtomicReference<>();
+        while(android.os.SystemClock.uptimeMillis()<end) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()-> {
+                for(android.app.Activity a:androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) if(type.isInstance(a)) found.set(type.cast(a));
+            });
+            if(found.get()!=null)return found.get();android.os.SystemClock.sleep(20);
+        }
+        throw new AssertionError("Expected resumed "+type.getSimpleName());
     }
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29) public void subCanOpenAndroidPermissionSettingsWithoutUnlockingDom() throws Exception {

@@ -53,7 +53,7 @@ public final class ContractActivity extends RolePage {
             if (person.sync.contract == PersonSnapshot.Freshness.CURRENT) {
                 boolean whispers = new com.subhub.app.settings.FeatureModuleManager(application).isSubliminalEnabled();
                 boolean popup = com.subhub.app.popup.PopupStormSettings.load(application).isEnabled();
-                atmosphere = application.getString(R.string.overview_atmosphere_states,
+                atmosphere = application.getString(R.string.contract_atmosphere_states,
                         application.getString(whispers ? R.string.role_enabled : R.string.role_disabled),
                         application.getString(popup ? R.string.role_enabled : R.string.role_disabled));
             }
@@ -71,7 +71,7 @@ public final class ContractActivity extends RolePage {
         readOnly.setGravity(Gravity.END); readOnly.setPadding(0, 0, 0, PersonUi.dp(this, 6));
         body.addView(readOnly, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout identity = OverviewUi.card(body);
-        OverviewUi.heading(identity, R.string.overview_profile, 0, null);
+        OverviewUi.heading(identity, R.string.overview_your_dom, 0, null);
         identity.setTag("person_contract_identity");
         ContractHeader.add(identity, person, expandedAbout, value -> expandedAbout = value);
         LinearLayout scope = OverviewUi.card(body);
@@ -129,7 +129,7 @@ public final class ContractActivity extends RolePage {
                 : "duration".equals(value.key) ? getString(R.string.role_service_duration) : value.title;
         int actualIcon = "censor".equals(value.key) ? R.drawable.ic_overview_filter
                 : "duration".equals(value.key) || "limits".equals(value.key) ? R.drawable.ic_overview_clock : icon;
-        LinearLayout header = OverviewUi.row(parent, actualIcon, title, summary, expand);
+        LinearLayout header = OverviewUi.row(parent, actualIcon, title, summary, expand, "atmosphere".equals(value.key));
         header.setTag("contract_section:" + value.key);
         if (value.details.isEmpty()) return;
         ImageView indicator = (ImageView) header.getChildAt(header.getChildCount() - 1);

@@ -37,7 +37,7 @@ import java.util.Set;
 
 /** A protected, paged history of facts received from currently paired Subs. */
 public final class DomActivityPane extends android.content.ContextWrapper {
-    private final com.subhub.app.people.PeopleActivity host;
+    private final androidx.appcompat.app.AppCompatActivity host;
     private final View root;
     public static final String EXTRA_ENTRY_KEY = "subhub.activity.entry";
     public static final String EXTRA_LOCAL_HISTORY = "subhub.activity.local";
@@ -52,7 +52,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private AutoCloseable observer;
     private boolean resumed, reading;
     private long readSequence, renderGeneration;
-    public DomActivityPane(com.subhub.app.people.PeopleActivity host, Bundle saved) {
+    public DomActivityPane(androidx.appcompat.app.AppCompatActivity host, Bundle saved) {
         super(host);
         this.host = host;
         root = host.getLayoutInflater().inflate(R.layout.activity_dom_activity, null, false);

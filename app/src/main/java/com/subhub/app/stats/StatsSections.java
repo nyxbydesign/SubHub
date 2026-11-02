@@ -28,13 +28,12 @@ final class StatsSections {
             Button button = (Button) row.getChildAt(index);
             int natural = Math.max(button.getMinimumWidth(), (int) Math.ceil(android.text.Layout.getDesiredWidth(
                     button.getText(), button.getPaint())) + button.getPaddingLeft() + button.getPaddingRight());
-            ((LinearLayout.LayoutParams) button.getLayoutParams()).weight = natural;
-            required += natural + 2 * gap;
+            required = Math.max(required, natural);
         }
         int available = Math.round(activity.getResources().getConfiguration().screenWidthDp
                 * activity.getResources().getDisplayMetrics().density)
                 - 2 * activity.getResources().getDimensionPixelSize(R.dimen.page_margin);
-        if (required > available) {
+        if (2 * required + 4 * gap > available) {
             Button catalog = row.findViewById(R.id.stats_section_achievements);
             row.removeView(catalog);
             LinearLayout.LayoutParams catalogSize = new LinearLayout.LayoutParams(-1, -2);

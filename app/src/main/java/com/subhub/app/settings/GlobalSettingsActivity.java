@@ -133,6 +133,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         action(help, R.string.tour_replay,
                 () -> startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)
                         .putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY, true)));
+        action(help, R.string.settings_language,
+                () -> startActivity(new Intent(this, HelpActivity.class)
+                        .putExtra(HelpActivity.EXTRA_LANGUAGE, true))).setTag("settings_language");
         detach(binding.buttonDiagnostics);
         help.addView(binding.buttonDiagnostics, new LinearLayout.LayoutParams(-1, -2));
         binding.buttonDiagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticsActivity.class)));

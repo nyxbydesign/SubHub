@@ -290,11 +290,12 @@ public final class TasksAndroidTest {
     @Test public void localSubOwnsOptOutAcrossRecreationAndDomCannotEditIt() throws Exception {
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<com.subhub.app.people.ProfileActivity> profile = ActivityScenario.launch(com.subhub.app.people.ProfileActivity.class)) {
-            awaitTag(profile, "sub_feature:tasks"); tap("sub_feature:tasks");
+            awaitTag(profile, "person_allowance:tasks"); tap("profile_edit");
+            onView(withTagValue(is("sub_feature:tasks"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            assertTrue(repository.allowed()); tap("profile_save");
             await(() -> !repository.allowed());
-            profile.recreate(); awaitTag(profile, "sub_feature:tasks");
-            profile.onActivity(activity -> assertFalse(((android.widget.CompoundButton) activity.findViewById(android.R.id.content)
-                    .findViewWithTag("sub_feature:tasks")).isChecked()));
+            awaitTag(profile, "person_allowance:tasks"); profile.recreate();
+            profile.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("sub_feature:tasks")));
         }
         try (ActivityScenario<TasksActivity> page = launch()) {
             awaitTag(page, "tasks_target");
