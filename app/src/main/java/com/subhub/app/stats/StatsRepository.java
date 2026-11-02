@@ -239,6 +239,30 @@ public final class StatsRepository {
         }
     }
 
+    /** Exact active origin for a native transition's durable end witness. */
+    public long activeSessionStartedAt(String expected) {
+        requireSessionIdentity(expected);
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                return expected.equals(preferences.getString("active_session_identity", ""))
+                        ? preferences.getLong(KEY_ACTIVE_SESSION_START, 0L) : 0L;
+            }
+        }
+    }
+
+    /** A lost marker-cache write may acknowledge existing history, but cannot invent an end time. */
+    public boolean acknowledgeEndedSession(String expected) {
+        requireSessionIdentity(expected);
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            synchronized (SESSION_LOCK) {
+                if (!expected.equals(preferences.getString(NATIVE_ENDED, ""))
+                        || !preferences.getString("active_session_identity", "").isEmpty()
+                        || preferences.getLong(KEY_ACTIVE_SESSION_START, 0L) != 0L) return false;
+                boolean saved = flushNativeState(); refreshSessionMemory(); if (saved) syncDaily(); return saved;
+            }
+        }
+    }
+
     /** History, totals, the closure receipt and active-field removal share one checked preference commit. */
     public boolean endSessionForIdentity(String expected, long observedAt, long durationSeconds) {
         requireSessionIdentity(expected);

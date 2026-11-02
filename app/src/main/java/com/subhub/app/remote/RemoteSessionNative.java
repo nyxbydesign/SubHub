@@ -141,18 +141,52 @@ public final class RemoteSessionNative implements AutoCloseable {
         }
     }
 
+    static final class StopEnd {
+        final RemoteSessionClock.Sample clock;
+        final long statisticsStartedAt, durationSeconds;
+        final boolean nativeOwned;
+        StopEnd(PreparedStop prepared, RemoteSessionClock.Sample clock, long startedAt, long duration, boolean nativeOwned) {
+            if (clock.wall <= 0 || clock.elapsed < 0 || clock.boot < 0 || startedAt < 0 || duration < 0
+                    || RemoteSessionClock.Bounds.begin(prepared.request, prepared.clock).check(prepared.request, clock)
+                            != RemoteSessionCommands.Reason.NONE)
+                throw new IllegalArgumentException("Invalid Stop transition clock");
+            if (prepared.statistics.isEmpty() ? startedAt != 0 || duration != 0 || nativeOwned
+                    : startedAt <= 0 || !nativeOwned && duration != (clock.wall >= startedAt ? (clock.wall - startedAt) / 1000 : 0))
+                throw new IllegalArgumentException("Invalid Stop accounting witness");
+            this.clock = clock; statisticsStartedAt = startedAt; durationSeconds = duration; this.nativeOwned = nativeOwned;
+        }
+        JSONObject json() throws JSONException {
+            return new JSONObject().put("wall", clock.wall).put("elapsed", clock.elapsed).put("boot", clock.boot)
+                    .put("statisticsStartedAt", statisticsStartedAt).put("durationSeconds", durationSeconds).put("nativeOwned", nativeOwned);
+        }
+        static StopEnd parse(PreparedStop prepared, JSONObject value) throws JSONException {
+            RemoteSessionCommands.keys(value, "wall", "elapsed", "boot", "statisticsStartedAt", "durationSeconds", "nativeOwned");
+            if (!(value.get("nativeOwned") instanceof Boolean)) throw new JSONException("Invalid Stop accounting basis");
+            return new StopEnd(prepared, new RemoteSessionClock.Sample(RemoteProtocol.integer(value, "wall"),
+                    RemoteProtocol.integer(value, "elapsed"), boot(value, "boot")), RemoteProtocol.integer(value, "statisticsStartedAt"),
+                    RemoteProtocol.integer(value, "durationSeconds"), value.getBoolean("nativeOwned"));
+        }
+    }
+
     static final class StopMarker {
         final PreparedStop prepared;
         final boolean ready;
-        StopMarker(PreparedStop prepared, boolean ready) { this.prepared = prepared; this.ready = ready; }
+        final StopEnd end;
+        /** Legacy marker construction remains available to readers and compatibility fixtures. */
+        StopMarker(PreparedStop prepared, boolean ready) { this(prepared, ready, null); }
+        StopMarker(PreparedStop prepared, boolean ready, StopEnd end) { this.prepared = prepared; this.ready = ready; this.end = end; }
         JSONObject json() throws JSONException {
-            return new JSONObject().put("schema", 1).put("prepared", prepared.json()).put("ready", ready);
+            JSONObject value = new JSONObject().put("schema", end == null ? 1 : 2).put("prepared", prepared.json()).put("ready", ready);
+            if (end != null) value.put("end", end.json()); return value;
         }
         static StopMarker parse(JSONObject value) throws JSONException {
-            RemoteSessionCommands.keys(value, "schema", "prepared", "ready");
-            if (RemoteProtocol.integer(value, "schema") != 1 || !(value.get("ready") instanceof Boolean))
+            long schema = RemoteProtocol.integer(value, "schema");
+            RemoteSessionCommands.keys(value, schema == 2 ? new String[]{"schema", "prepared", "ready", "end"}
+                    : new String[]{"schema", "prepared", "ready"});
+            if (schema != 1 && schema != 2 || !(value.get("ready") instanceof Boolean))
                 throw new JSONException("Invalid native stop marker");
-            return new StopMarker(PreparedStop.parse(value.getJSONObject("prepared")), value.getBoolean("ready"));
+            PreparedStop prepared = PreparedStop.parse(value.getJSONObject("prepared"));
+            return new StopMarker(prepared, value.getBoolean("ready"), schema == 2 ? StopEnd.parse(prepared, value.getJSONObject("end")) : null);
         }
     }
     StopMarker stopMarker() throws JSONException {
@@ -186,11 +220,29 @@ public final class RemoteSessionNative implements AutoCloseable {
             com.subhub.app.service.ScreenCaptureService.StopTarget capture =
                     com.subhub.app.service.ScreenCaptureService.observedStopTarget(context);
             if (!prepared.capture.equals(capture == null ? "" : capture.identity())) return false;
+            long startedAt = prepared.statistics.isEmpty() ? 0 : stats().activeSessionStartedAt(prepared.statistics);
+            if (!prepared.statistics.isEmpty() && startedAt <= 0) return false;
+            Marker start = marker();
+            boolean nativeOwned = start != null && !start.ended && !prepared.statistics.isEmpty()
+                    && prepared.statistics.equals(start.prepared.statistics.identity)
+                    && prepared.statistics.equals(main.getString(StatsRepository.NATIVE_OWNER_KEY, ""))
+                    && (start.prepared.pactIdentity.isEmpty() || start.prepared.pactIdentity.equals(current.pactIdentity));
+            if (nativeOwned && startedAt != start.prepared.statistics.startedAt) return false;
+            // This is the transition snapshot, after potentially blocking statistics reads, not preparation time.
+            long transitionElapsed = android.os.SystemClock.elapsedRealtime();
+            if (transitionElapsed < now.elapsed || transitionElapsed - now.elapsed > 5000) return false;
+            RemoteSessionClock.Sample transition = new RemoteSessionClock.Sample(System.currentTimeMillis(), transitionElapsed, now.boot);
+            if (RemoteSessionClock.Bounds.begin(prepared.request, prepared.clock).check(prepared.request, transition)
+                    != RemoteSessionCommands.Reason.NONE) return false;
+            long duration = nativeOwned ? nativeDuration(start.prepared, transition)
+                    : startedAt > 0 && transition.wall >= startedAt ? (transition.wall - startedAt) / 1000 : 0;
+            StopEnd end = new StopEnd(prepared, transition, startedAt, duration, nativeOwned);
             stopCapture = capture;
             SharedPreferences.Editor edit = main.edit().putBoolean(AppModeManager.KEY_ARMED, false)
                     .putBoolean("media_projection_session_desired", false)
-                    .putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, false).json()));
-            appendLocalEnd(context, edit); CommitmentManager.appendNativeStop(edit);
+                    .putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, false, end).json()));
+            if (nativeOwned) edit.putString(MAIN_KEY, RemoteProtocol.canonical(new Marker(start.prepared, true, false, transition, duration).json()));
+            CommitmentManager.appendNativeStop(edit);
             boolean saved = edit.commit(); RuntimeSessionIdentity.changed();
             if (!saved) return false;
             com.subhub.app.appmode.SessionExpiryAlarms.update(context, com.subhub.app.appmode.SessionExpiryAlarms.Kind.PACT,
@@ -218,11 +270,36 @@ public final class RemoteSessionNative implements AutoCloseable {
         String activeStatistics = stats().activeSessionIdentity();
         if (!activeStatistics.isEmpty() && !prepared.statistics.equals(activeStatistics)) return false;
         if (!new com.subhub.app.penance.PaidPauseManager(context).finishNativeStop(prepared.pause)) return false;
-        if (!(prepared.statistics.isEmpty() ? stats().acknowledgeInactiveSession()
-                : stats().endSessionForIdentity(prepared.statistics))) return false;
+        if (!finishStoppedStatistics(marker)) return false;
         // All required commits already succeeded; this bit is only a recomputable reconciliation cache.
-        main.edit().putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, true).json())).commit();
+        main.edit().putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, true, marker.end).json())).commit();
         return true;
+    }
+
+    private boolean finishStoppedStatistics(StopMarker marker) throws JSONException {
+        PreparedStop prepared = marker.prepared;
+        if (prepared.statistics.isEmpty()) return stats().acknowledgeInactiveSession();
+        StopEnd end = marker.end;
+        Marker start = marker();
+        // Start-first recovery can already have closed statistics; it cannot waive this durable witness comparison.
+        if (end != null && end.nativeOwned && (start == null || !start.ended || !prepared.statistics.equals(start.prepared.statistics.identity)
+                || start.prepared.statistics.startedAt != end.statisticsStartedAt || start.durationSeconds != end.durationSeconds
+                || start.end.wall != end.clock.wall || start.end.elapsed != end.clock.elapsed || start.end.boot != end.clock.boot)) return false;
+        if (stats().acknowledgeEndedSession(prepared.statistics)) return true;
+        if (end == null) {
+            // Schema1 LOCAL markers have no historical end clock; never charge their recovery delay.
+            if (start == null || !start.ended || start.end.wall <= 0 || !prepared.statistics.equals(start.prepared.statistics.identity)
+                    || stats().activeSessionStartedAt(prepared.statistics) != start.prepared.statistics.startedAt) return false;
+            return stats().endSessionForIdentity(prepared.statistics, start.end.wall, start.durationSeconds);
+        }
+        if (stats().activeSessionStartedAt(prepared.statistics) != end.statisticsStartedAt) return false;
+        return stats().endSessionForIdentity(prepared.statistics, end.clock.wall, end.durationSeconds);
+    }
+
+    private static long nativeDuration(PreparedStart prepared, RemoteSessionClock.Sample end) {
+        return end.boot >= 0 && end.boot == prepared.boot && end.elapsed >= prepared.startedElapsed
+                ? (end.elapsed - prepared.startedElapsed) / 1000
+                : end.wall >= prepared.statistics.startedAt ? (end.wall - prepared.statistics.startedAt) / 1000 : 0;
     }
 
     /** Pending or unknown native Stop state cannot supply an ordinary pause's automatic rearm. */
