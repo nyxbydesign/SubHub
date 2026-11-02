@@ -187,6 +187,13 @@ public final class OnboardingActivity extends PreferencePage {
         if (spec.action != OnboardingPage.Action.NONE)
             button(body, getString(spec.actionLabel), () -> performAction(spec.action))
                     .setTag("onboarding_action:" + spec.id);
+        if (spec.scene == OnboardingPage.Scene.CONNECT_DOM || spec.scene == OnboardingPage.Scene.CONNECT_SUB
+                || spec.scene == OnboardingPage.Scene.SWITCH_ROLES) {
+            body.addView(new com.subhub.app.relationships.RelationshipPanel(this,
+                    "tour:" + selectedRole.name() + ":" + spec.id,
+                    () -> step > 0 && step <= flow.size() && flow.get(step - 1) == spec,
+                    () -> true), new LinearLayout.LayoutParams(-1, -2));
+        }
     }
 
     private void next() {

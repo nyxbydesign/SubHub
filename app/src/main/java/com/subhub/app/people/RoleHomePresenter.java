@@ -42,6 +42,8 @@ public final class RoleHomePresenter {
     private TaskSummary taskSummary;
     private PersonSnapshot subPerson;
     private AssignedDom subDom;
+    private boolean subFormal, subRelationshipUnavailable;
+    private com.subhub.app.relationships.RelationshipPresentation.Access homeAccess;
 
     public static final class HomeSelection extends ViewModel {
         boolean allUsage;
@@ -116,23 +118,42 @@ public final class RoleHomePresenter {
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
+            com.subhub.app.relationships.RelationshipPresentation.Access access = null;
+            boolean relationshipUnavailable = false;
             if (dom) {
                 if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application))
-                    return new HomeData(values, null, null);
-                for (PersonId id : repository.people()) {
-                    if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application)) break;
-                    values.add(repository.load(id));
-                }
-            } else values.add(repository.load(PersonId.LOCAL));
-            return new HomeData(PersonDisplayOrder.sorted(values, locale), dom ? null : assignedDom(application),
-                    dom ? null : TaskSummary.read(application));
+                    throw new IllegalStateException("Home context changed");
+                try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
+                catch (Exception unavailable) { throw new RelationshipUnavailable(unavailable); }
+                values.addAll(com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale));
+            } else {
+                values.add(repository.load(PersonId.LOCAL));
+                try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
+                catch (Exception unavailable) { relationshipUnavailable = true; }
+            }
+            AssignedDom assigned = dom || access == null ? null : access.legacy
+                    ? assignedDom(application) : formalAssignedDom(application, access.snapshot);
+            return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
+                    access, relationshipUnavailable);
         }, loaded -> {
             if (dom != domWorkspace() || sessionPage
                     || dom && !ControllerPinManager.isDomModeActive()) return;
-            if (dom) renderDom(loaded.people);
+            boolean current = loaded.access != null
+                    && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
+            homeAccess = current ? loaded.access : null;
+            if (dom) {
+                if (!current) {
+                    resetDomSignatures(); domPeople.removeAllViews();
+                    PersonUi.text(domPeople, activity.getString(R.string.relationships_unavailable), false);
+                    PersonUi.action(domPeople, R.string.role_retry, () -> refresh(true), false); return;
+                }
+                renderDom(loaded.people);
+            }
             else if (!loaded.people.isEmpty()) {
                 taskSummary = loaded.tasks;
-                renderSub(loaded.people.get(0), loaded.dom);
+                subFormal = !current || !loaded.access.legacy;
+                subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
+                renderSub(loaded.people.get(0), current ? loaded.dom : null);
             }
         }, failure -> {
             if (dom != domWorkspace()
@@ -142,7 +163,8 @@ public final class RoleHomePresenter {
             else renderedRelationship = null;
             LinearLayout target = dom ? domPeople : subBody;
             target.removeAllViews();
-            PersonUi.text(target, activity.getString(R.string.role_person_unavailable), false);
+            PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
+                    ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
             PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
         });
     }
@@ -371,7 +393,9 @@ public final class RoleHomePresenter {
     }
 
     private void openPerson(PersonSnapshot person) {
-        if (domWorkspace() && ControllerPinManager.isDomModeActive()) PersonRoutes.open(activity, person.id);
+        if (domWorkspace() && ControllerPinManager.isDomModeActive() && homeAccess != null
+                && homeAccess.current(com.subhub.app.relationships.RelationshipUi::provider))
+            PersonRoutes.open(activity, person.id);
     }
 
     private String taskSubtitle() {
@@ -391,16 +415,22 @@ public final class RoleHomePresenter {
         if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
         List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId,
                 person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
-                dom == null ? null : dom.name, dom == null ? null : dom.status);
-        boolean assigned = person.contractDomId != null || dom != null;
+                dom == null ? null : dom.name, dom == null ? null : dom.profile,
+                dom == null ? null : dom.status, subFormal, subRelationshipUnavailable);
+        boolean assigned = subFormal ? dom != null : person.contractDomId != null || dom != null;
         if (!relationSignature.equals(renderedRelationship)) {
             renderedRelationship = relationSignature;
             relationship.removeAllViews();
-            if (assigned) {
+            if (subRelationshipUnavailable) {
+                LinearLayout unavailable = OverviewUi.card(relationship);
+                PersonUi.text(unavailable, activity.getString(R.string.relationships_unavailable), false);
+                PersonUi.action(unavailable, R.string.role_retry, () -> refresh(true), false);
+            } else if (assigned) {
                 LinearLayout linked = OverviewUi.card(relationship);
                 Runnable open = () -> { if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class)); };
                 OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open);
-                ProfileData profile = person.contractDom != null ? person.contractDom
+                ProfileData profile = dom != null && dom.profile != null ? dom.profile
+                        : person.contractDom != null ? person.contractDom
                         : ProfileData.empty(dom.name);
                 OverviewUi.Identity identity = OverviewUi.identity(linked, profile, true, "home_contract_dom");
                 if (!profile.about.isEmpty()) {
@@ -416,7 +446,7 @@ public final class RoleHomePresenter {
                                 ? R.string.role_stale_data : R.string.role_unknown_data), false);
             }
         }
-        relationship.setVisibility(assigned ? View.VISIBLE : View.GONE);
+        relationship.setVisibility(assigned || subRelationshipUnavailable ? View.VISIBLE : View.GONE);
         String subtitle = taskSubtitle();
         if (!android.text.TextUtils.equals(subTasksDetail.getText(), subtitle)) subTasksDetail.setText(subtitle);
         List<Object> usageSignature = new ArrayList<>();
@@ -514,12 +544,32 @@ public final class RoleHomePresenter {
         } catch (RuntimeException unavailable) { return null; }
     }
 
+    private static AssignedDom formalAssignedDom(android.content.Context context,
+            com.subhub.app.relationships.RelationshipUi.Snapshot snapshot) {
+        com.subhub.app.relationships.RelationshipUi.Edge edge = snapshot.governingDom;
+        if (edge == null) return null;
+        ProfileData profile = null;
+        for (com.subhub.app.relationships.RelationshipUi.Participant participant : snapshot.localParticipants)
+            if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.DOM
+                    && participant.ref.equals(edge.domParticipantRef)) profile = participant.profile;
+        if (profile == null) profile = ProfileData.empty(context.getString(R.string.role_your_dom));
+        return new AssignedDom(profile.name, R.string.relationships_linked, profile);
+    }
+
     private int dp(int value) { return PersonUi.dp(activity, value); }
 
     private static final class AssignedDom {
         final String name;
         final int status;
-        AssignedDom(String name, int status) { this.name = name; this.status = status; }
+        final ProfileData profile;
+        AssignedDom(String name, int status) { this(name, status, null); }
+        AssignedDom(String name, int status, ProfileData profile) {
+            this.name = name; this.status = status; this.profile = profile;
+        }
+    }
+
+    private static final class RelationshipUnavailable extends RuntimeException {
+        RelationshipUnavailable(Exception cause) { super(cause); }
     }
 
     private static final class TaskSummary {
@@ -542,8 +592,12 @@ public final class RoleHomePresenter {
         final List<PersonSnapshot> people;
         final AssignedDom dom;
         final TaskSummary tasks;
-        HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks) {
+        final com.subhub.app.relationships.RelationshipPresentation.Access access;
+        final boolean relationshipUnavailable;
+        HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks,
+                com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable) {
             this.people = people; this.dom = dom; this.tasks = tasks;
+            this.access = access; this.relationshipUnavailable = relationshipUnavailable;
         }
     }
 }

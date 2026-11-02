@@ -6,7 +6,6 @@ import android.widget.TextView;
 import com.subhub.app.R;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.SubHubNavigation;
-import java.util.ArrayList;
 import java.util.List;
 
 /** The Dom's people list, backed by actual local or paired identities. */
@@ -52,7 +51,11 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
             else android.widget.Toast.makeText(this, R.string.role_pairing_unavailable,
                     android.widget.Toast.LENGTH_SHORT).show();
         }, true).setId(R.id.people_add_sub);
-        PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
+        com.subhub.app.relationships.RelationshipPanel relationships =
+                new com.subhub.app.relationships.RelationshipPanel(this, "people",
+                        () -> resumed && mayManagePeople(), () -> true, this::refresh);
+        body.addView(relationships, new LinearLayout.LayoutParams(-1, -2));
+        TextView favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
         LinearLayout roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(roster, getString(R.string.role_loading), false);
@@ -66,21 +69,28 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
         data.load("people", () -> {
-            List<PersonSnapshot> values = new ArrayList<>();
             if (!ControllerPinManager.isDomModeActive()
-                    || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)) return values;
-            for (PersonId id : repository.people()) {
-                if (!ControllerPinManager.isDomModeActive()
-                        || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)) break;
-                values.add(repository.load(id));
-            }
-            return PersonDisplayOrder.sorted(values, locale);
-        }, people -> {
+                    || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application))
+                throw new IllegalStateException("People context changed");
+            com.subhub.app.relationships.RelationshipPresentation.Access access;
+            try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
+            catch (Exception unavailable) { return new Roster(null, java.util.Collections.emptyList()); }
+            return new Roster(access, com.subhub.app.relationships.RelationshipPanel.roster(
+                    application, repository, access, locale));
+        }, loaded -> {
             if (!mayManagePeople() || !resumed) return;
             roster.removeAllViews();
-            for (PersonSnapshot person : people) {
+            if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
+                favoriteGuidance.setVisibility(android.view.View.GONE);
+                relationships.snapshotUnavailable(); return;
+            }
+            favoriteGuidance.setVisibility(loaded.people.isEmpty() ? android.view.View.GONE : android.view.View.VISIBLE);
+            if (!loaded.access.legacy && loaded.people.isEmpty())
+                PersonUi.text(roster, getString(R.string.relationships_no_subs), false);
+            for (PersonSnapshot person : loaded.people) {
                 LinearLayout card = ProfileViews.person(roster, person, () -> {
-                    if (mayManagePeople()) PersonRoutes.open(this, person.id);
+                    if (mayManagePeople() && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider))
+                        PersonRoutes.open(this, person.id);
                 });
                 if (!FavoriteSubStore.eligible(person)) continue;
                 boolean favorite = favorites.isFavorite(person);
@@ -103,6 +113,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         }, failure -> {
             if (!resumed || !mayManagePeople()) return;
             roster.removeAllViews();
+            favoriteGuidance.setVisibility(android.view.View.GONE);
             PersonUi.text(roster, getString(R.string.role_person_unavailable), false);
             PersonUi.action(roster, R.string.role_retry, this::refresh, false);
         });
@@ -116,6 +127,10 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         data.load("favorite-change", () -> {
             if (!ControllerPinManager.isDomModeActive()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)) return false;
+            com.subhub.app.relationships.RelationshipPresentation.Access access =
+                    com.subhub.app.relationships.RelationshipPanel.readAccess(application);
+            if (!access.legacy && !com.subhub.app.relationships.RelationshipPresentation.rosterIds(
+                    access.snapshot).contains(person.id)) return false;
             PersonSnapshot current = repository.load(person.id);
             if (!ControllerPinManager.isDomModeActive()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)
@@ -171,5 +186,13 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
     private boolean mayManagePeople() {
         return ControllerPinManager.isDomModeActive()
                 && com.subhub.app.security.DeviceRolePreferences.supportsDom(this);
+    }
+
+    private static final class Roster {
+        final com.subhub.app.relationships.RelationshipPresentation.Access access;
+        final List<PersonSnapshot> people;
+        Roster(com.subhub.app.relationships.RelationshipPresentation.Access access, List<PersonSnapshot> people) {
+            this.access = access; this.people = people;
+        }
     }
 }
