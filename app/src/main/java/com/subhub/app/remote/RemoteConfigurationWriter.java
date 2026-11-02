@@ -63,52 +63,52 @@ public final class RemoteConfigurationWriter {
         }
         // Asset I/O happens outside the authority lock, keeping local recovery controls responsive.
         File prepared=prepare(command.id,refs,assets);
-        synchronized(store) {
-            if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is pending");
-            recover();
-            RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
-            if(current==null || current.state!=RemoteStore.State.ACTIVE || current.localRole!=RemoteProtocol.Role.SUB)
-                throw new SecurityException("Pairing is no longer authorized");
-            RemoteStore.Command latest=store.command(peer.identity,peer.generation,command.id);
-            if(latest==null || !latest.pending())return true;
-            long applied=Long.parseLong(store.metadata(peer.identity,peer.generation,"applied_revision","0"));
-            if(body.getLong("base")!=applied || command.revision<=applied) {
-                store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.CONFLICT,null,"Configuration changed; reload before saving");return true;
-            }
-            Set<String> previous=new LinkedHashSet<>(preferences(SettingsRepository.PREFERENCES_NAME)
-                    .getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES,Collections.emptySet()));
-            for(String name:RemoteConfiguration.selected(doc))if(!previous.contains(name) && !selectable.contains(name)) {
-                store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"An app is unavailable; reload the app list");return true;
-            }
-            synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
-            String prior = preferences(SettingsRepository.PREFERENCES_NAME).getString("remote_active_configuration",
-                    store.metadata(peer.identity, peer.generation, "initial_configuration", ""));
-            try {
-                RemoteFeaturePolicy.requireAllowed(context, doc, prior.isEmpty() ? null : new JSONObject(prior));
-            } catch (SecurityException denied) {
-                store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Feature disabled by Sub");
-                return true;
-            }
-            Map<String,Map<String,Object>> writes=writes(doc,prepared,selectable);
-            JSONObject saved=new JSONObject().put("peer",peer.identity).put("generation",peer.generation).put("command",command.id).put("before",snapshot(writes));
-            writeJournal(saved);
-            try {
-                store.markApplying(peer.identity,peer.generation,command.id);
-                for(Map.Entry<String,Map<String,Object>> entry:writes.entrySet()) {
-                    SharedPreferences.Editor editor=preferences(entry.getKey()).edit();
-                    for(Map.Entry<String,Object> value:entry.getValue().entrySet())put(editor,value.getKey(),value.getValue());
-                    if(!committer.commit(entry.getKey(),editor))throw new IOException("Could not save configuration");
-                }
-                store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.APPLIED,doc,"");
-                journal.delete();return true;
-            } catch(Exception failure) {
-                // A database commit can succeed before a later observer fails. Recovery checks its receipt.
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized(store) {
+                if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new IOException("Configuration recovery is pending");
                 recover();
-                RemoteStore.Command result=store.command(peer.identity,peer.generation,command.id);
-                if(result==null || result.state!=RemoteStore.CommandState.APPLIED)
-                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Configuration could not be saved");
-                return true;
-            }
+                RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
+                if(current==null || current.state!=RemoteStore.State.ACTIVE || current.localRole!=RemoteProtocol.Role.SUB)
+                    throw new SecurityException("Pairing is no longer authorized");
+                RemoteStore.Command latest=store.command(peer.identity,peer.generation,command.id);
+                if(latest==null || !latest.pending())return true;
+                long applied=Long.parseLong(store.metadata(peer.identity,peer.generation,"applied_revision","0"));
+                if(body.getLong("base")!=applied || command.revision<=applied) {
+                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.CONFLICT,null,"Configuration changed; reload before saving");return true;
+                }
+                Set<String> previous=new LinkedHashSet<>(preferences(SettingsRepository.PREFERENCES_NAME)
+                        .getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES,Collections.emptySet()));
+                for(String name:RemoteConfiguration.selected(doc))if(!previous.contains(name) && !selectable.contains(name)) {
+                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"An app is unavailable; reload the app list");return true;
+                }
+                String prior = preferences(SettingsRepository.PREFERENCES_NAME).getString("remote_active_configuration",
+                        store.metadata(peer.identity, peer.generation, "initial_configuration", ""));
+                try {
+                    RemoteFeaturePolicy.requireAllowed(context, doc, prior.isEmpty() ? null : new JSONObject(prior));
+                } catch (SecurityException denied) {
+                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Feature disabled by Sub");
+                    return true;
+                }
+                Map<String,Map<String,Object>> writes=writes(doc,prepared,selectable);
+                JSONObject saved=new JSONObject().put("peer",peer.identity).put("generation",peer.generation).put("command",command.id).put("before",snapshot(writes));
+                writeJournal(saved);
+                try {
+                    store.markApplying(peer.identity,peer.generation,command.id);
+                    for(Map.Entry<String,Map<String,Object>> entry:writes.entrySet()) {
+                        SharedPreferences.Editor editor=preferences(entry.getKey()).edit();
+                        for(Map.Entry<String,Object> value:entry.getValue().entrySet())put(editor,value.getKey(),value.getValue());
+                        if(!committer.commit(entry.getKey(),editor))throw new IOException("Could not save configuration");
+                    }
+                    store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.APPLIED,doc,"");
+                    journal.delete();return true;
+                } catch(Exception failure) {
+                    // A database commit can succeed before a later observer fails. Recovery checks its receipt.
+                    recover();
+                    RemoteStore.Command result=store.command(peer.identity,peer.generation,command.id);
+                    if(result==null || result.state!=RemoteStore.CommandState.APPLIED)
+                        store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Configuration could not be saved");
+                    return true;
+                }
             }
         }
     }

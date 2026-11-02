@@ -57,6 +57,51 @@ public class RemoteConfigurationAndroidTest {
         writer().apply(sub.peer(DOM,generation),sub.stageCommand(DOM,generation,new JSONObject(command.body)),assets,Set.of());
         assertTrue(main().getBoolean("module_censor_enabled",false));
     }
+
+    @Test public void waitingConfigurationWriterLeavesAuthorityAvailableForActualTaskSweep() throws Exception {
+        Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        RemoteStore shared=RemoteFeature.get(target).store;
+        assertFalse("Synthetic guest must not have an assigned Dom",shared.isRemotelyControlled());
+        shared.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic lock fixture','SUB','ACTIVE')",
+                new Object[]{DOM,generation});
+        java.util.concurrent.ExecutorService workers=java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.atomic.AtomicReference<Thread> writerThread=new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.Future<Boolean> applying=null;
+        try {
+            RemoteStore.Command command=shared.stageCommand(DOM,generation,new JSONObject(deliver(configuration()).body));
+            RemoteConfigurationWriter writer=new RemoteConfigurationWriter(context,shared);
+            synchronized(com.subhub.app.security.SubFeaturePolicy.LOCK) {
+                applying=workers.submit(()->{writerThread.set(Thread.currentThread());
+                    return writer.apply(shared.peer(DOM,generation),command,assets,Set.of());});
+                long deadline=android.os.SystemClock.elapsedRealtime()+5000;
+                boolean waiting=false;
+                while(android.os.SystemClock.elapsedRealtime()<deadline) {
+                    Thread thread=writerThread.get();
+                    if(thread!=null && thread.getState()==Thread.State.BLOCKED) {
+                        for(StackTraceElement frame:thread.getStackTrace())
+                            if(frame.getClassName().equals(RemoteConfigurationWriter.class.getName())
+                                    && frame.getMethodName().equals("apply"))waiting=true;
+                    }
+                    if(waiting)break;
+                    Thread.yield();
+                }
+                assertTrue("Writer did not reach the held consent lock",waiting);
+                // This bounded observer fails without deadlocking cleanup if apply holds store first.
+                assertNotNull(workers.submit(()->shared.peer(DOM,generation)).get(2,java.util.concurrent.TimeUnit.SECONDS));
+                com.subhub.app.tasks.TaskRepository repository=new com.subhub.app.tasks.TaskRepository(context,
+                        com.subhub.app.people.PersonId.LOCAL);
+                assertEquals(generation,repository.target().peer.generation);
+                assertTrue(repository.list(System.currentTimeMillis()).isEmpty());
+            }
+            assertTrue(applying.get(10,java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(RemoteStore.CommandState.APPLIED,shared.command(DOM,generation,command.id).state);
+        } finally {
+            workers.shutdown();assertTrue(workers.awaitTermination(15,java.util.concurrent.TimeUnit.SECONDS));
+            android.database.sqlite.SQLiteDatabase db=shared.getWritableDatabase();
+            for(String table:new String[]{"session_controls","local_objects","outbox","remote_objects","outgoing","incoming","commands","remote_metadata","peers"})
+                db.delete(table,"peer=? AND generation=?",new String[]{DOM,generation});
+        }
+    }
     @Test public void failedSecondStoreRestoresTypedValuesAndRetainedSettings() throws Exception {
         seed();Map<String,?> before=new HashMap<>(main().getAll());RemoteStore.Command command=deliver(configuration());int[] commits={0};
         RemoteConfigurationWriter failed=new RemoteConfigurationWriter(context,sub,(name,editor)->++commits[0]!=2 && editor.commit(),new File(root,"writer"));
