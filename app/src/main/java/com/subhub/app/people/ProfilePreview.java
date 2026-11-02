@@ -42,12 +42,24 @@ public final class ProfilePreview extends LinearLayout {
         this(context, profile, dom, prefix, expanded, expansion, false);
     }
 
+    public static ProfilePreview own(Context context, ProfileData profile, boolean dom) {
+        int role = com.subhub.app.security.DeviceRolePreferences.get(context)
+                == com.subhub.app.security.DeviceRolePreferences.Mode.BOTH
+                ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub;
+        return new ProfilePreview(context, profile, dom, "self_profile", false, null, false, role);
+    }
+
     public static ProfilePreview roster(Context context, ProfileData profile, String prefix) {
         return new ProfilePreview(context, profile, false, prefix, false, null, true);
     }
 
     private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
             boolean expanded, Consumer<Boolean> expansion, boolean roster) {
+        this(context, profile, dom, prefix, expanded, expansion, roster, dom ? R.string.role_dom : R.string.role_sub);
+    }
+
+    private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
+            boolean expanded, Consumer<Boolean> expansion, boolean roster, int role) {
         super(context);
         this.expansion = expansion; stateKey = prefix + ":" + dom;
         state = !roster && context instanceof androidx.lifecycle.ViewModelStoreOwner
@@ -70,7 +82,7 @@ public final class ProfilePreview extends LinearLayout {
         ViewCompat.setAccessibilityHeading(name, true);
         copy.addView(name, new LayoutParams(-1, -2));
         List<String> details = new ArrayList<>();
-        details.add(context.getString(dom ? R.string.role_dom : R.string.role_sub));
+        details.add(context.getString(role));
         if (profile.age != 0) details.add(getResources().getQuantityString(R.plurals.profile_age_value, profile.age, profile.age));
         if (!profile.gender.isEmpty()) details.add(profile.gender);
         TextView summary = PersonUi.text(copy, String.join(" · ", details), false);

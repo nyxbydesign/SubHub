@@ -57,13 +57,10 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(roster, getString(R.string.role_loading), false);
         if (com.subhub.app.activity.ActivitySources.repository().supports(null)) {
-            LinearLayout activityCard = OverviewUi.compactCard(body);
+            LinearLayout activityCard = PersonUi.column(this);
             activityCard.setTag("people_activity_card");
-            OverviewUi.row(activityCard, R.drawable.ic_shell_activity, getString(R.string.dom_activity_title), "", () -> {
-                if (mayManagePeople()) startActivity(new android.content.Intent(this,
-                        com.subhub.app.activity.DomActivityActivity.class)
-                        .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
-            }).setTag("people_activity_open");
+            body.addView(activityCard, new LinearLayout.LayoutParams(-1, -2));
+            com.subhub.app.activity.ActivityPreview.addSubs(activityCard, data, "people-activity-preview");
         }
         PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();

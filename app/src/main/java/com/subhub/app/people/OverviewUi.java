@@ -92,7 +92,7 @@ public final class OverviewUi {
     }
 
     public static LinearLayout row(LinearLayout parent, int icon, CharSequence title, CharSequence value,
-            Runnable action, boolean subtext) {
+            Runnable action, boolean inlineValue) {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context); row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(context, 48)); row.setPadding(0, dp(context, 6), 0, dp(context, 6));
@@ -103,7 +103,7 @@ public final class OverviewUi {
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(context, 24), dp(context, 24));
             size.setMarginEnd(dp(context, 12)); row.addView(image, size);
         }
-        boolean stacked = subtext || context.getResources().getConfiguration().fontScale >= 1.3f;
+        boolean stacked = !inlineValue && context.getResources().getConfiguration().fontScale >= 1.3f;
         LinearLayout copy = new LinearLayout(context);
         copy.setGravity(Gravity.CENTER_VERTICAL); copy.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
@@ -111,9 +111,11 @@ public final class OverviewUi {
         copy.addView(label, stacked ? new LinearLayout.LayoutParams(-1, -2) : new LinearLayout.LayoutParams(0, -2, 1));
         TextView detail = text(context, value, 13, false); detail.setTag("overview_row_value");
         if (stacked) detail.setPadding(0, dp(context, 4), 0, 0);
-        else { detail.setMaxWidth(dp(context, 150)); detail.setGravity(Gravity.END); }
+        else { if (!inlineValue) detail.setMaxWidth(dp(context, 150)); detail.setGravity(Gravity.END); }
         detail.setVisibility(value == null || value.length() == 0 ? View.GONE : View.VISIBLE);
-        LinearLayout.LayoutParams detailSize = new LinearLayout.LayoutParams(stacked ? -1 : -2, -2);
+        LinearLayout.LayoutParams detailSize = inlineValue
+                ? new LinearLayout.LayoutParams(0, -2, 1.7f)
+                : new LinearLayout.LayoutParams(stacked ? -1 : -2, -2);
         if (!stacked) detailSize.setMarginStart(dp(context, 10));
         copy.addView(detail, detailSize);
         if (action != null) {

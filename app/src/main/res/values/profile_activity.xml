@@ -7,4 +7,5 @@
     <string name="profile_next_session_duration">Next session duration</string>
     <item type="id" name="profile_stats_allowances" />
     <item type="id" name="profile_stats_current" />
+    <string name="people_show_all_activity">Show all activity</string>
 </resources>
