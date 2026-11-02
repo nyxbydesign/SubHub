@@ -96,12 +96,12 @@ public final class PrimaryPageHeaderAndroidTest {
         if (dom) {
             try (ActivityScenario<PeopleActivity> page = ActivityScenario.launch(PeopleActivity.class)) {
                 assertEquals(reference, inspectPage(page, name+"-subs", R.drawable.ic_nav_people, R.string.role_people, false));
-                onView(withId(R.id.people_section_activity)).perform(click());
-                assertEquals(reference, inspectPage(page, name+"-activity", R.drawable.ic_shell_activity, R.string.dom_activity_title, false));
                 page.recreate();
-                assertEquals(reference, inspectPage(page, name+"-activity-recreated", R.drawable.ic_shell_activity, R.string.dom_activity_title, false));
-                onView(withId(R.id.people_section_people)).perform(click());
-                assertEquals(reference, inspectPage(page, name+"-subs-return", R.drawable.ic_nav_people, R.string.role_people, false));
+                assertEquals(reference, inspectPage(page, name+"-subs-recreated", R.drawable.ic_nav_people, R.string.role_people, false));
+                page.onActivity(a -> {
+                    assertNull(a.findViewById(R.id.people_section_activity));
+                    assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("people_activity_card"));
+                });
             }
         } else {
             try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
@@ -202,7 +202,7 @@ public final class PrimaryPageHeaderAndroidTest {
     private View firstContent(Activity a) {
         View root=a.findViewById(android.R.id.content);
         if(a instanceof GlobalSettingsActivity)return root.findViewWithTag("settings_device");
-        if(a instanceof PeopleActivity)return a.findViewById(R.id.people_section_container);
+        if(a instanceof PeopleActivity)return a.findViewById(R.id.people_roster_scroll);
         if(a instanceof StatsActivity)return root.findViewWithTag("stats_sections");
         if(a instanceof MainActivity) {
             View header=PrimaryHeader.view(root);ViewGroup parent=(ViewGroup)header.getParent();

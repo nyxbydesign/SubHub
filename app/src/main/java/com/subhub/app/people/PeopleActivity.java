@@ -11,17 +11,16 @@ import java.util.List;
 
 /** The Dom's people list, backed by actual local or paired identities. */
 public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
-    private LinearLayout body, sections;
+    private LinearLayout body;
     private android.widget.ScrollView rosterScroll;
     private com.subhub.app.util.AsyncUiScope data;
-    private com.subhub.app.activity.DomActivityPane feed;
-    private boolean activitySelected, resumed, authenticating, rosterLoaded;
+    private boolean resumed;
     private int rosterPosition;
     private final android.os.Handler authority = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable checkAuthority = new Runnable() {
         @Override public void run() {
             if (!resumed) return;
-            if (!mayManagePeople() && !authenticating) {
+            if (!mayManagePeople()) {
                 hideProtectedContent();
                 com.subhub.app.security.ControllerEditMode.enterSubMode(PeopleActivity.this);
                 return;
@@ -37,19 +36,14 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         data = com.subhub.app.util.AsyncUiScope.forPage(this);
         body = findViewById(R.id.role_page_body);
         rosterScroll = findViewById(R.id.people_roster_scroll);
-        sections = findViewById(R.id.people_section_container);
         rosterPosition = state == null ? 0 : state.getInt("people_roster_position");
-        activitySelected = state == null ? initiallyShowActivity()
-                : state.getBoolean("people_activity_selected", initiallyShowActivity());
-        PeopleSections.add(this, sections, activitySelected);
-        feed = new com.subhub.app.activity.DomActivityPane(this, state);
-        ((android.widget.FrameLayout) findViewById(R.id.people_panes)).addView(feed.view(),
-                new android.widget.FrameLayout.LayoutParams(-1, -1));
-        renderSection();
+        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
+                R.drawable.ic_nav_people, R.string.role_people, 0);
     }
 
     protected void refresh() {
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
+        if (rosterScroll.getScrollY() > 0) rosterPosition = rosterScroll.getScrollY();
         body.removeAllViews();
         PersonUi.action(body, R.string.role_add_sub, () -> {
             if (!mayManagePeople()) return;
@@ -62,6 +56,15 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         LinearLayout roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(roster, getString(R.string.role_loading), false);
+        if (com.subhub.app.activity.ActivitySources.repository().supports(null)) {
+            LinearLayout activityCard = OverviewUi.compactCard(body);
+            activityCard.setTag("people_activity_card");
+            OverviewUi.row(activityCard, R.drawable.ic_shell_activity, getString(R.string.dom_activity_title), "", () -> {
+                if (mayManagePeople()) startActivity(new android.content.Intent(this,
+                        com.subhub.app.activity.DomActivityActivity.class)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            }).setTag("people_activity_open");
+        }
         PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
@@ -76,8 +79,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
             }
             return PersonDisplayOrder.sorted(values, locale);
         }, people -> {
-            if (!mayManagePeople() || activitySelected || !resumed) return;
-            rosterLoaded = true;
+            if (!mayManagePeople() || !resumed) return;
             roster.removeAllViews();
             for (PersonSnapshot person : people) {
                 LinearLayout card = ProfileViews.person(roster, person, () -> {
@@ -100,8 +102,9 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
                         androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
                         action, (view, args) -> { changeFavorite(person); return true; });
             }
+            rosterScroll.post(() -> rosterScroll.scrollTo(0, rosterPosition));
         }, failure -> {
-            if (!resumed || activitySelected || !mayManagePeople()) return;
+            if (!resumed || !mayManagePeople()) return;
             roster.removeAllViews();
             PersonUi.text(roster, getString(R.string.role_person_unavailable), false);
             PersonUi.action(roster, R.string.role_retry, this::refresh, false);
@@ -122,80 +125,39 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
                     || !FavoriteSubStore.eligible(current)) return false;
             return store.toggle(current);
         }, changed -> {
-            if (mayManagePeople() && resumed && !activitySelected) refresh();
+            if (mayManagePeople() && resumed) refresh();
         }, failure -> {
             if (mayManagePeople()) android.widget.Toast.makeText(this,
                     R.string.role_person_unavailable, android.widget.Toast.LENGTH_SHORT).show();
         });
     }
 
-    protected boolean initiallyShowActivity() { return false; }
-
-    public final void showActivity(boolean selected) {
-        if (selected == activitySelected || !resumed || !mayManagePeople()) return;
-        if (!activitySelected) rosterPosition = rosterScroll.getScrollY();
-        feed.pause();
-        data.cancel("people");
-        activitySelected = selected;
-        renderSection();
-        if (selected) feed.resume();
-        else if (!rosterLoaded) refresh();
-    }
-
-    private void renderSection() {
-        rosterScroll.setVisibility(activitySelected ? android.view.View.GONE : android.view.View.VISIBLE);
-        feed.view().setVisibility(activitySelected ? android.view.View.VISIBLE : android.view.View.GONE);
-        PeopleSections.select(sections, activitySelected);
-        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
-                activitySelected ? R.drawable.ic_shell_activity : R.drawable.ic_nav_people,
-                activitySelected ? feed.title() : R.string.role_people, 0);
-        if (!activitySelected) rosterScroll.post(() -> rosterScroll.scrollTo(0, rosterPosition));
-    }
-
     @Override protected void onResume() {
         super.onResume();
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
         resumed = true;
-        renderSection();
+        rosterScroll.setVisibility(android.view.View.VISIBLE);
+        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
+                R.drawable.ic_nav_people, R.string.role_people, 0);
         android.widget.TextView role = com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content));
         com.subhub.app.security.ControllerEditMode.renderButton(this, role);
         role.setOnClickListener(view -> com.subhub.app.security.ControllerEditMode.enterSubMode(this));
         SubHubNavigation.bind(this, findViewById(android.R.id.content), SubHubNavigation.Screen.PEOPLE);
         authority.removeCallbacks(checkAuthority);
         authority.postDelayed(checkAuthority, 500);
-        if (mayManagePeople()) activateSelected();
-        else if (activitySelected && !authenticating) {
-            authenticating = true;
-            hideProtectedContent();
-            com.subhub.app.security.ControllerPinGate.unlock(this, () -> {
-                authenticating = false;
-                if (resumed && mayManagePeople()) {
-                    com.subhub.app.security.ControllerEditMode.renderButton(this, role);
-                    SubHubNavigation.bind(this, findViewById(android.R.id.content), SubHubNavigation.Screen.PEOPLE);
-                    activateSelected();
-                }
-            }, true);
-        } else if (!authenticating) {
+        if (mayManagePeople()) refresh();
+        else {
             hideProtectedContent();
             com.subhub.app.security.ControllerEditMode.enterSubMode(this);
         }
     }
 
-    private void activateSelected() {
-        authenticating = false;
-        renderSection();
-        if (activitySelected) feed.resume();
-        else refresh();
-    }
-
     private void hideProtectedContent() {
-        if (feed != null) feed.pause();
         rosterScroll.setVisibility(android.view.View.INVISIBLE);
-        if (feed != null) feed.view().setVisibility(android.view.View.INVISIBLE);
     }
 
     @Override protected void onPause() {
-        if (!activitySelected) rosterPosition = rosterScroll.getScrollY();
+        rosterPosition = rosterScroll.getScrollY();
         resumed = false;
         authority.removeCallbacks(checkAuthority);
         data.cancel("people");
@@ -204,26 +166,9 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
-        if (!activitySelected && rosterScroll.isShown()) rosterPosition = rosterScroll.getScrollY();
-        state.putBoolean("people_activity_selected", activitySelected);
+        if (rosterScroll.isShown()) rosterPosition = rosterScroll.getScrollY();
         state.putInt("people_roster_position", rosterPosition);
-        feed.save(state);
         super.onSaveInstanceState(state);
-    }
-
-    @Override protected void onNewIntent(android.content.Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        if (initiallyShowActivity()
-                || intent.hasExtra(com.subhub.app.activity.DomActivityActivity.EXTRA_ENTRY_KEY)
-                || intent.getBooleanExtra(com.subhub.app.activity.DomActivityActivity.EXTRA_LOCAL_HISTORY, false)) {
-            feed.pause();
-            data.cancel("people");
-            feed.acceptIntent(intent);
-            activitySelected = true;
-            renderSection();
-            if (resumed && mayManagePeople()) feed.resume();
-        }
     }
 
     private boolean mayManagePeople() {

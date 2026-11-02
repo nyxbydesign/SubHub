@@ -242,12 +242,11 @@ public final class RoleHomePresenter {
         LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
                 R.string.home_subs_total, Integer.toString(subs));
         pairedSubs.setTag("home_devices");
-        if (paired > 0) PersonUi.text(pairedSubs,
-                activity.getString(R.string.home_devices_counts, online, offline), false).setTextSize(12);
-        if (local > 0) PersonUi.text(pairedSubs,
-                activity.getString(R.string.home_local_sub_count, local), false).setTextSize(12);
-        if (unknownDevices > 0) PersonUi.text(pairedSubs,
-                activity.getString(R.string.home_status_unknown, unknownDevices), false).setTextSize(12);
+        List<String> status = new ArrayList<>();
+        if (local > 0) status.add(activity.getString(R.string.home_local_sub_count, local));
+        if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
+        if (unknownDevices > 0) status.add(activity.getString(R.string.home_status_unknown, unknownDevices));
+        if (!status.isEmpty()) PersonUi.text(pairedSubs, String.join(" · ", status), false).setTextSize(12);
     }
 
     private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value) {

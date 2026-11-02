@@ -41,6 +41,7 @@ import java.util.Locale;
 
 /** Searchable local help with explicit permission repair and troubleshooting entry points. */
 public final class HelpActivity extends AppCompatActivity {
+    public static final String EXTRA_LANGUAGE = "help_language";
     private ActivityHelpBinding binding;
     private final List<Question> questions = new ArrayList<>();
     private int expandedTitle;
@@ -88,6 +89,11 @@ public final class HelpActivity extends AppCompatActivity {
         binding.helpBuild.setText(getString(R.string.help_rework_build,
                 BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE));
         renderEditableActions();
+        if (getIntent().getBooleanExtra(EXTRA_LANGUAGE, false)) {
+            getIntent().removeExtra(EXTRA_LANGUAGE);
+            binding.buttonLanguage.post(() -> binding.buttonLanguage.requestRectangleOnScreen(
+                    new android.graphics.Rect(0, 0, binding.buttonLanguage.getWidth(), binding.buttonLanguage.getHeight()), true));
+        }
     }
 
     @Override protected void onResume() {

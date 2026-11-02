@@ -289,10 +289,10 @@ public final class SubHubNavigationTest {
             onView(withId(R.id.nav_tasks)).perform(click());
             assertDestination(com.subhub.app.tasks.TasksOverviewActivity.class, R.id.nav_tasks, R.id.nav_people);
             onView(withId(R.id.nav_people)).perform(click());
-            onView(withId(R.id.people_section_activity)).perform(click());
-            assertDestination(com.subhub.app.people.PeopleActivity.class, R.id.nav_people, R.id.nav_tasks);
-            assertTrue(resumedActivity(com.subhub.app.people.PeopleActivity.class)
-                    .findViewById(R.id.people_section_activity).isSelected());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is((Object) "people_activity_open")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            assertDestination(com.subhub.app.activity.DomActivityActivity.class, R.id.nav_people, R.id.nav_tasks);
+            androidx.test.espresso.Espresso.pressBack();
             onView(withId(R.id.primary_header_settings)).perform(click());
             assertDestination(GlobalSettingsActivity.class, R.id.primary_header_settings, R.id.nav_people);
             onView(withId(R.id.nav_home)).perform(click());
@@ -304,32 +304,37 @@ public final class SubHubNavigationTest {
         try (ActivityScenario<com.subhub.app.people.PeopleActivity> scenario =
                      ActivityScenario.launch(com.subhub.app.people.PeopleActivity.class)) {
             scenario.onActivity(activity -> {
-                View stale = activity.findViewById(R.id.people_section_activity);
+                View stale = activity.findViewById(android.R.id.content).findViewWithTag("people_activity_open");
                 assertNotNull(stale);
                 ControllerPinManager.enterSubMode();
                 stale.performClick();
             });
-            assertEquals(com.subhub.app.people.PeopleActivity.class,
-                    resumedActivity(com.subhub.app.people.PeopleActivity.class).getClass());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                for (Activity a : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED))
+                    assertFalse(a instanceof com.subhub.app.activity.DomActivityActivity);
+            });
         } finally { ControllerPinManager.enterDomMode(); }
     }
 
     @Test public void activitySectionReturnsToSubsWithNativeBackAndItsSectionButton() {
         try (ActivityScenario<com.subhub.app.people.PeopleActivity> scenario =
                      ActivityScenario.launch(com.subhub.app.people.PeopleActivity.class)) {
-            onView(withId(R.id.people_section_activity)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is((Object) "people_activity_open")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
             assertDestination(com.subhub.app.activity.DomActivityActivity.class, R.id.nav_people, R.id.nav_tasks);
             Activity feed = resumedActivity(com.subhub.app.activity.DomActivityActivity.class);
-            assertTrue(feed.findViewById(R.id.people_section_activity).isSelected());
-            assertFalse(feed.findViewById(R.id.people_section_people).isSelected());
+            assertTrue(feed.findViewById(R.id.button_back).isShown());
+            assertNull(feed.findViewById(R.id.people_section_activity));
             androidx.test.espresso.Espresso.pressBack();
             assertDestination(com.subhub.app.people.PeopleActivity.class, R.id.nav_people, R.id.nav_tasks);
-            onView(withId(R.id.people_section_activity)).perform(click());
-            onView(withId(R.id.people_section_people)).perform(click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is((Object) "people_activity_open")))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            onView(withId(R.id.nav_people)).perform(click());
             assertDestination(com.subhub.app.people.PeopleActivity.class, R.id.nav_people, R.id.nav_tasks);
             scenario.recreate();
             scenario.onActivity(activity -> {
-                assertTrue(activity.findViewById(R.id.people_section_people).isSelected());
+                assertNull(activity.findViewById(R.id.people_section_people));
                 assertTrue(activity.findViewById(R.id.nav_people).isSelected());
             });
         }

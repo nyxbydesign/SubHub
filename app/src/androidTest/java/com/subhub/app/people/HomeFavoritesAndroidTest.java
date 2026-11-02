@@ -271,21 +271,42 @@ public final class HomeFavoritesAndroidTest {
     }
     @Test public void peopleSectionsToggleWithinOneHostAndBackReturnsDirectlyHome() {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
-            awaitTag(scenario, "home_devices");
-            onView(withId(R.id.nav_people)).perform(click());
-            PeopleActivity host = resumed(PeopleActivity.class);
-            for (int count = 0; count < 3; count++) {
-                onView(withId(R.id.people_section_activity)).perform(click());
-                assertSame(host, resumed(PeopleActivity.class));
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                    assertTrue(host.findViewById(R.id.people_section_activity).isSelected());
-                    assertTrue(host.findViewById(R.id.nav_people).isSelected());
-                });
-                onView(withId(R.id.people_section_people)).perform(click());
-                assertSame(host, resumed(PeopleActivity.class));
-            }
-            androidx.test.espresso.Espresso.pressBack();
-            awaitTag(scenario, "home_devices");
+            awaitTag(scenario, "home_devices"); onView(withId(R.id.nav_people)).perform(click());
+            PeopleActivity rosterHost = resumed(PeopleActivity.class);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertNull(rosterHost.findViewById(R.id.people_section_people));
+                assertNull(rosterHost.findViewById(R.id.people_section_activity));
+            });
+            onView(withTagValue(is("people_activity_open"))).perform(NativeUiActions.revealAboveNavigation(), click());
+            com.subhub.app.activity.DomActivityActivity feed = resumed(com.subhub.app.activity.DomActivityActivity.class);
+            assertNotSame(rosterHost, feed);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertTrue(feed.findViewById(R.id.button_back).isShown());
+                assertTrue(feed.findViewById(R.id.nav_people).isSelected());
+                assertNull(feed.findViewById(R.id.people_section_activity));
+            });
+            androidx.test.espresso.Espresso.pressBack(); assertSame(rosterHost, resumed(PeopleActivity.class));
+            onView(withTagValue(is("people_activity_open"))).perform(NativeUiActions.revealAboveNavigation(), click());
+            resumed(com.subhub.app.activity.DomActivityActivity.class);
+            onView(withId(R.id.nav_people)).perform(click()); assertSame(rosterHost, resumed(PeopleActivity.class));
+            androidx.test.espresso.Espresso.pressBack(); awaitTag(scenario, "home_devices");
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void subsRosterKeepsActivityCardAfterTheLastPerson() throws Exception {
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            PeopleActivity activity = resumed(PeopleActivity.class);
+            awaitTag(scenario, "people_activity_open");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity, "subs-activity-card", "people_activity_card");
+            scenario.onActivity(a -> {
+                ViewGroup body = a.findViewById(R.id.role_page_body);
+                assertSame(body.getChildAt(body.getChildCount() - 1), body.findViewWithTag("people_activity_card"));
+                assertNull(a.findViewById(R.id.people_section_activity));
+                View action = body.findViewWithTag("people_activity_open");
+                assertTrue(action.isShown() && action.isEnabled() && action.isClickable());
+                assertTrue(action.getHeight() >= PersonUi.dp(a, 48));
+            });
         }
     }
 

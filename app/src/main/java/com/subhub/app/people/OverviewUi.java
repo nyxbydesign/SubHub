@@ -88,6 +88,11 @@ public final class OverviewUi {
     }
 
     public static LinearLayout row(LinearLayout parent, int icon, CharSequence title, CharSequence value, Runnable action) {
+        return row(parent, icon, title, value, action, false);
+    }
+
+    public static LinearLayout row(LinearLayout parent, int icon, CharSequence title, CharSequence value,
+            Runnable action, boolean subtext) {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context); row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(context, 48)); row.setPadding(0, dp(context, 6), 0, dp(context, 6));
@@ -98,7 +103,7 @@ public final class OverviewUi {
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(context, 24), dp(context, 24));
             size.setMarginEnd(dp(context, 12)); row.addView(image, size);
         }
-        boolean stacked = context.getResources().getConfiguration().fontScale >= 1.3f;
+        boolean stacked = subtext || context.getResources().getConfiguration().fontScale >= 1.3f;
         LinearLayout copy = new LinearLayout(context);
         copy.setGravity(Gravity.CENTER_VERTICAL); copy.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
