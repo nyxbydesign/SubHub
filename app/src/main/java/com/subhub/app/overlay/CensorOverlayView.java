@@ -74,6 +74,7 @@ final class CensorOverlayView extends View {
     private final List<LabelPlacement> labelPlacements = new ArrayList<>();
     private final CensorTapTracker tapTracker = CensorTapTracker.shared();
     private final List<BBox> displayedTapRegions = new ArrayList<>();
+    private long displayedTapScope;
     private final int[] tapScreenLocation = new int[2];
     private final Rect tapVisibleRect = new Rect();
     private long visualTapScope;
@@ -844,6 +845,8 @@ final class CensorOverlayView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        // A session change during this draw cannot relabel already collected geometry.
+        displayedTapScope = tapTracker.scope();
         displayedTapRegions.clear();
         removeCallbacks(refreshDisplayedTapGeometry);
         activeRenderTimeMillis = renderTimeMillis();
@@ -881,7 +884,7 @@ final class CensorOverlayView extends View {
     private void recordDisplayedTapRegion(RectF rect, boolean textRegion) {
         long sourceScope = textRegion ? textTapScope : visualTapScope;
         boolean labOwned = textRegion ? textTapSourceLabOwned : visualTapSourceLabOwned;
-        if (labOwned || sourceScope != tapTracker.scope() || rect.isEmpty()) return;
+        if (labOwned || sourceScope != displayedTapScope || rect.isEmpty()) return;
         // All effects cover these two intersecting interior strips. Rounded transparent corners
         // are deliberately excluded: target bounds cannot prove a touch inside those corners.
         float radius = Math.min(dp(8), Math.min(rect.width(), rect.height()) / 2f);
@@ -912,7 +915,13 @@ final class CensorOverlayView extends View {
             int bottom = Math.min(viewport.getBottom(), box.getBottom() + tapScreenLocation[1]);
             if (right > left && bottom > top) screenRegions.add(new BBox(left, top, right - left, bottom - top));
         }
-        tapTracker.publishDisplayed(this, tapTracker.scope(), screenRegions, viewport,
+        if (screenRegions.isEmpty()) {
+            synchronized (tapTracker) {
+                if (displayedTapScope == tapTracker.scope()) tapTracker.withdrawDisplayed(this);
+            }
+            return;
+        }
+        tapTracker.publishDisplayed(this, displayedTapScope, screenRegions, viewport,
                 SystemClock.uptimeMillis(), false);
         // A stationary BOX still has visible pixels. Renew only through another actual draw,
         // at a bounded cadence; this does not request captures or run any detector.
