@@ -19,6 +19,7 @@ import java.util.List;
 public final class RemoteStore extends SQLiteOpenHelper {
     static final int DATABASE_VERSION = 6;
     static final int MAX_SESSION_PENDING = 16, MAX_SESSION_RECORDS = 128, MAX_SESSION_GLOBAL = 4096;
+    private static final String SESSION_NATIVE_PREFIX = "session_native_prepared:";
     private final Context context;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
@@ -174,8 +175,13 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 if (lifetime.retentionElapsed(now)) expired.add(rows.getString(0));
             }
         }
-        for (String id : expired) db.delete("session_control_journal", "peer=? AND generation=? AND direction=? AND id=?",
-                new String[]{identity, generation, direction.name(), id});
+        for (String id : expired) {
+            db.delete("session_control_journal", "peer=? AND generation=? AND direction=? AND id=?",
+                    new String[]{identity, generation, direction.name(), id});
+            if (direction == RemoteSessionRuntime.Direction.INCOMING)
+                db.delete("remote_metadata", "peer=? AND generation=? AND name=?",
+                        new String[]{identity, generation, SESSION_NATIVE_PREFIX + id});
+        }
     }
 
     synchronized RemoteSessionRuntime.Record checkSessionControlClock(String identity, String generation,
@@ -295,6 +301,61 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 throw new IllegalStateException("Session journal changed during transaction");
             db.setTransactionSuccessful(); return new RemoteSessionRuntime.Record(direction, previous.request, result, previous.lifetime);
         } finally { db.endTransaction(); }
+    }
+
+    /** Immutable preparation and APPLYING share SQLite durability; no Android runtime effect occurs here. */
+    synchronized RemoteSessionRuntime.Record prepareNativeSessionControl(String identity, String generation,
+            String id, JSONObject prepared, RemoteSessionClock.Sample now) throws JSONException {
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            RemoteSessionRuntime.Record current = checkSessionControlClock(identity, generation,
+                    RemoteSessionRuntime.Direction.INCOMING, id, now);
+            if (current.result.state.terminal()) { db.setTransactionSuccessful(); return current; }
+            String body = nativePreparation(current.request, prepared);
+            String previous = metadata(identity, generation, SESSION_NATIVE_PREFIX + id, "");
+            if (!previous.isEmpty() && !body.equals(previous)) throw new SecurityException("Native preparation changed");
+            if (current.result.state == RemoteSessionCommands.State.APPLYING) {
+                if (previous.isEmpty()) throw new SecurityException("Applying command has no native preparation");
+                db.setTransactionSuccessful(); return current;
+            }
+            if (current.result.state != RemoteSessionCommands.State.ACKNOWLEDGED)
+                throw new SecurityException("Native preparation requires an incoming receipt");
+            putMetadata(identity, generation, SESSION_NATIVE_PREFIX + id, body);
+            RemoteSessionCommands.Result applying = new RemoteSessionCommands.Result(current.request,
+                    RemoteSessionCommands.State.APPLYING, RemoteSessionCommands.Reason.NONE, now.wall, null);
+            RemoteSessionRuntime.Record result = advanceSessionControl(identity, generation,
+                    RemoteSessionRuntime.Direction.INCOMING, id, applying.json());
+            db.setTransactionSuccessful(); return result;
+        } finally { db.endTransaction(); }
+    }
+
+    synchronized JSONObject nativeSessionPreparation(String identity, String generation, String id) throws JSONException {
+        RemoteSessionRuntime.Record current = sessionControl(identity, generation, RemoteSessionRuntime.Direction.INCOMING, id);
+        if (current == null) throw new SecurityException("Unknown native command");
+        requireSessionControlPeer(getReadableDatabase(), identity, generation, RemoteSessionRuntime.Direction.INCOMING, current.request);
+        String body = metadata(identity, generation, SESSION_NATIVE_PREFIX + id, "");
+        if (body.isEmpty()) {
+            if (current.result.state == RemoteSessionCommands.State.APPLYING)
+                throw new SecurityException("Applying command has no native preparation");
+            return null;
+        }
+        if (current.result.state == RemoteSessionCommands.State.ACKNOWLEDGED
+                || body.length() > 8192 || body.getBytes(StandardCharsets.UTF_8).length > 8192)
+            throw new SecurityException("Invalid stored native preparation");
+        JSONObject prepared = new JSONObject(body);
+        if (!body.equals(nativePreparation(current.request, prepared)))
+            throw new SecurityException("Stored native preparation changed");
+        return prepared;
+    }
+
+    private static String nativePreparation(RemoteSessionCommands.Request request, JSONObject prepared) throws JSONException {
+        String body = RemoteProtocol.canonical(prepared);
+        if (body.getBytes(StandardCharsets.UTF_8).length > 8192) throw new IllegalArgumentException("Native preparation too large");
+        String digest = request.action == RemoteSessionCommands.Action.START
+                ? RemoteSessionNative.PreparedStart.parse(prepared).requestDigest
+                : RemoteSessionNative.PreparedStop.parse(prepared).requestDigest;
+        if (!request.digest().equals(digest)) throw new SecurityException("Native preparation request mismatch");
+        return body;
     }
 
     synchronized List<RemoteSessionRuntime.Record> pendingSessionControls(String identity, String generation,
