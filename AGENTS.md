@@ -124,6 +124,9 @@ the connection state. For pixel assertions, exclude fixture window transitions a
 a new hardware-frame commit where supported; UI idle and a fixed sleep alone do not
 prove composition. Keep independent screenshot and hit-map assertions, and retain failed
 pixels before assertions discard their evidence. A frame commit is not a physical pixel clock.
+For empty-draw tests, keep the overlay visible with retained offscreen geometry. Removing its last
+track can intentionally hide the View and prevent its marker or draw callback from appearing;
+exercise hidden and detached lifecycle behavior separately.
 
 Instrumentation providers run under the test APK's UID. Create and clean their synthetic
 documents through that provider; target-process code cannot enumerate the test APK's cache.
