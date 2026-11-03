@@ -17,10 +17,11 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
-    static final int DATABASE_VERSION = 6;
+    static final int DATABASE_VERSION = 7;
     static final int MAX_SESSION_PENDING = 16, MAX_SESSION_RECORDS = 128, MAX_SESSION_GLOBAL = 4096;
     private static final String SESSION_NATIVE_PREFIX = "session_native_prepared:";
     private final Context context;
+    private volatile SQLiteDatabase openedDatabase;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
         public final String identity, generation, name;
@@ -51,6 +52,27 @@ public final class RemoteStore extends SQLiteOpenHelper {
         super(context.getApplicationContext(), databaseName, null, DATABASE_VERSION);
         this.context=context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
+    }
+
+    /** Resolve identity before opening or mutating a database, including absolute-name aliases. */
+    java.io.File resolvedDatabaseFile() throws java.io.IOException {
+        if (getDatabaseName() == null) throw new java.io.IOException("Named database required");
+        return context.getDatabasePath(getDatabaseName()).getCanonicalFile();
+    }
+    // Publish under SQLiteOpenHelper's lifecycle monitor so an older getter cannot replace a reopened handle.
+    @Override public synchronized SQLiteDatabase getWritableDatabase() {
+        SQLiteDatabase db = super.getWritableDatabase(); openedDatabase = db; return db;
+    }
+    @Override public synchronized SQLiteDatabase getReadableDatabase() {
+        SQLiteDatabase db = super.getReadableDatabase(); openedDatabase = db; return db;
+    }
+    @Override public synchronized void close() {
+        super.close(); openedDatabase = null;
+    }
+    /** Inspect only an existing connection; this must never open a database to reject an entry. */
+    boolean hasCurrentFormalTransaction() {
+        SQLiteDatabase db = openedDatabase;
+        return db != null && db.isOpen() && db.inTransaction();
     }
 
     /** Local retained facts have no pairing prerequisite and are never marked read or re-published. */
@@ -93,6 +115,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         StoredPayloads.createProgress(db);
         createSessionControls(db);
         createSessionClockJournal(db);
+        FormalRelationshipStore.create(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 1 || oldVersion >= newVersion || newVersion > DATABASE_VERSION)
@@ -106,6 +129,18 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (oldVersion < 4 && newVersion >= 4) StoredPayloads.createProgress(db);
         if (oldVersion < 5 && newVersion >= 5) createSessionControls(db);
         if (oldVersion < 6 && newVersion >= 6) createSessionClockJournal(db);
+        if (oldVersion < 7 && newVersion >= 7) FormalRelationshipStore.create(db);
+    }
+
+    /** Bounded adaptation is independent of application readiness; this foundation stays INERT. */
+    synchronized int migrateFormalRelationships() {
+        SQLiteDatabase db = getWritableDatabase();
+        if (db.inTransaction()) throw new IllegalStateException("Independent migration transaction required");
+        db.beginTransaction();
+        try {
+            int migrated = FormalRelationshipStore.migrate(db);
+            db.setTransactionSuccessful(); return migrated;
+        } finally { db.endTransaction(); }
     }
 
     private static void createSessionControls(SQLiteDatabase db) {
@@ -721,28 +756,42 @@ public final class RemoteStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    synchronized void activate(String identity, String generation) {
-        ContentValues values = new ContentValues(); values.put("state", State.ACTIVE.name());
-        SQLiteDatabase db = getWritableDatabase();
-        Peer peer = peer(db, identity, generation);
-        if (peer == null || peer.state == State.REVOKED) throw new SecurityException("Pairing unavailable");
-        if(peer.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
-        db.update("peers", values, "peer=? AND generation=? AND state='PENDING'", new String[]{identity,generation});
-        activated.accept(peer(db,identity,generation));
+    void activate(String identity, String generation) {
+        requireCallbackBoundary();
+        Peer committed; java.util.function.Consumer<Peer> listener;
+        synchronized (this) {
+            SQLiteDatabase db = getWritableDatabase(); requireNoOuterTransaction(db);
+            db.beginTransaction();
+            try {
+                Peer peer = peer(db, identity, generation);
+                if (peer == null || peer.state == State.REVOKED) throw new SecurityException("Pairing unavailable");
+                if(peer.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
+                db.execSQL("UPDATE peers SET state='ACTIVE' WHERE peer=? AND generation=? AND state='PENDING'", new Object[]{identity,generation});
+                FormalRelationshipStore.mapPeer(db, identity, generation, false);
+                committed = peer(db, identity, generation);
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+            listener = activated;
+        }
+        listener.accept(committed);
     }
 
-    public synchronized void cancelInvite(String id) {
-        id=RemoteProtocol.identifier(id);SQLiteDatabase db=getWritableDatabase();List<Peer> cancelled=new ArrayList<>();
-        db.beginTransaction();
-        try {
-            db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{id});
-            try(Cursor cursor=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state!='REVOKED'",new String[]{id})){
-                while(cursor.moveToNext())cancelled.add(readPeer(cursor));
-            }
-            for(Peer peer:cancelled)revokeRows(db,peer.identity,peer.generation);
-            db.setTransactionSuccessful();
-        }finally{db.endTransaction();}
-        for(Peer peer:cancelled)revoked.accept(peer.identity,peer.generation);
+    public void cancelInvite(String id) {
+        requireCallbackBoundary(); id=RemoteProtocol.identifier(id);
+        List<Peer> cancelled=new ArrayList<>(); java.util.function.BiConsumer<String,String> listener;
+        synchronized (this) {
+            SQLiteDatabase db=getWritableDatabase(); requireNoOuterTransaction(db); db.beginTransaction();
+            try {
+                db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{id});
+                try(Cursor cursor=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state!='REVOKED'",new String[]{id})){
+                    while(cursor.moveToNext())cancelled.add(readPeer(cursor));
+                }
+                for(Peer peer:cancelled)revokeRows(db,peer.identity,peer.generation);
+                db.setTransactionSuccessful();
+            }finally{db.endTransaction();}
+            listener = revoked;
+        }
+        for(Peer peer:cancelled)listener.accept(peer.identity,peer.generation);
     }
 
     synchronized void setRoute(String identity,String generation,String route) {
@@ -760,14 +809,25 @@ public final class RemoteStore extends SQLiteOpenHelper {
         getWritableDatabase().execSQL("INSERT OR REPLACE INTO remote_metadata(peer,generation,name,value) VALUES(?,?,?,?)",new Object[]{identity,generation,name,value});
     }
 
-    synchronized void revoke(String identity, String generation) {
-        RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
-        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
-        try{revokeRows(db,identity,generation);db.setTransactionSuccessful();}finally{db.endTransaction();}
-        revoked.accept(identity,generation);
+    void revoke(String identity, String generation) {
+        requireCallbackBoundary(); RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
+        java.util.function.BiConsumer<String,String> listener;
+        synchronized (this) {
+            SQLiteDatabase db=getWritableDatabase(); requireNoOuterTransaction(db); db.beginTransaction();
+            try{revokeRows(db,identity,generation);db.setTransactionSuccessful();}finally{db.endTransaction();}
+            listener = revoked;
+        }
+        listener.accept(identity,generation);
+    }
+    private void requireCallbackBoundary() {
+        if (Thread.holdsLock(this)) throw new IllegalStateException("Callback mutation requires an unlocked caller");
+    }
+    private static void requireNoOuterTransaction(SQLiteDatabase db) {
+        if (db.inTransaction()) throw new IllegalStateException("Callback mutation requires its own transaction");
     }
     private static void revokeRows(SQLiteDatabase db,String identity,String generation){
         db.execSQL("UPDATE peers SET state='REVOKED' WHERE peer=? AND generation=?",new Object[]{identity,generation});
+        if (peer(db, identity, generation) != null) FormalRelationshipStore.mapPeer(db, identity, generation, false);
         db.delete("outbox","peer=? AND generation=?",new String[]{identity,generation});
         db.execSQL("UPDATE outgoing SET offered=0,digest=NULL WHERE peer=? AND generation=?",new Object[]{identity,generation});
         db.execSQL("UPDATE commands SET status='REJECTED' WHERE peer=? AND generation=? AND status IN ('QUEUED','SENT','APPLYING')",new Object[]{identity,generation});
@@ -908,9 +968,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     /** Peer rows are inserted once and archived in place, so this also orders historical additions. */
     public synchronized long additionOrder(String identity,String generation) {
         RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
-        try(Cursor row=getReadableDatabase().rawQuery("SELECT rowid FROM peers WHERE peer=? AND generation=?",new String[]{identity,generation})){
-            return row.moveToFirst()?row.getLong(0):0;
-        }
+        return FormalRelationshipStore.additionOrder(getReadableDatabase(), identity, generation);
     }
     synchronized JSONObject outgoingHeads(String identity,String generation,boolean activity) throws JSONException {
         Peer peer=active(getReadableDatabase(),identity,generation);JSONObject result=new JSONObject();
@@ -1092,6 +1150,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         RemoteProtocol.peerId(identity); RemoteProtocol.identifier(generation);
         name=RemoteProtocol.deviceName(name);
         db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,?,'PENDING')",new Object[]{identity,generation,name.trim(),role.name()});
+        FormalRelationshipStore.mapPeer(db, identity, generation, true);
     }
     private static Peer active(SQLiteDatabase db,String identity,String generation) {
         Peer peer = peer(db,identity,generation);

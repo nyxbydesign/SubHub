@@ -27,10 +27,10 @@ import org.junit.Test;
 /** Private PIN/preferences and real SQLite; global provider/mode/context are restored exactly. No OS grants. */
 public final class RemoteSessionControlCoordinatorAndroidTest {
     private static final String DOM = String.join("", Collections.nCopies(64, "a"));
-    private static final String SUB = String.join("", Collections.nCopies(64, "b")), GEN = "coordinator_generation";
+    private static final String SUB = String.join("", Collections.nCopies(64, "b"));
     private static final String SESSION = String.join("", Collections.nCopies(64, "c")), IDLE = String.join("", Collections.nCopies(64, "d"));
     private Context target, context;
-    private String prefix, database;
+    private String prefix, database, generation;
     private RemoteStore store, independent;
     private RemoteKeyholder keyholder;
     private String wrappingAlias;
@@ -53,13 +53,17 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
             @Override public SharedPreferences getSharedPreferences(String name, int mode) { return target.getSharedPreferences(prefix + name, mode); }
         };
         store = new RemoteStore(context, database); independent = new RemoteStore(context, database);
-        store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic Sub','DOM','ACTIVE')", new Object[]{SUB, GEN});
-        store.putMetadata(SUB, GEN, "session_control_version", "1"); independent.getReadableDatabase();
         wrappingAlias = "subhub.test.coordinator." + UUID.randomUUID();
         keyholder = new RemoteKeyholder(context, store, new RemoteSecrets(context, "secrets", wrappingAlias));
         ownedProvider = provider(); People.installKeyholder(ownedProvider);
         main().edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
         assertTrue(ControllerPinManager.setPin(context, "7351"));
+        long now = System.currentTimeMillis();
+        PairingInvite invite = PairingInvite.create(DOM, "fixture", now);
+        generation = invite.id;
+        store.saveInvite(invite); store.bindInvite(generation, SUB, invite.tokenHash(), now);
+        store.approveInvite(generation, SUB, "Synthetic Sub", now); store.activate(SUB, generation);
+        store.putMetadata(SUB, generation, "session_control_version", "1"); independent.getReadableDatabase();
         coordinator = new RemoteSessionControlCoordinator(context, store, DOM); state(true, 7, needsAction(), Reason.READINESS_REQUIRED);
     }
     private static RemoteSessionRuntime.Readiness needsAction() { return RemoteSessionRuntime.Readiness.NEEDS_SUB_ACTION; }
@@ -97,22 +101,22 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         }
     }
     private SharedPreferences main() { return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0); }
-    private RemoteStore.Peer peer() { return store.peer(SUB, GEN); }
+    private RemoteStore.Peer peer() { return store.peer(SUB, generation); }
     private RemoteSessionControlState state(boolean active, long revision, RemoteSessionRuntime.Readiness readiness, Reason reason) throws Exception {
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
-        RemoteSessionControlState state = new RemoteSessionControlState(SUB, DOM, GEN, now.wall, revision,
+        RemoteSessionControlState state = new RemoteSessionControlState(SUB, DOM, generation, now.wall, revision,
                 active ? null : new Duration(-1, 3600000, 86400000, false), active, active ? "" : IDLE, active ? SESSION : "",
                 readiness, reason, !active && readiness == RemoteSessionRuntime.Readiness.APP_MODE_READY && reason == Reason.NONE, active);
-        store.putMetadata(SUB, GEN, RemoteSessionControlState.METADATA, RemoteProtocol.canonical(new RemoteSessionControlState.Received(state, now).json()));
+        store.putMetadata(SUB, generation, RemoteSessionControlState.METADATA, RemoteProtocol.canonical(new RemoteSessionControlState.Received(state, now).json()));
         return state;
     }
     private RemoteSessionRuntime.Review review() throws Exception { return coordinator.review(peer(), Action.STOP); }
     private int count() {
         try (Cursor rows = store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM session_control_journal", null)) { assertTrue(rows.moveToFirst()); return rows.getInt(0); }
     }
-    private String floor() { return store.metadata(SUB, GEN, "session_control_OUTGOING_floor", "0"); }
+    private String floor() { return store.metadata(SUB, generation, "session_control_OUTGOING_floor", "0"); }
     private RemoteSessionRuntime.Record recorded(RemoteSessionRuntime.Review review) throws Exception {
-        return store.sessionControl(SUB, GEN, RemoteSessionRuntime.Direction.OUTGOING, review.request.id);
+        return store.sessionControl(SUB, generation, RemoteSessionRuntime.Direction.OUTGOING, review.request.id);
     }
     @Test public void mintedReviewQueuesOnceAndAlreadyJournaledReplayRequiresCurrentAuthentication() throws Exception {
         RemoteSessionRuntime.Review review = review(); assertEquals(0, count()); String digest = review.requestDigest;
@@ -143,21 +147,22 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         assertTrue(ControllerPinManager.isDomModeActive());
         assertThrows(SecurityException.class, () -> coordinator.review(peer(), Action.STOP));
         assertThrows(SecurityException.class, () -> coordinator.snapshot(peer()));
-        assertEquals(0, count()); assertEquals("0", store.metadata(SUB, GEN, "session_control_allocated", "0"));
+        assertEquals(0, count()); assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0"));
     }
     @Test public void realPrivateRemoteCredentialAdmitsReviewButGoverningScopeChangeRefusesItsConfirmation() throws Exception {
         main().edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit();
-        String parent = String.join("", Collections.nCopies(64, "e")), generation = "synthetic_parent_generation";
-        store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic Dom','SUB','ACTIVE')", new Object[]{parent, generation});
+        String parent = String.join("", Collections.nCopies(64, "e"));
+        PairingInvite governing = PairingInvite.create(parent, "fixture", System.currentTimeMillis());
+        store.acceptInvite(governing, "Synthetic Dom"); store.activate(parent, governing.id);
         java.security.KeyStore keys = java.security.KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
         assertFalse(keys.containsAlias(wrappingAlias)); wrappingCreated = true;
-        String secret = keyholder.provisionSub(store.peer(parent, generation), DOM);
+        String secret = keyholder.provisionSub(store.peer(parent, governing.id), DOM);
         assertFalse(ControllerPinManager.isSessionUnlocked());
         String code = com.subhub.app.security.Totp.code(secret, System.currentTimeMillis() / com.subhub.app.security.Totp.STEP_MILLIS);
         assertEquals(ControllerAuthenticator.Result.SUCCESS, keyholder.verifyCode(code)); assertTrue(ControllerPinManager.isSessionUnlocked());
         assertEquals(KeyholderProvider.State.READY, ownedProvider.state());
         RemoteSessionRuntime.Review review = review(); assertEquals(0, count());
-        independent.revoke(parent, generation);
+        independent.revoke(parent, governing.id);
         assertThrows(SecurityException.class, () -> coordinator.confirm(review)); assertEquals(0, count()); assertEquals("0", floor());
     }
     @Test public void changedProviderOrRoleCannotConfirmAnEarlierUnjournaledReview() throws Exception {
@@ -170,24 +175,30 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         assertThrows(SecurityException.class, () -> coordinator.confirm(both)); assertEquals(0, count());
     }
     @Test public void targetRevocationAndCapabilityDowngradeRefuseNewIntentAcrossIndependentHandle() throws Exception {
-        RemoteSessionRuntime.Review old = review(); independent.putMetadata(SUB, GEN, "session_control_version", "0");
+        RemoteSessionRuntime.Review old = review(); independent.putMetadata(SUB, generation, "session_control_version", "0");
         assertThrows(UnsupportedOperationException.class, () -> coordinator.confirm(old)); assertEquals(0, count());
-        independent.putMetadata(SUB, GEN, "session_control_version", "1");
-        RemoteSessionRuntime.Review current = review(); independent.revoke(SUB, GEN);
+        independent.putMetadata(SUB, generation, "session_control_version", "1");
+        RemoteSessionRuntime.Review current = review(); independent.revoke(SUB, generation);
         assertThrows(SecurityException.class, () -> coordinator.confirm(current)); assertEquals(0, count()); assertEquals("0", floor());
     }
     @Test public void authorityMutationDuringObservationCannotAllocateOrQueueAReview() throws Exception {
         afterObservation = () -> assertTrue(ControllerPinManager.setPin(context, "8642"));
         assertThrows(SecurityException.class, () -> coordinator.review(peer(), Action.STOP));
-        assertEquals("0", store.metadata(SUB, GEN, "session_control_allocated", "0")); assertEquals(0, count());
+        assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0")); assertEquals(0, count());
         afterObservation = () -> People.installKeyholder(provider());
         assertThrows(SecurityException.class, () -> coordinator.review(peer(), Action.STOP)); assertEquals(0, count());
     }
     @Test public void newGoverningDomDuringObservationCannotUseTheOldLocalAuthorityScope() throws Exception {
-        afterObservation = () -> independent.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic Dom','SUB','ACTIVE')",
-                new Object[]{String.join("", Collections.nCopies(64, "e")), "new_governing_generation"});
+        assertTrue(main().edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit());
+        PairingInvite governing = PairingInvite.create(String.join("", Collections.nCopies(64, "e")), "fixture", System.currentTimeMillis());
+        afterObservation = () -> {
+            independent.acceptInvite(governing, "Synthetic Dom"); independent.activate(governing.domIdentity, governing.id);
+        };
         assertThrows(SecurityException.class, () -> coordinator.review(peer(), Action.STOP)); assertEquals(0, count());
-        assertEquals("0", store.metadata(SUB, GEN, "session_control_allocated", "0"));
+        RemoteStore.Peer installed = independent.peer(governing.domIdentity, governing.id);
+        assertNotNull(installed); assertEquals(RemoteProtocol.Role.SUB, installed.localRole); assertEquals(RemoteStore.State.ACTIVE, installed.state);
+        assertEquals(DeviceRolePreferences.Mode.BOTH, DeviceRolePreferences.get(context)); assertTrue(ControllerPinManager.isSessionUnlocked());
+        assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0"));
     }
     @Test public void failedQueueCommitRetainsSameReviewIdentityAndOriginalDeadlineForRetry() throws Exception {
         RemoteSessionRuntime.Review review = review(); String digest = review.requestDigest;
@@ -233,9 +244,9 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         assertEquals(stop.request.id, coordinator.confirm(stop)); assertEquals(1, count());
         RemoteSessionRuntime.Review changed = review();
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
-        RemoteSessionControlState replacement = new RemoteSessionControlState(SUB, DOM, GEN, now.wall, 99, null, true, "",
+        RemoteSessionControlState replacement = new RemoteSessionControlState(SUB, DOM, generation, now.wall, 99, null, true, "",
                 String.join("", Collections.nCopies(64, "f")), RemoteSessionRuntime.Readiness.UNAVAILABLE, Reason.HARDCORE_REQUIRED, false, true);
-        store.putMetadata(SUB, GEN, RemoteSessionControlState.METADATA, RemoteProtocol.canonical(new RemoteSessionControlState.Received(replacement, now).json()));
+        store.putMetadata(SUB, generation, RemoteSessionControlState.METADATA, RemoteProtocol.canonical(new RemoteSessionControlState.Received(replacement, now).json()));
         assertThrows(SecurityException.class, () -> coordinator.confirm(changed)); assertEquals(1, count());
     }
     @Test public void startReviewBindsFullSourceWhileUnchangedFactsCanRefreshTheirObservation() throws Exception {
@@ -249,7 +260,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
     }
     @Test public void latestStatusNeverRegressesToOlderResultAfterNewerRowRetires() throws Exception {
         RemoteSessionRuntime.Review first = review(), second = review(); coordinator.confirm(first); coordinator.confirm(second);
-        store.advanceSessionControl(SUB, GEN, RemoteSessionRuntime.Direction.OUTGOING, first.request.id,
+        store.advanceSessionControl(SUB, generation, RemoteSessionRuntime.Direction.OUTGOING, first.request.id,
                 new Result(first.request, State.REJECTED, Reason.SESSION_CHANGED, System.currentTimeMillis() + 5000, null).json());
         assertEquals(second.request.id, coordinator.snapshot(peer()).latestRecord.request.id);
         store.getWritableDatabase().delete("session_control_journal", "id=?", new String[]{second.request.id});
@@ -259,7 +270,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         RemoteSessionRuntime.Review first = null;
         for (int index = 0; index < 32; index++) { RemoteSessionRuntime.Review review = review(); if (first == null) first = review; }
         assertThrows(IllegalStateException.class, () -> coordinator.review(peer(), Action.STOP));
-        assertEquals("32", store.metadata(SUB, GEN, "session_control_allocated", "0")); assertEquals(0, count());
+        assertEquals("32", store.metadata(SUB, generation, "session_control_allocated", "0")); assertEquals(0, count());
         coordinator.confirm(first); RemoteSessionRuntime.Review next = review(); assertEquals(33, next.request.sequence); assertEquals(1, count());
     }
     private static void futureFailure(Class<? extends Throwable> type, java.util.concurrent.CompletableFuture<?> future) throws Exception {
@@ -268,12 +279,12 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
     }
     @Test public void disabledFacadeAndHooksCannotCreateCoordinatorTransportOrOutboxEffects() throws Exception {
         assertFalse(RemoteSessionRuntime.applicationEnabled()); feature = new RemoteFeature(context, store);
-        String source = store.metadata(SUB, GEN, RemoteSessionControlState.METADATA, "");
+        String source = store.metadata(SUB, generation, RemoteSessionControlState.METADATA, "");
         RemoteSessionRuntime.Snapshot snapshot = feature.sessionSnapshot(peer()).get(5, java.util.concurrent.TimeUnit.SECONDS);
         assertFalse(snapshot.supported); assertFalse(snapshot.canStart); assertFalse(snapshot.canStop);
         futureFailure(UnsupportedOperationException.class, feature.reviewSession(peer(), Action.STOP));
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
-        Request request = Request.stop(UUID.randomUUID().toString(), DOM, SUB, GEN, 1, 7, now.wall, now.wall + LIFETIME_MILLIS, SESSION);
+        Request request = Request.stop(UUID.randomUUID().toString(), DOM, SUB, generation, 1, 7, now.wall, now.wall + LIFETIME_MILLIS, SESSION);
         futureFailure(UnsupportedOperationException.class, feature.confirmSession(new RemoteSessionRuntime.Review(request, "disabled", now.wall)));
         PeerTransport noTransport = new PeerTransport() {
             public String localIdentity() { fail("Disabled hook resolved transport identity"); return DOM; }
@@ -289,8 +300,8 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         assertNull(field(feature, "sessionControlCoordinator")); assertNull(field(feature, "endpoint"));
         assertEquals(0, ((java.util.concurrent.atomic.AtomicInteger) field(feature, "leases")).get());
         assertTrue(((Map<?, ?>) field(feature, "connections")).isEmpty()); assertTrue(((Map<?, ?>) field(feature, "nextAttempt")).isEmpty());
-        assertEquals(0, count()); assertEquals("0", floor()); assertEquals("0", store.metadata(SUB, GEN, "session_control_allocated", "0"));
-        assertEquals(source, store.metadata(SUB, GEN, RemoteSessionControlState.METADATA, ""));
+        assertEquals(0, count()); assertEquals("0", floor()); assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0"));
+        assertEquals(source, store.metadata(SUB, generation, RemoteSessionControlState.METADATA, ""));
         ControllerPinManager.lockNow(); futureFailure(SecurityException.class, feature.sessionSnapshot(peer()));
     }
 }

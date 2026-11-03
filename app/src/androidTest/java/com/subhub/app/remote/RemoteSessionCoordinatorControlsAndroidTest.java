@@ -58,9 +58,8 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
             new KeyholderPresentationAndroidTest.IntegrationFixture();
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private static final String DOM = repeat('a'), SUB = repeat('b'), SESSION = repeat('c');
-    private static final String GENERATION = "controls_coordinator_generation";
     private Context target, authority;
-    private String prefix, database;
+    private String prefix, database, generation;
     private final Set<String> privatePreferences = ConcurrentHashMap.newKeySet();
     private RemoteFeature feature, previous;
     private RemoteStore store;
@@ -99,11 +98,6 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
         assertTrue(LegacyPackMigration.recoverAndMigrate(authority));
         store = new RemoteStore(authority, database);
         feature = new RemoteFeature(authority, store); assertTrue(feature.recoveryReady());
-        store.getWritableDatabase().execSQL(
-                "INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic Sub','DOM','ACTIVE')",
-                new Object[]{SUB, GENERATION});
-        peer = store.peer(SUB, GENERATION);
-        store.putMetadata(SUB, GENERATION, "session_control_version", "1");
         People.installKeyholder(feature.keyholder);
         assertTrue(authority.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
                 .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit());
@@ -112,6 +106,15 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
         // IntegrationFixture restores this exact typed global preference snapshot and People hooks.
         assertTrue(target.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
                 .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit());
+        long now = System.currentTimeMillis();
+        PairingInvite invite = PairingInvite.create(DOM, "fixture", now);
+        generation = invite.id;
+        store.saveInvite(invite);
+        store.bindInvite(generation, SUB, invite.tokenHash(), now);
+        store.approveInvite(generation, SUB, "Synthetic Sub", now);
+        store.activate(SUB, generation);
+        peer = store.peer(SUB, generation);
+        store.putMetadata(SUB, generation, "session_control_version", "1");
         coordinator = new RemoteSessionControlCoordinator(authority, store, DOM);
         gateway = new Gateway();
         syntheticAdvice(SESSION, 7, 3_600_000, RemoteSessionRuntime.Readiness.NEEDS_SUB_ACTION,
@@ -289,23 +292,23 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
     private void syntheticAdvice(String session, long revision, long duration,
             RemoteSessionRuntime.Readiness readiness, RemoteSessionCommands.Reason reason) throws Exception {
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(authority);
-        RemoteSessionControlState state = new RemoteSessionControlState(SUB, DOM, GENERATION, now.wall,
+        RemoteSessionControlState state = new RemoteSessionControlState(SUB, DOM, generation, now.wall,
                 revision, new RemoteSessionCommands.Duration(duration, 1_800_000, 86_400_000, false),
                 true, "", session, readiness, reason, false, true);
-        store.putMetadata(SUB, GENERATION, RemoteSessionControlState.METADATA,
+        store.putMetadata(SUB, generation, RemoteSessionControlState.METADATA,
                 RemoteProtocol.canonical(new RemoteSessionControlState.Received(state, now).json()));
     }
     private void assertQueued(RemoteSessionRuntime.Review review) throws Exception {
         assertEquals(1, journalCount());
-        RemoteSessionRuntime.Record row = store.sessionControl(SUB, GENERATION,
+        RemoteSessionRuntime.Record row = store.sessionControl(SUB, generation,
                 RemoteSessionRuntime.Direction.OUTGOING, review.request.id);
         assertNotNull(row); assertEquals(review.request.id, row.request.id);
         assertEquals(review.requestDigest, row.request.digest());
         assertEquals(DOM, row.request.sender); assertEquals(SUB, row.request.recipient);
-        assertEquals(GENERATION, row.request.generation); assertEquals(SESSION, row.request.sessionIdentity);
+        assertEquals(generation, row.request.generation); assertEquals(SESSION, row.request.sessionIdentity);
         assertEquals(RemoteSessionCommands.Action.STOP, row.request.action); assertNull(row.request.service);
         assertEquals(RemoteSessionCommands.State.QUEUED, row.result.state); assertNull(row.result.proof);
-        assertEquals(Long.toString(review.request.sequence), store.metadata(SUB, GENERATION, "session_control_OUTGOING_floor", "0"));
+        assertEquals(Long.toString(review.request.sequence), store.metadata(SUB, generation, "session_control_OUTGOING_floor", "0"));
         assertEquals(review.request.id, coordinator.snapshot(peer).latestResult.id);
     }
     private int journalCount() {
@@ -317,9 +320,9 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
     }
     private void assertNoIntent() throws Exception {
         assertEquals(0, journalCount());
-        assertEquals("0", store.metadata(SUB, GENERATION, "session_control_OUTGOING_floor", "0"));
-        assertTrue(store.pendingSessionControls(SUB, GENERATION, RemoteSessionRuntime.Direction.OUTGOING, 10).isEmpty());
-        assertNull(store.latestCommand(SUB, GENERATION));
+        assertEquals("0", store.metadata(SUB, generation, "session_control_OUTGOING_floor", "0"));
+        assertTrue(store.pendingSessionControls(SUB, generation, RemoteSessionRuntime.Direction.OUTGOING, 10).isEmpty());
+        assertNull(store.latestCommand(SUB, generation));
     }
     private ActivityScenario<PersonActivity> open() {
         return ActivityScenario.launch(new Intent(target, PersonActivity.class)
