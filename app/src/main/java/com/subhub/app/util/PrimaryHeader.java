@@ -40,7 +40,7 @@ public final class PrimaryHeader {
         }
         title.setText(titleRes);
         TextView role = root.findViewById(R.id.header_role_badge);
-        if (role != null) role.setText(com.subhub.app.security.ControllerPinManager.isDomModeActive()
+        if (role != null) role.setText(com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(root.getContext())
                 ? R.string.role_dom : R.string.role_sub);
         subtitle.setText(subtitleRes == 0 ? "" : root.getResources().getString(subtitleRes));
         subtitle.setVisibility(subtitleRes == 0 ? View.GONE : View.VISIBLE);

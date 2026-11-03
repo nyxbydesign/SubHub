@@ -25,7 +25,7 @@ public abstract class RemotePage extends AppCompatActivity {
     }
     protected boolean requiresDom(){return true;}
     @Override protected void onResume(){super.onResume();
-        if(requiresDom()&&!ControllerPinManager.isDomModeActive()
+        if(requiresDom()&&!ControllerPinManager.isDomWorkspaceUnlocked()
                 ||(requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM)&&!DeviceRolePreferences.supportsDom(this)){finish();return;}
         if(peer!=null){RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null||current.localRole!=peer.localRole){finish();return;}peer=current;}
     }
@@ -36,20 +36,28 @@ public abstract class RemotePage extends AppCompatActivity {
     protected boolean mayEdit() {
         RemoteStore.Peer current=peer==null?null:feature.store.peer(peer.identity,peer.generation);
         return feature.recoveryReady() && DeviceRolePreferences.supportsDom(this) && current!=null && current.localRole==RemoteProtocol.Role.DOM && current.state==RemoteStore.State.ACTIVE
-                && ControllerPinManager.isDomModeActive() && ControllerPinManager.hasCredentials(this);
+                && ControllerPinManager.isDomWorkspaceUnlocked() && (ControllerPinManager.isLocalDomWorkspaceUnlocked()||ControllerPinManager.hasCredentials(this));
     }
     protected void authorize(Runnable action) {
         if((requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM)&&!DeviceRolePreferences.supportsDom(this)){notice(R.string.remote_read_only);return;}
-        if(!ControllerPinManager.hasCredentials(this)){notice(R.string.remote_credentials);return;}
-        ControllerPinGate.unlock(this,()->{if(ControllerPinManager.isSessionUnlocked()
-                &&(!(requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM)||DeviceRolePreferences.supportsDom(this)))action.run();},false);
+        if(!((requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM)&&ControllerPinManager.canUnlockLocalDomWorkspace(this))&&!ControllerPinManager.hasCredentials(this)){notice(R.string.remote_credentials);return;}
+        if(requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM)
+            ControllerPinGate.unlockDomWorkspace(this,()->{if(ControllerPinManager.isDomWorkspaceUnlocked()
+                    &&DeviceRolePreferences.supportsDom(this))action.run();},false);
+        else ControllerPinGate.unlock(this,()->{if(ControllerPinManager.isSessionUnlocked())action.run();},false);
     }
     protected <T> void work(Callable<T> action,Consumer<T> success) { work(action,success,()->notice(R.string.remote_failure)); }
     protected <T> void work(Callable<T> action,Consumer<T> success,Runnable failure) {
         boolean domPage=requiresDom()||peer!=null&&peer.localRole==RemoteProtocol.Role.DOM;android.content.Context app=getApplicationContext();
-        feature.submit(()->{if(domPage&&!DeviceRolePreferences.supportsDom(app))throw new SecurityException("Dom capability unavailable");return action.call();}).whenComplete((result,error)->runOnUiThread(()->{
-            if(isFinishing() || isDestroyed())return;
-            if(requiresDom()&&!ControllerPinManager.isDomModeActive()||domPage&&!DeviceRolePreferences.supportsDom(this)){finish();return;}
+        long revision=ControllerPinManager.domWorkspaceRevision();
+        feature.submit(()->{
+            if(domPage&&(revision!=ControllerPinManager.domWorkspaceRevision()
+                    ||!ControllerPinManager.isDomWorkspaceUnlocked()||!DeviceRolePreferences.supportsDom(app)))
+                throw new SecurityException("Dom workspace changed");
+            return action.call();
+        }).whenComplete((result,error)->runOnUiThread(()->{
+            if(isFinishing() || isDestroyed()||domPage&&revision!=ControllerPinManager.domWorkspaceRevision())return;
+            if(requiresDom()&&!ControllerPinManager.isDomWorkspaceUnlocked()||domPage&&!DeviceRolePreferences.supportsDom(this)){finish();return;}
             if(error!=null)failure.run();else success.accept(result);
         }));
     }

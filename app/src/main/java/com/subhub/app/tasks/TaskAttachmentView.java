@@ -14,7 +14,6 @@ import android.widget.VideoView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonUi;
-import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.AsyncUiScope;
 import java.io.IOException;
 import java.util.Locale;
@@ -63,7 +62,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
 
     private boolean live() {
         try {
-            return !closed && current.getAsBoolean() && dom == ControllerPinManager.isDomModeActive()
+            return !closed && current.getAsBoolean() && dom == TaskRepository.domSession(repository.person)
                     && scope.equals(repository.target().scope) && repository.allowed();
         } catch (RuntimeException denied) { return false; }
     }

@@ -12,7 +12,7 @@ public final class JournalRoutes {
     private JournalRoutes() { }
     public static void own(Activity activity, boolean dom) {
         Runnable open = () -> start(activity, PersonId.LOCAL, dom);
-        if (dom && !ControllerPinManager.isDomModeActive()) ControllerPinGate.unlock(activity, open, false);
+        if (dom && !ControllerPinManager.isDomWorkspaceUnlocked()) ControllerPinGate.unlockDomWorkspace(activity, open, false);
         else open.run();
     }
     public static void profile(Activity activity, PersonId target) {

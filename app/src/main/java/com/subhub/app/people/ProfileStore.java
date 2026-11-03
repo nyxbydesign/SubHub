@@ -12,7 +12,7 @@ public final class ProfileStore {
 
     public static boolean mayEdit(Context context, boolean dom) {
         return dom ? DeviceRolePreferences.supportsDom(context)
-                && DeviceRolePreferences.isDomWorkspace(context) && (ControllerPinManager.isDomModeActive()
+                && DeviceRolePreferences.isDomWorkspace(context) && (ControllerPinManager.isDomWorkspaceUnlocked()
                         || DeviceRolePreferences.get(context) == DeviceRolePreferences.Mode.DOM_ONLY)
                 : DeviceRolePreferences.supportsSub(context) && !DeviceRolePreferences.isDomWorkspace(context);
     }

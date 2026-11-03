@@ -22,7 +22,7 @@ public final class DeviceRolePreferences {
     public static boolean supportsDom(Context context) { return get(context) != Mode.SUB_ONLY; }
     public static boolean supportsSub(Context context) { return get(context) != Mode.DOM_ONLY; }
     public static boolean isDomWorkspace(Context context) {
-        return get(context) == Mode.DOM_ONLY || ControllerPinManager.isDomModeActive();
+        return get(context) == Mode.DOM_ONLY || ControllerPinManager.isDomWorkspaceUnlocked();
     }
 
     /** Established devices require controller authentication; pairing and active protection stay authoritative. */

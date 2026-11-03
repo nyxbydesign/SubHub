@@ -30,14 +30,19 @@ public final class TaskRepository {
                     return new Target(peer.identity + "_" + peer.generation, peer);
             return new Target("local", null);
         }
-        if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(context))
+        if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context))
             throw new SecurityException("Dom access required");
         RemoteStore.Peer peer = new RemotePersonRepository(context, remote).peer(person);
         if (peer.localRole != RemoteProtocol.Role.DOM || peer.state != RemoteStore.State.ACTIVE)
             throw new SecurityException("Pairing is no longer active");
         return new Target(peer.identity + "_" + peer.generation, peer);
     }
-    public boolean isDom() { target(); return ControllerPinManager.isDomModeActive(); }
+    /** A local Sub target retains protected author authority; outgoing Dom peers use workspace proof. */
+    static boolean domSession(PersonId person) {
+        return person != null && (person.isLocal() ? ControllerPinManager.isDomModeActive()
+                : ControllerPinManager.isDomWorkspaceUnlocked());
+    }
+    public boolean isDom() { target(); return domSession(person); }
     public boolean supported() {
         Target target = target();
         return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"))
@@ -159,7 +164,7 @@ public final class TaskRepository {
     }
     private void requireDom(Target target) {
         if (!supported()) throw new SecurityException("Update both paired devices to use Tasks");
-        if (!ControllerPinManager.isDomModeActive() || !ControllerPinManager.hasCredentials(context)
+        if (!domSession(person) || !ControllerPinManager.hasCredentials(context)
                 || (target.peer != null && target.peer.localRole != RemoteProtocol.Role.DOM)
                 || (person.isLocal() && !PersonRoutes.canEditLocal(context, person)))
             throw new SecurityException("Task author access required");

@@ -36,6 +36,33 @@ public final class ControllerPinManager {
     private static final int KEY_BITS = 256;
     private static volatile boolean domModeActive;
     private static volatile Context application;
+    private static WorkspaceProof localWorkspace;
+    private static long workspaceRevision;
+    private static final class WorkspaceProof {
+        final SharedPreferences preferences;
+        final String salt, hash;
+        final KeyholderProvider provider;
+        WorkspaceProof(SharedPreferences preferences, String salt, String hash, KeyholderProvider provider) {
+            this.preferences = preferences; this.salt = salt; this.hash = hash; this.provider = provider;
+        }
+        boolean current() {
+            try {
+                return DeviceRolePreferences.Mode.BOTH.name().equals(preferences.getString(
+                        DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()))
+                        && salt.equals(preferences.getString(KEY_SALT, null))
+                        && hash.equals(preferences.getString(KEY_HASH, null))
+                        && provider == com.subhub.app.people.People.keyholder();
+            } catch (RuntimeException invalid) { return false; }
+        }
+    }
+    // Keep the listener strongly referenced. Credential/capability changes retire a proof even if restored later.
+    private static final SharedPreferences.OnSharedPreferenceChangeListener workspacePreferences = (preferences, key) -> {
+        if (key == null || KEY_SALT.equals(key) || KEY_HASH.equals(key) || DeviceRolePreferences.KEY_MODE.equals(key)) {
+            synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                invalidateWorkspace();
+            }
+        }
+    };
 
     private ControllerPinManager() {}
 
@@ -48,8 +75,8 @@ public final class ControllerPinManager {
     }
 
     public static boolean hasCredentials(Context context) {
-        return remoteKeyholderState() != KeyholderProvider.State.NONE
-                || isConfigured(context) || new ControllerAuthenticator(context).isPaired();
+        return isConfigured(context) || new ControllerAuthenticator(context).isPaired()
+                || remoteKeyholderState() != KeyholderProvider.State.NONE;
     }
     public static boolean allowsUnkeyedAccess(Context context) {
         return !hasCredentials(context) && preferences(context).getBoolean("controller_keyholder_optional", false);
@@ -107,6 +134,69 @@ public final class ControllerPinManager {
         }
     }
 
+    /** Existing local PIN authenticates only the owner's BOTH-role Dom workspace, including offline. */
+    public static boolean canUnlockLocalDomWorkspace(Context context) {
+        try {
+            SharedPreferences preferences = preferences(context);
+            return DeviceRolePreferences.Mode.BOTH.name().equals(preferences.getString(
+                    DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()))
+                    && !preferences.getString(KEY_SALT, "").isEmpty()
+                    && !preferences.getString(KEY_HASH, "").isEmpty();
+        } catch (RuntimeException invalid) { return false; }
+    }
+
+    public static boolean verifyLocalDomWorkspace(Context context, String pin) {
+        initialize(context);
+        if (!canUnlockLocalDomWorkspace(context) || !normalize(pin).matches("[0-9]{4,12}")) return false;
+        final WorkspaceProof proof;
+        final long revision;
+        try {
+            SharedPreferences preferences = preferences(context);
+            synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                proof = new WorkspaceProof(preferences, preferences.getString(KEY_SALT, ""),
+                        preferences.getString(KEY_HASH, ""), com.subhub.app.people.People.keyholder());
+                revision = workspaceRevision;
+                preferences.registerOnSharedPreferenceChangeListener(workspacePreferences);
+            }
+            byte[] expected = Base64.decode(proof.hash, Base64.NO_WRAP);
+            byte[] actual = derive(normalize(pin), Base64.decode(proof.salt, Base64.NO_WRAP));
+            if (expected.length != KEY_BITS / 8 || !MessageDigest.isEqual(expected, actual)) return false;
+            synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                if (revision != workspaceRevision || !proof.current()) return false;
+                localWorkspace = proof;
+                workspaceRevision++;
+                sessionChanged();
+                return true;
+            }
+        } catch (RuntimeException | GeneralSecurityException invalid) { return false; }
+    }
+
+    /** Pure cached proof fence: never queries provider readiness, Keystore, or transport. */
+    public static boolean isLocalDomWorkspaceUnlocked() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            if (localWorkspace != null && !localWorkspace.current()) invalidateWorkspace();
+            return localWorkspace != null;
+        }
+    }
+
+    public static boolean isDomWorkspaceUnlocked() {
+        return isDomModeActive() || isLocalDomWorkspaceUnlocked();
+    }
+
+    /** Process-only witness for reviews that must not survive lock and reauthentication. */
+    public static long domWorkspaceRevision() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            isLocalDomWorkspaceUnlocked();
+            return workspaceRevision;
+        }
+    }
+
+    private static void invalidateWorkspace() {
+        localWorkspace = null;
+        workspaceRevision++;
+        sessionChanged();
+    }
+
     public static boolean isSessionUnlocked() {
         return isDomModeActive();
     }
@@ -128,11 +218,11 @@ public final class ControllerPinManager {
     }
 
     public static void enterDomMode() {
-        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=!domModeActive;domModeActive = true;if(changed)sessionChanged();}
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=!domModeActive;domModeActive = true;workspaceRevision++;if(changed)sessionChanged();}
     }
 
     public static void enterSubMode() {
-        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=domModeActive;domModeActive = false;if(changed)sessionChanged();}
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=domModeActive;domModeActive = false;invalidateWorkspace();if(changed)sessionChanged();}
     }
 
     static KeyholderProvider.State remoteKeyholderState() {

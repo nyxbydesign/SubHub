@@ -17,7 +17,7 @@ public enum AchievementRole {
         return current(context) == this && (this == SUB
                 ? DeviceRolePreferences.supportsSub(context)
                 : DeviceRolePreferences.supportsDom(context)
-                        && ControllerPinManager.isDomModeActive());
+                        && ControllerPinManager.isDomWorkspaceUnlocked());
     }
 
     public boolean owns(String id) {

@@ -70,7 +70,7 @@ public final class PairingActivity extends RemotePage {
     private void createInvitation() {
         authorize(()->{
             if(isFinishing()||isDestroyed()||!requiresDom()
-                    ||!com.subhub.app.security.ControllerPinManager.isDomModeActive())return;
+                    ||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked())return;
             if(creation.request==null) {
                 body.removeAllViews();
                 text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
@@ -90,7 +90,7 @@ public final class PairingActivity extends RemotePage {
             PairingActivity page=weak.get();if(page==null)return;
             page.runOnUiThread(()->{
                 if(page.isDestroyed()||page.isFinishing()||page.creation!=captured||captured.request!=request)return;
-                if(!page.requiresDom()||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                if(!page.requiresDom()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                         ||!com.subhub.app.security.DeviceRolePreferences.supportsDom(page)){page.finish();return;}
                 if(error!=null||value==null){page.invitationFailure(error==null?R.string.remote_expired:R.string.remote_failure);return;}
                 page.invitation=value;page.renderInvite();

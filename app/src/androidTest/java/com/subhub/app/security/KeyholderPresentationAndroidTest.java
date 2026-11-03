@@ -48,8 +48,9 @@ public class KeyholderPresentationAndroidTest {
             } finally { screenshot.recycle(); }
         } finally { ControllerPinManager.enterSubMode(); }
     }
-    @Test public void localAndRemoteChoicesShareOneSetupAndSurviveRecreation() {
+    @Test public void localAndRemoteChoicesShareOneSetupAndSurviveRecreation() throws Exception {
         try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
+            awaitRendered(scenario, KeyholderPresentationAndroidTest::localRendered);
             scenario.onActivity(a -> {
                 assertNotNull(a.findViewById(R.id.keyholder_setup_local));
                 assertNotNull(a.findViewById(R.id.keyholder_pair_device));
@@ -57,6 +58,7 @@ public class KeyholderPresentationAndroidTest {
                 assertEquals(0, a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             });
             scenario.recreate();
+            awaitRendered(scenario, KeyholderPresentationAndroidTest::localRendered);
             scenario.onActivity(a -> {
                 assertTrue(a.findViewById(R.id.keyholder_pin_change_button).isShown());
                 assertTrue(a.findViewById(R.id.keyholder_pair_device).isShown());
@@ -64,16 +66,57 @@ public class KeyholderPresentationAndroidTest {
         }
     }
 
-    @Test public void pairedPendingAndUnavailableStatesNeverOfferPinOrManualEnrollment() {
+    @Test public void pairedPendingAndUnavailableStatesNeverOfferPinOrManualEnrollment() throws Exception {
         for (KeyholderProvider.State state : new KeyholderProvider.State[] {
                 KeyholderProvider.State.READY, KeyholderProvider.State.PENDING, KeyholderProvider.State.UNAVAILABLE}) {
             com.subhub.app.people.People.installKeyholder(provider(state, "Synthetic Dom"));
             try (ActivityScenario<AuthenticatorActivity> scenario = ActivityScenario.launch(AuthenticatorActivity.class)) {
+                awaitRendered(scenario, a -> remoteRendered(a, state));
                 scenario.onActivity(a -> assertRemote(a, state));
                 scenario.recreate();
+                awaitRendered(scenario, a -> remoteRendered(a, state));
                 scenario.onActivity(a -> assertRemote(a, state));
             }
         }
+    }
+
+    private static boolean localRendered(AuthenticatorActivity activity) {
+        android.view.View local = activity.findViewById(R.id.keyholder_setup_local);
+        android.view.View pin = activity.findViewById(R.id.keyholder_pin_change_button);
+        android.view.View pairing = activity.findViewById(R.id.keyholder_pair_device);
+        return local != null && local.isShown() && pin != null && pin.isShown() && pairing != null && pairing.isShown();
+    }
+
+    private static boolean remoteRendered(AuthenticatorActivity activity, KeyholderProvider.State state) {
+        android.widget.TextView name = activity.findViewById(R.id.keyholder_assigned_dom);
+        android.widget.TextView status = activity.findViewById(R.id.keyholder_setup_status);
+        int expected = state == KeyholderProvider.State.READY ? R.string.role_connection_paired
+                : state == KeyholderProvider.State.PENDING ? R.string.keyholder_pairing_in_progress : R.string.keyholder_unavailable;
+        return name != null && name.isShown() && "Synthetic Dom".contentEquals(name.getText())
+                && status != null && status.isShown() && activity.getString(expected).contentEquals(status.getText());
+    }
+
+    private static void awaitRendered(ActivityScenario<AuthenticatorActivity> scenario,
+            java.util.function.Predicate<AuthenticatorActivity> expected) throws InterruptedException {
+        java.util.concurrent.CountDownLatch rendered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Runnable> remove = new java.util.concurrent.atomic.AtomicReference<>(() -> {});
+        try {
+            scenario.onActivity(activity -> {
+                if (expected.test(activity)) { rendered.countDown(); return; }
+                android.view.View root = activity.findViewById(android.R.id.content);
+                android.view.ViewTreeObserver.OnPreDrawListener observer = () -> {
+                    if (expected.test(activity)) rendered.countDown();
+                    return true;
+                };
+                root.getViewTreeObserver().addOnPreDrawListener(observer);
+                remove.set(() -> {
+                    if (root.getViewTreeObserver().isAlive()) root.getViewTreeObserver().removeOnPreDrawListener(observer);
+                });
+                root.invalidate();
+            });
+            assertTrue("Expected Keyholder cards/status were not rendered",
+                    rendered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        } finally { InstrumentationRegistry.getInstrumentation().runOnMainSync(remove.get()); }
     }
 
     private static void assertRemote(AuthenticatorActivity activity, KeyholderProvider.State state) {

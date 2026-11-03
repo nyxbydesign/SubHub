@@ -60,6 +60,7 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
     /** Worker-only. Publish only changes to reference authority, preserving descriptors for unchanged refs. */
     void refresh() throws IOException {
         initialize();
+        long revision=ControllerPinManager.domWorkspaceRevision();
         if(!viewerAllowed()){publish(Collections.emptySet());return;}
         try {
             store.authorityAccess(()->{
@@ -69,7 +70,10 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
                     if (peer.state!=RemoteStore.State.ACTIVE || peer.localRole!=RemoteProtocol.Role.DOM) continue;
                     for (String name:packages(peer,false)) current.add(new RemoteAppIcon(peer.identity,peer.generation,name,null));
                 }
-                publish(current);return null;
+                if(revision!=ControllerPinManager.domWorkspaceRevision()||!viewerAllowed())throw new SecurityException("Dom workspace changed");
+                publish(current);
+                long previous=viewerRevision;viewerRevision=revision;if(previous!=revision)changed();
+                return null;
             });
         } catch (RuntimeException unavailable) {
             publish(Collections.emptySet());throw unavailable;
@@ -210,11 +214,12 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
 
     @Override public RemoteAppIcons.Authority currentAuthority() {
         AppIconCache target=cache;
-        return target!=null && viewerAllowed()?target.currentAuthority():RemoteAppIcons.Authority.EMPTY;
+        return target!=null && viewerAllowed()&&viewerRevision==ControllerPinManager.domWorkspaceRevision()?target.currentAuthority():RemoteAppIcons.Authority.EMPTY;
     }
+    private volatile long viewerRevision=-1;
     private boolean viewerAllowed(){
         android.content.SharedPreferences loaded=rolePreferences;
-        if(closed||loaded==null||!ControllerPinManager.isDomModeActive())return false;
+        if(closed||loaded==null||!ControllerPinManager.isDomWorkspaceUnlocked())return false;
         // This exact SharedPreferences instance finished loading before publication. getString is a
         // memory read here, so capacity loss is observed even before its queued listener runs.
         try{return com.subhub.app.security.DeviceRolePreferences.Mode.valueOf(loaded.getString(
@@ -241,11 +246,12 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
         refused();
     }
     @Override public byte[] load(RemoteAppIcon identity) throws Exception {
+        long revision=ControllerPinManager.domWorkspaceRevision();
         if(!currentAuthority().permits(identity))return null;
         RemoteStore.Peer peer=store.authorityAccess(()->store.peer(identity.peer,identity.generation));
         if(peer==null||!mirrored(peer,identity.packageName))return null;
         byte[] bytes=cache.load(identity);
-        return currentAuthority().permits(identity)&&mirrored(peer,identity.packageName)?bytes:null;
+        return revision==ControllerPinManager.domWorkspaceRevision()&&currentAuthority().permits(identity)&&mirrored(peer,identity.packageName)?bytes:null;
     }
     @Override public void addInvalidationListener(Runnable listener){listeners.addIfAbsent(Objects.requireNonNull(listener));}
     @Override public void removeInvalidationListener(Runnable listener){listeners.remove(listener);}

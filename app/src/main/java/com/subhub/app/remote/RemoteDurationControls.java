@@ -55,14 +55,16 @@ public final class RemoteDurationControls {
     }
     private static boolean editable(android.content.Context context,RemoteFeature feature,RemoteStore.Peer peer) {
         RemoteStore.Peer current = feature.store.peer(peer.identity, peer.generation);
-        return feature.recoveryReady() && DeviceRolePreferences.supportsDom(context) && ControllerPinManager.isDomModeActive() && ControllerPinManager.hasCredentials(context)
+        return feature.recoveryReady() && DeviceRolePreferences.supportsDom(context) && ControllerPinManager.isDomWorkspaceUnlocked() && (ControllerPinManager.isLocalDomWorkspaceUnlocked()||ControllerPinManager.hasCredentials(context))
                 && current != null && current.state == RemoteStore.State.ACTIVE && current.localRole == RemoteProtocol.Role.DOM;
     }
 
     private void load(LinearLayout controls) {
         controls.removeAllViews();PersonUi.text(controls, activity.getString(R.string.role_loading), false);
         RemoteStore store = feature.store;RemoteFeature backend = feature;RemoteStore.Peer selected = peer;android.content.Context app=application;
-        work.load(request, () -> {
+        long revision=ControllerPinManager.domWorkspaceRevision();
+        work.load(request, () -> store.authorityObservation(()->{
+            if(revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Dom workspace changed");
             synchronized (store) {
                 if(!editable(app,backend,selected))throw new SecurityException("Dom access required");
                 RemoteStore.Peer current = store.peer(selected.identity, selected.generation);
@@ -74,8 +76,8 @@ public final class RemoteDurationControls {
                 return new Object[]{value, Long.parseLong(store.metadata(current.identity,current.generation,"desired_revision","0")),
                         Long.parseLong(store.metadata(current.identity,current.generation,"applied_revision","0")), command};
             }
-        }, result -> {
-            if (!attached(controls) || !editable()) return;
+        }), result -> {
+            if (!attached(controls) || !editable()||revision!=ControllerPinManager.domWorkspaceRevision()) return;
             configuration = (JSONObject) result[0];desired = (Long) result[1];applied = (Long) result[2];
             try {
                 fingerprint = RemoteProtocol.sha256(RemoteProtocol.canonical(configuration).getBytes(StandardCharsets.UTF_8));
@@ -122,7 +124,7 @@ public final class RemoteDurationControls {
                 if(value==-2){long min=Long.parseLong(minimum.getText().toString()),max=Long.parseLong(maximum.getText().toString());
                     if(min<30||max>43200||max<min)throw new IllegalArgumentException();duration.put("minimum",Math.multiplyExact(min,60_000)).put("maximum",Math.multiplyExact(max,60_000));}
                 RemoteConfiguration.active(snapshot);
-                ControllerPinGate.require(activity,()->save(controls,snapshot,status),false);
+                ControllerPinGate.requireDomWorkspace(activity,()->save(controls,snapshot,status),false);
             } catch(Exception invalid){minimum.setError(activity.getString(R.string.remote_invalid_value));maximum.setError(activity.getString(R.string.remote_invalid_value));}
         },true);apply.setTag("remote_duration_apply");apply.setEnabled(!pending);
     }
@@ -145,16 +147,21 @@ public final class RemoteDurationControls {
 
     private void save(LinearLayout controls,JSONObject snapshot,TextView status) {
         String expected=fingerprint;long expectedDesired=desired,expectedApplied=applied;RemoteFeature backend=feature;RemoteStore.Peer selected=peer;android.content.Context app=application;
+        long revision=ControllerPinManager.domWorkspaceRevision();
         work.load(request+":save",()->{
-            synchronized(backend.store){
-                if(!editable(app,backend,selected))throw new SecurityException("Relationship unavailable");
-                JSONObject current=backend.contracts.current(selected);
-                if(current==null||!expected.equals(RemoteProtocol.sha256(RemoteProtocol.canonical(current).getBytes(StandardCharsets.UTF_8))))
-                    throw new IllegalStateException("Configuration changed");
-                backend.store.queueConfiguration(selected.identity,selected.generation,expectedDesired,expectedApplied,snapshot);
-            }
-            backend.changed();return true;
-        },saved->{if(!attached(controls)||!editable())return;clearDraft();load(controls);},failure->{if(attached(controls)){status.setText(R.string.remote_reload);status.setVisibility(View.VISIBLE);}});
+            boolean saved=backend.store.authorityAccess(()->{
+                if(revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Dom workspace changed");
+                synchronized(backend.store){
+                    if(!editable(app,backend,selected)||revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Relationship unavailable");
+                    JSONObject current=backend.contracts.current(selected);
+                    if(current==null||!expected.equals(RemoteProtocol.sha256(RemoteProtocol.canonical(current).getBytes(StandardCharsets.UTF_8))))
+                        throw new IllegalStateException("Configuration changed");
+                    backend.store.queueConfiguration(selected.identity,selected.generation,expectedDesired,expectedApplied,snapshot);
+                }
+                return true;
+            });
+            backend.changed();return saved;
+        },saved->{if(!attached(controls)||!editable()||revision!=ControllerPinManager.domWorkspaceRevision())return;clearDraft();load(controls);},failure->{if(attached(controls)){status.setText(R.string.remote_reload);status.setVisibility(View.VISIBLE);}});
     }
     private EditText number(LinearLayout range,int label,String key) {
         PersonUi.text(range,activity.getString(label),false);EditText editor=new EditText(activity);editor.setTag("remote_duration_"+key);

@@ -1,6 +1,7 @@
 package com.subhub.app.security;
 
 import android.app.Activity;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -11,12 +12,20 @@ import com.subhub.app.people.ConnectionUi;
 import com.subhub.app.people.People;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonUi;
+import com.subhub.app.util.AsyncUiScope;
 
 /** Onboarding and Settings share the same durable local or remote keyholder presentation. */
 public final class KeyholderSetupView extends LinearLayout {
     private final Activity activity;
+    private final Context application;
+    private final AsyncUiScope work;
+    private final String statusJob = "keyholder-status:" + View.generateViewId();
     private final Handler clock = new Handler(Looper.getMainLooper());
     private String renderedState = "";
+    private long epoch;
+    private KeyholderProvider observedProvider;
+    private DeviceRolePreferences.Mode observedRole;
+    private boolean observedDomWorkspace;
     private final Runnable observe = new Runnable() {
         @Override public void run() {
             if (!isAttachedToWindow() || getWindowVisibility() != View.VISIBLE) return;
@@ -28,29 +37,71 @@ public final class KeyholderSetupView extends LinearLayout {
     public KeyholderSetupView(Activity activity) {
         super(activity);
         this.activity = activity;
+        application = activity.getApplicationContext();
+        work = AsyncUiScope.forContext(activity);
         setOrientation(VERTICAL);
-        refresh();
+        renderUnavailable();
     }
 
     public void refresh() {
-        KeyholderProvider.State state;
-        String dom;
-        try {
-            state = People.keyholder().state();
-            dom = state == KeyholderProvider.State.NONE ? "" : People.keyholder().assignedDomName();
-            if (dom == null) dom = "";
-        } catch (RuntimeException unavailable) {
-            state = KeyholderProvider.State.UNAVAILABLE;
-            dom = "";
-        }
-        boolean pin = ControllerPinManager.isConfigured(activity);
-        boolean legacyCode = state == KeyholderProvider.State.NONE
-                && new ControllerAuthenticator(activity).isPaired();
-        String signature = DeviceRolePreferences.get(activity) + ":" + state + ":" + dom + ":" + pin + ":" + legacyCode;
+        if (!isAttachedToWindow() || getWindowVisibility() != View.VISIBLE || activity.isFinishing() || activity.isDestroyed()) return;
+        KeyholderProvider provider = People.keyholder();
+        DeviceRolePreferences.Mode role = DeviceRolePreferences.get(application);
+        boolean domWorkspace = DeviceRolePreferences.isDomWorkspace(application);
+        boolean sameContext = observedProvider == provider && observedRole == role
+                && observedDomWorkspace == domWorkspace;
+        if (sameContext && work.isPending(statusJob)) return;
+        if (!sameContext) renderUnavailable();
+        observedProvider = provider; observedRole = role; observedDomWorkspace = domWorkspace;
+        long request = ++epoch;
+        Context app = application;
+        // These observations can decrypt through KeyStore/Binder; workers retain no Activity or View.
+        work.load(statusJob, () -> readStatus(app, provider), status -> {
+            if (!current(request, provider, role, domWorkspace)) { refresh(); return; }
+            render(status, role);
+        }, failure -> {
+            if (!current(request, provider, role, domWorkspace)) { refresh(); return; }
+            renderUnavailable();
+        });
+    }
+
+    private boolean current(long request, KeyholderProvider provider, DeviceRolePreferences.Mode role, boolean domWorkspace) {
+        return request == epoch && isAttachedToWindow() && getWindowVisibility() == View.VISIBLE
+                && !activity.isFinishing() && !activity.isDestroyed() && People.keyholder() == provider
+                && DeviceRolePreferences.get(application) == role
+                && DeviceRolePreferences.isDomWorkspace(application) == domWorkspace;
+    }
+
+    private static Status readStatus(Context app, KeyholderProvider provider) {
+        KeyholderProvider.State state = java.util.Objects.requireNonNull(provider.state());
+        String dom = state == KeyholderProvider.State.NONE ? "" : provider.assignedDomName();
+        boolean pin = ControllerPinManager.isConfigured(app);
+        boolean legacyCode = state == KeyholderProvider.State.NONE && new ControllerAuthenticator(app).isPaired();
+        return new Status(state, dom == null ? "" : dom, pin, legacyCode);
+    }
+
+    private void renderUnavailable() {
+        render(new Status(KeyholderProvider.State.UNAVAILABLE, "", false, false), DeviceRolePreferences.get(application));
+    }
+
+    private void render(Status status, DeviceRolePreferences.Mode role) {
+        KeyholderProvider.State state = status.state;
+        String dom = status.dom;
+        boolean pin = status.pin, legacyCode = status.legacyCode;
+        boolean ownDomPin = role == DeviceRolePreferences.Mode.BOTH && ControllerPinManager.isDomWorkspaceUnlocked()
+                && ControllerPinManager.canUnlockLocalDomWorkspace(application);
+        String signature = role + ":" + ownDomPin + ":" + state + ":" + dom + ":" + pin + ":" + legacyCode;
         if (signature.equals(renderedState)) return;
         renderedState = signature;
         removeAllViews();
         if (state != KeyholderProvider.State.NONE) {
+            if (ownDomPin) {
+                LinearLayout workspace = PersonUi.card(this);
+                workspace.setId(R.id.keyholder_dom_workspace_status);
+                PersonUi.text(workspace, activity.getString(R.string.keyholder_dom_workspace), true);
+                PersonUi.text(workspace, activity.getString(R.string.keyholder_status_pin), false);
+                PersonUi.text(workspace, activity.getString(R.string.keyholder_dom_workspace_help), false);
+            }
             remote(state, dom);
             return;
         }
@@ -78,7 +129,7 @@ public final class KeyholderSetupView extends LinearLayout {
             }, false);
         }, false).setId(R.id.keyholder_remove_authenticator);
 
-        if (DeviceRolePreferences.get(activity) == DeviceRolePreferences.Mode.DOM_ONLY) {
+        if (role == DeviceRolePreferences.Mode.DOM_ONLY) {
             PersonUi.action(local, R.string.role_add_sub, () -> {
                 if (!localAvailable()) return;
                 ControllerPinGate.unlock(activity, () -> {
@@ -136,19 +187,37 @@ public final class KeyholderSetupView extends LinearLayout {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        renderUnavailable();
         clock.removeCallbacks(observe);
         clock.post(observe);
     }
 
     @Override protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
-        if (clock == null) return;
+        if (clock == null || work == null) return;
         clock.removeCallbacks(observe);
         if (visibility == View.VISIBLE && isAttachedToWindow()) clock.post(observe);
+        else cancelStatus();
     }
 
     @Override protected void onDetachedFromWindow() {
         clock.removeCallbacks(observe);
+        cancelStatus();
         super.onDetachedFromWindow();
+    }
+
+    private void cancelStatus() {
+        ++epoch;
+        work.cancel(statusJob);
+        observedProvider = null;
+    }
+
+    private static final class Status {
+        final KeyholderProvider.State state;
+        final String dom;
+        final boolean pin, legacyCode;
+        Status(KeyholderProvider.State state, String dom, boolean pin, boolean legacyCode) {
+            this.state = state; this.dom = dom; this.pin = pin; this.legacyCode = legacyCode;
+        }
     }
 }

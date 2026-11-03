@@ -53,10 +53,13 @@ final class RemoteSessionControlCoordinator {
         final RemoteSessionClock.Sample began, completed;
         final String credentials;
         final DeviceRolePreferences.Mode role;
+        final boolean localDomWorkspace;
+        final long workspaceRevision;
         Authority(KeyholderProvider provider, KeyholderProvider.State state, RemoteStore.Peer governing,
-                RemoteSessionClock.Sample began, RemoteSessionClock.Sample completed, String credentials, DeviceRolePreferences.Mode role) {
+                RemoteSessionClock.Sample began, RemoteSessionClock.Sample completed, String credentials, DeviceRolePreferences.Mode role, boolean localDomWorkspace, long workspaceRevision) {
             this.provider = provider; this.state = state; this.governing = governing; this.began = began; this.completed = completed;
             this.credentials = credentials; this.role = role;
+            this.localDomWorkspace=localDomWorkspace;this.workspaceRevision=workspaceRevision;
         }
     }
     private void outsideLocks() {
@@ -75,15 +78,19 @@ final class RemoteSessionControlCoordinator {
     private Authority observeAuthority() {
         outsideLocks();
         RemoteSessionClock.Sample began = RemoteSessionClock.observe(context);
+        long workspaceRevision=ControllerPinManager.domWorkspaceRevision();
+        boolean localDomWorkspace=ControllerPinManager.isLocalDomWorkspaceUnlocked();
         KeyholderProvider provider = People.keyholder();
         String credentials = credentialWitness(); DeviceRolePreferences.Mode role = DeviceRolePreferences.get(context);
         RemoteStore.Peer before = RemoteSessionRuntime.assignedDom(store);
-        KeyholderProvider.State state = provider.state();
+        KeyholderProvider.State state = localDomWorkspace ? null : provider.state();
         RemoteStore.Peer after = RemoteSessionRuntime.assignedDom(store);
         if (!samePeer(before, after) || !credentials.equals(credentialWitness())
-                || state != KeyholderProvider.State.NONE && state != KeyholderProvider.State.READY)
+                || workspaceRevision!=ControllerPinManager.domWorkspaceRevision()
+                || localDomWorkspace!=ControllerPinManager.isLocalDomWorkspaceUnlocked()
+                || !localDomWorkspace&&state != KeyholderProvider.State.NONE && state != KeyholderProvider.State.READY)
             throw new SecurityException("Controller authority unavailable");
-        return new Authority(provider, state, after, began, RemoteSessionClock.observe(context), credentials, role);
+        return new Authority(provider, state, after, began, RemoteSessionClock.observe(context), credentials, role, localDomWorkspace, workspaceRevision);
     }
     private static boolean samePeer(RemoteStore.Peer left, RemoteStore.Peer right) {
         return left == null ? right == null : right != null && left.identity.equals(right.identity)
@@ -98,11 +105,18 @@ final class RemoteSessionControlCoordinator {
     /** Pure local checks only: provider/Keystore observation has already finished outside this transaction. */
     private void requireAuthority(Authority observed, RemoteSessionClock.Sample now) {
         if (!recent(observed.began, observed.completed) || !recent(observed.began, now) || now.elapsed < observed.completed.elapsed
-                || People.keyholder() != observed.provider || !ControllerPinManager.isSessionUnlocked()
+                || People.keyholder() != observed.provider || !ControllerPinManager.isDomWorkspaceUnlocked()
+                || observed.workspaceRevision!=ControllerPinManager.domWorkspaceRevision()
+                || observed.localDomWorkspace!=ControllerPinManager.isLocalDomWorkspaceUnlocked()
+                || !observed.localDomWorkspace&&!ControllerPinManager.isSessionUnlocked()
                 || !DeviceRolePreferences.supportsDom(context) || !DeviceRolePreferences.isDomWorkspace(context)
                 || observed.role != DeviceRolePreferences.get(context) || !observed.credentials.equals(credentialWitness())
                 || !samePeer(observed.governing, RemoteSessionRuntime.assignedDom(store)))
             throw new SecurityException("Controller authority changed");
+        if (observed.localDomWorkspace) {
+            if(!ControllerPinManager.isConfigured(context))throw new SecurityException("Local Dom credentials required");
+            return;
+        }
         if (observed.state == KeyholderProvider.State.NONE) {
             if (observed.governing != null || !ControllerPinManager.isConfigured(context) && !new ControllerAuthenticator(context).isPaired())
                 throw new SecurityException("Controller credentials required");
@@ -215,6 +229,8 @@ final class RemoteSessionControlCoordinator {
                     if (minted == null || minted.review != review || minted.lifetime.check(request, now) != RemoteSessionCommands.Reason.NONE
                             || !minted.source.fresh(now) || minted.authority.provider != authority.provider
                             || minted.authority.state != authority.state || minted.authority.role != authority.role
+                            || minted.authority.workspaceRevision!=authority.workspaceRevision
+                            || minted.authority.localDomWorkspace!=authority.localDomWorkspace
                             || !minted.authority.credentials.equals(authority.credentials)
                             || !samePeer(minted.authority.governing, authority.governing))
                         throw new SecurityException("Session review expired or unavailable");

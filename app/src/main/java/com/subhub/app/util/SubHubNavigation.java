@@ -57,9 +57,9 @@ public final class SubHubNavigation {
         TextView role = PrimaryHeader.editLockButton(root);
         role.setVisibility(View.VISIBLE);
         role.setOnClickListener(view -> {
-            if (ControllerPinManager.isDomModeActive()) {
+            if (ControllerPinManager.isDomWorkspaceUnlocked()) {
                 com.subhub.app.security.ControllerEditMode.enterSubMode(activity);
-            } else com.subhub.app.security.ControllerPinGate.unlock(activity, () -> {
+            } else com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(activity, () -> {
                 activity.startActivity(new Intent(activity, MainActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
                 activity.finish();
@@ -113,7 +113,7 @@ public final class SubHubNavigation {
                 root.findViewById(R.id.nav_stats_icon), root.findViewById(R.id.nav_stats_label),
                 selected, Screen.PROFILE, com.subhub.app.people.ProfileActivity.class);
         bindNavigationLayout(navigation);
-        bindActivityUnread(activity, root, domMode && activityAvailable && ControllerPinManager.isDomModeActive());
+        bindActivityUnread(activity, root, domMode && activityAvailable && ControllerPinManager.isDomWorkspaceUnlocked());
     }
 
     private static void bindActivityUnread(Activity activity, View root, boolean domMode) {
@@ -179,7 +179,7 @@ public final class SubHubNavigation {
             android.content.Context application = tab.getContext().getApplicationContext();
             data.load(job, () -> {
                 if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(application)
-                        || !ControllerPinManager.isDomModeActive()) return 0;
+                        || !ControllerPinManager.isDomWorkspaceUnlocked()) return 0;
                 return com.subhub.app.activity.ActivitySources.repository().unreadCount();
             }, count -> {
                 if (!started || closed) return;
@@ -205,7 +205,7 @@ public final class SubHubNavigation {
         }
 
         private boolean allowed() {
-            return dom && ControllerPinManager.isDomModeActive()
+            return dom && ControllerPinManager.isDomWorkspaceUnlocked()
                     && com.subhub.app.security.DeviceRolePreferences.supportsDom(tab.getContext());
         }
 
@@ -376,7 +376,7 @@ public final class SubHubNavigation {
             androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, label.getText());
         }
         tab.setOnClickListener(view -> {
-            if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomModeActive()
+            if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
             if (selected && target.isInstance(activity)) {
                 if (activity instanceof com.subhub.app.stats.StatsActivity)

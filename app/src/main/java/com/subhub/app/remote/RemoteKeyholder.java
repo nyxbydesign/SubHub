@@ -96,22 +96,42 @@ public final class RemoteKeyholder implements KeyholderProvider {
     }
 
     public Code code(RemoteStore.Peer peer) throws GeneralSecurityException {
-        synchronized (store) {
-            State authority;
-            try { authority = com.subhub.app.people.People.keyholder().state(); }
-            catch (RuntimeException unavailable) { throw new GeneralSecurityException("Keyholder authority unavailable"); }
-            if (authority != State.NONE && authority != State.READY)
-                throw new GeneralSecurityException("Keyholder authority unavailable");
-            if (!ControllerPinManager.isDomModeActive() || !ControllerPinManager.hasCredentials(context))
-                throw new SecurityException("Keyholder access required");
-            RemoteStore.Peer current = requirePeer(peer, RemoteProtocol.Role.DOM, true);
-            String secret = secrets.controllerSecret(current.localRole, current.identity, current.generation);
-            if (secret == null) throw new GeneralSecurityException("Controller credential unavailable");
-            long now = wall.getAsLong();
-            if (now < 0 || now > Long.MAX_VALUE - Totp.STEP_MILLIS)
-                throw new GeneralSecurityException("Controller clock unavailable");
-            long step = now / Totp.STEP_MILLIS;
-            return new Code(Totp.code(secret, step), (step + 1) * Totp.STEP_MILLIS);
+        KeyholderProvider provider=com.subhub.app.people.People.keyholder();
+        long revision=ControllerPinManager.domWorkspaceRevision();
+        boolean local=ControllerPinManager.isLocalDomWorkspaceUnlocked();
+        State authority=local?null:provider.state();
+        try {
+            return store.authorityObservation(()->{
+                synchronized(store){
+                    // Never select authority from the supplied object before verifying its current role.
+                    RemoteStore.Peer current=requirePeer(peer,RemoteProtocol.Role.DOM,true);
+                    if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context)
+                            ||provider!=com.subhub.app.people.People.keyholder()
+                            ||revision!=ControllerPinManager.domWorkspaceRevision()
+                            ||local!=ControllerPinManager.isLocalDomWorkspaceUnlocked())
+                        throw new SecurityException("Dom workspace changed");
+                    if(local){
+                        if(!ControllerPinManager.isConfigured(context))throw new SecurityException("Local Dom credentials required");
+                    }else{
+                        if(authority!=State.NONE&&authority!=State.READY)
+                            throw new GeneralSecurityException("Keyholder authority unavailable");
+                        if(!ControllerPinManager.isDomModeActive()||!ControllerPinManager.hasCredentials(context))
+                            throw new SecurityException("Keyholder access required");
+                    }
+                    String secret=secrets.controllerSecret(current.localRole,current.identity,current.generation);
+                    if(secret==null)throw new GeneralSecurityException("Controller credential unavailable");
+                    long now=wall.getAsLong();
+                    if(now<0||now>Long.MAX_VALUE-Totp.STEP_MILLIS)throw new GeneralSecurityException("Controller clock unavailable");
+                    long step=now/Totp.STEP_MILLIS;
+                    Code result=new Code(Totp.code(secret,step),(step+1)*Totp.STEP_MILLIS);
+                    if(revision!=ControllerPinManager.domWorkspaceRevision()||provider!=com.subhub.app.people.People.keyholder())
+                        throw new SecurityException("Dom workspace changed");
+                    return result;
+                }
+            });
+        }catch(RuntimeException failure){
+            if(failure.getCause() instanceof GeneralSecurityException)throw (GeneralSecurityException)failure.getCause();
+            throw failure;
         }
     }
 

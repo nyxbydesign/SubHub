@@ -14,17 +14,21 @@ public final class PairingService {
     private final RemoteSecrets secrets;
     private final PeerTransport transport;
     private final RemoteKeyholder authenticator;
-    private final BooleanSupplier keyholder;
+    private final BooleanSupplier keyholder,domWorkspace;
     private final String deviceName;
 
     public PairingService(RemoteStore store,RemoteSecrets secrets,PeerTransport transport,RemoteKeyholder authenticator,
             BooleanSupplier keyholder,String deviceName) {
-        this.store=store;this.secrets=secrets;this.transport=transport;this.authenticator=java.util.Objects.requireNonNull(authenticator);this.keyholder=keyholder;
+        this(store,secrets,transport,authenticator,keyholder,keyholder,deviceName);
+    }
+    public PairingService(RemoteStore store,RemoteSecrets secrets,PeerTransport transport,RemoteKeyholder authenticator,
+            BooleanSupplier keyholder,BooleanSupplier domWorkspace,String deviceName) {
+        this.store=store;this.secrets=secrets;this.transport=transport;this.authenticator=java.util.Objects.requireNonNull(authenticator);this.keyholder=keyholder;this.domWorkspace=domWorkspace;
         this.deviceName=RemoteProtocol.deviceName(deviceName);
     }
 
     public PairingInvite create(long now) throws IOException,GeneralSecurityException {
-        requireKeyholder();
+        requireDomWorkspace();
         PairingInvite invite=PairingInvite.create(transport.localIdentity(),transport.inviteRoute(),now);
         return store.pairingOperation(()->{
             String prior=secrets.pendingLink(invite.id);
@@ -66,7 +70,7 @@ public final class PairingService {
     }
 
     public void approve(String invitation,String candidate,String fingerprint,long now) {
-        requireKeyholder();
+        requireDomWorkspace();
         String expected=PairingInvite.fingerprint(transport.localIdentity(),candidate,invitation);
         if(!expected.equals(fingerprint)) throw new SecurityException("Pairing identity changed");
         String name=null;
@@ -78,13 +82,23 @@ public final class PairingService {
     }
 
     public void cancel(String invitation) {
-        requireKeyholder();
+        requireDomWorkspace();
         store.pairingOperation(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});
     }
 
     public void revoke(String identity,String generation) {
-        requireKeyholder();
-        store.pairingOperation(()->{String candidate=secrets.pendingLink(generation);String expected=store.ownsPendingSecret(identity,generation,candidate)?candidate:null;store.revoke(identity,generation);secrets.removePendingIfMatches(generation,expected);return null;});
+        RemoteStore.Peer selected=store.authorityObservation(()->store.peer(identity,generation));
+        if(selected==null)throw new SecurityException("Relationship unavailable");
+        if(selected.localRole==RemoteProtocol.Role.DOM)requireDomWorkspace();else requireKeyholder();
+        long revision=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+        store.pairingOperation(()->{
+            RemoteStore.Peer current=store.peer(identity,generation);
+            if(current==null||current.localRole!=selected.localRole||revision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision())
+                throw new SecurityException("Relationship changed");
+            if(current.localRole==RemoteProtocol.Role.DOM)requireDomWorkspace();else requireKeyholder();
+            String candidate=secrets.pendingLink(generation);String expected=store.ownsPendingSecret(identity,generation,candidate)?candidate:null;
+            store.revoke(identity,generation);secrets.removePendingIfMatches(generation,expected);return null;
+        });
     }
 
     boolean resume(PeerTransport.Connection connection,RemoteStore.Peer peer) throws IOException,GeneralSecurityException {
@@ -170,6 +184,9 @@ public final class PairingService {
         if(RemoteProtocol.integer(message,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");
     }
 
+    private void requireDomWorkspace() {
+        if(!domWorkspace.getAsBoolean())throw new SecurityException("Dom workspace access required");
+    }
     private void requireKeyholder() {
         if(!keyholder.getAsBoolean()) throw new SecurityException("Keyholder access required");
     }

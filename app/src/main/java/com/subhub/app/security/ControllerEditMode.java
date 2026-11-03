@@ -44,7 +44,7 @@ public final class ControllerEditMode {
     }
 
     public static void renderButton(Activity activity, TextView button) {
-        boolean unlocked = ControllerPinManager.isDomModeActive();
+        boolean unlocked = ControllerPinManager.isDomWorkspaceUnlocked();
         DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(activity);
         boolean both = mode == DeviceRolePreferences.Mode.BOTH;
         boolean domWorkspace = DeviceRolePreferences.isDomWorkspace(activity);

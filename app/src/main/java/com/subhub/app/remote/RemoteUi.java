@@ -77,7 +77,7 @@ public final class RemoteUi implements ConnectionUi {
             }
         };
     }
-    @Override public void openPairing(Activity activity){openPairing(activity,ControllerPinManager.isDomModeActive());}
+    @Override public void openPairing(Activity activity){openPairing(activity,ControllerPinManager.isDomWorkspaceUnlocked());}
     public void openPairing(Activity activity,boolean asDom){
         Intent intent=new Intent(activity,PairingActivity.class).putExtra("asDom",asDom);
         if(asDom)activity.startActivityForResult(intent.putExtra(PairingActivity.EXTRA_DIRECT_INVITATION,true),0x5348);

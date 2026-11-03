@@ -123,7 +123,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
 
     private boolean authorized() {
         if (peer == null || !feature.recoveryReady() || !DeviceRolePreferences.supportsDom(application)
-                || !ControllerPinManager.isDomModeActive() || !ControllerPinManager.hasCredentials(application)) return false;
+                || !ControllerPinManager.isDomWorkspaceUnlocked() || !(ControllerPinManager.isLocalDomWorkspaceUnlocked()||ControllerPinManager.hasCredentials(application))) return false;
         RemoteStore.Peer current = feature.store.peer(peer.identity, peer.generation);
         return current != null && current.state == RemoteStore.State.ACTIVE
                 && current.localRole == RemoteProtocol.Role.DOM;
@@ -134,8 +134,9 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         if (!authorized()) { controls.removeAllViews(); onStop((LifecycleOwner) activity); return; }
         if (work.isPending(key + ":snapshot")) return;
         Gateway backend = gateway;
+        long revision=ControllerPinManager.domWorkspaceRevision();
         work.load(key + ":snapshot", () -> backend.snapshot().get(15, TimeUnit.SECONDS), value -> {
-            if (!attached() || !authorized()) return;
+            if (!attached() || !authorized()||revision!=ControllerPinManager.domWorkspaceRevision()) return;
             if (!peer.identity.equals(value.peer) || !peer.generation.equals(value.generation)) { unavailable(); return; }
             snapshot = value; render();
         }, failure -> { if (attached() && authorized()) unavailable(); });
@@ -192,7 +193,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 || (action == RemoteSessionCommands.Action.START ? !snapshot.canStart || durationDraft.getAsBoolean()
                         : !snapshot.canStop)) return;
         RemoteSessionRuntime.Snapshot source = snapshot;
-        ControllerPinGate.require(activity, () -> review(action, source), false);
+        ControllerPinGate.requireDomWorkspace(activity, () -> review(action, source), false);
     }
 
     private void review(RemoteSessionCommands.Action action, RemoteSessionRuntime.Snapshot source) {
@@ -201,11 +202,12 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 || action == RemoteSessionCommands.Action.START && durationDraft.getAsBoolean()) return;
         reviewing = true; render();
         long epoch = observationEpoch;
+        long revision=ControllerPinManager.domWorkspaceRevision();
         Gateway backend = gateway;
         work.load(key + ":review", () -> backend.review(action).get(15, TimeUnit.SECONDS), value -> {
             reviewing = false;
             if (!attached() || !authorized()) return;
-            if (epoch != observationEpoch || snapshot == null
+            if (revision!=ControllerPinManager.domWorkspaceRevision()||epoch != observationEpoch || snapshot == null
                     || !source.sourceWitness.equals(snapshot.sourceWitness)
                     || !source.sourceWitness.equals(value.sourceWitness) || !peer.identity.equals(value.request.recipient)
                     || !peer.generation.equals(value.request.generation)
@@ -219,7 +221,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
             Operation retained = operation;
             pending.whenComplete((id, error) -> clock.post(() -> {
                 if (error == null) retained.saved.set("operation", id);
-                if (!attached() || !authorized()) return;
+                if (!attached() || !authorized()||revision!=ControllerPinManager.domWorkspaceRevision()) return;
                 if (error != null) unavailable(); else load();
             }));
         }, failure -> { reviewing = false; if (attached() && authorized()) unavailable(); });

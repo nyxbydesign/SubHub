@@ -51,6 +51,9 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private TextView reviewConsent;
     private HardcoreReviewState hardcoreReview;
     private AsyncUiScope consentWork;
+    private com.subhub.app.security.KeyholderProvider connectionProvider;
+    private DeviceRolePreferences.Mode connectionRole;
+    private boolean connectionDomWorkspace, assignedConnection;
 
     public static final class HardcoreReviewState extends ViewModel {
         RemoteSessionRuntime.HardcoreReview review;
@@ -171,37 +174,39 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private void openConnectionOrKeyholder() {
-        observeConnection("settings-open-connection", true);
+        // A known Sub connection is a shortcut, never a prerequisite for inspecting Keyholder status.
+        com.subhub.app.people.ConnectionUi ui = com.subhub.app.people.People.connectionUi();
+        if (assignedConnection && connectionProvider == com.subhub.app.people.People.keyholder()
+                && connectionRole == DeviceRolePreferences.get(this)
+                && !DeviceRolePreferences.isDomWorkspace(this) && ui != null) ui.openConnection(this, PersonId.LOCAL);
+        else startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
     }
 
     private void refreshConnection() {
-        if (!consentWork.isPending("settings-connection")) observeConnection("settings-connection", false);
-    }
-
-    private void observeConnection(String key, boolean open) {
         com.subhub.app.security.KeyholderProvider provider = com.subhub.app.people.People.keyholder();
         DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(this);
         boolean dom = DeviceRolePreferences.isDomWorkspace(this);
-        View link = findViewById(R.id.settings_connections_security);
-        link.setEnabled(false);
-        // Credential availability is a display/routing observation; guarded actions retain their own checks.
-        consentWork.load(key, provider::state, state -> {
+        boolean sameContext = connectionProvider == provider && connectionRole == mode && connectionDomWorkspace == dom;
+        if (sameContext && consentWork.isPending("settings-connection")) return;
+        connectionProvider = provider; connectionRole = mode; connectionDomWorkspace = dom;
+        renderConnection(false);
+        consentWork.load("settings-connection", provider::state, state -> {
             if (isFinishing() || isDestroyed()) return;
             if (com.subhub.app.people.People.keyholder() != provider
-                    || DeviceRolePreferences.get(this) != mode
-                    || DeviceRolePreferences.isDomWorkspace(this) != dom) {
+                    || DeviceRolePreferences.get(this) != mode || DeviceRolePreferences.isDomWorkspace(this) != dom) {
                 refreshConnection(); return;
             }
-            boolean assigned = !dom && (state == com.subhub.app.security.KeyholderProvider.State.READY
+            renderConnection(!dom && (state == com.subhub.app.security.KeyholderProvider.State.READY
                     || state == com.subhub.app.security.KeyholderProvider.State.PENDING)
-                    && com.subhub.app.people.People.connectionUi() != null;
-            ((TextView) link).setText(assigned ? R.string.role_connection : R.string.keyholder_home_title);
-            boolean available = state != com.subhub.app.security.KeyholderProvider.State.UNAVAILABLE;
-            link.setEnabled(available);
-            if (!open || !available) return;
-            if (assigned) com.subhub.app.people.People.connectionUi().openConnection(this, PersonId.LOCAL);
-            else startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
-        }, failure -> { if (!isFinishing() && !isDestroyed()) link.setEnabled(false); });
+                    && com.subhub.app.people.People.connectionUi() != null);
+        }, failure -> { if (!isFinishing() && !isDestroyed()) renderConnection(false); });
+    }
+
+    private void renderConnection(boolean assigned) {
+        assignedConnection = assigned;
+        TextView link = findViewById(R.id.settings_connections_security);
+        link.setText(assigned ? R.string.role_connection : R.string.keyholder_home_title);
+        link.setEnabled(true);
     }
 
     private void heading(LinearLayout parent, int title, String key) {
@@ -250,10 +255,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private void toggleController() {
-        if (ControllerPinManager.isDomModeActive()) {
+        if (ControllerPinManager.isDomWorkspaceUnlocked()) {
             ControllerPinManager.enterSubMode();
             applyState();
-        } else ControllerPinGate.unlock(this, this::applyState, false);
+        } else ControllerPinGate.unlockDomWorkspace(this, this::applyState, false);
     }
     private void applyState() {
         if (binding == null || role == null) return;

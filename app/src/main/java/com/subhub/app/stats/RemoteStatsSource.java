@@ -21,7 +21,7 @@ final class RemoteStatsSource implements DailyStatsPanel.Source {
     }
     void requireAccess(){
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);
-        if(!ControllerPinManager.isDomModeActive()||!DeviceRolePreferences.supportsDom(context)
+        if(!ControllerPinManager.isDomWorkspaceUnlocked()||!DeviceRolePreferences.supportsDom(context)
                 ||current==null||current.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Statistics unavailable");
     }
     PersonSnapshot person()throws Exception{requireAccess();return new RemotePersonRepository(context,feature).load(id);}

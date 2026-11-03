@@ -125,7 +125,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
 
     private boolean mayRead() {
         return com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
-                && ControllerPinManager.isDomModeActive();
+                && ControllerPinManager.isDomWorkspaceUnlocked();
     }
 
     public void resume() {

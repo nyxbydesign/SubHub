@@ -39,17 +39,18 @@ public final class RemoteContractActivity extends RemotePage {
     private void observeAppIcons(){
         if(appIconObserver!=null||!iconsResumed||peer==null||body==null||!body.isAttachedToWindow()||isFinishing())return;
         long request=++appIconEpoch;String identity=peer.identity,generation=peer.generation;
+        long revision=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
         String route=getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
         com.subhub.app.security.DeviceRolePreferences.Mode role=com.subhub.app.security.DeviceRolePreferences.get(this);
         com.subhub.app.security.KeyholderProvider authority=com.subhub.app.people.People.keyholder();
         com.subhub.app.relationships.RelationshipUi.Provider provider=com.subhub.app.relationships.RelationshipUi.provider();
         appIconObserver=RemoteUi.observeAppIcons(()->{
-            if(request!=appIconEpoch||!iconsResumed||isFinishing()||isDestroyed()||peer==null
+            if(revision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||request!=appIconEpoch||!iconsResumed||isFinishing()||isDestroyed()||peer==null
                     ||!identity.equals(peer.identity)||!generation.equals(peer.generation)||!body.isAttachedToWindow()
                     ||!getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                     ||!Objects.equals(route,getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
                     ||role!=com.subhub.app.security.DeviceRolePreferences.get(this)
-                    ||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                    ||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                     ||authority!=com.subhub.app.people.People.keyholder()
                     ||provider!=com.subhub.app.relationships.RelationshipUi.provider())return;
             rebindAppIcons();
@@ -60,7 +61,7 @@ public final class RemoteContractActivity extends RemotePage {
         if(old!=null)try{old.close();}catch(Exception ignored){/* Queued callbacks are fenced above. */}
     }
     private void rebindAppIcons(){
-        if(!iconsResumed||peer==null||isFinishing()||!com.subhub.app.security.ControllerPinManager.isDomModeActive())return;
+        if(!iconsResumed||peer==null||isFinishing()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked())return;
         for(Map.Entry<String,ImageView> entry:iconViews.entrySet())if(entry.getValue().isAttachedToWindow())bindAppIcon(entry.getValue(),entry.getKey());
     }
     private void bindAppIcon(ImageView icon,String id){

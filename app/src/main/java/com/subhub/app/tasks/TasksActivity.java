@@ -200,7 +200,7 @@ public final class TasksActivity extends RolePage {
     private void render() {
         if (!resumed || isFinishing() || !samePerson()) return;
         Snapshot state = model.snapshot;
-        List<Object> location = java.util.Arrays.asList(model.scope, ControllerPinManager.isDomModeActive(),
+        List<Object> location = java.util.Arrays.asList(model.scope, TaskRepository.domSession(person),
                 primary, model.form, model.selected, model.proofAttachments);
         List<Object> signature = new ArrayList<>(location);
         java.util.Collections.addAll(signature, model.busy, model.history, model.message,
@@ -243,7 +243,7 @@ public final class TasksActivity extends RolePage {
             PersonUi.text(loading, getString(R.string.role_loading), false);
             return;
         }
-        if (state.dom != ControllerPinManager.isDomModeActive()) {
+        if (state.dom != TaskRepository.domSession(person)) {
             model.snapshot = null;
             refresh();
             return;
@@ -466,7 +466,7 @@ public final class TasksActivity extends RolePage {
     }
 
     private void confirmCancellation(TaskEngine.Occurrence occurrence) {
-        if (model.busy || !model.dom || !ControllerPinManager.isDomModeActive()) return;
+        if (model.busy || !model.dom || !TaskRepository.domSession(person)) return;
         for (TaskAttachmentView media : inlineMedia) media.pause();
         boolean[] series = {false};
         androidx.appcompat.app.AlertDialog.Builder dialog = new androidx.appcompat.app.AlertDialog.Builder(this)
@@ -486,7 +486,7 @@ public final class TasksActivity extends RolePage {
     private boolean inlineAuthorized() {
         try {
             return resumed && samePerson() && model.form.isEmpty() && !model.selected.isEmpty()
-                    && model.dom == ControllerPinManager.isDomModeActive()
+                    && model.dom == TaskRepository.domSession(person)
                     && model.scope.equals(repository.target().scope) && repository.allowed();
         } catch (RuntimeException denied) { return false; }
     }
@@ -872,7 +872,7 @@ public final class TasksActivity extends RolePage {
                     if (closed || sequence != readSequence) return;
                     loading = false;
                     if (problem == null) bind(result);
-                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = ControllerPinManager.isDomModeActive(); failure = problem; closeForm(); }
+                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = TaskRepository.domSession(repo.person); failure = problem; closeForm(); }
                     notifyUi();
                 });
             });
@@ -898,7 +898,7 @@ public final class TasksActivity extends RolePage {
                     if (closed) return;
                     busy = false; loading = false;
                     if (refreshed != null) bind(refreshed);
-                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = ControllerPinManager.isDomModeActive(); closeForm(); }
+                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = TaskRepository.domSession(repo.person); closeForm(); }
                     if (problem == null) success.accept(result);
                     else if (importing && !(problem instanceof SecurityException)) message = R.string.tasks_import_error;
                     else failure = problem;

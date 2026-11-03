@@ -69,7 +69,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
         data.load("people", () -> {
-            if (!ControllerPinManager.isDomModeActive()
+            if (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application))
                 throw new IllegalStateException("People context changed");
             com.subhub.app.relationships.RelationshipPresentation.Access access;
@@ -125,14 +125,14 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         FavoriteSubStore store = favorites;
         android.content.Context application = getApplicationContext();
         data.load("favorite-change", () -> {
-            if (!ControllerPinManager.isDomModeActive()
+            if (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)) return false;
             com.subhub.app.relationships.RelationshipPresentation.Access access =
                     com.subhub.app.relationships.RelationshipPanel.readAccess(application);
             if (!access.legacy && !com.subhub.app.relationships.RelationshipPresentation.rosterIds(
                     access.snapshot).contains(person.id)) return false;
             PersonSnapshot current = repository.load(person.id);
-            if (!ControllerPinManager.isDomModeActive()
+            if (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)
                     || !FavoriteSubStore.eligible(current)) return false;
             return store.toggle(current);
@@ -184,7 +184,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
     }
 
     private boolean mayManagePeople() {
-        return ControllerPinManager.isDomModeActive()
+        return ControllerPinManager.isDomWorkspaceUnlocked()
                 && com.subhub.app.security.DeviceRolePreferences.supportsDom(this);
     }
 

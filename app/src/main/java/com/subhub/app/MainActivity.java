@@ -577,17 +577,17 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (ControllerPinManager.isDomModeActive()) {
+        if (ControllerPinManager.isDomWorkspaceUnlocked()) {
             ControllerPinManager.enterSubMode();
             renderEditState();
-        } else if (DeviceRolePreferences.supportsDom(this)) ControllerPinGate.unlock(this, this::renderEditState, false);
+        } else if (DeviceRolePreferences.supportsDom(this)) ControllerPinGate.unlockDomWorkspace(this, this::renderEditState, false);
     }
 
     private void renderEditState() {
         if (binding == null) return;
         ControllerEditMode.renderButton(this, editLockButton);
         editLockButton.setVisibility(DeviceRolePreferences.supportsDom(this)
-                || ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
+                || ControllerPinManager.isDomWorkspaceUnlocked() ? View.VISIBLE : View.GONE);
         if (!DeviceRolePreferences.supportsSub(this)) editLockButton.setText(R.string.role_dom);
         PrimaryHeader.backButton(binding.getRoot()).setVisibility(localSessionPage ? View.VISIBLE : View.GONE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());

@@ -88,7 +88,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         if (sessionPage || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                 || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()) { stopAppIcons(); return; }
         DeviceRolePreferences.Mode role = DeviceRolePreferences.get(activity);
-        boolean unlocked = ControllerPinManager.isDomModeActive();
+        boolean unlocked = ControllerPinManager.isDomWorkspaceUnlocked();
         KeyholderProvider authority = People.keyholder();
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         PersonSnapshot person = subPerson;
@@ -100,7 +100,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (request != appIconEpoch || sessionPage || activity.isFinishing() || activity.isDestroyed()
                     || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                     || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()
-                    || role != DeviceRolePreferences.get(activity) || unlocked != ControllerPinManager.isDomModeActive()
+                    || role != DeviceRolePreferences.get(activity) || unlocked != ControllerPinManager.isDomWorkspaceUnlocked()
                     || authority != People.keyholder() || provider != com.subhub.app.relationships.RelationshipUi.provider()
                     || person != subPerson) return;
             refresh(true);
@@ -139,7 +139,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
         if (dom || sessionPage) relationship.setVisibility(View.GONE);
         oldDashboard.setVisibility(View.GONE);
-        if (dom && !ControllerPinManager.isDomModeActive()) {
+        if (dom && !ControllerPinManager.isDomWorkspaceUnlocked()) {
             data.cancel("role-home");
             domPeople = null;
             domAchievements = null;
@@ -147,7 +147,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (domBody.findViewWithTag("home_dom_unlock") == null) {
                 domBody.removeAllViews();
                 PersonUi.action(domBody, R.string.home_dom_locked, () ->
-                        com.subhub.app.security.ControllerPinGate.unlock(activity, () -> refresh(true), false), true)
+                        com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(activity, () -> refresh(true), false), true)
                         .setTag("home_dom_unlock");
             }
             return;
@@ -168,7 +168,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             com.subhub.app.relationships.RelationshipPresentation.Access access = null;
             boolean relationshipUnavailable = false;
             if (dom) {
-                if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(application))
+                if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(application))
                     throw new IllegalStateException("Home context changed");
                 try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
                 catch (Exception unavailable) { throw new RelationshipUnavailable(unavailable); }
@@ -185,7 +185,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         }, loaded -> {
             if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
                     || dom != domWorkspace() || sessionPage
-                    || dom && !ControllerPinManager.isDomModeActive()) return;
+                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
             boolean current = loaded.access != null
                     && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
             homeAccess = current ? loaded.access : null;
@@ -206,7 +206,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         }, failure -> {
             if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
                     || dom != domWorkspace()
-                    || dom && !ControllerPinManager.isDomModeActive()) return;
+                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
             relationship.setVisibility(View.GONE);
             if (dom) resetDomSignatures();
             else renderedRelationship = null;
@@ -235,7 +235,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 LinearLayout empty = OverviewUi.card(domFavorite);
                 OverviewUi.heading(empty, R.string.home_favorite_title, 0, null);
                 PersonUi.action(empty, R.string.home_favorite_choose, () -> {
-                if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
                     activity.startActivity(new Intent(activity, PeopleActivity.class));
                 }, true).setTag("home_choose_favorite");
             } else favoriteOverview(favorite);
@@ -257,7 +257,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (!recent.isEmpty()) {
                 LinearLayout recentCard = OverviewUi.card(domRecent);
                 OverviewUi.heading(recentCard, R.string.home_recent_additions, R.string.overview_view_subs, () -> {
-                    if (domWorkspace() && ControllerPinManager.isDomModeActive())
+                    if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
                         activity.startActivity(new Intent(activity, PeopleActivity.class));
                 });
                 for (PersonSnapshot person : recent)
@@ -346,7 +346,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         copy.addView(caption, new LinearLayout.LayoutParams(-1, -2));
         tile.addView(row, new LinearLayout.LayoutParams(-1, -2));
         OverviewUi.click(tile, () -> {
-            if (domWorkspace() && ControllerPinManager.isDomModeActive())
+            if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
                 activity.startActivity(new Intent(activity, PeopleActivity.class));
         });
         return tile;
@@ -442,7 +442,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private void openPerson(PersonSnapshot person) {
-        if (domWorkspace() && ControllerPinManager.isDomModeActive() && homeAccess != null
+        if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked() && homeAccess != null
                 && homeAccess.current(com.subhub.app.relationships.RelationshipUi::provider))
             PersonRoutes.open(activity, person.id);
     }

@@ -25,13 +25,15 @@ final class LocalRelationshipAuthority {
         private final boolean adminActive;
         private final KeyholderProvider.State state;
         private final DeviceRolePreferences.Mode role;
-        private final boolean domSession,hasCredentials;
+        private final boolean domSession,hasCredentials,localDomWorkspace;
+        private final long workspaceRevision;
         private final FormalRelationshipClock.Sample clock;
         private Observation(KeyholderProvider provider, String credentials, Inputs inputs, boolean adminActive, FormalRelationshipClock.Sample clock,
-                KeyholderProvider.State state,DeviceRolePreferences.Mode role,boolean domSession,String pinSalt,String pinHash,String totpCipher,boolean hasCredentials) {
+                KeyholderProvider.State state,DeviceRolePreferences.Mode role,boolean domSession,String pinSalt,String pinHash,String totpCipher,boolean hasCredentials,boolean localDomWorkspace,long workspaceRevision) {
             this.provider = provider; this.credentials = credentials; this.inputs = inputs; this.adminActive = adminActive;
             this.scope = inputs.scope(adminActive); this.clock = clock;
             this.state=state;this.role=role;this.domSession=domSession;this.pinSalt=pinSalt;this.pinHash=pinHash;this.totpCipher=totpCipher;this.hasCredentials=hasCredentials;
+            this.localDomWorkspace=localDomWorkspace;this.workspaceRevision=workspaceRevision;
         }
     }
     LocalRelationshipAuthority(Context context, RemoteStore store, FormalRelationshipClock.Source clock) {
@@ -62,15 +64,18 @@ final class LocalRelationshipAuthority {
         return new Inputs(chosen.toString(), consent, requested);
     }
     static String digest(String value) { return RemoteProtocol.sha256(value.getBytes(StandardCharsets.UTF_8)); }
-    Observation observe() { return observe(false); }
-    Observation observeRead() { return observe(true); }
-    private Observation observe(boolean readOnly) {
+    Observation observe() { return observe(false,false); }
+    Observation observeRead() { return observe(true,true); }
+    private Observation observe(boolean readOnly,boolean independentDom) {
         if (Thread.holdsLock(store) || Thread.holdsLock(SubFeaturePolicy.LOCK) || Thread.holdsLock(RuntimeSessionIdentity.LOCK))
             throw new IllegalStateException("Observe local authority outside locks");
         FormalRelationshipClock.Sample before = clock.observe();
+        long workspaceRevision=ControllerPinManager.domWorkspaceRevision();
+        boolean localDomWorkspace=ControllerPinManager.isLocalDomWorkspaceUnlocked();
         KeyholderProvider provider = People.keyholder();
         String witness = credentials();
-        KeyholderProvider.State state=provider.state();
+        // Unknown incoming authority is not a prerequisite for an independently authenticated Dom view.
+        KeyholderProvider.State state=independentDom&&localDomWorkspace?KeyholderProvider.State.UNAVAILABLE:provider.state();
         DeviceRolePreferences.Mode role=DeviceRolePreferences.get(context);boolean domSession=ControllerPinManager.isDomModeActive();
         if (!readOnly&&(state != KeyholderProvider.State.NONE
                 || !ControllerPinManager.isConfigured(context) && !new ControllerAuthenticator(context).isPaired())
@@ -83,21 +88,28 @@ final class LocalRelationshipAuthority {
         android.content.SharedPreferences pin=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0),totp=context.getSharedPreferences("subhub_controller_auth",0);
         Observation result = new Observation(provider, witness, inputs, adminActive, before,state,role,domSession,
                 pin.getString("controller_pin_salt",""),pin.getString("controller_pin_hash",""),totp.getString("encrypted_secret",""),
-                ControllerPinManager.isConfigured(context)||new ControllerAuthenticator(context).isPaired());
+                ControllerPinManager.isConfigured(context)||new ControllerAuthenticator(context).isPaired(),localDomWorkspace,workspaceRevision);
         FormalRelationshipClock.Sample after = clock.observe();
         synchronized (SubFeaturePolicy.LOCK) {
             if (!inputs.same(inputs())) throw new SecurityException("Local consent changed during observation");
         }
         if (!FormalRelationshipClock.consistent(before, after) || after.elapsed - before.elapsed > 5000
-                || !witness.equals(credentials()) || People.keyholder() != provider)
+                || !witness.equals(credentials()) || People.keyholder() != provider
+                || workspaceRevision!=ControllerPinManager.domWorkspaceRevision()
+                || localDomWorkspace!=ControllerPinManager.isLocalDomWorkspaceUnlocked())
             throw new SecurityException("Local controller authority changed");
         return result;
     }
     enum NewCommand { KEYHOLDER, ENROLLMENT }
     Observation observeCommand(RemoteProtocol.Role capability,NewCommand command){
-        Observation observed=observeRead();requireCommandInputs(observed,capability,command);return observed;
+        Observation observed=observe(true,capability==RemoteProtocol.Role.DOM&&command==NewCommand.KEYHOLDER);requireCommandInputs(observed,capability,command);return observed;
     }
     private void requireCommandInputs(Observation observed,RemoteProtocol.Role capability,NewCommand command){
+        // An incoming Sub controller does not own this device's separate outgoing Dom participant.
+        if(capability==RemoteProtocol.Role.DOM&&command==NewCommand.KEYHOLDER&&observed.localDomWorkspace){
+            if(!supportsDom(observed)||!observed.hasCredentials)throw new SecurityException("Local Dom credentials required");
+            return;
+        }
         if(observed.state==KeyholderProvider.State.UNAVAILABLE||observed.state==KeyholderProvider.State.PENDING
                 ||command==NewCommand.ENROLLMENT&&observed.state!=KeyholderProvider.State.NONE
                 ||capability==RemoteProtocol.Role.DOM&&!supportsDom(observed)||capability==RemoteProtocol.Role.SUB&&!supportsSub(observed)
@@ -121,6 +133,8 @@ final class LocalRelationshipAuthority {
         if (!Thread.holdsLock(SubFeaturePolicy.LOCK) || !Thread.holdsLock(store)
                 || !Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Authority lock order required");
         if (observed == null || People.keyholder() != observed.provider || ControllerPinManager.isDomModeActive()!=observed.domSession
+                || observed.workspaceRevision!=ControllerPinManager.domWorkspaceRevision()
+                || observed.localDomWorkspace!=ControllerPinManager.isLocalDomWorkspaceUnlocked()
                 || DeviceRolePreferences.get(context) != observed.role
                 || !observed.credentials.equals(credentials()) || !observed.inputs.same(inputs())
                 || !observed.scope.equals(observed.inputs.scope(observed.adminActive))
@@ -142,18 +156,21 @@ final class LocalRelationshipAuthority {
             DeviceRolePreferences.Mode role;
             try{role=DeviceRolePreferences.Mode.valueOf(pin.getString(DeviceRolePreferences.KEY_MODE,"BOTH"));}catch(IllegalArgumentException|ClassCastException invalid){role=DeviceRolePreferences.Mode.BOTH;}
             if(People.keyholder()!=observed.provider||ControllerPinManager.isDomModeActive()!=observed.domSession||role!=observed.role
+                    ||observed.workspaceRevision!=ControllerPinManager.domWorkspaceRevision()
+                    ||observed.localDomWorkspace!=ControllerPinManager.isLocalDomWorkspaceUnlocked()
                     ||!observed.pinSalt.equals(pin.getString("controller_pin_salt",""))||!observed.pinHash.equals(pin.getString("controller_pin_hash",""))
                     ||!observed.totpCipher.equals(totp.getString("encrypted_secret","")))throw new SecurityException("Profile read authority changed");
         }
     }
-    boolean domView(Observation observed){return observed.domSession&&supportsDom(observed)&&observed.state!=KeyholderProvider.State.UNAVAILABLE&&observed.state!=KeyholderProvider.State.PENDING;}
+    boolean domView(Observation observed){return supportsDom(observed)&&(observed.localDomWorkspace||observed.domSession&&observed.state!=KeyholderProvider.State.UNAVAILABLE&&observed.state!=KeyholderProvider.State.PENDING);}
     boolean supportsDom(Observation observed){return observed.role!=DeviceRolePreferences.Mode.SUB_ONLY;}
     boolean supportsSub(Observation observed){return observed.role!=DeviceRolePreferences.Mode.DOM_ONLY;}
-    String snapshotScope(Observation observed){return digest(observed.scope+":"+observed.role.name()+":"+observed.domSession+":"+observed.state.name());}
+    String snapshotScope(Observation observed){return digest(observed.scope+":"+observed.role.name()+":"+observed.domSession+":"+observed.state.name()+":"+observed.localDomWorkspace+":"+observed.workspaceRevision);}
     String observedScope(Observation observed) { return observed.scope; }
     FormalRelationshipClock.Sample anchor(Observation observed) { return observed.clock; }
     boolean sameSource(Observation original, Observation current) {
         return original != null && current != null && original.provider == current.provider
-                && original.credentials.equals(current.credentials) && original.scope.equals(current.scope);
+                && original.credentials.equals(current.credentials) && original.scope.equals(current.scope)
+                && original.workspaceRevision==current.workspaceRevision&&original.localDomWorkspace==current.localDomWorkspace;
     }
 }

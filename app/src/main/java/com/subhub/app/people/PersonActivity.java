@@ -126,9 +126,9 @@ public final class PersonActivity extends RolePage {
     }
 
     private static boolean mayRead(android.content.Context context, PersonId target) {
-        return target != null && ControllerPinManager.isDomModeActive() && (target.isLocal()
-                ? com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
-                : com.subhub.app.security.DeviceRolePreferences.supportsDom(context));
+        return target != null && (target.isLocal()
+                ? ControllerPinManager.isDomModeActive() && com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
+                : ControllerPinManager.isDomWorkspaceUnlocked() && com.subhub.app.security.DeviceRolePreferences.supportsDom(context));
     }
 
     private static java.util.List<Object> signature(PersonSnapshot person) {
@@ -313,7 +313,7 @@ public final class PersonActivity extends RolePage {
 
         boolean editable = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
                 && (person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
-                        : ControllerPinManager.isDomModeActive() && People.connectionUi() != null);
+                        : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
         PersonUi.text(scope, getString(R.string.profile_contract_scope), true);
@@ -367,7 +367,7 @@ public final class PersonActivity extends RolePage {
         }
         ConnectionUi ui = People.connectionUi();
         if (!person.id.isLocal() && person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
-                && ControllerPinManager.isDomModeActive() && ui != null)
+                && ControllerPinManager.isDomWorkspaceUnlocked() && ui != null)
             ui.editSection(this, person.id, section);
     }
 

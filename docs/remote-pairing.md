@@ -15,7 +15,9 @@ The Sub automatically creates a separate authenticator credential for this relat
 
 For an existing pairing, update both phones and let them sync once to provision the relationship’s keyholder code. If protected credential storage is missing or unreadable, the app refuses to replace it silently. When the devices can still connect, unpair from the Dom and approve a new pairing to establish a new credential.
 
-While a Dom is assigned, the Sub’s keyholder screen offers code-based recovery and hides local PIN controls. Old local PIN and manually configured authenticator data are retained privately, but cannot unlock or replace the assigned Dom. Recovery access allows unpairing; ordinary local configuration remains managed until the relationship is revoked.
+While a Dom is assigned, the Sub’s keyholder screen offers code-based recovery and hides local PIN controls. Old local credentials cannot replace the assigned Dom. Recovery access allows unpairing; ordinary local Sub configuration remains managed until the relationship is revoked.
+
+On a Both device, its existing local PIN can independently open its Dom profile and manage its outgoing Sub relationships, including while its own Dom is offline. That workspace unlock leaves the incoming Sub session, timer, configuration, and protection unchanged. It does not authorize stopping local Sub protection, changing its managed configuration, or unpairing its assigned Dom. Settings → Keyholder remains available for inspecting status when connection or credential checks are unavailable.
 
 An invitation expires and is limited to one relationship. Pairing by itself preserves the Sub's current configuration and running session. Android permissions remain local: pairing cannot grant Accessibility, screen capture, usage access, or other platform permissions.
 
@@ -27,7 +29,7 @@ Open the person's profile to adjust session duration directly, or its Contract t
 
 Artwork transfers as bounded, verified file content. Existing PINs and manual authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. The separate relationship authenticator credential is shared only with the approved Dom, stored encrypted, and excluded from ordinary synchronization records. Wallet settings can be configured remotely, but pairing does not transfer payment authentication or initiate payments.
 
-End session targets the specific active session last observed on that Sub. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued request cannot end a later session. Remote Start and Pause are unavailable.
+Compatible devices expose Start and Stop beside the Sub profile’s applied service duration. Start requires current Sub-approved Hardcore control consent and a ready App Mode service; it uses the already applied configuration and never applies an unsaved draft. Stop targets the specific active session last observed on that Sub and remains available after Hardcore is turned off. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued Stop cannot end a later session. Older peers retain only their supported controls. Remote Pause is unavailable.
 
 ## Activity
 

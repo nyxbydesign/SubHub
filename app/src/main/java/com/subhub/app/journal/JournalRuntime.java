@@ -82,7 +82,7 @@ public final class JournalRuntime {
     }
 
     public void requireScreen(boolean dom) {
-        if (!ProfileStore.mayEdit(context, dom) || dom && !ControllerPinManager.isDomModeActive())
+        if (!ProfileStore.mayEdit(context, dom) || dom && !ControllerPinManager.isDomWorkspaceUnlocked())
             throw new SecurityException("Journal workspace unavailable");
     }
     public void checkTarget(boolean dom, PersonId target) {

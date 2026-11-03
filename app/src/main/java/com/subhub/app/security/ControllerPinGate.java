@@ -166,6 +166,31 @@ public final class ControllerPinGate {
         showCredentialPrompt(activity, authorized, finishOnCancel, false);
     }
 
+    /** Explicit own-Dom navigation entry; this never grants protected Sub authority. */
+    public static void unlockDomWorkspace(Activity activity, Runnable authorized, boolean finishOnCancel) {
+        if (!DeviceRolePreferences.supportsDom(activity)) { if (finishOnCancel) activity.finish(); return; }
+        if (ControllerPinManager.isDomWorkspaceUnlocked()) { authorized.run(); return; }
+        if (ControllerPinManager.canUnlockLocalDomWorkspace(activity)) {
+            showCredentialPrompt(activity, authorized, finishOnCancel, false, true);
+        } else unlock(activity, authorized, finishOnCancel);
+    }
+
+    /** Fresh own-Dom credential for sensitive outgoing-peer actions, even in an unlocked workspace. */
+    public static void authenticateDomWorkspace(Activity activity, Runnable authorized, boolean finishOnCancel) {
+        if (!DeviceRolePreferences.supportsDom(activity)) { if (finishOnCancel) activity.finish(); return; }
+        if (ControllerPinManager.canUnlockLocalDomWorkspace(activity))
+            showCredentialPrompt(activity, authorized, finishOnCancel, true, true);
+        else authenticate(activity, authorized, finishOnCancel);
+    }
+
+    public static void requireDomWorkspace(Activity activity, Runnable authorized, boolean finishIfLocked) {
+        if (DeviceRolePreferences.supportsDom(activity) && ControllerPinManager.isDomWorkspaceUnlocked()) {
+            authorized.run(); return;
+        }
+        notifyLocked(activity);
+        if (finishIfLocked) activity.finish();
+    }
+
     /** Sensitive actions obtain a fresh credential without resetting the surrounding role session. */
     public static void authenticate(Activity activity, Runnable authorized, boolean finishOnCancel) {
         KeyholderProvider.State keyholder = keyholderState();
@@ -180,7 +205,12 @@ public final class ControllerPinGate {
 
     private static void showCredentialPrompt(Activity activity, Runnable authorized,
             boolean finishOnCancel, boolean force) {
-        KeyholderProvider.State keyholder = keyholderState();
+        showCredentialPrompt(activity, authorized, finishOnCancel, force, false);
+    }
+
+    private static void showCredentialPrompt(Activity activity, Runnable authorized,
+            boolean finishOnCancel, boolean force, boolean workspaceOnly) {
+        KeyholderProvider.State keyholder = workspaceOnly ? KeyholderProvider.State.NONE : keyholderState();
         LinearLayout panel = panel(activity);
         boolean remote = keyholder != KeyholderProvider.State.NONE;
         panel.addView(title(activity, activity.getString(remote
@@ -188,7 +218,7 @@ public final class ControllerPinGate {
         panel.addView(explainer(activity, activity.getString(remote
                 ? R.string.keyholder_remote_unlock_help : R.string.controller_pin_unlock_body)));
         EditText pin = pinInput(activity, remote ? R.string.authenticator_code : R.string.controller_pin_label);
-        ControllerCredentialChoice credential = new ControllerCredentialChoice(activity, panel, pin);
+        ControllerCredentialChoice credential = new ControllerCredentialChoice(activity, panel, pin, workspaceOnly);
         panel.addView(pin);
         AlertDialog dialog = com.subhub.app.util.ThemedDialogs.builder(activity)
                 .setView(panel)
@@ -214,7 +244,9 @@ public final class ControllerPinGate {
         dialog.show();
         watchAuthority(activity, dialog, credential::isCurrentAuthority,
                 () -> {
-                    if (force) authenticate(activity, authorized, finishOnCancel);
+                    if (force && workspaceOnly) authenticateDomWorkspace(activity, authorized, finishOnCancel);
+                    else if (force) authenticate(activity, authorized, finishOnCancel);
+                    else if (workspaceOnly) unlockDomWorkspace(activity, authorized, finishOnCancel);
                     else unlock(activity, authorized, finishOnCancel);
                 });
     }

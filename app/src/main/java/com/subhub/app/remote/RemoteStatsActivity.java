@@ -40,7 +40,7 @@ public final class RemoteStatsActivity extends RemotePage {
         android.widget.TextView stale=text(card,getString(R.string.role_stale_data),false);stale.setTag("remote_freshness_"+stream.name());freshness.put(stream,stale);return card;
     }
     private void render(){
-        if(!ControllerPinManager.isDomModeActive()||!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)||peer.localRole!=RemoteProtocol.Role.DOM){finish();return;}
+        if(!ControllerPinManager.isDomWorkspaceUnlocked()||!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)||peer.localRole!=RemoteProtocol.Role.DOM){finish();return;}
         body.removeAllViews();freshness.clear();target();
         LinearLayout summary=section(R.string.role_stats,RemoteProtocol.Stream.STATS);
         try {

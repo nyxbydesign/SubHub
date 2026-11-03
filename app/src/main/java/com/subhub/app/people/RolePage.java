@@ -34,7 +34,7 @@ public abstract class RolePage extends AppCompatActivity {
     @Override protected void onResume() {
         super.onResume();
         if (body == null) return;
-        if (domOnly && !ControllerPinManager.isDomModeActive()) {
+        if (domOnly && !ControllerPinManager.isDomWorkspaceUnlocked()) {
             ControllerEditMode.enterSubMode(this);
             return;
         }
@@ -42,8 +42,8 @@ public abstract class RolePage extends AppCompatActivity {
         TextView role = PrimaryHeader.editLockButton(findViewById(android.R.id.content));
         ControllerEditMode.renderButton(this, role);
         role.setOnClickListener(v -> {
-            if (ControllerPinManager.isDomModeActive()) ControllerEditMode.enterSubMode(this);
-            else ControllerPinGate.unlock(this, () -> {
+            if (ControllerPinManager.isDomWorkspaceUnlocked()) ControllerEditMode.enterSubMode(this);
+            else ControllerPinGate.unlockDomWorkspace(this, () -> {
                 startActivity(new Intent(this, MainActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
                 finish();

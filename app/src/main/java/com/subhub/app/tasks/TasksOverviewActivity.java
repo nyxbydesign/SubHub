@@ -20,7 +20,7 @@ public final class TasksOverviewActivity extends RolePage {
     }
 
     private boolean allowed() {
-        return ControllerPinManager.isDomModeActive() && DeviceRolePreferences.supportsDom(this);
+        return ControllerPinManager.isDomWorkspaceUnlocked() && DeviceRolePreferences.supportsDom(this);
     }
 
     @Override protected void refresh() {
@@ -32,7 +32,7 @@ public final class TasksOverviewActivity extends RolePage {
         data.load("tasks-overview", () -> {
             List<PersonSnapshot> targets = new ArrayList<>();
             for (PersonId id : people.people()) {
-                if (!ControllerPinManager.isDomModeActive()) throw new SecurityException("Dom access required");
+                if (!ControllerPinManager.isDomWorkspaceUnlocked()) throw new SecurityException("Dom access required");
                 targets.add(people.load(id));
             }
             List<Summary> result = new ArrayList<>();

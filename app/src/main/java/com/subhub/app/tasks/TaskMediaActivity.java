@@ -18,7 +18,6 @@ import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.people.PersonUi;
 import com.subhub.app.people.RolePage;
-import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.util.SubHubNavigation;
 import java.io.File;
 import java.io.InputStream;
@@ -53,7 +52,7 @@ public final class TaskMediaActivity extends RolePage {
             attachment = TaskAttachment.parse(new JSONObject(raw));
         } catch (Exception invalid) { finish(); return; }
         scope = state == null ? getIntent().getStringExtra(EXTRA_SCOPE) : state.getString(EXTRA_SCOPE);
-        dom = state == null ? getIntent().getBooleanExtra(EXTRA_DOM, ControllerPinManager.isDomModeActive())
+        dom = state == null ? getIntent().getBooleanExtra(EXTRA_DOM, TaskRepository.domSession(person))
                 : state.getBoolean(EXTRA_DOM);
         repository = new TaskRepository(getApplicationContext(), person);
         page(R.string.tasks_media_title, SubHubNavigation.Screen.PEOPLE, false);
@@ -198,7 +197,7 @@ public final class TaskMediaActivity extends RolePage {
     }
 
     private boolean liveRole() {
-        try { return dom == ControllerPinManager.isDomModeActive() && person.equals(PersonRoutes.requireId(getIntent())); }
+        try { return dom == TaskRepository.domSession(person) && person.equals(PersonRoutes.requireId(getIntent())); }
         catch (IllegalArgumentException invalid) { return false; }
     }
 

@@ -374,7 +374,10 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
     }
 
     private void requireRead() {
-        if (!DeviceRolePreferences.supportsDom(context) || !ControllerPinManager.isDomModeActive()) throw new SecurityException("Dom access required");
+        store.authorityObservation(()->{
+            if (!DeviceRolePreferences.supportsDom(context) || !ControllerPinManager.isDomWorkspaceUnlocked()) throw new SecurityException("Dom access required");
+            return null;
+        });
     }
     private static void checkLimit(int value) { if (value < 1 || value > 100) throw new IllegalArgumentException("Invalid activity page size"); }
     private static void checkKey(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid activity entry"); }

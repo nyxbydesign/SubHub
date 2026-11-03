@@ -118,7 +118,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             authorityProvider = authority; presentationProvider = provider; ++contextEpoch;
         }
         return selectionKey + ":" + DeviceRolePreferences.get(activity).name()
-                + ":" + ControllerPinManager.isDomModeActive() + ":" + contextEpoch;
+                + ":" + ControllerPinManager.isDomWorkspaceUnlocked() + ":" + ControllerPinManager.domWorkspaceRevision() + ":" + contextEpoch;
     }
 
     private boolean mayLink() {
@@ -405,7 +405,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         List<PersonSnapshot> values = new ArrayList<>();
         List<PersonId> ids = access.legacy ? repository.people() : RelationshipPresentation.rosterIds(access.snapshot);
         for (PersonId id : ids) {
-            if (!ControllerPinManager.isDomModeActive() || !DeviceRolePreferences.supportsDom(context)
+            if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context)
                     || !access.current(RelationshipUi::provider)) throw new IllegalStateException("Relationship context changed");
             PersonSnapshot value = repository.load(id);
             if (!id.equals(value.id)) throw new IllegalStateException("Relationship projection differs");

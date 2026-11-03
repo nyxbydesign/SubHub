@@ -139,7 +139,7 @@ public final class ActivityPreview {
                     && owner.getLifecycle().getCurrentState().isAtLeast(subs ? Lifecycle.State.RESUMED : Lifecycle.State.STARTED);
         }
 
-        private boolean allowed() { return DeviceRolePreferences.supportsDom(getContext()) && ControllerPinManager.isDomModeActive(); }
+        private boolean allowed() { return DeviceRolePreferences.supportsDom(getContext()) && ControllerPinManager.isDomWorkspaceUnlocked(); }
 
         private boolean retainAccess() {
             if (allowed()) return true;
@@ -192,7 +192,7 @@ public final class ActivityPreview {
             int count = limit;
             Context app = getContext().getApplicationContext();
             data.load(jobKey, () -> {
-                if (!DeviceRolePreferences.supportsDom(app) || !ControllerPinManager.isDomModeActive()) {
+                if (!DeviceRolePreferences.supportsDom(app) || !ControllerPinManager.isDomWorkspaceUnlocked()) {
                     throw new SecurityException("Activity unavailable");
                 }
                 return source.recent(requested, count);

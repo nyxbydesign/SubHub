@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keyholder_dom_workspace">Dom-Profil</string>
+    <string name="keyholder_dom_workspace_help">Deine lokale PIN öffnet dein Dom-Profil. Der Sub-Schutz bleibt unverändert.</string>
+</resources>

@@ -12,9 +12,15 @@ public final class ControllerCredentialChoice {
     private final EditText input;
     private final KeyholderProvider.State authority;
     private final KeyholderProvider provider;
+    private final boolean workspaceOnly;
     public ControllerCredentialChoice(Activity activity, LinearLayout panel, EditText input) {
-        this.activity = activity; this.input = input;
-        provider = com.subhub.app.people.People.keyholder();authority = currentAuthority();
+        this(activity, panel, input, false);
+    }
+    ControllerCredentialChoice(Activity activity, LinearLayout panel, EditText input, boolean workspaceOnly) {
+        this.activity = activity; this.input = input; this.workspaceOnly = workspaceOnly;
+        provider = com.subhub.app.people.People.keyholder();
+        authority = workspaceOnly ? KeyholderProvider.State.NONE : currentAuthority();
+        if (workspaceOnly) { input.setHint(R.string.controller_pin_label); return; }
         if (authority != KeyholderProvider.State.NONE) {
             input.setHint(R.string.authenticator_code);
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -24,6 +30,11 @@ public final class ControllerCredentialChoice {
             input.setHint(ControllerPinManager.isConfigured(activity) ? R.string.keyholder_pin_or_code : R.string.authenticator_code);
     }
     public boolean verify() {
+        if (workspaceOnly) {
+            if (isCurrentAuthority() && ControllerPinManager.verifyLocalDomWorkspace(activity, input.getText().toString())) return true;
+            input.setError(activity.getString(R.string.controller_pin_wrong));
+            return false;
+        }
         if (!isCurrentAuthority() || authority==KeyholderProvider.State.PENDING || authority==KeyholderProvider.State.UNAVAILABLE) {
             input.setError(activity.getString(R.string.keyholder_remote_code_unavailable));
             return false;
@@ -51,7 +62,8 @@ public final class ControllerCredentialChoice {
         return false;
     }
 
-    public boolean isCurrentAuthority() { return provider == com.subhub.app.people.People.keyholder() && authority == currentAuthority(); }
+    public boolean isCurrentAuthority() { return provider == com.subhub.app.people.People.keyholder()
+            && (workspaceOnly ? ControllerPinManager.canUnlockLocalDomWorkspace(activity) : authority == currentAuthority()); }
 
     private static KeyholderProvider.State currentAuthority() {
         try { return com.subhub.app.people.People.keyholder().state(); }

@@ -150,7 +150,7 @@ public final class JournalPreview extends LinearLayout {
         if (!isAttachedToWindow()) return;
         metadata.setVisibility(GONE);
         if (link) { entryAction.setEnabled(false); summary.setVisibility(VISIBLE); }
-        summary.setText(dom && !com.subhub.app.security.ControllerPinManager.isDomModeActive()
+        summary.setText(dom && !com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                 ? R.string.profile_journal_locked : R.string.journal_unavailable);
     }
 }

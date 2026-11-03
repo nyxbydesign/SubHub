@@ -181,7 +181,7 @@ public class StatsActivity extends PreferencePage {
     public final void showAchievements(boolean selected) {
         if (!hasSections || selected == catalogSelected && !profileSelected) return;
         if (!workspace.accessible(this)) {
-            if (lockedOwnProfile()) com.subhub.app.security.ControllerPinGate.unlock(this, () -> {
+            if (lockedOwnProfile()) com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, () -> {
                 com.subhub.app.security.ControllerEditMode.renderButton(this,
                         com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
                 showAchievements(selected);
@@ -219,7 +219,7 @@ public class StatsActivity extends PreferencePage {
             unlock.setTag("profile_stats_locked");
             heading(unlock, R.string.role_stats);
             button(unlock, getString(R.string.controller_pin_unlock), () ->
-                    com.subhub.app.security.ControllerPinGate.unlock(this, () -> {
+                    com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, () -> {
                         com.subhub.app.security.ControllerEditMode.renderButton(this,
                                 com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
                         renderSection();
@@ -290,10 +290,10 @@ public class StatsActivity extends PreferencePage {
         com.subhub.app.util.PrimaryHeader.backButton(root).setVisibility(
                 dom ? android.view.View.VISIBLE : android.view.View.GONE);
         if (hasSections) role.setOnClickListener(view -> {
-            if (com.subhub.app.security.ControllerPinManager.isDomModeActive()) {
+            if (com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()) {
                 com.subhub.app.security.ControllerPinManager.enterSubMode();
                 recreate();
-            } else com.subhub.app.security.ControllerPinGate.unlock(this, this::recreate, false);
+            } else com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, this::recreate, false);
         });
         com.subhub.app.util.PrimaryHeader.bindPrimary(root,
                 hasSections ? (profileSelected ? R.drawable.ic_nav_profile : R.drawable.ic_nav_stats) : 0,
@@ -375,7 +375,7 @@ public class StatsActivity extends PreferencePage {
                 && !isFinishing() && !isDestroyed() && allowances != null && allowances.isAttachedToWindow()
                 && getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                 && java.util.Objects.equals(route, getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
-                && com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                && com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                 && com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
                 && provider == com.subhub.app.relationships.RelationshipUi.provider()
                 && authority == com.subhub.app.people.People.keyholder();

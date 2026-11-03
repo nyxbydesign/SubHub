@@ -5,6 +5,7 @@ import android.content.Context;
 import android.os.Bundle;
 import android.os.SystemClock;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.people.People;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.SocketTimeoutException;
@@ -120,14 +121,14 @@ public final class RemoteFeature {
         return result;
     }
     PairingInvite restoreInvitation(String id)throws Exception {
-        requireKeyholder();
+        requireDomWorkspace();
         for(RemoteStore.Invitation candidate:store.invitations(System.currentTimeMillis()))if(candidate.id.equals(id)) {
             String saved=secrets.pendingLink(id);return saved==null?null:PairingInvite.parse(saved,System.currentTimeMillis());
         }
         return null;
     }
-    public CompletableFuture<PairingInvite> createInvite() {return submit(()->{if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");requireKeyholder();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
-    public CompletableFuture<String> localIdentity(){return submit(()->{requireKeyholder();return transport().localIdentity();});}
+    public CompletableFuture<PairingInvite> createInvite() {return submit(()->{if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");requireDomWorkspace();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
+    public CompletableFuture<String> localIdentity(){return submit(()->{if(ControllerPinManager.isLocalDomWorkspaceUnlocked())requireDomWorkspace();else requireKeyholder();return transport().localIdentity();});}
     public static final class Enrollment {
         private final RemoteFeature owner;private final PairingInvite invitation;private final long expires;
         private final java.util.concurrent.atomic.AtomicBoolean used=new java.util.concurrent.atomic.AtomicBoolean();
@@ -164,12 +165,12 @@ public final class RemoteFeature {
     });}
     public CompletableFuture<Void> approve(String invitation,String candidate,String fingerprint) {return submit(()->{
         if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
-        requireKeyholder();pairing(transport()).approve(invitation,candidate,fingerprint,System.currentTimeMillis());changed();return null;
+        requireDomWorkspace();pairing(transport()).approve(invitation,candidate,fingerprint,System.currentTimeMillis());changed();return null;
     });}
-    public CompletableFuture<String> endSession(RemoteStore.Peer peer,String expected){return submit(()->{requireKeyholder();String id=endCommands.queue(peer,expected,System.currentTimeMillis());changed();return id;});}
+    public CompletableFuture<String> endSession(RemoteStore.Peer peer,String expected){return submit(()->{requireDomWorkspace();String id=endCommands.queue(peer,expected,System.currentTimeMillis());changed();return id;});}
     public CompletableFuture<RemoteSessionRuntime.Snapshot> sessionSnapshot(RemoteStore.Peer peer) {
         return submit(() -> {
-            requireKeyholder();
+            requireDomWorkspace();
             RemoteStore.Peer current = store.peer(peer.identity, peer.generation);
             if (current == null || current.state != RemoteStore.State.ACTIVE || current.localRole != RemoteProtocol.Role.DOM)
                 throw new SecurityException("Current Sub relationship required");
@@ -180,14 +181,14 @@ public final class RemoteFeature {
     public CompletableFuture<RemoteSessionRuntime.Review> reviewSession(RemoteStore.Peer peer,
             RemoteSessionCommands.Action action) {
         return submit(() -> {
-            requireKeyholder();
+            requireDomWorkspace();
             if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
             return controlCoordinator(transport()).review(peer, action);
         });
     }
     public CompletableFuture<String> confirmSession(RemoteSessionRuntime.Review review) {
         return submit(() -> {
-            requireKeyholder();
+            requireDomWorkspace();
             if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
             String id = controlCoordinator(transport()).confirm(review); changed(); return id;
         });
@@ -215,10 +216,19 @@ public final class RemoteFeature {
         });
     }
     public void cancel(String invitation) {
-        requireKeyholder();store.authorityAccess(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});changed();
+        requireDomWorkspace();store.authorityAccess(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});changed();
     }
     public void revoke(RemoteStore.Peer peer) {
-        requireKeyholder();store.revoke(peer.identity,peer.generation);
+        RemoteStore.Peer selected=store.authorityObservation(()->store.peer(peer.identity,peer.generation));
+        if(selected==null||selected.localRole!=peer.localRole)throw new SecurityException("Relationship changed");
+        if(selected.localRole==RemoteProtocol.Role.DOM)requireDomWorkspace();else requireKeyholder();
+        long revision=ControllerPinManager.domWorkspaceRevision();
+        store.authorityAccess(()->{
+            RemoteStore.Peer current=store.peer(selected.identity,selected.generation);
+            if(current==null||current.localRole!=selected.localRole||revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Relationship changed");
+            if(current.localRole==RemoteProtocol.Role.DOM)requireDomWorkspace();else requireKeyholder();
+            store.revoke(current.identity,current.generation);return null;
+        });
         for(Map.Entry<PeerTransport.Connection,String> entry:connections.entrySet())if(key(peer).equals(entry.getValue()))timer.execute(()->close(entry.getKey()));
         changed();
     }
@@ -227,7 +237,27 @@ public final class RemoteFeature {
     public boolean isConnected(RemoteStore.Peer peer){return connections.containsValue(key(peer));}
     private static String key(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
     private void requireKeyholder(){store.authorityAccess(()->{if(!ControllerPinManager.isSessionUnlocked()||!ControllerPinManager.hasCredentials(context))throw new SecurityException("Keyholder access required");return null;});}
-    private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),android.os.Build.MODEL);}
+    /** Outgoing Dom authority is independent of the incoming Sub's controller availability. */
+    void requireDomWorkspace(){
+        long revision=ControllerPinManager.domWorkspaceRevision();
+        boolean local=ControllerPinManager.isLocalDomWorkspaceUnlocked();
+        com.subhub.app.security.KeyholderProvider provider=People.keyholder();
+        com.subhub.app.security.KeyholderProvider.State state=local?null:provider.state();
+        store.authorityAccess(()->{
+            if(revision!=ControllerPinManager.domWorkspaceRevision()||provider!=People.keyholder()
+                    ||local!=ControllerPinManager.isLocalDomWorkspaceUnlocked()
+                    ||!com.subhub.app.security.DeviceRolePreferences.supportsDom(context)
+                    ||!ControllerPinManager.isDomWorkspaceUnlocked())throw new SecurityException("Dom workspace changed");
+            if(local){if(!ControllerPinManager.isConfigured(context))throw new SecurityException("Local Dom credentials required");}
+            else if(!ControllerPinManager.isSessionUnlocked()
+                    ||state!=com.subhub.app.security.KeyholderProvider.State.NONE&&state!=com.subhub.app.security.KeyholderProvider.State.READY
+                    ||!ControllerPinManager.hasCredentials(context))throw new SecurityException("Keyholder access required");
+            return null;
+        });
+    }
+    private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,
+            ()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),
+            ()->{requireDomWorkspace();return true;},android.os.Build.MODEL);}
 
     private PeerTransport transport() throws Exception {
         if(!recoveryReady())throw new IOException("Configuration recovery is pending");

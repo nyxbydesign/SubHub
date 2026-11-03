@@ -44,7 +44,7 @@ public final class DomActivityActivity extends AppCompatActivity {
     }
 
     private boolean mayRead() {
-        return ControllerPinManager.isDomModeActive() && DeviceRolePreferences.supportsDom(this);
+        return ControllerPinManager.isDomWorkspaceUnlocked() && DeviceRolePreferences.supportsDom(this);
     }
 
     private void bindPage() {
@@ -70,7 +70,7 @@ public final class DomActivityActivity extends AppCompatActivity {
         if (mayRead()) feed.resume();
         else if (!authenticating) {
             authenticating = true; feed.pause();
-            com.subhub.app.security.ControllerPinGate.unlock(this, () -> {
+            com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, () -> {
                 authenticating = false;
                 if (resumed && mayRead()) { bindPage(); feed.resume(); }
             }, true);
