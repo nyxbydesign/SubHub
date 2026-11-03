@@ -9,6 +9,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.activity.*;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.penance.*;
+import com.subhub.app.relationships.DomScopeObserverFixture;
 import com.subhub.app.security.*;
 import com.subhub.app.settings.SettingsRepository;
 import java.util.*;
@@ -19,7 +20,10 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class RemoteActivityAndroidTest {
+    @Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     private Context context;
+    private DomScopeObserverFixture scope;
     private RemoteStore sender,receiver;
     private RemoteActivityRepository sending,receiving;
     private RemoteStore.Peer sourcePeer,targetPeer;
@@ -30,12 +34,17 @@ public class RemoteActivityAndroidTest {
     private static final String DOM=String.join("",Collections.nCopies(64,"a")),SUB=String.join("",Collections.nCopies(64,"b"));
     @Before public void setup()throws Exception {
         context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        assertFalse(com.subhub.app.service.ScreenCaptureService.isRunning());
+        assertFalse(com.subhub.app.service.ScreenshotAccessibilityService.isRunning());
         settings=new HashMap<>(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).getAll());
         penance=new HashMap<>(context.getSharedPreferences(PenanceManager.PREFS_NAME,0).getAll());
+        scope=new DomScopeObserverFixture(context);
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.BOTH.name()).commit();
         context.getSharedPreferences(PenanceManager.PREFS_NAME,0).edit().clear().commit();
-        ControllerPinManager.initialize(context);ControllerPinManager.enterDomMode();
+        authenticateDom();
         sender=database();receiver=database();pair();
+        // These named databases own the model projection; the normal provider queries another store.
+        scope.outgoing(DomScopeObserverFixture.peer(targetPeer, 1));
         sending=new RemoteActivityRepository(context,sender,()->{},notifications);
         receiving=new RemoteActivityRepository(context,receiver,()->{},notifications);
         receiver.onActivityReceived(receiving::received);
@@ -43,10 +52,37 @@ public class RemoteActivityAndroidTest {
         drain(sending);drain(receiving);
     }
     @After public void cleanup()throws Exception {
-        if(sending!=null)sending.close();if(receiving!=null)receiving.close();
-        if(sender!=null)sender.close();if(receiver!=null)receiver.close();for(String name:databases)context.deleteDatabase(name);
-        restore(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0),settings);
-        restore(context.getSharedPreferences(PenanceManager.PREFS_NAME,0),penance);ControllerPinManager.enterSubMode();
+        try {
+            try { if(sending!=null)sending.close(); }
+            finally { if(receiving!=null)receiving.close(); }
+        } finally {
+            try {
+                try { if(sender!=null)sender.close(); }
+                finally { if(receiver!=null)receiver.close(); }
+            } finally {
+                try { if(scope!=null)scope.close(); }
+                finally {
+                    try {
+                        for(String name:databases)
+                            if(context.getDatabasePath(name).isFile())assertTrue(context.deleteDatabase(name));
+                    }
+                    finally {
+                        try { if(settings!=null)restore(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0),settings); }
+                        finally {
+                            try { if(penance!=null)restore(context.getSharedPreferences(PenanceManager.PREFS_NAME,0),penance); }
+                            finally { ControllerPinManager.enterSubMode(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private void authenticateDom() {
+        ControllerPinManager.initialize(context);
+        assertTrue("Use the guest's existing configured controller PIN", ControllerPinManager.isConfigured(context));
+        assertTrue("Authenticate the configured PIN without replacing it", ControllerPinManager.verify(context,
+                InstrumentationRegistry.getArguments().getString("controller_pin", "2468")));
+        assertTrue(ControllerPinManager.isDomWorkspaceUnlocked());
     }
     private RemoteStore database(){String name="activity-"+UUID.randomUUID()+".db";databases.add(name);return new RemoteStore(context,name);}
     private void pair() {
@@ -102,6 +138,7 @@ public class RemoteActivityAndroidTest {
         assertEquals(123,count(receiver,"activity_receipts"));
     }
     @Test public void unpairedServiceWindowCallbacksPersistLocalSelectedAppAndReopenOnActivity() throws Exception {
+        scope.outgoing();
         RemoteStore local = database(); String name = databases.get(databases.size() - 1);
         RemoteActivityRepository repository = new RemoteActivityRepository(context, local, () -> {}, notifications);
         ActivityRepository priorUi = ActivitySources.repository();
@@ -136,12 +173,19 @@ public class RemoteActivityAndroidTest {
             drain(repository); assertEquals(1, repository.recent(PersonId.LOCAL, 20).size());
             ActivityEntry entry = repository.recent(PersonId.LOCAL, 1).get(0);
             assertEquals("com.example.selected", entry.event.packageName); assertFalse(entry.unread);
+            assertTrue(repository.load(null, 20).entries.isEmpty());
+            assertTrue(repository.recent(null, 20).isEmpty()); assertEquals(0, repository.unreadCount());
+            assertEquals(entry.key, repository.load("local:MAX", 20).entries.get(0).key);
             repository.close(); local.close(); local = new RemoteStore(context, name);
             repository = new RemoteActivityRepository(context, local, () -> {}, notifications); drain(repository);
             assertEquals(entry.key, repository.recent(PersonId.LOCAL, 1).get(0).key);
-            ActivitySources.install(repository); ControllerPinManager.enterDomMode();
+            assertTrue(repository.load(null, 20).entries.isEmpty());
+            ActivitySources.install(repository); authenticateDom();
+            Intent localHistory = new Intent(context, DomActivityActivity.class)
+                    .putExtra(DomActivityActivity.EXTRA_LOCAL_HISTORY, true)
+                    .putExtra(DomActivityActivity.EXTRA_ENTRY_KEY, entry.key);
             try (androidx.test.core.app.ActivityScenario<DomActivityActivity> page =
-                    androidx.test.core.app.ActivityScenario.launch(DomActivityActivity.class)) {
+                    androidx.test.core.app.ActivityScenario.launch(localHistory)) {
                 java.util.concurrent.atomic.AtomicBoolean shown = new java.util.concurrent.atomic.AtomicBoolean();
                 long deadline = android.os.SystemClock.uptimeMillis() + 8000;
                 do {
@@ -172,14 +216,17 @@ public class RemoteActivityAndroidTest {
             assertEquals("Synthetic Sub", local.personName);
             assertEquals("Synthetic Sub", receiving.locate(key, 10).entries.stream()
                     .filter(row -> row.key.equals(key)).findFirst().get().personName);
-            assertEquals("Synthetic Sub", receiving.recent(null, 10).stream()
-                    .filter(row -> row.key.equals(key)).findFirst().get().personName);
+            assertEquals("Synthetic Sub", receiving.load("local:MAX", 10).entries.get(0).personName);
+            assertFalse(receiving.recent(null, 10).stream().anyMatch(row -> row.key.equals(key)));
+            assertEquals(1, receiving.load(null, 10).entries.size());
             assertEquals("Fixture Sub", receiving.recent(RemotePersonRepository.id(targetPeer), 1).get(0).personName);
             assertTrue(com.subhub.app.people.ProfileNames.set(context, false, "Renamed Sub"));
             assertEquals(key, receiving.recent(PersonId.LOCAL, 1).get(0).key);
             assertEquals("Renamed Sub", receiving.recent(PersonId.LOCAL, 1).get(0).personName);
-            assertEquals("Renamed Sub", receiving.recent(null, 10).stream()
+            assertEquals("Renamed Sub", receiving.locate(key, 10).entries.stream()
                     .filter(row -> row.key.equals(key)).findFirst().get().personName);
+            assertEquals("Renamed Sub", receiving.load("local:MAX", 10).entries.get(0).personName);
+            assertFalse(receiving.recent(null, 10).stream().anyMatch(row -> row.key.equals(key)));
             assertTrue(com.subhub.app.people.ProfileNames.set(context, false, "\u202e\u2066"));
             assertEquals(context.getString(com.subhub.app.R.string.header_subtitle_sub),
                     receiving.recent(PersonId.LOCAL, 1).get(0).personName);
@@ -193,6 +240,24 @@ public class RemoteActivityAndroidTest {
         receiving.foreground("com.example.launcher", "com.example.local", true, now + 10);
         drain(receiving);
         receiver.receive(SUB, publish("remote_event", now));
+        assertEquals(1, receiving.load(null, 10).entries.size());
+        assertFalse(receiving.load(null, 10).entries.get(0).personId.isLocal());
+        assertEquals(1, receiving.load("local:MAX", 10).entries.size());
+        String remoteKey = receiving.load(null, 10).entries.get(0).key;
+        assertEquals(1, receiving.unreadCount());
+        scope.outgoing(DomScopeObserverFixture.peer(SUB, "unapproved-generation", 1));
+        assertTrue(receiving.load(null, 10).entries.isEmpty());
+        assertTrue(receiving.recent(RemotePersonRepository.id(targetPeer), 10).isEmpty());
+        assertTrue(receiving.locate(remoteKey, 10).entries.isEmpty());
+        assertEquals(0, receiving.unreadCount());
+        scope.outgoing();
+        assertTrue(receiving.recent(null, 10).isEmpty());
+        scope.outgoing(DomScopeObserverFixture.peer(targetPeer, 1));
+        assertEquals(remoteKey, receiving.load(null, 10).entries.get(0).key);
+        assertEquals(1, receiving.unreadCount());
+        // Only this receiver has an outgoing LOCAL approval; the sender's incoming Dom is separate.
+        scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                DomScopeObserverFixture.peer(targetPeer, 2));
         ActivityRepository.Page first = receiving.load(null, 1);
         assertEquals(1, first.entries.size());
         assertNotNull(first.nextCursor);
@@ -225,6 +290,10 @@ public class RemoteActivityAndroidTest {
         receiving.markRead(Collections.singletonList(remoteEntry.key));
         assertEquals(0, receiving.unreadCount());
         assertEquals(remoteEntry.key, receiving.locate(remoteEntry.key, 10).entries.get(0).key);
+        assertEquals(localEntry.key, receiving.load("local:MAX", 10).entries.get(0).key);
+        scope.outgoing(DomScopeObserverFixture.peer(targetPeer, 1));
+        assertEquals(remoteEntry.key, receiving.load(null, 10).entries.get(0).key);
+        assertEquals(1, receiving.load(null, 10).entries.size());
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
                 .putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
         assertEquals(1, receiving.load(null, 10).entries.size());
@@ -277,12 +346,50 @@ public class RemoteActivityAndroidTest {
         sender.retireLibraries();assertTrue(sender.nextBatch(DOM,generation,RemoteProtocol.Stream.BASELINE).changes.isEmpty());
     }
     @Test public void sourceAndReceiptTablesUpgradeWithoutChangingExistingPeerRows()throws Exception {
-        RemoteStore legacy=database();String name=databases.get(databases.size()-1);
-        SQLiteDatabase db=legacy.getWritableDatabase();db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'DOM','ACTIVE')",new Object[]{SUB,generation,"Kept peer"});
-        db.execSQL("DROP TABLE activity_receipts");db.execSQL("DROP TABLE activity_source");db.execSQL("DROP TABLE activity_state");db.execSQL("DROP TABLE payload_maintenance");db.execSQL("DROP TABLE session_controls");db.execSQL("DROP TABLE session_control_journal");db.setVersion(2);legacy.close();
+        String name="activity-v2-"+UUID.randomUUID()+".db";databases.add(name);
+        assertFalse(context.getDatabasePath(name).exists());
+        try(SQLiteDatabase db=context.openOrCreateDatabase(name,Context.MODE_PRIVATE,null)) {
+            createVersion2Schema(db);
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'DOM','ACTIVE')",new Object[]{SUB,generation,"Kept peer"});
+            db.setVersion(2);assertEquals(2,db.getVersion());
+            Set<String> tables=new HashSet<>();
+            try(Cursor rows=db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='android_metadata'",null)) {
+                while(rows.moveToNext())tables.add(rows.getString(0));
+            }
+            assertEquals(new HashSet<>(Arrays.asList("peers","invites","local_objects","outbox","remote_objects","outgoing","incoming","commands","remote_metadata")),tables);
+        }
         RemoteStore upgraded=new RemoteStore(context,name);
-        try{assertEquals("Kept peer",upgraded.peer(SUB,generation).name);assertEquals(0,count(upgraded,"activity_receipts"));assertEquals(0,count(upgraded,"activity_source"));}
+        try{assertEquals("Kept peer",upgraded.peer(SUB,generation).name);assertEquals(0,count(upgraded,"activity_receipts"));assertEquals(0,count(upgraded,"activity_source"));
+            RemoteStore.Peer peer=upgraded.peer(SUB,generation);
+            assertEquals(SUB,peer.identity);assertEquals(generation,peer.generation);
+            assertEquals(RemoteProtocol.Role.DOM,peer.localRole);assertEquals(RemoteStore.State.ACTIVE,peer.state);
+            assertEquals(0,count(upgraded,"activity_state"));assertEquals(RemoteStore.DATABASE_VERSION,upgraded.getReadableDatabase().getVersion());
+        }
         finally{upgraded.close();}
+    }
+    // RemoteStore v2 onCreate/createMetadata from db22ddd689d5095f28cd52f552a126dcd4b52c85.
+    private static void createVersion2Schema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE peers(peer TEXT NOT NULL,generation TEXT NOT NULL,name TEXT NOT NULL,"
+                + "local_role TEXT NOT NULL,state TEXT NOT NULL,last_sync INTEGER NOT NULL DEFAULT 0,"
+                + "route TEXT NOT NULL DEFAULT '',PRIMARY KEY(peer,generation))");
+        db.execSQL("CREATE UNIQUE INDEX active_remote_identity ON peers(peer) WHERE state IN ('PENDING','ACTIVE')");
+        db.execSQL("CREATE UNIQUE INDEX one_dom_per_sub ON peers(local_role) WHERE local_role='SUB' AND state IN ('PENDING','ACTIVE')");
+        db.execSQL("CREATE TABLE invites(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL,expires INTEGER NOT NULL,"
+                + "candidate TEXT,candidate_name TEXT NOT NULL DEFAULT '',approved INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0)");
+        for (String table : new String[] {"local_objects", "outbox", "remote_objects"}) {
+            db.execSQL("CREATE TABLE " + table + "(peer TEXT NOT NULL,generation TEXT NOT NULL,"
+                    + "stream TEXT NOT NULL,item TEXT NOT NULL,seq INTEGER NOT NULL,body TEXT NOT NULL,"
+                    + "deleted INTEGER NOT NULL,observed INTEGER NOT NULL,PRIMARY KEY(peer,generation,stream,item))");
+        }
+        db.execSQL("CREATE TABLE outgoing(peer TEXT NOT NULL,generation TEXT NOT NULL,stream TEXT NOT NULL,"
+                + "next_seq INTEGER NOT NULL DEFAULT 0,acked INTEGER NOT NULL DEFAULT 0,"
+                + "offered INTEGER NOT NULL DEFAULT 0,digest TEXT,PRIMARY KEY(peer,generation,stream))");
+        db.execSQL("CREATE TABLE incoming(peer TEXT NOT NULL,generation TEXT NOT NULL,stream TEXT NOT NULL,"
+                + "through_seq INTEGER NOT NULL,PRIMARY KEY(peer,generation,stream))");
+        db.execSQL("CREATE TABLE commands(peer TEXT NOT NULL,generation TEXT NOT NULL,id TEXT NOT NULL,"
+                + "revision INTEGER NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL,"
+                + "PRIMARY KEY(peer,generation,id))");
+        db.execSQL("CREATE TABLE remote_metadata(peer TEXT NOT NULL,generation TEXT NOT NULL,name TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(peer,generation,name))");
     }
     @Test public void assessmentLedgerPublishesOneDurableRuleFactWithoutPaymentFields()throws Exception {
         java.lang.reflect.Field installed=RemoteActivityRecorder.class.getDeclaredField("installed");installed.setAccessible(true);
@@ -305,7 +412,7 @@ public class RemoteActivityAndroidTest {
         RemoteProtocol.Batch batch=publish("event_one",System.currentTimeMillis());receiver.receive(SUB,batch);
         ActivityEntry entry=receiving.load(null,20).entries.get(0);ControllerPinManager.enterSubMode();
         assertThrows(SecurityException.class,()->receiving.load(null,20));assertThrows(SecurityException.class,()->receiving.markRead(Collections.singletonList(entry.key)));
-        ControllerPinManager.enterDomMode();context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.SUB_ONLY.name()).commit();
+        authenticateDom();context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.SUB_ONLY.name()).commit();
         assertThrows(SecurityException.class,()->receiving.load(null,20));
         assertThrows(SecurityException.class,()->receiver.queueConfiguration(SUB,generation,0,0,new JSONObject()));
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();

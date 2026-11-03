@@ -31,8 +31,7 @@ final class HistoricalAchievementBackfill {
 
     static void dom(Context context, AchievementManager manager, DomStatsRepository.Loaded data) throws Exception {
         if (!AchievementRole.DOM.accessible(context)) throw new SecurityException("Dom statistics unavailable");
-        LocalRetainedStatistics local = data.local;
-        if (local != null) local(context, new AchievementManager(context), local);
+        data.scope.revalidate();
         List<DomDailySnapshot.History> histories = data.histories;
         Map<String, DomDailySnapshot.History> unique = new LinkedHashMap<>();
         for (DomDailySnapshot.History value : histories) {
@@ -53,6 +52,7 @@ final class HistoricalAchievementBackfill {
             }
         }
         RetainedStatistics history = new RetainedStatistics(ZoneId.systemDefault(), System.currentTimeMillis(), dates);
+        data.scope.revalidate();
         manager.reconcileHistory(history.awards(true), sources, null, data.stats);
     }
 }

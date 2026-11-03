@@ -7,6 +7,7 @@ import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.relationships.DomScopeObserverFixture;
 import com.subhub.app.remote.*;
 import com.subhub.app.security.*;
 import com.subhub.app.settings.SettingsRepository;
@@ -24,6 +25,7 @@ public final class HistoryBackfillAndroidTest {
             new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
     @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private Scoped context;
+    private DomScopeObserverFixture scope;
     private DailyStatsStore daily, previous;
     private Field singleton;
     private static final String DAY = "2025-12-31";
@@ -32,6 +34,7 @@ public final class HistoryBackfillAndroidTest {
     @Before public void setup() throws Exception {
         assertIdle();
         context = new Scoped(InstrumentationRegistry.getInstrumentation().getTargetContext());
+        scope = new DomScopeObserverFixture(context);
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
                 .putString(DeviceRolePreferences.KEY_MODE, "BOTH").commit();
         ControllerPinManager.enterDomMode();
@@ -42,8 +45,17 @@ public final class HistoryBackfillAndroidTest {
         daily.getWritableDatabase();
     }
     @After public void teardown() throws Exception {
-        DailyStatsStore.awaitWrites(); singleton.set(null, previous); daily.close();
-        context.clean(); assertIdle();
+        try { DailyStatsStore.awaitWrites(); }
+        finally {
+            try { if (singleton != null) singleton.set(null, previous); }
+            finally {
+                try { if (daily != null) daily.close(); }
+                finally {
+                    try { if (scope != null) scope.close(); }
+                    finally { if (context != null) context.clean(); assertIdle(); }
+                }
+            }
+        }
     }
     private SharedPreferences prefs(String name) { return context.getSharedPreferences(name, 0); }
     private void session() {
@@ -56,12 +68,22 @@ public final class HistoryBackfillAndroidTest {
         session();
         Map<String, ?> before = prefs(StatsRepository.PREFS_NAME).getAll();
         Map<String, Map<String, Long>> dailyBefore = daily.days("0000-01-01", "9999-12-31");
-        DomStatsSnapshot facts = new DomStatsRepository(context).load();
+        DomStatsSnapshot unlinked = new DomStatsRepository(context).load();
+        assertEquals(0, unlinked.subs); assertEquals(0, unlinked.sessionSeconds); assertEquals(0, unlinked.sessions);
+        scope.outgoing(DomScopeObserverFixture.local("approved-local", 1));
+        DomStatsRepository.Loaded approved = new DomStatsRepository(context).loadWithHistory();
+        DomStatsSnapshot facts = approved.stats;
         assertEquals(1, facts.subs); assertEquals(3600, facts.sessionSeconds); assertEquals(1, facts.sessions);
+        assertEquals("approved-local", approved.histories.get(0).identity.generation);
         LocalRetainedStatistics local = LocalRetainedStatistics.load(context);
         assertEquals(100, local.stats.getTotalBlocks()); assertEquals(1, local.history.sessions().size());
         assertEquals(before, prefs(StatsRepository.PREFS_NAME).getAll());
         DailyStatsStore.awaitWrites(); assertEquals(dailyBefore, daily.days("0000-01-01", "9999-12-31"));
+        scope.outgoing(DomScopeObserverFixture.local("replacement-local", 1));
+        assertThrows(IllegalStateException.class, approved.scope::revalidate);
+        scope.outgoing();
+        assertEquals(0, new DomStatsRepository(context).load().subs);
+        assertEquals(1, LocalRetainedStatistics.load(context).history.sessions().size());
         prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(DeviceRolePreferences.KEY_MODE, "DOM_ONLY").commit();
         assertEquals(0, new DomStatsRepository(context).load().subs);
         prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(DeviceRolePreferences.KEY_MODE, "SUB_ONLY").commit();
@@ -154,13 +176,29 @@ public final class HistoryBackfillAndroidTest {
         try (RemoteStore store = new RemoteStore(context)) {
             String id = String.join("", Collections.nCopies(64, "a"));
             store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Synthetic','DOM','ACTIVE')",new Object[]{id});
+            DomScopeObserverFixture.mapOwnedPeer(context, store, id, "current");
             JSONObject day = new JSONObject().put("schema",1).put("day",DAY).put("zone","UTC").put("metrics",new JSONObject().put("service_ms",3600000).put("sessions",1));
             ContentValues row = new ContentValues(); row.put("peer",id); row.put("generation","current"); row.put("stream","DAILY"); row.put("item",DAY); row.put("seq",1); row.put("body",day.toString()); row.put("deleted",0); row.put("observed",WALL);
             store.getWritableDatabase().insertOrThrow("remote_objects",null,row);
             String before = rows(store.getReadableDatabase(),"remote_objects");
+            scope.outgoing(DomScopeObserverFixture.peer(store.peer(id, "current"), 1));
+            DomStatsSnapshot peerOnly = new DomStatsRepository(context).load();
+            assertEquals(1, peerOnly.subs); assertEquals(3600, peerOnly.sessionSeconds); assertEquals(1, peerOnly.sessions);
+            assertEquals(1, LocalRetainedStatistics.load(context).history.sessions().size());
+            // No incoming Dom governs this fixture's Sub: combined projection requires explicit LOCAL approval.
+            scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                    DomScopeObserverFixture.peer(store.peer(id, "current"), 2));
             DomStatsSnapshot facts = new DomStatsRepository(context).load();
             assertEquals(2,facts.subs); assertEquals(7200,facts.sessionSeconds); assertEquals(2,facts.sessions);
             assertEquals(before,rows(store.getReadableDatabase(),"remote_objects"));
+            scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                    DomScopeObserverFixture.peer(id, "unapproved-generation", 2));
+            DomStatsSnapshot wrongGeneration = new DomStatsRepository(context).load();
+            assertEquals(1, wrongGeneration.subs); assertEquals(3600, wrongGeneration.sessionSeconds);
+            scope.outgoing();
+            assertEquals(0, new DomStatsRepository(context).load().subs);
+            scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                    DomScopeObserverFixture.peer(store.peer(id, "current"), 2));
             store.getWritableDatabase().execSQL("UPDATE peers SET state='REVOKED'");
             assertEquals(1,new DomStatsRepository(context).load().subs);
             assertEquals(before,rows(store.getReadableDatabase(),"remote_objects"));
@@ -171,21 +209,38 @@ public final class HistoryBackfillAndroidTest {
         try(RemoteStore store = new RemoteStore(context)) {
             SQLiteDatabase db = store.getWritableDatabase();
             String id = String.join("",Collections.nCopies(64,"b"));
-            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Synthetic','DOM','ACTIVE')",new Object[]{id});
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Synthetic','SUB','ACTIVE')",new Object[]{id});
+            DomScopeObserverFixture.mapOwnedPeer(context, store, id, "current");
+            scope.scope(DomScopeObserverFixture.incomingDom(store.peer(id, "current")));
             JSONObject event = new JSONObject().put("schema",1).put("id","tribute_original")
                     .put("kind","TRIBUTE_TRIGGERED").put("observedAt",WALL).put("day",DAY).put("zone","UTC")
                     .put("packageName", "").put("amountCents",250).put("currency","EUR")
                     .put("reason","NEW_DETECTION").put("limitMinutes",0).put("configuration", "");
             db.execSQL("INSERT INTO activity_source(event_id,source_key,body,observed) VALUES('tribute_original','original',?,?)",new Object[]{event.toString(),WALL});
             db.execSQL("INSERT INTO remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,'current','EVENTS','tribute_original',1,?,0,?)",new Object[]{id,event.toString(),WALL});
+            String outgoing = String.join("",Collections.nCopies(64,"d"));
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Outgoing Sub','DOM','ACTIVE')",new Object[]{outgoing});
+            DomScopeObserverFixture.mapOwnedPeer(context, store, outgoing, "current");
+            db.execSQL("INSERT INTO remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,'current','EVENTS','tribute_original',1,?,0,?)",new Object[]{outgoing,event.toString(),WALL});
             String source = rows(db,"activity_source"), inbound=rows(db,"remote_objects"), outbox=rows(db,"outbox");
             LocalRetainedStatistics local=LocalRetainedStatistics.load(context);
             assertEquals(Long.valueOf(250),local.assessed.get("EUR"));
-            List<DomDailySnapshot.History> histories=new DomDailyStatsSource(context).histories(store,local);
+            assertEquals(1, local.activityCopies.size());
+            assertTrue(new DomDailyStatsSource(context).histories(store,local).isEmpty());
+            assertEquals(0, new DomStatsRepository(context).load().subs);
             long total=0;
+            for(Map<String,Long> day:local.history.days().values()) total+=Math.max(0,day.getOrDefault("assessed_EUR",0L));
+            assertEquals(250,total);
+            // An incoming Dom and local self facts do not enter the outgoing Sub's aggregate.
+            scope.scope(DomScopeObserverFixture.incomingDom(store.peer(id, "current")),
+                    DomScopeObserverFixture.peer(store.peer(outgoing, "current"), 1));
+            List<DomDailySnapshot.History> histories=new DomDailyStatsSource(context).histories(store,local);
+            assertEquals(1, histories.size()); assertEquals(outgoing, histories.get(0).identity.identity);
+            total=0;
             for(DomDailySnapshot.History history:histories)
                 for(Map<String,Long> day:history.days.values()) total+=Math.max(0,day.getOrDefault("assessed_EUR",0L));
             assertEquals(250,total);
+            assertEquals(local.assessed, LocalRetainedStatistics.load(context).assessed);
             assertEquals(source,rows(db,"activity_source")); assertEquals(inbound,rows(db,"remote_objects")); assertEquals(outbox,rows(db,"outbox"));
             assertEquals("",rows(db,"outgoing")); assertEquals("",rows(db,"incoming"));
         }
@@ -215,6 +270,7 @@ public final class HistoryBackfillAndroidTest {
             SQLiteDatabase db = store.getWritableDatabase();
             String peer = String.join("", Collections.nCopies(64, "c"));
             db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,'current','Synthetic','DOM','ACTIVE')", new Object[]{peer});
+            DomScopeObserverFixture.mapOwnedPeer(context, store, peer, "current");
             JSONObject first = tribute("tribute_text", 250, "EUR"), second = tribute("tribute_blob", 450, "USD");
             for (JSONObject event : Arrays.asList(first, second))
                 db.execSQL("INSERT INTO activity_source(event_id,source_key,body,observed) VALUES(?,?,?,?)",
@@ -237,8 +293,17 @@ public final class HistoryBackfillAndroidTest {
             db.execSQL("INSERT INTO outgoing(peer,generation,stream,next_seq,acked,offered) VALUES(?,'current','DAILY',11,5,8)", new Object[]{peer});
             db.execSQL("INSERT INTO incoming(peer,generation,stream,through_seq) VALUES(?,'current','EVENTS',9)", new Object[]{peer});
 
+            scope.outgoing(DomScopeObserverFixture.peer(store.peer(peer, "current"), 1));
+            String unlinkedBefore = storageWitness(db);
             LocalRetainedStatistics plain = LocalRetainedStatistics.load(context);
             DomDailyStatsSource source = new DomDailyStatsSource(context);
+            DailyStatsPanel.DailyData outgoingOnly = source.load(store, DAY, DAY, plain);
+            assertEquals(Long.valueOf(250), outgoingOnly.days.get(DAY).get("assessed_EUR"));
+            assertEquals(Long.valueOf(700), outgoingOnly.days.get(DAY).get("assessed_USD"));
+            assertEquals(Long.valueOf(60000), outgoingOnly.days.get(DAY).get("service_ms"));
+            assertEquals(unlinkedBefore, storageWitness(db));
+            scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                    DomScopeObserverFixture.peer(store.peer(peer, "current"), 2));
             DailyStatsPanel.DailyData plainDays = source.load(store, DAY, DAY, plain);
             assertEquals(Long.valueOf(250), plain.assessed.get("EUR"));
             assertEquals(Long.valueOf(450), plain.assessed.get("USD"));
@@ -284,6 +349,14 @@ public final class HistoryBackfillAndroidTest {
             assertEquals(Long.valueOf(450), hidden.days.get(DAY).get("assessed_USD"));
             assertEquals(Long.valueOf(-1), hidden.days.get(DAY).get("service_ms"));
             assertEquals(withdrawn, storageWitness(db));
+            scope.outgoing(DomScopeObserverFixture.peer(store.peer(peer, "current"), 1));
+            DailyStatsPanel.DailyData noLocal = source.load(store, DAY, DAY, mixed);
+            assertEquals(Long.valueOf(-1), noLocal.days.get(DAY).get("assessed_USD"));
+            assertEquals(Long.valueOf(60000), noLocal.days.get(DAY).get("service_ms"));
+            assertEquals(Long.valueOf(450), LocalRetainedStatistics.load(context).assessed.get("USD"));
+            assertEquals(withdrawn, storageWitness(db));
+            scope.outgoing(DomScopeObserverFixture.local("approved-local", 1),
+                    DomScopeObserverFixture.peer(store.peer(peer, "current"), 2));
             db.execSQL("UPDATE peers SET state='REVOKED'");
             assertEquals(Long.valueOf(450), source.load(store, DAY, DAY, mixed).days.get(DAY).get("assessed_USD"));
             assertEquals(withdrawn, storageWitness(db));
@@ -330,16 +403,16 @@ public final class HistoryBackfillAndroidTest {
         state.putString("daily_selected", "2026-01-01");
         try (androidx.test.core.app.ActivityScenario<com.subhub.app.help.HelpActivity> scenario =
                 androidx.test.core.app.ActivityScenario.launch(new Intent(context.getBaseContext(), com.subhub.app.help.HelpActivity.class))) {
-            mount(scenario, state); awaitCalendar(scenario, "January 2026");
+            mount(scenario, state); awaitCalendar(scenario, 2026, 1);
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription(com.subhub.app.R.string.stats_previous_month))
                     .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
-            awaitCalendar(scenario, "December 2025");
+            awaitCalendar(scenario, 2025, 12);
             scenario.onActivity(activity -> ((DailyStatsPanel)activity.findViewById(com.subhub.app.R.id.daily_statistics_panel)).save(state));
             assertEquals(2025, state.getInt("daily_year")); assertEquals(12, state.getInt("daily_month"));
-            scenario.recreate(); mount(scenario, state); awaitCalendar(scenario, "December 2025");
+            scenario.recreate(); mount(scenario, state); awaitCalendar(scenario, 2025, 12);
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription(com.subhub.app.R.string.stats_next_month))
                     .perform(androidx.test.espresso.action.ViewActions.scrollTo(), androidx.test.espresso.action.ViewActions.click());
-            awaitCalendar(scenario, "January 2026");
+            awaitCalendar(scenario, 2026, 1);
         }
     }
     private void mount(androidx.test.core.app.ActivityScenario<?> scenario, android.os.Bundle state) {
@@ -349,15 +422,81 @@ public final class HistoryBackfillAndroidTest {
             activity.setContentView(scroll);
         });
     }
-    private void awaitCalendar(androidx.test.core.app.ActivityScenario<?> scenario, String expected) throws Exception {
+    private void awaitCalendar(androidx.test.core.app.ActivityScenario<?> scenario, int year, int month) throws Exception {
         long end = android.os.SystemClock.elapsedRealtime() + 10000;
+        java.util.concurrent.atomic.AtomicReference<JSONObject> last = new java.util.concurrent.atomic.AtomicReference<>();
         while(android.os.SystemClock.elapsedRealtime() < end) {
             java.util.concurrent.atomic.AtomicBoolean found = new java.util.concurrent.atomic.AtomicBoolean();
-            scenario.onActivity(activity -> found.set(texts(activity.findViewById(android.R.id.content)).contains(expected)));
+            scenario.onActivity(activity -> {
+                // Match the production formatter on the actual Activity thread without changing its locale.
+                String expected = LocalDate.of(year, month, 1).format(
+                        java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()));
+                DailyStatsPanel panel = activity.findViewById(com.subhub.app.R.id.daily_statistics_panel);
+                android.os.Bundle actual = new android.os.Bundle();
+                if (panel != null) panel.save(actual);
+                found.set(panel != null && actual.getInt("daily_range") == 365
+                        && actual.getInt("daily_year") == year && actual.getInt("daily_month") == month
+                        && hasCalendarText(panel, expected));
+                if (!found.get()) last.set(calendarObservation(activity, panel, actual, expected, year, month));
+            });
             if(found.get()) return;
             Thread.sleep(40);
         }
-        throw new AssertionError("Calendar did not render " + expected);
+        String observation = last.get() == null ? "No Activity observation completed before the deadline" : last.get().toString();
+        AssertionError failure = new AssertionError("Calendar did not render " + YearMonth.of(year, month)
+                + "; see CALENDAR_OBSERVER_FAILURE snapshot");
+        android.util.Log.e("HistoryCalendar", observation);
+        android.os.Bundle evidence = new android.os.Bundle();
+        evidence.putString("stream", "\nCALENDAR_OBSERVER_FAILURE " + observation + "\n");
+        try {
+            // In-progress diagnostics enter the retained instrumentation log before the failing result.
+            InstrumentationRegistry.getInstrumentation().sendStatus(2, evidence);
+        } catch (RuntimeException unavailable) { failure.addSuppressed(unavailable); }
+        throw failure;
+    }
+    private JSONObject calendarObservation(android.app.Activity activity, DailyStatsPanel panel,
+            android.os.Bundle state, String expected, int year, int month) {
+        try {
+            String observed = texts(activity.findViewById(android.R.id.content));
+            JSONObject result = new JSONObject().put("expected_year", year).put("expected_month", month)
+                    .put("expected_label", calendarBounded(expected, 128))
+                    .put("default_locale", calendarBounded(Locale.getDefault().toLanguageTag(), 128))
+                    .put("activity_locales", calendarBounded(activity.getResources().getConfiguration().getLocales().toLanguageTags(), 256))
+                    .put("observed_elapsed_ms", android.os.SystemClock.elapsedRealtime())
+                    .put("today", LocalDate.now().toString()).put("zone", calendarBounded(ZoneId.systemDefault().getId(), 128))
+                    .put("scoped_mode", DeviceRolePreferences.get(context).name())
+                    .put("activity_mode", DeviceRolePreferences.get(activity).name())
+                    .put("source_accessible", new LocalDailyStatsSource(context).accessible())
+                    .put("workspace", AchievementRole.current(context).name())
+                    .put("dom_unlocked", ControllerPinManager.isDomWorkspaceUnlocked())
+                    .put("activity_state", activity instanceof androidx.lifecycle.LifecycleOwner
+                            ? ((androidx.lifecycle.LifecycleOwner) activity).getLifecycle().getCurrentState().name() : "no LifecycleOwner")
+                    .put("window_focus", activity.hasWindowFocus()).put("panel_present", panel != null)
+                    .put("panel_children", panel == null ? 0 : panel.getChildCount())
+                    .put("actual_range", state.getInt("daily_range", -1))
+                    .put("actual_year", state.getInt("daily_year", -1)).put("actual_month", state.getInt("daily_month", -1))
+                    .put("actual_selected", calendarBounded(state.getString("daily_selected", "absent"), 64))
+                    .put("view_text_chars", observed.length()).put("view_text_truncated", observed.length() > 4096)
+                    .put("view_texts", calendarBounded(observed, 4096));
+            if (panel != null) {
+                result.put("unavailable_label", hasCalendarText(panel, activity.getString(com.subhub.app.R.string.daily_unavailable)));
+                try {
+                    Field work = DailyStatsPanel.class.getDeclaredField("uiData"), key = DailyStatsPanel.class.getDeclaredField("taskKey");
+                    work.setAccessible(true); key.setAccessible(true);
+                    result.put("async_pending", ((com.subhub.app.util.AsyncUiScope) work.get(panel)).isPending((String) key.get(panel)));
+                } catch (Exception unavailable) { result.put("async_observation_error", unavailable.getClass().getName()); }
+            }
+            return result;
+        } catch (org.json.JSONException invalid) { throw new AssertionError("Cannot record calendar observation", invalid); }
+    }
+    private static String calendarBounded(String value, int limit) {
+        return value.substring(0, Math.min(value.length(), limit));
+    }
+    private static boolean hasCalendarText(android.view.View view, String expected) {
+        if (view instanceof android.widget.TextView && expected.contentEquals(((android.widget.TextView)view).getText())) return true;
+        if (view instanceof android.view.ViewGroup) for (int i = 0; i < ((android.view.ViewGroup)view).getChildCount(); i++)
+            if (hasCalendarText(((android.view.ViewGroup)view).getChildAt(i), expected)) return true;
+        return false;
     }
     private static String texts(android.view.View view) {
         StringBuilder text = new StringBuilder();
@@ -388,6 +527,10 @@ public final class HistoryBackfillAndroidTest {
         private final Set<String> databases = new LinkedHashSet<>(), preferences = new LinkedHashSet<>();
         Scoped(Context base) { super(base); }
         @Override public Context getApplicationContext() { return this; }
+        @Override public android.content.pm.ApplicationInfo getApplicationInfo() {
+            android.content.pm.ApplicationInfo info = new android.content.pm.ApplicationInfo(super.getApplicationInfo());
+            info.dataDir += "/" + prefix; return info;
+        }
         @Override public SharedPreferences getSharedPreferences(String name,int mode) { preferences.add(name); return super.getSharedPreferences(prefix+name,mode); }
         @Override public File getDatabasePath(String name) { databases.add(name); return super.getDatabasePath(prefix+name); }
         @Override public SQLiteDatabase openOrCreateDatabase(String name,int mode,SQLiteDatabase.CursorFactory factory) { databases.add(name); return super.openOrCreateDatabase(prefix+name,mode,factory); }

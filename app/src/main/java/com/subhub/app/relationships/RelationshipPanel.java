@@ -227,9 +227,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             }
             return;
         }
-        if (snapshot.governingDom != null) {
-            text(R.string.relationships_governing_dom, "relationship_governing_dom"); return;
-        }
+        if (snapshot.governingDom != null) return;
         List<RelationshipUi.Participant> doms = participants(snapshot, RelationshipUi.Role.DOM);
         List<RelationshipUi.Participant> subs = participants(snapshot, RelationshipUi.Role.SUB);
         if (doms.isEmpty() || subs.isEmpty()) { setVisibility(GONE); return; }
@@ -402,9 +400,11 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
 
     public static List<PersonSnapshot> roster(Context context, PersonRepository repository,
             RelationshipPresentation.Access access, java.util.Locale locale) throws Exception {
+        DomSubjectScope scope = DomSubjectScope.from(context, access);
         List<PersonSnapshot> values = new ArrayList<>();
         List<PersonId> ids = access.legacy ? repository.people() : RelationshipPresentation.rosterIds(access.snapshot);
         for (PersonId id : ids) {
+            if (!scope.includes(id)) continue;
             if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context)
                     || !access.current(RelationshipUi::provider)) throw new IllegalStateException("Relationship context changed");
             PersonSnapshot value = repository.load(id);
@@ -413,6 +413,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
                 throw new IllegalStateException("Relationship projection is not eligible");
             values.add(value);
         }
+        scope.revalidate();
         return access.legacy ? PersonDisplayOrder.sorted(values, locale) : values;
     }
 

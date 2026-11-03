@@ -179,7 +179,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 catch (Exception unavailable) { relationshipUnavailable = true; }
             }
             AssignedDom assigned = dom || access == null ? null : access.legacy
-                    ? assignedDom(application) : formalAssignedDom(application, access.snapshot);
+                    ? assignedDom(application) : formalAssignedDom(application, access.snapshot, values.get(0));
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
                     access, relationshipUnavailable);
         }, loaded -> {
@@ -492,9 +492,11 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 LinearLayout linked = OverviewUi.card(relationship);
                 Runnable open = () -> { if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class)); };
                 OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open);
-                ProfileData profile = dom != null && dom.profile != null ? dom.profile
-                        : person.contractDom != null ? person.contractDom
-                        : ProfileData.empty(dom.name);
+                // Formal delivery has already selected an identity-bound source; never cross-feed a legacy profile.
+                ProfileData profile = subFormal ? dom.profile
+                        : dom != null && dom.profile != null ? dom.profile : person.contractDom;
+                if (profile == null) profile = ProfileData.empty(dom == null
+                        ? activity.getString(R.string.role_unknown_data) : dom.name);
                 OverviewUi.Identity identity = OverviewUi.identity(linked, profile, true, "home_contract_dom");
                 if (!profile.about.isEmpty()) {
                     TextView about = OverviewUi.text(activity, profile.about, 13, false);
@@ -613,15 +615,27 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private static AssignedDom formalAssignedDom(android.content.Context context,
-            com.subhub.app.relationships.RelationshipUi.Snapshot snapshot) {
+            com.subhub.app.relationships.RelationshipUi.Snapshot snapshot, PersonSnapshot person) {
         com.subhub.app.relationships.RelationshipUi.Edge edge = snapshot.governingDom;
         if (edge == null) return null;
         ProfileData profile = null;
+        boolean localSub = false;
         for (com.subhub.app.relationships.RelationshipUi.Participant participant : snapshot.localParticipants)
-            if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.DOM
-                    && participant.ref.equals(edge.domParticipantRef)) profile = participant.profile;
-        if (profile == null) profile = ProfileData.empty(context.getString(R.string.role_your_dom));
-        return new AssignedDom(profile.name, R.string.relationships_linked, profile);
+            if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.SUB
+                    && participant.ref.equals(edge.subParticipantRef)) localSub = true;
+        if (person.id.isLocal() && localSub) {
+            if (edge.delivery == com.subhub.app.relationships.RelationshipUi.Delivery.PEER) {
+                // personId includes the peer generation, independently of the formal relationship generation.
+                if (!edge.personId.isLocal() && edge.personId.equals(person.contractDomId))
+                    profile = person.contractDom;
+            } else if (edge.personId.isLocal()) {
+                for (com.subhub.app.relationships.RelationshipUi.Participant participant : snapshot.localParticipants)
+                    if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.DOM
+                            && participant.ref.equals(edge.domParticipantRef)) profile = participant.profile;
+            }
+        }
+        return new AssignedDom(profile == null ? context.getString(R.string.role_unknown_data) : profile.name,
+                R.string.relationships_linked, profile);
     }
 
     private int dp(int value) { return PersonUi.dp(activity, value); }

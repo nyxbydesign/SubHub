@@ -1,6 +1,9 @@
 package com.subhub.app.stats;
 
 import android.content.Context;
+import com.subhub.app.relationships.DomSubjectScope;
+import com.subhub.app.people.PersonId;
+import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.remote.RemoteStore;
 import com.subhub.app.remote.RemoteTelemetry;
@@ -24,9 +27,11 @@ final class DomDailyStatsSource implements DailyStatsPanel.Source {
 
     @Override public DailyStatsPanel.DailyData load(String first, String last) throws Exception {
         requireAccess();
-        LocalRetainedStatistics local = com.subhub.app.security.DeviceRolePreferences.supportsSub(context)
-                ? LocalRetainedStatistics.load(context) : null;
-        try (RemoteStore store = new RemoteStore(context)) { return load(store, first, last, local); }
+        DomSubjectScope scope = DomSubjectScope.read(context);
+        LocalRetainedStatistics local = scope.includes(PersonId.LOCAL) ? LocalRetainedStatistics.load(context) : null;
+        try (RemoteStore store = new RemoteStore(context)) {
+            return load(store, first, last, local, scope);
+        }
     }
 
     DailyStatsPanel.DailyData load(RemoteStore store, String first, String last) throws Exception {
@@ -34,27 +39,48 @@ final class DomDailyStatsSource implements DailyStatsPanel.Source {
     }
 
     DailyStatsPanel.DailyData load(RemoteStore store, String first, String last, LocalRetainedStatistics local) throws Exception {
-        List<DomDailySnapshot.History> histories = histories(store, local);
+        DomStatsRepository.outsideStore(store);
+        return load(store, first, last, local, DomSubjectScope.read(context));
+    }
+
+    private DailyStatsPanel.DailyData load(RemoteStore store, String first, String last,
+            LocalRetainedStatistics local, DomSubjectScope scope) throws Exception {
+        if (!scope.includes(PersonId.LOCAL)) local = null;
+        List<DomDailySnapshot.History> histories = histories(store, local, scope);
         if (local != null) {
             histories.removeIf(history -> history.identity.identity.equals("local"));
-            histories.add(new DomDailySnapshot.History(local.aggregate(context, System.currentTimeMillis()),
+            histories.add(new DomDailySnapshot.History(DomStatsRepository.localIdentity(context, local, scope, System.currentTimeMillis()),
                     com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet"), local.range(first, last)));
         }
         DomDailySnapshot snapshot = DomDailySnapshot.aggregate(histories, first, last);
+        scope.revalidate();
         return new DailyStatsPanel.DailyData(snapshot.since, snapshot.days);
     }
 
     List<DomDailySnapshot.History> histories(RemoteStore store, LocalRetainedStatistics local) throws Exception {
+        DomStatsRepository.outsideStore(store);
+        DomSubjectScope scope = DomSubjectScope.read(context);
+        List<DomDailySnapshot.History> result = histories(store, local, scope);
+        scope.revalidate();
+        return result;
+    }
+
+    // The caller captures the scope outside its store transaction; this path never waits on a provider.
+    List<DomDailySnapshot.History> histories(RemoteStore store, LocalRetainedStatistics local,
+            DomSubjectScope scope) throws Exception {
         requireAccess();
+        scope.requireCurrent();
+        if (!scope.includes(PersonId.LOCAL)) local = null;
         List<DomDailySnapshot.History> histories = new ArrayList<>();
-        if (local != null) histories.add(new DomDailySnapshot.History(local.aggregate(context, System.currentTimeMillis()),
+        if (local != null) histories.add(new DomDailySnapshot.History(DomStatsRepository.localIdentity(context, local, scope, System.currentTimeMillis()),
                 com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet"), local.history.days()));
         synchronized (store) {
             android.database.sqlite.SQLiteDatabase database = store.getReadableDatabase();
             database.beginTransactionNonExclusive();
             try {
                 for (RemoteStore.Peer peer : store.peers(false)) {
-                    if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.DOM) continue;
+                    if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.DOM
+                            || !scope.includes(RemotePersonRepository.id(peer))) continue;
                     Map<String, Map<String, Long>> days = new LinkedHashMap<>();
                     for (RemoteProtocol.Change row : store.mirror(peer.identity, peer.generation, RemoteProtocol.Stream.DAILY)) {
                         if (row.deleted) continue;
@@ -94,6 +120,7 @@ final class DomDailyStatsSource implements DailyStatsPanel.Source {
                     histories.add(new DomDailySnapshot.History(identity, wallet, projected));
                 }
                 requireAccess();
+                scope.requireCurrent();
                 database.setTransactionSuccessful();
                 return histories;
             } finally { database.endTransaction(); }

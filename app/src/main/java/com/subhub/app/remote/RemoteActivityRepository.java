@@ -10,6 +10,7 @@ import android.os.Build;
 import com.subhub.app.R;
 import com.subhub.app.activity.*;
 import com.subhub.app.people.PersonId;
+import com.subhub.app.relationships.DomSubjectScope;
 import com.subhub.app.penance.PenanceEvent;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
@@ -205,11 +206,14 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             String position=before.substring(6);long boundary="MAX".equals(position)?Long.MAX_VALUE:cursor(position);
             synchronized(store){return localPage(boundary,before,limit);}
         }
-        if (before == null || before.startsWith("combined:")) {
-            synchronized (store) { return combinedPage(before, limit); }
+        DomSubjectScope scope = readScope();
+        Page result;
+        synchronized (store) {
+            result = before == null || before.startsWith("combined:") ? combinedPage(before, limit, scope)
+                    : page(cursor(before), before, limit, null, scope);
         }
-        long boundary = cursor(before);
-        synchronized (store) { return page(boundary, before, limit, null); }
+        scope.revalidate(); requireRead();
+        return result;
     }
 
     @Override public Page locate(String entryKey, int limit) throws Exception {
@@ -222,17 +226,28 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             }}
         }
         checkKey(entryKey);
+        DomSubjectScope scope = readScope();
+        Page result;
         synchronized (store) {
-            try (Cursor row = store.getReadableDatabase().rawQuery("SELECT a.id FROM " + JOIN + " WHERE " + ELIGIBLE + " AND a.entry_key=?", new String[]{entryKey})) {
-                if (!row.moveToFirst()) return new Page(Collections.emptyList(), null, null);
-                long boundary = Math.addExact(row.getLong(0), 1);return page(boundary, Long.toString(boundary), limit, null);
+            List<String> args = new ArrayList<>();
+            String selection = eligible(scope, args); args.add(entryKey);
+            try (Cursor row = store.getReadableDatabase().rawQuery("SELECT a.id FROM " + JOIN + " WHERE " + selection
+                    + " AND a.entry_key=?", args.toArray(new String[0]))) {
+                if (!row.moveToFirst()) result = new Page(Collections.emptyList(), null, null);
+                else {
+                    long boundary = Math.addExact(row.getLong(0), 1);
+                    result = page(boundary, Long.toString(boundary), limit, null, scope);
+                }
             }
         }
+        scope.revalidate(); requireRead();
+        return result;
     }
 
-    private Page page(long boundary, String requested, int limit, RemoteStore.Peer only) throws Exception {
+    private Page page(long boundary, String requested, int limit, RemoteStore.Peer only, DomSubjectScope scope) throws Exception {
         List<ActivityEntry> entries = new ArrayList<>();long last = 0;boolean more = false;
-        String selection = ELIGIBLE + " AND a.id<?";List<String> args = new ArrayList<>();args.add(Long.toString(boundary));
+        List<String> args = new ArrayList<>();
+        String selection = eligible(scope, args) + " AND a.id<?"; args.add(Long.toString(boundary));
         if (only != null) { selection += " AND a.peer=? AND a.generation=?";args.add(only.identity);args.add(only.generation); }
         try (Cursor rows = store.getReadableDatabase().rawQuery("SELECT a.id,a.entry_key,a.peer,a.generation,a.body,a.received,a.is_read FROM "
                 + JOIN + " WHERE " + selection + " ORDER BY a.id DESC LIMIT " + (limit + 1), args.toArray(new String[0]))) {
@@ -245,7 +260,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         return new Page(entries, more ? Long.toString(last) : null, requested);
     }
 
-    private Page combinedPage(String before, int limit) throws Exception {
+    private Page combinedPage(String before, int limit, DomSubjectScope scope) throws Exception {
         long time = Long.MAX_VALUE, id = Long.MAX_VALUE;
         int source = 2;
         if (before != null) {
@@ -254,16 +269,17 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             String[] parts = before.split(":");
             time = Long.parseLong(parts[1]); source = Integer.parseInt(parts[2]); id = Long.parseLong(parts[3]);
         }
+        List<String> args = new ArrayList<>();
         String union = "SELECT a.id,a.entry_key,a.peer,a.generation,a.body,a.received,a.is_read,1 AS source,a.received AS sort_at FROM "
-                + JOIN + " WHERE " + ELIGIBLE;
-        if (DeviceRolePreferences.supportsSub(context))
+                + JOIN + " WHERE " + eligible(scope, args);
+        if (scope.includes(PersonId.LOCAL))
             union += " UNION ALL SELECT id,event_id,'','',body,observed,1,0,observed FROM activity_source";
         String predicate = "sort_at<CAST(? AS INTEGER) OR (sort_at=CAST(? AS INTEGER) AND "
                 + "(source<CAST(? AS INTEGER) OR (source=CAST(? AS INTEGER) AND id<CAST(? AS INTEGER))))";
-        String[] args = {Long.toString(time), Long.toString(time), Integer.toString(source), Integer.toString(source), Long.toString(id)};
+        Collections.addAll(args, Long.toString(time), Long.toString(time), Integer.toString(source), Integer.toString(source), Long.toString(id));
         List<ActivityEntry> entries = new ArrayList<>(); String next = null; boolean more = false;
         try (Cursor rows = store.getReadableDatabase().rawQuery("SELECT * FROM (" + union + ") WHERE " + predicate
-                + " ORDER BY sort_at DESC,source DESC,id DESC LIMIT " + (limit + 1), args)) {
+                + " ORDER BY sort_at DESC,source DESC,id DESC LIMIT " + (limit + 1), args.toArray(new String[0]))) {
             while (rows.moveToNext()) {
                 if (entries.size() == limit) { more = true; break; }
                 if (rows.getInt(7) == 0) {
@@ -292,28 +308,60 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
     }
 
     @Override public List<ActivityEntry> recent(PersonId person, int limit) throws Exception {
-        requireRead();checkLimit(limit);
+        requireRead(); checkLimit(limit);
+        if (PersonId.LOCAL.equals(person)) {
+            synchronized (store) { return localPage(Long.MAX_VALUE, "local:MAX", limit).entries; }
+        }
+        DomSubjectScope scope = readScope();
+        List<ActivityEntry> result = Collections.emptyList();
         synchronized (store) {
-            if (PersonId.LOCAL.equals(person)) {
-                return localPage(Long.MAX_VALUE,"local:MAX",limit).entries;
-            }
-            RemoteStore.Peer peer = null;
-            if (person != null) {
+            if (person == null) result = combinedPage(null, limit, scope).entries;
+            else if (scope.includes(person)) {
                 for (RemoteStore.Peer candidate : store.peers(false))
                     if (candidate.state == RemoteStore.State.ACTIVE && candidate.localRole == RemoteProtocol.Role.DOM
-                            && RemotePersonRepository.id(candidate).equals(person)) { peer = candidate;break; }
-                if (peer == null) return Collections.emptyList();
+                            && RemotePersonRepository.id(candidate).equals(person)) {
+                        result = page(Long.MAX_VALUE, null, limit, candidate, scope).entries; break;
+                    }
             }
-            return peer == null ? combinedPage(null, limit).entries : page(Long.MAX_VALUE, null, limit, peer).entries;
         }
+        scope.revalidate(); requireRead();
+        return result;
     }
 
     @Override public int unreadCount() {
-        requireRead();synchronized (store) {
-            try (Cursor rows = store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM " + JOIN + " WHERE " + ELIGIBLE + " AND a.is_read=0", null)) {
-                return rows.moveToFirst() ? (int) Math.min(Integer.MAX_VALUE, rows.getLong(0)) : 0;
+        requireRead();
+        try {
+            DomSubjectScope scope = readScope();
+            int count;
+            synchronized (store) {
+                List<String> args = new ArrayList<>();
+                String selection = eligible(scope, args);
+                try (Cursor rows = store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM " + JOIN
+                        + " WHERE " + selection + " AND a.is_read=0", args.toArray(new String[0]))) {
+                    count = rows.moveToFirst() ? (int) Math.min(Integer.MAX_VALUE, rows.getLong(0)) : 0;
+                }
             }
+            scope.revalidate(); requireRead();
+            return count;
+        } catch (Exception unavailable) { throw new IllegalStateException("Dom activity unavailable", unavailable); }
+    }
+
+    private DomSubjectScope readScope() throws Exception {
+        if (Thread.holdsLock(store) || store.getReadableDatabase().inTransaction())
+            throw new IllegalStateException("Dom subjects require no outer store transaction");
+        return DomSubjectScope.read(context);
+    }
+
+    private static String eligible(DomSubjectScope scope, List<String> args) {
+        scope.requireCurrent();
+        if (scope.legacy()) return ELIGIBLE;
+        List<String> placeholders = new ArrayList<>();
+        for (PersonId person : scope.personIds()) if (!person.isLocal()) {
+            placeholders.add("?"); args.add(person.value());
         }
+        return placeholders.isEmpty() ? ELIGIBLE + " AND 0"
+                : ELIGIBLE + " AND ('remote_' || a.peer || '_' || a.generation) IN ("
+                        + String.join(",", placeholders) + ")";
     }
 
     @Override public void markRead(List<String> keys) throws Exception {

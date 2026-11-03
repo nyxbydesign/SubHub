@@ -1,6 +1,9 @@
 package com.subhub.app.stats;
 
 import android.content.Context;
+import com.subhub.app.relationships.DomSubjectScope;
+import com.subhub.app.relationships.RelationshipUi;
+import com.subhub.app.remote.RemotePersonRepository;
 import com.subhub.app.remote.RemoteProtocol;
 import com.subhub.app.remote.RemoteStore;
 import com.subhub.app.remote.RemoteTelemetry;
@@ -20,13 +23,16 @@ public final class DomStatsRepository {
 
     Loaded loadWithHistory() {
         requireAccess();
+        DomSubjectScope scope = scope();
         LocalRetainedStatistics local = null;
-        if (com.subhub.app.security.DeviceRolePreferences.supportsSub(context)) {
+        if (scope.includes(com.subhub.app.people.PersonId.LOCAL)) {
             try { local = LocalRetainedStatistics.load(context); }
             catch (Exception unavailable) { throw new IllegalStateException("Local statistics unavailable", unavailable); }
         }
         try (RemoteStore store = new RemoteStore(context)) {
-            return read(store, System.currentTimeMillis(), local);
+            Loaded result = read(store, System.currentTimeMillis(), local, scope);
+            revalidate(scope);
+            return result;
         }
     }
 
@@ -35,13 +41,19 @@ public final class DomStatsRepository {
     }
 
     DomStatsSnapshot load(RemoteStore store, long now, LocalRetainedStatistics local) {
-        return read(store, now, local).stats;
+        outsideStore(store);
+        DomSubjectScope scope = scope();
+        Loaded result = read(store, now, local, scope);
+        revalidate(scope);
+        return result.stats;
     }
 
-    private Loaded read(RemoteStore store, long now, LocalRetainedStatistics local) {
+    private Loaded read(RemoteStore store, long now, LocalRetainedStatistics local, DomSubjectScope scope) {
         requireAccess();
+        scope.requireCurrent();
+        if (!scope.includes(com.subhub.app.people.PersonId.LOCAL)) local = null;
         List<DomStatsSnapshot.Sub> values = new ArrayList<>();
-        if (local != null) values.add(local.aggregate(context, now));
+        if (local != null) values.add(localIdentity(context, local, scope, now));
         synchronized (store) {
             android.database.sqlite.SQLiteDatabase database = store.getReadableDatabase();
             database.beginTransactionNonExclusive();
@@ -49,13 +61,14 @@ public final class DomStatsRepository {
             java.util.Map<String, RetainedStatistics> retained = new java.util.HashMap<>();
             List<DomDailySnapshot.History> histories;
             try {
-                histories = new DomDailyStatsSource(context).histories(store, local);
+                histories = new DomDailyStatsSource(context).histories(store, local, scope);
                 for (DomDailySnapshot.History history : histories)
                     retained.put(history.identity.identity + ":" + history.identity.generation,
                             new RetainedStatistics(java.time.ZoneId.systemDefault(), now, history.days));
             } catch (Exception unavailable) { throw new IllegalStateException("Retained peer statistics unavailable", unavailable); }
             for (RemoteStore.Peer peer : store.peers(false)) {
-                if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.DOM) continue;
+                if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.DOM
+                        || !scope.includes(RemotePersonRepository.id(peer))) continue;
                 JSONObject summary = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.STATS, "summary");
                 JSONObject live = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.RUNTIME, "current");
                 DomStatsSnapshot.Totals totals = null;
@@ -90,18 +103,44 @@ public final class DomStatsRepository {
             }
             requireAccess();
             database.setTransactionSuccessful();
-            return new Loaded(DomStatsSnapshot.aggregate(values, now), local, histories);
+            scope.requireCurrent();
+            return new Loaded(DomStatsSnapshot.aggregate(values, now), local, histories, scope);
             } finally { database.endTransaction(); }
         }
     }
 
     static final class Loaded {
+        final DomSubjectScope scope;
         final DomStatsSnapshot stats;
         final LocalRetainedStatistics local;
         final List<DomDailySnapshot.History> histories;
-        Loaded(DomStatsSnapshot stats, LocalRetainedStatistics local, List<DomDailySnapshot.History> histories) {
-            this.stats = stats; this.local = local; this.histories = histories;
+        Loaded(DomStatsSnapshot stats, LocalRetainedStatistics local, List<DomDailySnapshot.History> histories, DomSubjectScope scope) {
+            this.stats = stats; this.local = local; this.histories = histories; this.scope = scope;
         }
+    }
+
+    private DomSubjectScope scope() {
+        try { return DomSubjectScope.read(context); }
+        catch (Exception unavailable) { throw new IllegalStateException("Dom subjects unavailable", unavailable); }
+    }
+
+    static void revalidate(DomSubjectScope scope) {
+        try { scope.revalidate(); }
+        catch (Exception unavailable) { throw new IllegalStateException("Dom subjects changed", unavailable); }
+    }
+
+    static void outsideStore(RemoteStore store) {
+        if (Thread.holdsLock(store) || store.getReadableDatabase().inTransaction())
+            throw new IllegalStateException("Dom subjects require no outer store transaction");
+    }
+
+    static DomStatsSnapshot.Sub localIdentity(Context context, LocalRetainedStatistics local,
+            DomSubjectScope scope, long now) {
+        RelationshipUi.Edge edge = scope.localEdge();
+        if (edge == null) throw new IllegalStateException("Local Sub is not linked");
+        DomStatsSnapshot.Sub value = local.aggregate(context, now);
+        return new DomStatsSnapshot.Sub(value.identity, edge.generation, edge.insertionOrder,
+                value.statsConfirmedAt, value.runtimeConfirmedAt, value.totals, value.runtime);
     }
 
     private static long confirmed(RemoteStore store, RemoteStore.Peer peer, RemoteProtocol.Stream stream) {
