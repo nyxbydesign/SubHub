@@ -30,6 +30,7 @@ $env:YOLO_CONFIG_DIR = Join-Path $PWD 'artifacts/ultralytics-config'
 .\.venv\Scripts\yolo.exe settings sync=False
 .\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 .\.venv\Scripts\python.exe test_contract.py
+.\.venv\Scripts\python.exe test_data.py
 .\.venv\Scripts\python.exe test_metrics.py
 ```
 
