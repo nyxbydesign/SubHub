@@ -24,6 +24,8 @@ public class StatsActivity extends PreferencePage {
     private int statisticsScroll, catalogScroll, profileScroll;
     private DailyStatsPanel daily;
     private RemoteStatsSource remote;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
     private AchievementRole workspace;
     private boolean domOverview;
     private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -117,6 +119,22 @@ public class StatsActivity extends PreferencePage {
         allowances = new LinearLayout(this);
         allowances.setOrientation(LinearLayout.VERTICAL);
         allowances.setId(R.id.profile_stats_allowances);
+        allowances.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(android.view.View view) {
+                observeAppIcons();
+                if (remote == null || !resumed || catalogSelected || profileSelected) return;
+                RemoteStatsSource expected = remote;
+                String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+                com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+                com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+                long request = appIconEpoch;
+                // Late attachment advances the observer epoch after onResume's original load was queued.
+                view.post(() -> {
+                    if (currentAppIconTarget(request, expected, route, provider, authority)) bindAllowances();
+                });
+            }
+            @Override public void onViewDetachedFromWindow(android.view.View view) { stopAppIcons(); }
+        });
         page.addView(allowances, new LinearLayout.LayoutParams(-1, -2));
         sessionList = card(page);
         sessionList.setTag("stats_session_history");
@@ -254,6 +272,7 @@ public class StatsActivity extends PreferencePage {
         }
         if (!workspaceReadable()) { finish(); return; }
         resumed = true;
+        observeAppIcons();
         renderSection();
         if (!catalogSelected && workspace.accessible(this) && (remote != null || domOverview)) {
             try { if (remote != null) remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
@@ -326,12 +345,45 @@ public class StatsActivity extends PreferencePage {
     @Override protected void onPause() {
         rememberScroll();
         resumed = false;
+        stopAppIcons();
         pauseSection();
         if (workspace == AchievementRole.DOM && page != null) page.setVisibility(android.view.View.INVISIBLE);
         if (data != null) data.cancel("dom-statistics");
         if (data != null) data.cancel("local-statistics");
         remoteClock.removeCallbacks(refreshRemote);
         super.onPause();
+    }
+
+    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+
+    private void observeAppIcons() {
+        if (appIconObserver != null || remote == null || !resumed || allowances == null || !allowances.isAttachedToWindow()) return;
+        RemoteStatsSource expected = remote;
+        String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+        long request = ++appIconEpoch;
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
+            bindAllowances();
+        });
+    }
+
+    private boolean currentAppIconTarget(long request, RemoteStatsSource expected, String route,
+            com.subhub.app.relationships.RelationshipUi.Provider provider, com.subhub.app.security.KeyholderProvider authority) {
+        return request == appIconEpoch && resumed && !catalogSelected && !profileSelected && remote == expected
+                && !isFinishing() && !isDestroyed() && allowances != null && allowances.isAttachedToWindow()
+                && getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                && java.util.Objects.equals(route, getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
+                && com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                && com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
+                && provider == com.subhub.app.relationships.RelationshipUi.provider()
+                && authority == com.subhub.app.people.People.keyholder();
+    }
+
+    private void stopAppIcons() {
+        ++appIconEpoch; AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
     }
 
     private void bindTotals() {
@@ -522,7 +574,16 @@ public class StatsActivity extends PreferencePage {
     private void bindAllowances() {
         if (domOverview) { allowances.setVisibility(android.view.View.GONE); return; }
         if (remote != null) {
-            data.load("stats-app-allowances",remote::person,person->{allowances.removeAllViews();com.subhub.app.people.PersonUi.allowances(allowances,person);},failure->{
+            RemoteStatsSource expected = remote;
+            String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+            com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+            com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+            long request = appIconEpoch;
+            data.load("stats-app-allowances",expected::person,person->{
+                if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
+                allowances.removeAllViews();com.subhub.app.people.PersonUi.allowances(allowances,person);
+            },failure->{
+                if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
                 allowances.removeAllViews();text(allowances,getString(R.string.role_unknown_data),13,true);
             });
             return;

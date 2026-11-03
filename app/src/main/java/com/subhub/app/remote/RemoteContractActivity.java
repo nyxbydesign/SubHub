@@ -17,13 +17,56 @@ public final class RemoteContractActivity extends RemotePage {
     private final Map<String,android.view.View> controls=new LinkedHashMap<>();
     private Bundle restoreControls;
     private int fileAction;
+    private final Map<String,ImageView> iconViews=new LinkedHashMap<>();
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private boolean iconsResumed;
     @Override protected void onCreate(Bundle state){super.onCreate(state);
         String requested=getIntent().getStringExtra("section");if("atmosphere".equals(requested))requested="subliminal";
         if(ConfigurationSchema.SECTIONS.contains(requested)||"apps".equals(requested)||"duration".equals(requested))section=requested;
         if(state!=null)section=state.getString("section",section);
         page(sectionTitle(section));if(!selectPeer())return;
+        body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener(){
+            @Override public void onViewAttachedToWindow(android.view.View view){observeAppIcons();}
+            @Override public void onViewDetachedFromWindow(android.view.View view){stopAppIcons();}
+        });
         if(state!=null && state.containsKey("draft"))try{draft=new JSONObject(state.getString("draft"));desired=state.getLong("desired");applied=state.getLong("applied");section=state.getString("section",section);artGroup=state.getString("artGroup","censor");fileAction=state.getInt("fileAction");restoreControls=state.getBundle("controls");render();return;}catch(JSONException invalid){notice(R.string.remote_reload);}
         load();
+    }
+    @Override protected void onResume(){super.onResume();iconsResumed=true;observeAppIcons();rebindAppIcons();}
+    @Override protected void onPause(){iconsResumed=false;stopAppIcons();super.onPause();}
+    @Override protected void onDestroy(){stopAppIcons();iconViews.clear();super.onDestroy();}
+    private void observeAppIcons(){
+        if(appIconObserver!=null||!iconsResumed||peer==null||body==null||!body.isAttachedToWindow()||isFinishing())return;
+        long request=++appIconEpoch;String identity=peer.identity,generation=peer.generation;
+        String route=getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        com.subhub.app.security.DeviceRolePreferences.Mode role=com.subhub.app.security.DeviceRolePreferences.get(this);
+        com.subhub.app.security.KeyholderProvider authority=com.subhub.app.people.People.keyholder();
+        com.subhub.app.relationships.RelationshipUi.Provider provider=com.subhub.app.relationships.RelationshipUi.provider();
+        appIconObserver=RemoteUi.observeAppIcons(()->{
+            if(request!=appIconEpoch||!iconsResumed||isFinishing()||isDestroyed()||peer==null
+                    ||!identity.equals(peer.identity)||!generation.equals(peer.generation)||!body.isAttachedToWindow()
+                    ||!getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    ||!Objects.equals(route,getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
+                    ||role!=com.subhub.app.security.DeviceRolePreferences.get(this)
+                    ||!com.subhub.app.security.ControllerPinManager.isDomModeActive()
+                    ||authority!=com.subhub.app.people.People.keyholder()
+                    ||provider!=com.subhub.app.relationships.RelationshipUi.provider())return;
+            rebindAppIcons();
+        });
+    }
+    private void stopAppIcons(){
+        ++appIconEpoch;AutoCloseable old=appIconObserver;appIconObserver=null;
+        if(old!=null)try{old.close();}catch(Exception ignored){/* Queued callbacks are fenced above. */}
+    }
+    private void rebindAppIcons(){
+        if(!iconsResumed||peer==null||isFinishing()||!com.subhub.app.security.ControllerPinManager.isDomModeActive())return;
+        for(Map.Entry<String,ImageView> entry:iconViews.entrySet())if(entry.getValue().isAttachedToWindow())bindAppIcon(entry.getValue(),entry.getKey());
+    }
+    private void bindAppIcon(ImageView icon,String id){
+        com.subhub.app.util.RemoteAppIcon remoteIcon=peer!=null&&id!=null&&id.length()<=255
+                &&id.matches("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")?RemoteUi.appIcon(this,peer.identity,peer.generation,id):null;
+        RemoteUi.bindAppIcon(icon,remoteIcon,R.drawable.ic_settings_apps);
     }
     @Override protected void onSaveInstanceState(Bundle state){
         Bundle raw=new Bundle();for(Map.Entry<String,android.view.View> control:controls.entrySet()){android.view.View value=control.getValue();if(value instanceof EditText)raw.putString(control.getKey(),((EditText)value).getText().toString());else if(value instanceof CompoundButton)raw.putBoolean(control.getKey(),((CompoundButton)value).isChecked());else if(value instanceof Spinner)raw.putInt(control.getKey(),((Spinner)value).getSelectedItemPosition());}
@@ -37,7 +80,7 @@ public final class RemoteContractActivity extends RemotePage {
     }
 
     private void load() {
-        body.removeAllViews();collect.clear();controls.clear();text(body,getString(R.string.role_loading),false);
+        body.removeAllViews();collect.clear();controls.clear();iconViews.clear();text(body,getString(R.string.role_loading),false);
         work(()->{JSONObject doc=feature.contracts.current(peer);if(doc==null)throw new IOException("No baseline");
             long want=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"desired_revision","0"));
             long done=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"applied_revision","0"));
@@ -46,7 +89,7 @@ public final class RemoteContractActivity extends RemotePage {
     private boolean gather(){try{for(Runnable item:collect)item.run();draft=RemoteConfiguration.active(draft);return true;}
         catch(RuntimeException|JSONException invalid){notice(R.string.remote_check_fields);return false;}}
     private void render() {
-        if(draft==null)return;body.removeAllViews();collect.clear();controls.clear();
+        if(draft==null)return;body.removeAllViews();collect.clear();controls.clear();iconViews.clear();
         target();text(body,observed(RemoteProtocol.Stream.BASELINE),false);
         RemoteStore.Command latest=feature.store.latestCommand(peer.identity,peer.generation);
         if(latest!=null)text(body,commandState(latest),false);
@@ -132,7 +175,7 @@ public final class RemoteContractActivity extends RemotePage {
     private void app(LinearLayout target,Set<String> selected,JSONObject budgets,String id,String label){
         LinearLayout row=new LinearLayout(this);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
         android.widget.ImageView icon=new android.widget.ImageView(this);icon.setTag("app_icon:"+id);
-        com.subhub.app.util.AppIcons.bind(icon,id,R.drawable.ic_settings_apps);
+        iconViews.put(id,icon);bindAppIcon(icon,id);
         LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(PersonUi.dp(this,28),PersonUi.dp(this,28));size.setMarginEnd(PersonUi.dp(this,8));row.addView(icon,size);
         CheckBox box=new CheckBox(this);box.setText(label);box.setMinHeight(PersonUi.dp(this,48));box.setChecked(selected.contains(id));row.addView(box,new LinearLayout.LayoutParams(0,-2,1));target.addView(row);controls.put("app:"+id,box);box.setOnCheckedChangeListener((b,on)->{if(on)selected.add(id);else selected.remove(id);});
         int inherited=draft.optJSONObject("contract").optJSONObject("sections").optJSONObject("limits").optInt("app_timer_per_app_minutes",30);boolean custom=budgets.has(id);

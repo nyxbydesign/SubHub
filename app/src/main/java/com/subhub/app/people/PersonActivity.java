@@ -18,6 +18,10 @@ public final class PersonActivity extends RolePage {
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private java.util.List<Object> rendered;
     private boolean observing;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
+    private com.subhub.app.security.KeyholderProvider appIconAuthority;
     private TextView currentCountdown;
     private final Runnable observe = new Runnable() {
         @Override public void run() {
@@ -31,18 +35,46 @@ public final class PersonActivity extends RolePage {
         super.onResume();
         if (!guardTarget()) return;
         observing = true;
+        observeAppIcons();
         clock.postDelayed(observe, 2000);
     }
 
     @Override protected void onPause() {
         observing = false;
+        stopAppIcons();
         clock.removeCallbacks(observe);
         if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
         super.onPause();
     }
 
+    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+
+    private void observeAppIcons() {
+        if (personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider authority = People.keyholder();
+        if (appIconObserver != null && provider == appIconProvider && authority == appIconAuthority) return;
+        stopAppIcons(); appIconProvider = provider; appIconAuthority = authority;
+        long request = ++appIconEpoch;
+        PersonId expected = personId;
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (request != appIconEpoch || !observing || !expected.equals(personId) || isFinishing() || isDestroyed()
+                    || !getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()
+                    || !body.isAttachedToWindow() || !mayRead(this, expected)) return;
+            refresh();
+        });
+    }
+
+    private void stopAppIcons() {
+        ++appIconEpoch;
+        AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch also fences queued callbacks. */ }
+    }
+
     private void observePerson() {
         if (!guardTarget()) return;
+        observeAppIcons();
         if (currentCountdown != null && personId != null && personId.isLocal()
                 && com.subhub.app.commitment.CommitmentManager.isActive(this)) {
             currentCountdown.setText(com.subhub.app.commitment.CommitmentManager.countdownLabel(this));
@@ -51,11 +83,14 @@ public final class PersonActivity extends RolePage {
         PersonId requested = personId;
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         data.load("person-observe", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
             return repository.load(requested);
         }, person -> {
-            if (!guardTarget() || !observing || !requested.equals(personId)) return;
+            if (!guardTarget() || !observing || !requested.equals(personId)
+                    || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
             if (!requested.equals(person.id)) { rendered = null; unavailable(); return; }
             java.util.List<Object> next = signature(person);
             if (next.equals(rendered)) return;
@@ -71,13 +106,15 @@ public final class PersonActivity extends RolePage {
                 if (guardTarget() && observing && currentSection.equals(section)) scroll.scrollTo(0, position);
             });
         }, failure -> {
-            if (guardTarget() && observing) { rendered = null; unavailable(); }
+            if (guardTarget() && observing && provider == com.subhub.app.relationships.RelationshipUi.provider()
+                    && authority == People.keyholder()) { rendered = null; unavailable(); }
         });
     }
 
     private boolean guardTarget() {
         if (!mayRead(this, personId)) {
             observing = false;
+            stopAppIcons();
             clock.removeCallbacks(observe);
             if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
             currentCountdown = null;
@@ -103,11 +140,14 @@ public final class PersonActivity extends RolePage {
                 person.sessions, person.serviceActive, person.sessionIdentity,
                 person.sync.contract, person.sync.stats, person.sync.runtime,
                 person.sync.desiredRevision, person.sync.appliedRevision));
-        for (PersonSnapshot.Section section : person.sections)
+        for (PersonSnapshot.Section section : person.sections) {
             java.util.Collections.addAll(result, section.key, section.title, section.summary, section.details);
+            for (PersonSnapshot.App app : section.apps)
+                java.util.Collections.addAll(result, app.packageName, app.label, app.appIcon);
+        }
         for (PersonSnapshot.Allowance allowance : person.allowances)
             java.util.Collections.addAll(result, allowance.packageName, allowance.label,
-                    allowance.usedMillis, allowance.dailyMinutes);
+                    allowance.usedMillis, allowance.dailyMinutes, allowance.appIcon);
         return result;
     }
 
@@ -120,6 +160,10 @@ public final class PersonActivity extends RolePage {
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
+        body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(android.view.View view) { observeAppIcons(); }
+            @Override public void onViewDetachedFromWindow(android.view.View view) { stopAppIcons(); }
+        });
         secondaryBack(this::backToProfile);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { backToProfile(); }
@@ -133,21 +177,26 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void refresh() {
         if (!guardTarget()) return;
+        observeAppIcons();
         data.cancel("person-observe");
         data.cancel("contract-cover");
         loading();
         PersonId requested = personId;
         android.content.Context app = getApplicationContext();
         PersonRepository repository = People.repository(app);
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         data.load("person", () -> {
             if (!mayRead(app, requested)) throw new SecurityException("Profile unavailable");
             return repository.load(requested);
         }, person -> {
-            if (!guardTarget() || !requested.equals(personId)) return;
+            if (!guardTarget() || !requested.equals(personId)
+                    || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
             if (!requested.equals(person.id)) { rendered = null; unavailable(); return; }
             rendered = signature(person);
             render(person);
-        }, failure -> { if (guardTarget()) unavailable(); });
+        }, failure -> { if (guardTarget() && provider == com.subhub.app.relationships.RelationshipUi.provider()
+                && authority == People.keyholder()) unavailable(); });
     }
 
     private void render(PersonSnapshot person) {

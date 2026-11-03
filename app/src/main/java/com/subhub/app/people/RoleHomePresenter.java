@@ -23,7 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Person-focused overviews share the existing service controls and identity-bound routes. */
-public final class RoleHomePresenter {
+public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecycleObserver, View.OnAttachStateChangeListener {
     private final AppCompatActivity activity;
     private final AsyncUiScope data;
     private final LinearLayout domBody, subBody, relationship;
@@ -39,6 +39,13 @@ public final class RoleHomePresenter {
     private List<Object> renderedFavorite, renderedSummary, renderedRecent, renderedUsage, renderedRelationship;
     private long lastRefresh;
     private boolean displayedDom, sessionPage;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private DeviceRolePreferences.Mode iconRole;
+    private boolean iconUnlocked;
+    private KeyholderProvider iconAuthority;
+    private com.subhub.app.relationships.RelationshipUi.Provider iconProvider;
+    private PersonSnapshot iconPerson;
     private TaskSummary taskSummary;
     private PersonSnapshot subPerson;
     private AssignedDom subDom;
@@ -73,7 +80,44 @@ public final class RoleHomePresenter {
         reparent(activity.findViewById(R.id.sub_wallet_pay));
         reparent(activity.findViewById(R.id.sub_wallet_pause));
         session = new OverviewSession(activity);
+        domBody.addOnAttachStateChangeListener(this); subBody.addOnAttachStateChangeListener(this);
+        activity.getLifecycle().addObserver(this);
     }
+
+    private void observeAppIcons() {
+        if (sessionPage || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()) { stopAppIcons(); return; }
+        DeviceRolePreferences.Mode role = DeviceRolePreferences.get(activity);
+        boolean unlocked = ControllerPinManager.isDomModeActive();
+        KeyholderProvider authority = People.keyholder();
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        PersonSnapshot person = subPerson;
+        if (appIconObserver != null && iconRole == role && iconUnlocked == unlocked && iconAuthority == authority
+                && iconProvider == provider && iconPerson == person) return;
+        stopAppIcons(); iconRole = role; iconUnlocked = unlocked; iconAuthority = authority; iconProvider = provider; iconPerson = person;
+        long request = ++appIconEpoch;
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (request != appIconEpoch || sessionPage || activity.isFinishing() || activity.isDestroyed()
+                    || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()
+                    || role != DeviceRolePreferences.get(activity) || unlocked != ControllerPinManager.isDomModeActive()
+                    || authority != People.keyholder() || provider != com.subhub.app.relationships.RelationshipUi.provider()
+                    || person != subPerson) return;
+            refresh(true);
+        });
+    }
+    private void stopAppIcons() {
+        ++appIconEpoch; AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
+    }
+    @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeAppIcons(); }
+    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopAppIcons(); data.cancel("role-home"); }
+    @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
+        stopAppIcons(); domBody.removeOnAttachStateChangeListener(this); subBody.removeOnAttachStateChangeListener(this);
+        activity.getLifecycle().removeObserver(this);
+    }
+    @Override public void onViewAttachedToWindow(View view) { observeAppIcons(); }
+    @Override public void onViewDetachedFromWindow(View view) { stopAppIcons(); }
 
     private void reparent(View child) {
         ((android.view.ViewGroup) child.getParent()).removeView(child);
@@ -87,6 +131,7 @@ public final class RoleHomePresenter {
     public void renderOverviewSession(boolean active, boolean paused) { session.state(active, paused); }
 
     public void refresh(boolean force) {
+        observeAppIcons();
         boolean dom = domWorkspace();
         session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
@@ -115,6 +160,8 @@ public final class RoleHomePresenter {
         lastRefresh = now;
         android.content.Context application = activity.getApplicationContext();
         PersonRepository repository = People.repository(application);
+        com.subhub.app.relationships.RelationshipUi.Provider iconSource = com.subhub.app.relationships.RelationshipUi.provider();
+        KeyholderProvider authoritySource = People.keyholder();
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
@@ -136,7 +183,8 @@ public final class RoleHomePresenter {
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
                     access, relationshipUnavailable);
         }, loaded -> {
-            if (dom != domWorkspace() || sessionPage
+            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                    || dom != domWorkspace() || sessionPage
                     || dom && !ControllerPinManager.isDomModeActive()) return;
             boolean current = loaded.access != null
                     && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
@@ -156,7 +204,8 @@ public final class RoleHomePresenter {
                 renderSub(loaded.people.get(0), current ? loaded.dom : null);
             }
         }, failure -> {
-            if (dom != domWorkspace()
+            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                    || dom != domWorkspace()
                     || dom && !ControllerPinManager.isDomModeActive()) return;
             relationship.setVisibility(View.GONE);
             if (dom) resetDomSignatures();
@@ -451,12 +500,14 @@ public final class RoleHomePresenter {
         if (!android.text.TextUtils.equals(subTasksDetail.getText(), subtitle)) subTasksDetail.setText(subtitle);
         List<Object> usageSignature = new ArrayList<>();
         usageSignature.add(selection.allUsage);
+        usageSignature.add(person.id);
         for (PersonSnapshot.Allowance value : person.allowances) java.util.Collections.addAll(usageSignature,
-                value.packageName, value.label, value.dailyMinutes, value.usedMillis);
+                value.packageName, value.label, value.dailyMinutes, value.usedMillis, value.appIcon);
         if (!usageSignature.equals(renderedUsage)) {
             renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person, dom);
         }
         subAchievements.load(data, "home-achievement-preview");
+        observeAppIcons();
     }
 
     private void ensureSubSections() {
@@ -517,8 +568,11 @@ public final class RoleHomePresenter {
                     : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.dailyMinutes);
             LinearLayout row = OverviewUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
             row.setMinimumHeight(dp(32)); row.setPadding(0, dp(4), 0, dp(4));
-            com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName,
-                    value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps);
+            int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
+            row.getChildAt(0).setTag("home_app_icon:" + value.packageName);
+            if (value.appIcon != null || !person.id.isLocal())
+                com.subhub.app.remote.RemoteUi.bindAppIcon((android.widget.ImageView) row.getChildAt(0), value.appIcon, fallback);
+            else com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000); progress.setProgress(value.dailyMinutes <= 0 ? 0 : (int) Math.min(1000,

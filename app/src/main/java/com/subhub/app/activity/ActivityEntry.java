@@ -1,6 +1,7 @@
 package com.subhub.app.activity;
 
 import com.subhub.app.people.PersonId;
+import com.subhub.app.util.RemoteAppIcon;
 import java.util.Objects;
 
 /** A received fact with relationship-scoped identity and device-local read state. */
@@ -13,14 +14,24 @@ public final class ActivityEntry {
     public final long receivedAt;
     public final boolean unread;
     public final String appLabel;
+    public final RemoteAppIcon appIcon;
 
     public ActivityEntry(String key, PersonId personId, String personName, String device,
             ActivityEvent event, long receivedAt, boolean unread, String appLabel) {
+        this(key, personId, personName, device, event, receivedAt, unread, appLabel, null);
+    }
+
+    public ActivityEntry(String key, PersonId personId, String personName, String device,
+            ActivityEvent event, long receivedAt, boolean unread, String appLabel, RemoteAppIcon appIcon) {
         this.key = ActivityEvent.required(key, 512);
         this.personId = Objects.requireNonNull(personId);
         this.personName = ActivityEvent.required(personName, 160);
         this.device = ActivityEvent.optional(device, 160);
         this.event = Objects.requireNonNull(event);
+        if (appIcon != null && (event.kind != ActivityEvent.Kind.APP_OPENED && event.kind != ActivityEvent.Kind.APP_LIMIT_REACHED
+                || !appIcon.packageName.equals(event.packageName)))
+            throw new IllegalArgumentException("Icon does not match application activity");
+        this.appIcon = appIcon;
         if (receivedAt < 0) throw new IllegalArgumentException("Invalid receipt time");
         this.receivedAt = receivedAt;
         this.unread = unread;
@@ -30,6 +41,6 @@ public final class ActivityEntry {
 
     public ActivityEntry read() {
         return unread ? new ActivityEntry(key, personId, personName, device, event,
-                receivedAt, false, appLabel) : this;
+                receivedAt, false, appLabel, appIcon) : this;
     }
 }

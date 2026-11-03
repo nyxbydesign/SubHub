@@ -22,6 +22,7 @@ public final class RemoteFeature {
     public final RemoteEndCommands endCommands;
     public final RemoteKeyholder keyholder;
     public final RemoteActivityRepository activity;
+    final RemoteAppIconIntegration appIcons;
     private final RemoteSecrets secrets;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
@@ -50,9 +51,10 @@ public final class RemoteFeature {
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
+        appIcons=new RemoteAppIconIntegration(this.context,store,timer,this::kick);
         activity=new RemoteActivityRepository(this.context,store,this::changed);
         store.onActivityReceived(activity::received);
-        store.onRevoked((identity,generation)->{cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));});
+        store.onRevoked((identity,generation)->{appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));});
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
@@ -72,6 +74,7 @@ public final class RemoteFeature {
 
     public synchronized void installLifecycle(Application app) {
         if(installed)return;installed=true;
+        timer.execute(()->{try{appIcons.refresh();}catch(Exception unavailable){/* Reconstruct from a later verified sync. */}});
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             private int started;
             @Override public void onActivityStarted(Activity activity){if(++started==1){foreground=true;RemoteFeature.this.activity.dispatchNotifications();kick();}}
@@ -309,6 +312,10 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public int appIconsVersion() { return com.subhub.app.remote.icons.AppIconExchange.VERSION; }
+            @Override public void appIcons(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+                requireActive(peer);appIcons.exchange(connection,peer,deadline);
+            }
             @Override public int sessionControlVersion() { return RemoteSessionRuntime.applicationEnabled() ? RemoteSessionCommands.VERSION : 0; }
             @Override public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);
@@ -376,7 +383,10 @@ public final class RemoteFeature {
                 catch(Exception unavailable){store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","true");store.putMetadata(peer.identity,peer.generation,"contract_error","Contract data could not be refreshed");}
                 return null;});
             }
-            @Override public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception {withActivePeer(peer,()->{endCommands.process(peer,System.currentTimeMillis());contracts.process(peer);return null;});}
+            @Override public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception {
+                withActivePeer(peer,()->{endCommands.process(peer,System.currentTimeMillis());contracts.process(peer);return null;});
+                if(stream==RemoteProtocol.Stream.APP_CATALOG||stream==RemoteProtocol.Stream.APP_USAGE||stream==RemoteProtocol.Stream.EVENTS)appIcons.refresh();
+            }
             @Override public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception{return withActivePeer(peer,()->contracts.missing(peer));}
             @Override public RemoteAssets assets(RemoteStore.Peer peer) throws Exception{return withActivePeer(peer,()->contracts.assets(peer));}
             @Override public void complete(RemoteStore.Peer peer) throws Exception{withActivePeer(peer,()->{contracts.process(peer);return null;});}
@@ -427,6 +437,7 @@ public final class RemoteFeature {
         synchronized(endpointLock){if(foreground || leases.get()>0 || !busy.isEmpty())return;PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
     }
     void shutdownForTest() throws Exception {
+        appIcons.close();
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
         acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();
         com.subhub.app.security.SubFeaturePolicy.unregisterHardcoreAuthority(context, store);store.close();

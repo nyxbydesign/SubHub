@@ -12,6 +12,10 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
+        default int appIconsVersion() { return 0; }
+        default void appIcons(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+            throw new UnsupportedOperationException("App icons unavailable");
+        }
         default int journalVersion() { return 0; }
         default void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int sessionControlVersion() { return 0; }
@@ -58,8 +62,10 @@ public final class RemoteSession {
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         int localSessionControl = hooks.sessionControlVersion();
+        int localAppIcons = hooks.appIconsVersion();
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("displayName",hooks.displayName(peer));
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
+        if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileDetailsVersion() == 1) hello.put("profileDetailsVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileRoleVersion() == 1) hello.put("profileRoleVersion", 1);
@@ -91,7 +97,8 @@ public final class RemoteSession {
             RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"), details, roleIdentity);
         }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls);
+        exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls,
+                appIconsVersion(response)==1 && localAppIcons==1);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -110,6 +117,8 @@ public final class RemoteSession {
         store.setRoute(identity,generation,hello.getString("route"));
         receiveDisplayName(hello, peer);
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
+        boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
+        if (appIcons) ready.put("appIconsVersion",1);
         if (controls) ready.put("sessionControlVersion", 1);
         boolean profile = profileVersion(hello) == 1 && hooks.profileVersion() == 1;
         boolean details = profile && profileDetailsVersion(hello) == 1 && hooks.profileDetailsVersion() == 1;
@@ -136,7 +145,7 @@ public final class RemoteSession {
             send(connection, message("profile", peer).put("profile", hooks.profile(peer, details, roleIdentity)), deadlineNanos);
         }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
-        exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls);
+        exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls,appIcons);
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
@@ -214,7 +223,14 @@ public final class RemoteSession {
         return value;
     }
 
-    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls) throws Exception {
+    private static long appIconsVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("appIconsVersion")) return 0;
+        long value=RemoteProtocol.integer(frame,"appIconsVersion");
+        if (value<=0) throw new SecurityException("Invalid app icon capability");
+        return value;
+    }
+
+    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls,boolean appIcons) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
             push(connection,peer,deadline,activity);
@@ -222,6 +238,7 @@ public final class RemoteSession {
             if (tasks) hooks.tasks(connection,peer,deadline);
             if (journal) hooks.journal(connection,peer,deadline);
             if (controls) hooks.sessionControl(connection,peer,deadline);
+            if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
@@ -231,6 +248,7 @@ public final class RemoteSession {
             if (tasks) hooks.tasks(connection,peer,deadline);
             if (journal) hooks.journal(connection,peer,deadline);
             if (controls) hooks.sessionControl(connection,peer,deadline);
+            if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());

@@ -78,6 +78,66 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
     }
 
+    @Test public void appIconsBothNewNegotiateForEitherConnectionInitiator() throws Exception {
+        dh.iconVersion=1;sh.iconVersion=1;
+        String own=context.getPackageName();
+        JSONObject catalog=new JSONObject().put("schema",1).put("package",own).put("label","Own fixture app");
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.APP_CATALOG,own,catalog,false,1000);
+        com.subhub.app.remote.icons.AppIconCache domCache=new com.subhub.app.remote.icons.AppIconCache(new File(root,"icons-dom"));
+        com.subhub.app.remote.icons.AppIconCache subCache=new com.subhub.app.remote.icons.AppIconCache(new File(root,"icons-sub"));
+        FixtureIconAuthority domAuthority=new FixtureIconAuthority(dom,own),subAuthority=new FixtureIconAuthority(sub,own);
+        com.subhub.app.remote.icons.AndroidAppIconSource source=new com.subhub.app.remote.icons.AndroidAppIconSource(context,subAuthority);
+        RemoteStore.Peer subPeer=sub.peer(dt.localIdentity(),generation);
+        byte[] expected=source.rasterize(subPeer,own);assertNotNull(expected);
+        dh.realIcons=new com.subhub.app.remote.icons.AppIconExchange(domAuthority,(peer,name)->{throw new AssertionError("Dom must not rasterize");},domCache);
+        sh.realIcons=new com.subhub.app.remote.icons.AppIconExchange(subAuthority,source,subCache);
+        dh.beforeIcons=()->{
+            assertTrue(domAuthority.mirrored(dom.peer(st.localIdentity(),generation),own));
+            if(domCache.snapshot().identity(st.localIdentity(),generation,own)==null)
+                domCache.publishReferences(Collections.singletonList(new com.subhub.app.util.RemoteAppIcon(st.localIdentity(),generation,own,null)));
+        };
+        exchange(true,false);
+        com.subhub.app.util.RemoteAppIcon received=domCache.snapshot().identity(st.localIdentity(),generation,own);
+        assertNotNull(received);assertNotNull(received.descriptor);assertEquals(RemoteProtocol.sha256(expected),received.descriptor.sha256);
+        byte[] transferred=domCache.load(received);assertArrayEquals(expected,transferred);received.validatePng(transferred);
+        assertEquals(0,dh.iconResumeOffset);assertTrue(sh.iconChunks>0);assertEquals(1,dh.iconsAck);
+        android.graphics.Bitmap wanted=android.graphics.BitmapFactory.decodeByteArray(expected,0,expected.length),actual=android.graphics.BitmapFactory.decodeByteArray(transferred,0,transferred.length);
+        try{
+            assertNotNull(wanted);assertNotNull(actual);assertEquals(128,actual.getWidth());assertEquals(128,actual.getHeight());
+            if(!wanted.sameAs(actual)){
+                File evidence=new File(context.getCacheDir(),"remote-icon-failure-"+UUID.randomUUID());assertTrue(evidence.mkdirs());
+                Files.write(new File(evidence,"expected.png").toPath(),expected);Files.write(new File(evidence,"received.png").toPath(),transferred);
+                fail("Decoded pixels differ; retained "+evidence.getAbsolutePath());
+            }
+        }finally{if(wanted!=null)wanted.recycle();if(actual!=null)actual.recycle();}
+        dh.iconResumeOffset=-1;sh.iconChunks=0;dh.iconsAck=0;
+        exchange(false,false);
+        assertEquals(received,domCache.snapshot().identity(st.localIdentity(),generation,own));
+        assertArrayEquals(expected,domCache.load(received));assertEquals(expected.length,dh.iconResumeOffset);assertEquals(0,sh.iconChunks);assertEquals(1,dh.iconsAck);
+        assertEquals(1,dom.mirror(st.localIdentity(),generation,RemoteProtocol.Stream.APP_CATALOG).size());
+        assertEquals(1,sub.published(dt.localIdentity(),generation,RemoteProtocol.Stream.APP_CATALOG).size());
+        assertEquals(RemoteProtocol.canonical(catalog),RemoteProtocol.canonical(dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.APP_CATALOG,own)));
+        assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.APP_CATALOG).changes.isEmpty());
+        assertEquals(2,dh.iconCalls);assertEquals(2,sh.iconCalls);
+        assertTrue(dom.peer(st.localIdentity(),generation).lastSyncedAt>0);
+        assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
+    }
+    @Test public void appIconsNewDomOldSubSkipsPhaseAndStillAcknowledgesData() throws Exception {
+        dh.iconVersion=1;sh.iconVersion=0;
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",19),false,1000);
+        exchange(true,false);exchange(false,false);
+        assertEquals(0,dh.iconCalls);assertEquals(0,sh.iconCalls);
+        assertEquals(19,dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary").getInt("count"));
+        assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
+    }
+    @Test public void appIconsOldDomNewSubSkipsPhaseForEitherConnectionInitiator() throws Exception {
+        dh.iconVersion=0;sh.iconVersion=1;
+        exchange(true,false);exchange(false,false);
+        assertEquals(0,dh.iconCalls);assertEquals(0,sh.iconCalls);
+        assertTrue(dom.peer(st.localIdentity(),generation).lastSyncedAt>0);
+        assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
+    }
+
     @Test public void floatingContractNumbersKeepTheirAcknowledgementDigest() throws Exception {
         JSONObject document=new JSONObject().put("whole",1.0f).put("negativeZero",-0.0).put("fraction",0.2f).put("large",Long.MAX_VALUE);
         sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",document,false,1);
@@ -318,6 +378,17 @@ public class RemoteSessionAndroidTest {
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
         final RemoteStore store;final RemoteAssets assets;int prepares;
+        int iconVersion,iconCalls;
+        int iconChunks,iconsAck;long iconResumeOffset=-1;
+        com.subhub.app.remote.icons.AppIconExchange realIcons;Runnable beforeIcons=()->{};
+        public int appIconsVersion(){return iconVersion;}
+        public void appIcons(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception{
+            iconCalls++;
+            if(realIcons!=null){beforeIcons.run();realIcons.exchange(new IconFrames(connection,this),peer,deadline);return;}
+            JSONObject frame=new JSONObject().put("version",1).put("type","fixture_icons").put("generation",peer.generation);
+            if(peer.localRole==RemoteProtocol.Role.DOM){RemoteProtocol.write(connection.output(),frame);assertEquals("fixture_icons",RemoteProtocol.read(connection.input()).getString("type"));}
+            else {assertEquals("fixture_icons",RemoteProtocol.read(connection.input()).getString("type"));RemoteProtocol.write(connection.output(),frame);}
+        }
         boolean profiles, details, roleIdentity; int profileCalls, lastSentFields;
         com.subhub.app.people.ProfileData profile = com.subhub.app.people.ProfileData.empty("Fixture");
         FixtureHooks(RemoteStore store,RemoteAssets assets){this.store=store;this.assets=assets;}
@@ -350,6 +421,43 @@ public class RemoteSessionAndroidTest {
         }
         public RemoteAssets assets(RemoteStore.Peer peer){return assets;}
         public void complete(RemoteStore.Peer peer){}
+    }
+    private static final class FixtureIconAuthority implements com.subhub.app.remote.icons.AppIconExchange.Authority {
+        private final RemoteStore store;private final String name;
+        FixtureIconAuthority(RemoteStore store,String name){this.store=store;this.name=name;}
+        public boolean current(RemoteStore.Peer captured){RemoteStore.Peer actual=store.peer(captured.identity,captured.generation);return actual!=null&&actual.state==RemoteStore.State.ACTIVE&&actual.localRole==captured.localRole;}
+        public boolean published(RemoteStore.Peer peer,String packageName){
+            if(!current(peer)||peer.localRole!=RemoteProtocol.Role.SUB||!name.equals(packageName))return false;
+            for(RemoteProtocol.Change row:store.published(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))
+                if(!row.deleted&&name.equals(row.key))try{return name.equals(new JSONObject(row.body).getString("package"));}catch(org.json.JSONException invalid){return false;}
+            return false;
+        }
+        public boolean mirrored(RemoteStore.Peer peer,String packageName){
+            if(!current(peer)||peer.localRole!=RemoteProtocol.Role.DOM||!name.equals(packageName))return false;
+            JSONObject row=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,name);
+            return row!=null&&name.equals(row.optString("package"));
+        }
+        public List<String> wanted(RemoteStore.Peer peer){return mirrored(peer,name)?Collections.singletonList(name):Collections.emptyList();}
+    }
+    private static final class IconFrames implements PeerTransport.Connection {
+        private final PeerTransport.Connection delegate;private final OutputStream output;
+        IconFrames(PeerTransport.Connection delegate,FixtureHooks observed){this.delegate=delegate;
+            output=new OutputStream(){final ByteArrayOutputStream pending=new ByteArrayOutputStream();
+                public void write(int value){pending.write(value);}public void write(byte[] value,int offset,int length){pending.write(value,offset,length);}
+                public void flush()throws IOException{
+                    byte[] bytes=pending.toByteArray();
+                    if(bytes.length>0)try{
+                        JSONObject frame=RemoteProtocol.read(new ByteArrayInputStream(bytes));String type=frame.getString("type");
+                        if("icon_resume".equals(type))observed.iconResumeOffset=RemoteProtocol.integer(frame,"offset");
+                        if("icon_chunk".equals(type))observed.iconChunks++;if("icons_ack".equals(type))observed.iconsAck++;
+                    }catch(org.json.JSONException invalid){throw new IOException(invalid);}
+                    delegate.output().write(bytes);delegate.output().flush();pending.reset();
+                }
+            };
+        }
+        public String authenticatedPeerIdentity(){return delegate.authenticatedPeerIdentity();}
+        public InputStream input()throws IOException{return delegate.input();}public OutputStream output(){return output;}
+        public void setReadTimeoutMillis(long timeout){delegate.setReadTimeoutMillis(timeout);}public boolean isDirect(){return delegate.isDirect();}public void close()throws IOException{delegate.close();}
     }
     private static final class DropAck implements PeerTransport.Connection {
         final PeerTransport.Connection wrapped;final OutputStream output;

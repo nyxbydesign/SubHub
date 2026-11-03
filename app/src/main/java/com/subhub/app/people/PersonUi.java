@@ -116,8 +116,11 @@ public final class PersonUi {
                     value.usedMillis < 0 ? parent.getContext().getString(R.string.role_allowance_unknown, value.dailyMinutes)
                             : parent.getContext().getString(R.string.role_allowance_usage,
                                     value.usedMillis / 60_000L, value.dailyMinutes), null);
-            com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName,
-                    value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps);
+            int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
+            app.getChildAt(0).setTag("allowance_app_icon:" + value.packageName);
+            if (value.appIcon != null || !snapshot.id.isLocal())
+                com.subhub.app.remote.RemoteUi.bindAppIcon((ImageView) app.getChildAt(0), value.appIcon, fallback);
+            else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);

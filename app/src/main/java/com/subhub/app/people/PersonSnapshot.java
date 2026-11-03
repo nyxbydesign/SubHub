@@ -1,5 +1,6 @@
 package com.subhub.app.people;
 
+import com.subhub.app.util.RemoteAppIcon;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -165,9 +166,14 @@ public final class PersonSnapshot {
 
     public static final class App {
         public final String packageName, label;
+        public final RemoteAppIcon appIcon;
         public App(String packageName, String label) {
+            this(packageName, label, null);
+        }
+        public App(String packageName, String label, RemoteAppIcon appIcon) {
             this.packageName = Objects.requireNonNull(packageName);
             this.label = Objects.requireNonNull(label);
+            this.appIcon = matchingIcon(packageName, appIcon);
         }
     }
 
@@ -175,9 +181,20 @@ public final class PersonSnapshot {
         public final String packageName, label;
         public final long usedMillis;
         public final int dailyMinutes;
+        public final RemoteAppIcon appIcon;
         public Allowance(String packageName, String label, long usedMillis, int dailyMinutes) {
+            this(packageName, label, usedMillis, dailyMinutes, null);
+        }
+        public Allowance(String packageName, String label, long usedMillis, int dailyMinutes, RemoteAppIcon appIcon) {
             this.packageName = packageName; this.label = label;
             this.usedMillis = usedMillis; this.dailyMinutes = dailyMinutes;
+            this.appIcon = matchingIcon(packageName, appIcon);
         }
+    }
+
+    private static RemoteAppIcon matchingIcon(String packageName, RemoteAppIcon icon) {
+        if (icon != null && !icon.packageName.equals(packageName))
+            throw new IllegalArgumentException("Icon does not match application");
+        return icon;
     }
 }

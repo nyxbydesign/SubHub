@@ -84,7 +84,7 @@ public final class RemotePersonRepository implements PersonRepository {
         }
         JSONObject appDoc=configuration.getJSONObject("apps"),service=configuration.getJSONObject("service");
         List<String> names=new ArrayList<>();List<PersonSnapshot.App> appRows=new ArrayList<>();for(String id:RemoteConfiguration.selected(configuration)){
-            JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);String label=app==null?id:app.optString("label",id);names.add(label);appRows.add(new PersonSnapshot.App(id,label));
+            JSONObject app=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,id);String label=app==null?id:app.optString("label",id);names.add(label);appRows.add(new PersonSnapshot.App(id,label,feature.appIcons.identity(peer.identity,peer.generation,id)));
         }
         String appSummary=appDoc.getBoolean("all")?context.getString(R.string.remote_all_apps):context.getString(R.string.remote_app_count,names.size());
         result.add(new PersonSnapshot.Section("apps",context.getString(R.string.remote_apps),appSummary,String.join("\n",names),appRows));
@@ -108,7 +108,7 @@ public final class RemotePersonRepository implements PersonRepository {
         if(apps.getBoolean("all"))for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))if(!row.deleted)packages.add(row.key);
         if(limits.optBoolean("app_timer_per_app_enabled"))for(String name:packages) {
             JSONObject entry=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,name);
-            result.add(new PersonSnapshot.Allowance(name,entry==null?name:entry.optString("label",name),usage.has(name)?knownUsage(usage,name):-1,budgets.optInt(name,limits.optInt("app_timer_per_app_minutes",30))));
+            result.add(new PersonSnapshot.Allowance(name,entry==null?name:entry.optString("label",name),usage.has(name)?knownUsage(usage,name):-1,budgets.optInt(name,limits.optInt("app_timer_per_app_minutes",30)),feature.appIcons.identity(peer.identity,peer.generation,name)));
         }
         if(limits.optBoolean("app_timer_total_enabled"))result.add(new PersonSnapshot.Allowance("",context.getString(R.string.role_shared_allowance),knownUsage(usage,""),limits.optInt("app_timer_total_minutes",120)));
         java.text.Collator order=java.text.Collator.getInstance(context.getResources().getConfiguration().getLocales().get(0));

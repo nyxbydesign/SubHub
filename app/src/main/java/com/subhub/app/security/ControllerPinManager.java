@@ -15,6 +15,21 @@ import javax.crypto.spec.PBEKeySpec;
 
 /** Salted, app-local controller PIN with a process-local Dom-mode session. */
 public final class ControllerPinManager {
+    private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> sessionObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final class SessionDispatch {static final android.os.Handler MAIN=new android.os.Handler(android.os.Looper.getMainLooper());}
+    private static final java.util.concurrent.atomic.AtomicBoolean sessionNotification=new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** Presentation observers run asynchronously, including when callers retain an outer authority lock. */
+    public static AutoCloseable observeSession(Runnable observer){
+        java.util.Objects.requireNonNull(observer);sessionObservers.addIfAbsent(observer);
+        return ()->sessionObservers.remove(observer);
+    }
+    private static void sessionChanged(){
+        if(!sessionObservers.isEmpty()&&sessionNotification.compareAndSet(false,true))SessionDispatch.MAIN.post(()->{
+            sessionNotification.set(false);
+            for(Runnable observer:sessionObservers){try{observer.run();}catch(RuntimeException ignored){/* Observer owns failure. */}}
+        });
+    }
     private static final String KEY_SALT = "controller_pin_salt";
     private static final String KEY_HASH = "controller_pin_hash";
     private static final int ITERATIONS = 150_000;
@@ -113,11 +128,11 @@ public final class ControllerPinManager {
     }
 
     public static void enterDomMode() {
-        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){domModeActive = true;}
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=!domModeActive;domModeActive = true;if(changed)sessionChanged();}
     }
 
     public static void enterSubMode() {
-        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){domModeActive = false;}
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=domModeActive;domModeActive = false;if(changed)sessionChanged();}
     }
 
     static KeyholderProvider.State remoteKeyholderState() {

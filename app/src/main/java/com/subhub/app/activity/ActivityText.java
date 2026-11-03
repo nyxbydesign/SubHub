@@ -44,7 +44,9 @@ public final class ActivityText {
     public static void bindIcon(android.widget.ImageView image, ActivityEntry entry) {
         boolean app = entry.event.kind == ActivityEvent.Kind.APP_OPENED
                 || entry.event.kind == ActivityEvent.Kind.APP_LIMIT_REACHED;
-        com.subhub.app.util.AppIcons.bind(image, app ? entry.event.packageName : "", icon(entry));
+        if (entry.appIcon != null || !entry.personId.isLocal())
+            com.subhub.app.remote.RemoteUi.bindAppIcon(image, app ? entry.appIcon : null, icon(entry));
+        else com.subhub.app.util.AppIcons.bind(image, app ? entry.event.packageName : "", icon(entry));
     }
 
     private static String reason(Context context, String reason) {

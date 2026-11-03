@@ -32,7 +32,8 @@ public final class ContractAppList {
             icon.getLayoutParams().width = PersonUi.dp(parent.getContext(), 32);
             icon.getLayoutParams().height = PersonUi.dp(parent.getContext(), 32);
             icon.setTag("contract_app_icon:" + app.packageName);
-            com.subhub.app.util.AppIcons.bind(icon, app.packageName, R.drawable.ic_settings_apps);
+            if (app.appIcon != null) com.subhub.app.remote.RemoteUi.bindAppIcon(icon, app.appIcon, R.drawable.ic_settings_apps);
+            else com.subhub.app.util.AppIcons.bind(icon, app.packageName, R.drawable.ic_settings_apps);
             androidx.core.view.ViewCompat.setScreenReaderFocusable(row, true);
         }
     }

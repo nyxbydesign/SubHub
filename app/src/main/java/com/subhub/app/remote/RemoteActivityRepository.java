@@ -345,7 +345,9 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             JSONObject app = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.APP_CATALOG, event.packageName);
             if (app != null && event.packageName.equals(app.optString("package"))) label = clean(app.optString("label", label));
         }
-        return new ActivityEntry(key, RemotePersonRepository.id(peer), peer.name, device, event, received, unread, label);
+        return new ActivityEntry(key, RemotePersonRepository.id(peer), peer.name, device, event, received, unread, label,
+                event.kind==ActivityEvent.Kind.APP_OPENED||event.kind==ActivityEvent.Kind.APP_LIMIT_REACHED
+                        ?RemoteUi.appIcon(context,peer.identity,peer.generation,event.packageName):null);
     }
 
     void dispatchNotifications() {

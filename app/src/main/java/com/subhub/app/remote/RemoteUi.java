@@ -8,10 +8,52 @@ import com.subhub.app.security.ControllerPinManager;
 
 public final class RemoteUi implements ConnectionUi {
     private static Application application;
+    private static volatile RemoteAppIconIntegration iconProvider;
+    private static com.subhub.app.util.RemoteAppIcons iconBinder;
+    private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> iconObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final android.os.Handler iconMain=new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final java.util.concurrent.atomic.AtomicBoolean iconNotification=new java.util.concurrent.atomic.AtomicBoolean();
+    private static final com.subhub.app.util.RemoteAppIcon unavailableIcon=new com.subhub.app.util.RemoteAppIcon("unavailable","unavailable","unknown",null);
+    private static final Runnable iconChanged=()->{
+        if(iconNotification.compareAndSet(false,true))iconMain.post(()->{
+            iconNotification.set(false);
+            try{com.subhub.app.activity.ActivitySources.changed();}catch(RuntimeException ignored){/* Other projections still receive invalidation. */}
+            for(Runnable observer:iconObservers){try{observer.run();}catch(RuntimeException ignored){/* Observer owns failure. */}}
+        });
+    };
+
+    /** Memory-only lookup. Missing images retain the complete remote scope, never local package authority. */
+    public static com.subhub.app.util.RemoteAppIcon appIcon(android.content.Context context,String peer,String generation,String packageName){
+        if(packageName==null||packageName.isEmpty())return null;
+        RemoteAppIconIntegration provider=iconProvider;
+        try{return provider==null?new com.subhub.app.util.RemoteAppIcon(peer,generation,packageName,null):provider.identity(peer,generation,packageName);}
+        catch(IllegalArgumentException invalid){return null;}
+    }
+    public static void bindAppIcon(android.widget.ImageView view,com.subhub.app.util.RemoteAppIcon identity,int fallback){
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())throw new IllegalStateException("Icon binding requires the UI thread");
+        if(iconBinder==null) {
+            // The unavailable provider still uses the shared request slot, cancelling any local load.
+            iconBinder=new com.subhub.app.util.RemoteAppIcons(new com.subhub.app.util.RemoteAppIcons.Provider(){
+                public byte[] load(com.subhub.app.util.RemoteAppIcon icon){return null;}
+                public com.subhub.app.util.RemoteAppIcons.Authority currentAuthority(){return com.subhub.app.util.RemoteAppIcons.Authority.EMPTY;}
+                public void addInvalidationListener(Runnable listener){}public void removeInvalidationListener(Runnable listener){}
+            });
+        }
+        iconBinder.bind(view,identity==null?unavailableIcon:identity,fallback);
+    }
+    public static AutoCloseable observeAppIcons(Runnable observer){
+        java.util.Objects.requireNonNull(observer);iconObservers.addIfAbsent(observer);
+        return ()->iconObservers.remove(observer);
+    }
     public static void install(Application app) {
         application = app;
         ControllerPinManager.initialize(app);
         RemoteFeature feature=RemoteFeature.get(app);RemotePersonRepository repository=new RemotePersonRepository(app,feature);
+        if(iconProvider!=null)iconProvider.removeInvalidationListener(iconChanged);
+        if(iconBinder!=null)iconBinder.close();
+        iconProvider=feature.appIcons;
+        iconBinder=new com.subhub.app.util.RemoteAppIcons(iconProvider);
+        iconProvider.addInvalidationListener(iconChanged);
         com.subhub.app.activity.ActivitySources.install(feature.activity);feature.activity.install();
         People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);People.installKeyholder(keyholderProvider(feature));
         People.installLocalProjection(repository::localProjection);People.installConnectionUi(new RemoteUi());
