@@ -231,8 +231,8 @@ public class RemoteSessionCommandsAndroidTest {
     }
 
     private static void dropPostVersionFiveSchema(SQLiteDatabase db) {
-        // Remove only v6-v8 additions, dropping foreign-key children before their parents.
-        for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots",
+        // Only store()'s UUID-named, names-tracked fixtures reach here; remove v6-v9 children before parents.
+        for(String table:new String[]{"pairing_lifecycle","linking_unlinks","linking_state","formal_governing_slots",
                 "formal_operations","formal_relationships","formal_participants","formal_authority",
                 "session_control_journal"})db.execSQL("DROP TABLE "+table);
     }

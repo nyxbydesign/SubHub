@@ -8,10 +8,10 @@ import org.junit.Test;
 
 public final class FormalRelationshipMigrationAndroidTest extends FormalRelationshipFixture {
     @Override void beforeOpen() {
-        // Build a real v6 table inventory, then remove only the not-yet-shipped additive v7 tables.
+        // Reshape only this fixture's owned named database to v6, removing v7-v9 children before parents.
         RemoteStore seed=open(database);SQLiteDatabase db=seed.getWritableDatabase();db.beginTransaction();
         try {
-            for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority"})db.execSQL("DROP TABLE "+table);
+            for(String table:new String[]{"pairing_lifecycle","linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority"})db.execSQL("DROP TABLE "+table);
             db.setVersion(6);
             for(int i=1;i<=145;i++)db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Legacy pending','DOM','PENDING')",new Object[]{identity(i),"legacy_"+i});
             db.execSQL("INSERT INTO remote_metadata(peer,generation,name,value) VALUES(?,?,'retained','raw legacy value')",new Object[]{identity(1),"legacy_1"});
@@ -56,7 +56,8 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
         for(int version:new int[]{4,5}){
             String name=prefix+"version-"+version;RemoteStore seed=open(name);SQLiteDatabase original=seed.getWritableDatabase();original.beginTransaction();
             try{
-                for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority","session_control_journal"})original.execSQL("DROP TABLE "+table);
+                // This prefix-named fixture is owned by the names ledger; remove every post-v5 table.
+                for(String table:new String[]{"pairing_lifecycle","linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority","session_control_journal"})original.execSQL("DROP TABLE "+table);
                 if(version==4)original.execSQL("DROP TABLE session_controls");
                 else original.execSQL("INSERT INTO session_controls(peer,generation,id,direction,request_digest,request,result,state,updated) VALUES('legacy','generation','old','OUTGOING','digest','original/raw','original/result','QUEUED',99)");
                 original.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Original','DOM','REVOKED')",new Object[]{identity(version),"v"+version});
@@ -64,7 +65,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
                 original.setVersion(version);original.setTransactionSuccessful();
             }finally{original.endTransaction();}
             java.util.Map<String,String> retained=fingerprint(original);seed.close();RemoteStore upgraded=open(name);SQLiteDatabase next=upgraded.getWritableDatabase();
-            assertEquals(8,next.getVersion());upgraded.migrateFormalRelationships();
+            assertEquals(RemoteStore.DATABASE_VERSION,next.getVersion());upgraded.migrateFormalRelationships();
             java.util.Map<String,String> after=fingerprint(next);for(java.util.Map.Entry<String,String> entry:retained.entrySet())assertEquals(entry.getKey(),entry.getValue(),after.get(entry.getKey()));
         }
     }

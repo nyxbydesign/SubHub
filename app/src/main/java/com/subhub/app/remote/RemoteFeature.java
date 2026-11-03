@@ -25,6 +25,7 @@ public final class RemoteFeature {
     public final RemoteActivityRepository activity;
     final RemoteAppIconIntegration appIcons;
     private final RemoteSecrets secrets;
+    private final PairingLifecycleClock.Source pairingClock;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
     private final Object sessionControlLock = new Object();
@@ -32,6 +33,8 @@ public final class RemoteFeature {
     private String sessionControlIdentity = "";
     private final Object endpointLock=new Object();
     private final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"subhub-peer-clock"));
+    // This executor only reads immutable clock bounds and publishes attenuation; it never runs transport/SQL work.
+    private final ScheduledExecutorService pairingDeadlineTimer=newPairingDeadlineTimer();
     private final ExecutorService acceptor=Executors.newSingleThreadExecutor(r->new Thread(r,"subhub-peer-accept"));
     // Keep four workers and twelve queued slots; old outgoing work cannot consume UI or inbound capacity.
     private final ThreadPoolExecutor operations=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),r->new Thread(r,"subhub-peer-operation"),new ThreadPoolExecutor.AbortPolicy());
@@ -47,19 +50,38 @@ public final class RemoteFeature {
     private volatile PeerTransport endpoint;
     private volatile boolean foreground,recovered;
     private final java.util.concurrent.atomic.AtomicBoolean idleCheckPending=new java.util.concurrent.atomic.AtomicBoolean();
+    private final Map<String,PairingOperationLease> pairingLeases=new ConcurrentHashMap<>();
+    // Retain only the latest incarnation in each direction, including a deadline-closed owner.
+    private final Map<PairingLifecycleClock.Direction,PairingOperationLease> pairingDeadlineOwners=new ConcurrentHashMap<>();
+    private final Map<String,StartTicket> pairingTickets=new ConcurrentHashMap<>();
+    private final Map<String,PairingServiceState> pairingPresentation=new ConcurrentHashMap<>();
+    private final Map<PeerTransport.Connection,String> pairingConnections=new ConcurrentHashMap<>();
+    private final Map<Future<?>,String> pairingTasks=new ConcurrentHashMap<>();
+    private final Map<Future<?>,Long> pairingTaskDeadlines=new ConcurrentHashMap<>();
+    private final AtomicInteger backgroundWindows=new AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicBoolean pairingPoll=new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile boolean pairingTimerInstalled;
     private boolean installed;
     private boolean librariesRetired;
 
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
     RemoteFeature(Context context,RemoteStore store) {this(context,store,new RemoteSecrets(context.getApplicationContext()));}
     RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets) {
+        this(context,store,secrets,PairingLifecycleClock.source(context.getApplicationContext()));
+    }
+    RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets,PairingLifecycleClock.Source pairingClock) {
         this.context=context.getApplicationContext();this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
+        this.pairingClock=java.util.Objects.requireNonNull(pairingClock);
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
         appIcons=new RemoteAppIconIntegration(this.context,store,timer,this::kick);
         activity=new RemoteActivityRepository(this.context,store,this::changed);
         store.onActivityReceived(activity::received);
+        store.onPairingApproval((approved,sampled)->{
+            PairingOperationLease lease=pairingDeadlineOwners.get(approved.direction);
+            return lease!=null&&lease.matches(approved)?lease.stageApproval(approved,sampled):()->{};
+        });
         store.onRevoked((identity,generation)->{appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));});
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();});
         endCommands=new RemoteEndCommands(this.context,store);
@@ -120,12 +142,207 @@ public final class RemoteFeature {
         catch(RejectedExecutionException full){result.completeExceptionally(new IOException("Sync is busy"));task.cancel(false);}
         return result;
     }
-    PairingInvite restoreInvitation(String id)throws Exception {
-        requireDomWorkspace();
-        for(RemoteStore.Invitation candidate:store.invitations(System.currentTimeMillis()))if(candidate.id.equals(id)) {
-            String saved=secrets.pendingLink(id);return saved==null?null:PairingInvite.parse(saved,System.currentTimeMillis());
+    public enum PairingServiceState { STARTING, RUNNING, STOPPED, UNAVAILABLE }
+    public static final class PairingOperation {
+        public final String id,generation,direction,state;
+        public final boolean asDom,live,active,clockCertain;
+        public final long remainingMillis,deadlineWall;
+        private PairingOperation(String id,String generation,boolean asDom,String state,boolean live,boolean active,
+                boolean clockCertain,long remainingMillis,long deadlineWall){
+            this.id=id;this.generation=generation;this.asDom=asDom;direction=asDom?"CREATE":"ACCEPT";this.state=state;
+            this.live=live;this.active=active;this.clockCertain=clockCertain;this.remainingMillis=remainingMillis;this.deadlineWall=deadlineWall;
         }
-        return null;
+    }
+    public static final class PairingStart {
+        public final PairingOperation operation;private final String value;
+        private PairingStart(PairingOperation operation,String value){this.operation=operation;this.value=value;}
+        String ticket(){return value;}
+    }
+    private static final class StartTicket {
+        final PairingOperation operation;final String capability;final FormalRelationshipClock.Sample issued;
+        PairingOperationLease acquired;
+        StartTicket(PairingOperation operation,String capability,FormalRelationshipClock.Sample issued){this.operation=operation;this.capability=capability;this.issued=issued;}
+    }
+    private static PairingLifecycleClock.Direction pairingDirection(boolean asDom){return asDom?PairingLifecycleClock.Direction.CREATE:PairingLifecycleClock.Direction.ACCEPT;}
+    private static String pairingKey(String id,String generation,boolean asDom){return (asDom?"CREATE:":"ACCEPT:")+RemoteProtocol.identifier(id)+":"+RemoteProtocol.identifier(generation);}
+    private static String pairingKey(PairingOperation operation){return pairingKey(operation.id,operation.generation,operation.asDom);}
+    private void requirePairingAccess(boolean asDom){if(asDom)requireDomWorkspace();else requireEnrollmentAccess();}
+    private PairingOperation pairingSnapshot(String id,String generation,boolean asDom,FormalRelationshipClock.Sample observed){
+        String key=pairingKey(id,generation,asDom);PairingLifecycleLedger.Operation operation=store.pairingOperation(id,generation,pairingDirection(asDom));
+        RemoteStore.Peer peer=null;
+        if(operation!=null&&operation.peer!=null)peer=store.authorityObservation(()->store.peer(operation.peer,generation));
+        else for(RemoteStore.Peer selected:store.authorityObservation(()->store.peers(true)))
+            if(selected.generation.equals(generation)&&selected.localRole==(asDom?RemoteProtocol.Role.DOM:RemoteProtocol.Role.SUB)){
+                if(peer!=null)throw new SecurityException("Ambiguous pairing participant");peer=selected;
+            }
+        if(peer!=null&&peer.state==RemoteStore.State.ACTIVE){
+            PairingOperationLease lease=pairingLeases.get(key);
+            long original=Long.MAX_VALUE;boolean owned=false;
+            for(Map.Entry<PeerTransport.Connection,String> entry:pairingConnections.entrySet())if(key.equals(entry.getValue())){
+                owned=true;original=Math.min(original,connectionDeadlines.getOrDefault(entry.getKey(),System.nanoTime()));
+            }
+            for(Map.Entry<Future<?>,String> entry:pairingTasks.entrySet())if(key.equals(entry.getValue())&&!entry.getKey().isDone()){
+                owned=true;original=Math.min(original,pairingTaskDeadlines.getOrDefault(entry.getKey(),System.nanoTime()));
+            }
+            boolean draining=lease!=null&&owned&&lease.activeDraining(original);
+            return new PairingOperation(id,generation,asDom,"COMPLETE",draining,true,true,0,0);
+        }
+        if(peer!=null&&peer.state==RemoteStore.State.REVOKED)return new PairingOperation(id,generation,asDom,"CANCELLED",false,false,true,0,0);
+        if(operation==null)return store.legacyPendingGeneration(pairingDirection(asDom))!=null
+                &&generation.equals(store.legacyPendingGeneration(pairingDirection(asDom)))?new PairingOperation(id,generation,asDom,"UNAVAILABLE",false,false,false,0,0):null;
+        FormalRelationshipClock.Sample now=pairingClock.transition(observed);
+        PairingLifecycleClock.Verdict verdict=operation.verdict(now);
+        long deadline=operation.approval==null?operation.bounds.publicWall:operation.approval.deadlineWall;
+        return new PairingOperation(id,generation,asDom,operation.stage.name(),verdict==PairingLifecycleClock.Verdict.LIVE,false,
+                verdict!=PairingLifecycleClock.Verdict.UNCERTAIN,operation.remaining(now),deadline);
+    }
+    public CompletableFuture<PairingOperation> currentPairingOperation(boolean asDom){return submit(()->{
+        requirePairingAccess(asDom);FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        PairingLifecycleLedger.Operation current=store.currentPairingOperation(pairingDirection(asDom));
+        String generation=current==null?store.legacyPendingGeneration(pairingDirection(asDom)):current.generation;
+        return generation==null?null:pairingSnapshot(current==null?generation:current.id,generation,asDom,observed);
+    });}
+    public CompletableFuture<PairingOperation> pairingStatus(String id,String generation,boolean asDom){return submit(()->{
+        FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();return pairingSnapshot(id,generation,asDom,observed);
+    });}
+    public CompletableFuture<PairingStart> preparePairingStart(String id,String generation,boolean asDom){return submit(()->{
+        requirePairingAccess(asDom);FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        PairingOperation operation=pairingSnapshot(id,generation,asDom,observed);
+        if(operation==null||!operation.live||operation.active)throw new SecurityException("Original pairing lifetime unavailable");
+        String key=pairingKey(operation);PairingOperationLease incumbent=pairingLeases.get(key);
+        String capability=incumbent!=null&&!incumbent.isClosed()?incumbent.cancelCapability():PairingCompletionProof.freshNonce();
+        for(Map.Entry<String,StartTicket> entry:pairingTickets.entrySet()){
+            StartTicket ticket=entry.getValue();
+            if(!PairingLifecycleClock.freshProof(ticket.issued,pairingClock.transition(observed)))pairingTickets.remove(entry.getKey(),ticket);
+            else if(pairingKey(ticket.operation).equals(key)
+                    &&(ticket.acquired==null||!ticket.acquired.isClosed()))return new PairingStart(operation,entry.getKey());
+        }
+        if(pairingTickets.size()>=16)throw new SecurityException("Pairing start capacity reached");
+        store.authorizePairingStart(id,generation,pairingDirection(asDom),capabilityHash(capability),observed,pairingClock);
+        String value=PairingCompletionProof.freshNonce();pairingTickets.put(value,new StartTicket(operation,capability,observed));
+        reportPairingServiceState(operation,PairingServiceState.STARTING);return new PairingStart(operation,value);
+    });}
+    public CompletableFuture<PairingOperationLease> acquirePairingLease(String value){return submit(()->{
+        if(value==null||!value.matches("[0-9a-f]{64}"))throw new SecurityException("Pairing start unavailable");
+        StartTicket ticket=pairingTickets.get(value);FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        if(ticket==null||!PairingLifecycleClock.freshProof(ticket.issued,pairingClock.transition(observed)))throw new SecurityException("Pairing start expired");
+        PairingOperation operation=pairingSnapshot(ticket.operation.id,ticket.operation.generation,ticket.operation.asDom,observed);
+        if(operation==null)throw new SecurityException("Pairing start unavailable");
+        PairingLifecycleLedger.Operation ledger=store.pairingOperation(operation.id,operation.generation,pairingDirection(operation.asDom));
+        if(ticket.acquired!=null){
+            if(ticket.acquired.isClosed()||!operation.live||ledger==null||!capabilityHash(ticket.capability).equals(ledger.cancelHash)){
+                ticket.acquired.close();throw new SecurityException("Pairing start already consumed or changed");
+            }
+            ticket.acquired.update(operation);return ticket.acquired;
+        }
+        if(!operation.live||operation.active||ledger==null||!capabilityHash(ticket.capability).equals(ledger.cancelHash))throw new SecurityException("Pairing start changed");
+        String key=pairingKey(operation);PairingOperationLease incumbent=pairingLeases.get(key);
+        if(incumbent!=null&&!incumbent.isClosed()){ticket.acquired=incumbent;return incumbent;}
+        if(pairingLeases.size()>=2)throw new SecurityException("Pairing listener capacity reached");
+        PairingOperationLease lease=new PairingOperationLease(operation,ticket.capability,ledger,observed,pairingClock,closed->releasePairingLease(key,closed));
+        ticket.acquired=lease;pairingLeases.put(key,lease);pairingDeadlineOwners.put(pairingDirection(operation.asDom),lease);
+        try{transport();installPairingTimer();requestPairingPoll();return lease;}
+        catch(Exception unavailable){lease.close();throw unavailable;}
+    });}
+    private static String capabilityHash(String capability){
+        if(capability==null||!capability.matches("[0-9a-f]{64}"))throw new SecurityException("Pairing cancellation unavailable");
+        return LocalRelationshipAuthority.digest("pairing-cancel-v1:"+capability);
+    }
+    public CompletableFuture<Boolean> cancelPairingOperation(String id,String generation,boolean asDom,String capability){return submit(()->{
+        FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        PairingOperation selected=pairingSnapshot(id,generation,asDom,observed);
+        PairingLifecycleLedger.Operation current=store.currentPairingOperation(pairingDirection(asDom));
+        if(selected==null||selected.active||"CANCELLED".equals(selected.state)||"COMPLETE".equals(selected.state)
+                ||current!=null&&(!id.equals(current.id)||!generation.equals(current.generation)))return false;
+        if(capability==null){
+            try{requirePairingAccess(asDom);}
+            catch(SecurityException changed){
+                PairingOperation latest=pairingSnapshot(id,generation,asDom,observed);
+                if(latest!=null&&latest.active)return false;throw changed;
+            }
+        }
+        String hash=capability==null?null:capabilityHash(capability);
+        boolean cancelled=store.pairingOperation(()->{
+            String expected=secrets.pendingLink(generation);
+            boolean changed=store.cancelPairingOperation(id,generation,pairingDirection(asDom),hash,observed,pairingClock);
+            if(changed)secrets.removePendingIfMatches(generation,expected);return changed;
+        });
+        if(cancelled){PairingOperationLease lease=pairingLeases.get(pairingKey(id,generation,asDom));if(lease!=null)lease.close();changed();}
+        return cancelled;
+    });}
+    public void reportPairingServiceState(PairingOperation operation,PairingServiceState state){
+        Objects.requireNonNull(operation);Objects.requireNonNull(state);String key=pairingKey(operation);
+        if(pairingPresentation.size()<128||pairingPresentation.containsKey(key))pairingPresentation.put(key,state);
+    }
+    public PairingServiceState pairingServiceState(String id,String generation,boolean asDom){return pairingPresentation.getOrDefault(pairingKey(id,generation,asDom),PairingServiceState.STOPPED);}
+    private static ScheduledExecutorService newPairingDeadlineTimer(){
+        return Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"subhub-pairing-deadline"));
+    }
+    private static void startPairingDeadlineChecks(ScheduledExecutorService deadlineOnly,Collection<PairingOperationLease> leases){
+        deadlineOnly.scheduleWithFixedDelay(()->{for(PairingOperationLease lease:leases)lease.checkDeadline();},0,2,TimeUnit.SECONDS);
+    }
+    private synchronized void installPairingTimer(){
+        if(pairingTimerInstalled)return;pairingTimerInstalled=true;
+        startPairingDeadlineChecks(pairingDeadlineTimer,pairingLeases.values());
+        timer.scheduleWithFixedDelay(this::requestPairingPoll,0,2,TimeUnit.SECONDS);
+    }
+    private void requestPairingPoll(){
+        if(pairingLeases.isEmpty()||!pairingPoll.compareAndSet(false,true))return;
+        submit(()->{pollPairingLeases();return null;}).whenComplete((ignored,failure)->{
+            pairingPoll.set(false);
+            if(failure!=null)for(PairingOperationLease lease:pairingLeases.values())lease.close();
+        });
+    }
+    private void pollPairingLeases()throws Exception {
+        FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        for(Map.Entry<String,PairingOperationLease> entry:pairingLeases.entrySet()){
+            PairingOperationLease lease=entry.getValue();if(lease.isClosed())continue;
+            PairingOperation previous=lease.operation(),operation=pairingSnapshot(previous.id,previous.generation,previous.asDom,observed);
+            if(operation==null){lease.close();continue;}lease.update(operation);
+            if(!operation.live){
+                if(!operation.active&&operation.clockCertain)store.expirePairingOperation(operation.id,operation.generation,pairingDirection(operation.asDom),observed,pairingClock);
+                lease.close();continue;
+            }
+            if(operation.active)continue; // Existing committed ready/proof drains keep only their original 55-second deadline.
+            PairingLifecycleLedger.Operation bounds=store.pairingOperation(operation.id,operation.generation,pairingDirection(operation.asDom));
+            if(bounds==null){lease.close();continue;}lease.observeApproval(bounds,observed);
+            transport();
+            if(!operation.asDom){
+                PairingLifecycleLedger.Operation ledger=store.pairingOperation(operation.id,operation.generation,PairingLifecycleClock.Direction.ACCEPT);
+                RemoteStore.Peer peer=ledger==null?null:store.peer(ledger.peer,ledger.generation);
+                long now=SystemClock.elapsedRealtime();
+                if(peer!=null&&peer.state==RemoteStore.State.PENDING&&now>=nextAttempt.getOrDefault(key(peer),0L)&&busy.add(key(peer)))
+                    schedulePeer(peer,System.nanoTime()+TimeUnit.SECONDS.toNanos(55),entry.getKey());
+            }
+        }
+    }
+    private boolean hasPairingLease(){for(PairingOperationLease lease:pairingLeases.values())if(!lease.isClosed())return true;return false;}
+    private void releasePairingLease(String key,PairingOperationLease closed){
+        pairingLeases.remove(key,closed);
+        try{operations.execute(()->{
+            if(pairingLeases.containsKey(key))return; // A new incarnation already owns this operation.
+            // Serialize against activation: stopping an old pending owner cannot interrupt an ACTIVE ready drain.
+            try{store.pairingOperation(()->{
+                PairingOperationLease successor=pairingLeases.get(key);if(successor!=null&&!successor.isClosed())return null;
+                String[] parts=key.split(":",3);PairingLifecycleLedger.Operation operation=store.pairingOperation(parts[1],parts[2],PairingLifecycleClock.Direction.valueOf(parts[0]));
+                RemoteStore.Peer peer=operation==null||operation.peer==null?null:store.peer(operation.peer,operation.generation);
+                if(peer==null||peer.state!=RemoteStore.State.ACTIVE){
+                    for(Map.Entry<Future<?>,String> entry:pairingTasks.entrySet())if(key.equals(entry.getValue()))entry.getKey().cancel(true);
+                    for(Map.Entry<PeerTransport.Connection,String> entry:pairingConnections.entrySet())if(key.equals(entry.getValue()))close(entry.getKey());
+                }return null;
+            });}catch(RuntimeException unavailable){/* Original connection deadlines remain the conservative bound. */}
+            suspendIfIdle();
+        });}catch(RejectedExecutionException stopped){/* Shutdown owns the endpoint and connections. */}
+    }
+
+    PairingInvite restoreInvitation(String id)throws Exception {
+        requireDomWorkspace();FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        PairingLifecycleLedger.Operation operation=store.currentPairingOperation(PairingLifecycleClock.Direction.CREATE);
+        if(operation==null||!operation.id.equals(id)||operation.stage!=PairingLifecycleLedger.Stage.PENDING
+                ||operation.verdict(pairingClock.transition(observed))!=PairingLifecycleClock.Verdict.LIVE)return null;
+        String saved=secrets.pendingLink(id);if(saved==null)return null;PairingInvite invite=PairingInvite.restore(saved);
+        operation.requireToken(invite.tokenHash());
+        if(!invite.id.equals(operation.id)||invite.expiresAt!=operation.bounds.publicWall)throw new SecurityException("Original invitation differs");return invite;
     }
     public CompletableFuture<PairingInvite> createInvite() {return submit(()->{if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");requireDomWorkspace();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
     public CompletableFuture<String> localIdentity(){return submit(()->{if(ControllerPinManager.isLocalDomWorkspaceUnlocked())requireDomWorkspace();else requireKeyholder();return transport().localIdentity();});}
@@ -155,7 +372,10 @@ public final class RemoteFeature {
     public void cancelEnrollment(RemoteStore.Peer peer){
         requireEnrollmentAccess();RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
         if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state!=RemoteStore.State.PENDING)throw new SecurityException("Enrollment is not pending");
-        if(!store.cancelPendingPeer(current.identity,current.generation))throw new SecurityException("Enrollment is no longer pending");
+        String expected=store.authorityAccess(()->secrets.pendingLink(current.generation));
+        FormalRelationshipClock.Sample observed=pairingClock.observe();
+        if(!store.cancelPairingOperation(current.generation,current.generation,PairingLifecycleClock.Direction.ACCEPT,null,observed,pairingClock))throw new SecurityException("Enrollment is no longer pending");
+        store.authorityAccess(()->{secrets.removePendingIfMatches(current.generation,expected);return null;});
         changed();
     }
     public CompletableFuture<Void> acceptInvite(String link,String name) {return submit(()->{
@@ -216,12 +436,24 @@ public final class RemoteFeature {
         });
     }
     public void cancel(String invitation) {
-        requireDomWorkspace();store.authorityAccess(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});changed();
+        requireDomWorkspace();pairingServiceCancel(invitation);changed();
+    }
+    private void pairingServiceCancel(String invitation){
+        FormalRelationshipClock.Sample observed=pairingClock.observe();
+        store.pairingOperation(()->{String expected=secrets.pendingLink(invitation);
+            if(store.cancelPairingOperation(invitation,invitation,PairingLifecycleClock.Direction.CREATE,null,observed,pairingClock))
+                secrets.removePendingIfMatches(invitation,expected);return null;});
+        PairingOperationLease lease=pairingLeases.get(pairingKey(invitation,invitation,true));if(lease!=null)lease.close();
     }
     public void revoke(RemoteStore.Peer peer) {
         RemoteStore.Peer selected=store.authorityObservation(()->store.peer(peer.identity,peer.generation));
         if(selected==null||selected.localRole!=peer.localRole)throw new SecurityException("Relationship changed");
         if(selected.localRole==RemoteProtocol.Role.DOM)requireDomWorkspace();else requireKeyholder();
+        if(selected.state==RemoteStore.State.PENDING){
+            FormalRelationshipClock.Sample observed=pairingClock.observe();
+            store.cancelPairingOperation(selected.generation,selected.generation,pairingDirection(selected.localRole==RemoteProtocol.Role.DOM),null,observed,pairingClock);
+            PairingOperationLease lease=pairingLeases.get(pairingKey(selected.generation,selected.generation,selected.localRole==RemoteProtocol.Role.DOM));if(lease!=null)lease.close();changed();return;
+        }
         long revision=ControllerPinManager.domWorkspaceRevision();
         store.authorityAccess(()->{
             RemoteStore.Peer current=store.peer(selected.identity,selected.generation);
@@ -257,7 +489,7 @@ public final class RemoteFeature {
     }
     private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,
             ()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),
-            ()->{requireDomWorkspace();return true;},android.os.Build.MODEL);}
+            ()->{requireDomWorkspace();return true;},android.os.Build.MODEL,pairingClock);}
 
     private PeerTransport transport() throws Exception {
         if(!recoveryReady())throw new IOException("Configuration recovery is pending");
@@ -278,11 +510,16 @@ public final class RemoteFeature {
     private boolean needsBackground() {
         if(!recoveryReady())return false;
         for(RemoteStore.Peer peer:store.peers(true))if(peer.state!=RemoteStore.State.REVOKED || !"true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))return true;
-        return false;
+        return liveInvitation();
+    }
+    private boolean liveInvitation(){
+        FormalRelationshipClock.Sample observed=pairingClock.observe();observed.requireValid();
+        PairingLifecycleLedger.Operation current=store.currentPairingOperation(PairingLifecycleClock.Direction.CREATE);
+        return current!=null&&current.verdict(pairingClock.transition(observed))==PairingLifecycleClock.Verdict.LIVE;
     }
     private void tick() {
         long now=SystemClock.elapsedRealtime();
-        if(endpoint==null && (needsBackground() || !store.invitations(System.currentTimeMillis()).isEmpty()) && warming.compareAndSet(false,true)) {
+        if(endpoint==null && needsBackground() && warming.compareAndSet(false,true)) {
             submit(()->{transport();return null;}).whenComplete((value,error)->warming.set(false));
         }
         for(RemoteStore.Peer peer:outgoingPeers()) {
@@ -299,12 +536,15 @@ public final class RemoteFeature {
                 .thenComparingLong(peer->nextAttempt.getOrDefault(key(peer),0L)));
         return peers;
     }
-    private Future<Boolean> schedulePeer(RemoteStore.Peer peer,long deadline) {
+    private Future<Boolean> schedulePeer(RemoteStore.Peer peer,long deadline){return schedulePeer(peer,deadline,null);}
+    private Future<Boolean> schedulePeer(RemoteStore.Peer peer,long deadline,String pairingOwner) {
         String key=key(peer);boolean revoked=peer.state==RemoteStore.State.REVOKED;
         if(revoked&&!revocations.tryAcquire()){busy.remove(key);return null;}
-        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline),()->{
-            if(revoked)revocations.release();busy.remove(key);suspendIfIdle();
+        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner),()->{
+            if(revoked)revocations.release();busy.remove(key);
+            for(Future<?> finished:pairingTasks.keySet())if(finished.isDone()){pairingTasks.remove(finished);pairingTaskDeadlines.remove(finished);}suspendIfIdle();
         });
+        if(pairingOwner!=null){pairingTasks.put(task,pairingOwner);pairingTaskDeadlines.put(task,deadline);}
         try{sessions.execute(task);return task;}catch(RejectedExecutionException full){task.cancel(false);return null;}
     }
     /** Exception messages and causes may contain private wire data; record only bounded code locations. */
@@ -345,8 +585,8 @@ public final class RemoteFeature {
         try{timer.schedule(()->{if(connectionDeadlines.remove(connection,deadline))close(connection);},Math.max(0,deadline-System.nanoTime()),TimeUnit.NANOSECONDS);}
         catch(RejectedExecutionException stopped){close(connection);}
     }
-    private void untrack(PeerTransport.Connection connection){connections.remove(connection);connectionDeadlines.remove(connection);}
-    private boolean runPeer(RemoteStore.Peer peer,long deadline) {
+    private void untrack(PeerTransport.Connection connection){connections.remove(connection);connectionDeadlines.remove(connection);pairingConnections.remove(connection);}
+    private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner) {
         String key=key(peer);boolean success=false;
         try {
             RemoteStore.Peer requested=peer;
@@ -355,6 +595,7 @@ public final class RemoteFeature {
             try{connection=active.connect(peer.identity,peer.route,Math.min(8_000,remaining(deadline)));}
             catch(IOException oldRoute){if(peer.route.isEmpty())throw oldRoute;connection=active.connect(peer.identity,"",Math.min(8_000,remaining(deadline)));}
             track(connection,key,deadline);
+            if(peer.state==RemoteStore.State.PENDING&&pairingOwner!=null)pairingConnections.put(connection,pairingOwner);
             try(PeerTransport.Connection selected=connection) {
                 if(peer.state==RemoteStore.State.PENDING)success=pairing(active).resume(selected,peer);
                 else if(peer.state==RemoteStore.State.REVOKED){session(active).sendRevocation(selected,peer,deadline);success=true;}
@@ -387,7 +628,15 @@ public final class RemoteFeature {
             selected.setReadTimeoutMillis(8000);JSONObject first=RemoteProtocol.read(selected.input());
             store.authorityAccess(()->null);
             String type=first.optString("type");
-            if("pair_request".equals(type)){if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;}
+            if("pair_request".equals(type)||"pair_recover".equals(type)){
+                if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
+                String generation=RemoteProtocol.identifier(first.getString("pair_request".equals(type)?"invite":"generation"));
+                String identity=RemoteProtocol.peerId(selected.authenticatedPeerIdentity());
+                String owner=pairingKey(generation,generation,true);PairingOperationLease lease=pairingLeases.get(owner);
+                if(!foreground&&backgroundWindows.get()==0&&lease!=null&&!lease.isClosed())pairingConnections.put(selected,owner);
+                connections.put(selected,identity+":"+generation);
+                pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;
+            }
             String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.authorityAccess(()->store.peer(selected.authenticatedPeerIdentity(),generation));
             if(peer==null)throw new SecurityException("Unknown peer");
             reservation=key(peer);if(!busy.add(reservation)){reservation=null;return;}
@@ -505,7 +754,7 @@ public final class RemoteFeature {
     }
     public boolean backgroundWindow() throws Exception {return backgroundWindow(55_000);}
     boolean backgroundWindow(long durationMillis) throws Exception {
-        if(!needsBackground())return true;leases.incrementAndGet();long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(durationMillis);boolean success=true;
+        if(!needsBackground())return true;leases.incrementAndGet();backgroundWindows.incrementAndGet();long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(durationMillis);boolean success=true;
         Map<Future<Boolean>,String> attempts=new LinkedHashMap<>();
         try {
             transport();
@@ -516,8 +765,8 @@ public final class RemoteFeature {
                 Future<Boolean> attempt=schedulePeer(peer,deadline);if(attempt==null)success=false;else attempts.put(attempt,key);
             }
             if(attempts.isEmpty()) {
-                while(System.nanoTime()<deadline && (!busy.isEmpty() || store.peers(false).stream().anyMatch(peer->peer.state==RemoteStore.State.PENDING)))Thread.sleep(Math.min(50,Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
-                success=busy.isEmpty() && store.peers(false).stream().noneMatch(peer->peer.state==RemoteStore.State.PENDING);
+                while(System.nanoTime()<deadline && (!busy.isEmpty() || liveInvitation() || store.peers(false).stream().anyMatch(peer->peer.state==RemoteStore.State.PENDING)))Thread.sleep(Math.min(50,Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
+                success=busy.isEmpty() && !liveInvitation() && store.peers(false).stream().noneMatch(peer->peer.state==RemoteStore.State.PENDING);
             }
             for(Future<Boolean> attempt:attempts.keySet()) {
                 try{success=attempt.get(remaining(deadline),TimeUnit.MILLISECONDS)&&success;}
@@ -529,21 +778,23 @@ public final class RemoteFeature {
                 if(!attempt.getKey().isDone())attempt.getKey().cancel(true);
 
             }
-            if(!foreground && leases.get()==1)for(PeerTransport.Connection connection:connections.keySet())close(connection);
-            leases.decrementAndGet();suspendIfIdle();
+            if(!foreground && leases.get()==1 && !hasPairingLease())for(PeerTransport.Connection connection:connections.keySet())if(!pairingConnections.containsKey(connection))close(connection);
+            backgroundWindows.decrementAndGet();leases.decrementAndGet();suspendIfIdle();
         }
     }
     private void deferSuspendIfIdle() {
-        if(foreground||leases.get()>0||!busy.isEmpty()||!idleCheckPending.compareAndSet(false,true))return;
+        if(foreground||hasPairingLease()||leases.get()>0||!busy.isEmpty()||!idleCheckPending.compareAndSet(false,true))return;
         try{timer.execute(()->{idleCheckPending.set(false);suspendIfIdle();});}
         catch(RejectedExecutionException stopped){idleCheckPending.set(false);}
     }
     private void suspendIfIdle() {
-        if(foreground || leases.get()>0 || !busy.isEmpty())return;
-        synchronized(endpointLock){if(foreground || leases.get()>0 || !busy.isEmpty())return;PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
+        if(foreground || hasPairingLease() || leases.get()>0 || !busy.isEmpty())return;
+        synchronized(endpointLock){if(foreground || hasPairingLease() || leases.get()>0 || !busy.isEmpty())return;PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
     }
     void shutdownForTest() throws Exception {
+        pairingDeadlineTimer.shutdownNow();
         appIcons.close();
+        for(PairingOperationLease lease:pairingLeases.values())lease.close();
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
         acceptor.shutdownNow();
         for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions}) {
@@ -551,7 +802,9 @@ public final class RemoteFeature {
         }
         for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions})
             if(!pool.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Peer work did not stop");
-        acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();
+        acceptor.awaitTermination(10,TimeUnit.SECONDS);
+        if(!pairingDeadlineTimer.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Pairing deadlines did not stop");
+        activity.close();
         com.subhub.app.security.SubFeaturePolicy.unregisterHardcoreAuthority(context, store);store.close();
     }
     private static long remaining(long deadline) throws SocketTimeoutException {long millis=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());if(millis<=0)throw new SocketTimeoutException("Sync window expired");return millis;}

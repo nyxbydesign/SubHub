@@ -49,9 +49,15 @@ public class StorageCompressionAndroidTest {
         return RemoteProtocol.canonical(RemoteActivityWire.encode(new ActivityEvent(id,ActivityEvent.Kind.APP_OPENED,1767225600000L+index*1000L,"com.example.selected",0,"","",0),"Europe/Berlin",""));
     }
     static void legacy(Context context,String name,boolean sub,int records)throws Exception {
+        // The caller owns this named fixture; refuse to reshape an existing database.
+        assertFalse(context.getDatabasePath(name).exists());
         RemoteStore schema=new RemoteStore(context,name);SQLiteDatabase db=SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name),null);
         try {
-            schema.onCreate(db);db.execSQL("DROP TABLE payload_maintenance");db.execSQL("DROP TABLE session_controls");db.execSQL("DROP TABLE session_control_journal");
+            schema.onCreate(db);
+            // Exact post-v3 inventory, with foreign-key children removed before their parents.
+            for(String table:new String[]{"pairing_lifecycle","linking_unlinks","linking_state","formal_governing_slots",
+                    "formal_operations","formal_relationships","formal_participants","formal_authority",
+                    "session_control_journal","session_controls","payload_maintenance"})db.execSQL("DROP TABLE "+table);
             db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,?,?)",new Object[]{sub?DOM:SUB,GENERATION,"Synthetic",sub?"SUB":"DOM","ACTIVE"});
             for(int i=1;i<=records;i++){
                 String body=fact(i),id=new JSONObject(body).getString("id");
@@ -87,8 +93,13 @@ public class StorageCompressionAndroidTest {
             source.acknowledge(DOM,ack);assertTrue(source.nextBatch(DOM,GENERATION,RemoteProtocol.Stream.EVENTS).changes.isEmpty());
             assertEquals(2,target.mirror(SUB,GENERATION,RemoteProtocol.Stream.EVENTS).size());
         }
-        try(RemoteStore source=new RemoteStore(context,sourceName);RemoteActivityRepository local=new RemoteActivityRepository(context,source,()->{});
+        try(com.subhub.app.relationships.DomScopeObserverFixture scope=new com.subhub.app.relationships.DomScopeObserverFixture(context);
+                RemoteStore source=new RemoteStore(context,sourceName);RemoteActivityRepository local=new RemoteActivityRepository(context,source,()->{});
                 RemoteStore target=new RemoteStore(context,targetName);RemoteActivityRepository received=new RemoteActivityRepository(context,target,()->{})) {
+            assertTrue(ControllerPinManager.isDomWorkspaceUnlocked());
+            // This named target already has its legacy formal mapping; project that exact outbound peer.
+            scope.outgoing(com.subhub.app.relationships.DomScopeObserverFixture.peer(
+                    target.peer(SUB,GENERATION),target.additionOrder(SUB,GENERATION)));
             assertEquals(1,local.recent(PersonId.LOCAL,10).size());assertEquals(2,received.recent(RemotePersonRepository.id(target.peer(SUB,GENERATION)),10).size());
             assertEquals(fact(2),target.mirror(SUB,GENERATION,RemoteProtocol.Stream.EVENTS).get(1).body);
         }

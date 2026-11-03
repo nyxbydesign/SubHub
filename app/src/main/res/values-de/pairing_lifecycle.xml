@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pairing_channel">Kopplung</string>
+    <string name="pairing_background">Kopplung im Hintergrund</string>
+    <string name="pairing_resume">Kopplung fortsetzen</string>
+    <string name="pairing_starting">Kopplung wird gestartet…</string>
+    <string name="pairing_running">Die Kopplung läuft. Die Verbindung erfordert weiterhin die Zustimmung auf beiden Geräten.</string>
+    <string name="pairing_notification_running">Kopplung läuft</string>
+    <string name="pairing_stopped">Die Kopplung im Hintergrund ist gestoppt. Setze sie auf dieser geöffneten Seite fort.</string>
+    <string name="pairing_unavailable">Die Kopplung im Hintergrund ist nicht verfügbar. Öffne die Kopplungsseite, um es erneut zu versuchen.</string>
+    <string name="pairing_recovery">Diese Anfrage kann nicht sicher fortgesetzt werden. Brich sie ab, bevor du eine neue Einladung erstellst.</string>
+    <string name="pairing_remaining">Verbleibende Zeit: %1$s</string>
+    <string name="pairing_preserved">Das Verlassen dieser Seite bricht die Anfrage nicht ab und verlängert ihre Frist nicht.</string>
+    <string name="pairing_notifications_blocked">Kopplungsmitteilungen sind blockiert. Auf dieser Seite kannst du weiterhin abbrechen. Android zeigt die Hintergrundarbeit möglicherweise unter den aktiven Apps; Steuerelemente in der Benachrichtigungsleiste sind nicht verfügbar.</string>
+    <string name="pairing_notification_settings">Kopplungsmitteilungen verwalten</string>
+    <string name="pairing_no_operation">Keine ausstehende Kopplungsanfrage.</string>
+    <string name="pairing_status_unavailable">Der Kopplungsstatus ist nicht verfügbar. Versuche es auf dieser geöffneten Seite erneut.</string>
+</resources>

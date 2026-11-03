@@ -18,6 +18,7 @@ import javax.security.auth.x500.X500Principal;
 final class LinkingReceiptStore {
     static final String INIT="init", EVER="ever", CURRENT="current";
     private final String prefix;
+    private final String database;
     static final class Receipt {
         final String epoch, digest; final long revision;
         Receipt(String epoch,long revision,String digest) {
@@ -28,7 +29,8 @@ final class LinkingReceiptStore {
         boolean same(Receipt other){return other!=null&&revision==other.revision&&epoch.equals(other.epoch)&&digest.equals(other.digest);}
     }
     LinkingReceiptStore(String databaseIdentity) {
-        prefix="subhub.linking.v1."+LocalRelationshipAuthority.digest(databaseIdentity)+".";
+        database=LocalRelationshipAuthority.digest(databaseIdentity);
+        prefix="subhub.linking.v1."+database+".";
     }
     private static KeyStore keys()throws GeneralSecurityException {
         try{KeyStore keys=KeyStore.getInstance("AndroidKeyStore");keys.load(null);return keys;}
@@ -79,6 +81,35 @@ final class LinkingReceiptStore {
         generator.generateKeyPair();
         Receipt actual=read(kind);if(!requested.same(actual))throw new GeneralSecurityException("Receipt creation was not acknowledged");
         return actual;
+    }
+    /** Sign only the exact, typed 8/V1 -> 9/V2 reservation with the still-current existing key. */
+    byte[] signStructural(LinkingStructuralReservation reservation)throws GeneralSecurityException {
+        KeyStore current=structuralKey(reservation);
+        java.security.Key key=current.getKey(alias(CURRENT),null);
+        if(!(key instanceof PrivateKey))throw new GeneralSecurityException("Current persistence key unavailable");
+        Signature signer=Signature.getInstance("SHA256withECDSA");signer.initSign((PrivateKey)key);
+        signer.update(reservation.signingBytes());byte[] signature=signer.sign();
+        verifyStructural(reservation,signature);
+        return signature;
+    }
+    /** Marker certificates are never accepted: trust is the actual database-bound CURRENT alias. */
+    void verifyStructural(LinkingStructuralReservation reservation,byte[] signature)throws GeneralSecurityException {
+        if(signature==null||signature.length==0||signature.length>128)
+            throw new GeneralSecurityException("Invalid structural signature size");
+        KeyStore current=structuralKey(reservation);
+        java.security.cert.Certificate certificate=current.getCertificate(alias(CURRENT));
+        if(!(certificate instanceof X509Certificate))throw new GeneralSecurityException("Current persistence certificate unavailable");
+        Signature verifier=Signature.getInstance("SHA256withECDSA");verifier.initVerify(certificate.getPublicKey());
+        verifier.update(reservation.signingBytes());
+        if(!verifier.verify(signature))throw new GeneralSecurityException("Structural reservation signature differs");
+        structuralKey(reservation); // A different revision cannot publish or authenticate this reservation.
+    }
+    private KeyStore structuralKey(LinkingStructuralReservation reservation)throws GeneralSecurityException {
+        if(reservation==null||!reservation.forDatabase(database))
+            throw new GeneralSecurityException("Structural database identity differs");
+        Receipt actual=read(CURRENT),expected=new Receipt(reservation.epoch,reservation.oldRevision,reservation.oldCommand);
+        if(!expected.same(actual))throw new GeneralSecurityException("Structural current receipt differs");
+        return keys();
     }
     void deleteOwnedFixtureReceipts()throws GeneralSecurityException {
         KeyStore keys=keys();for(String kind:new String[]{INIT,EVER,CURRENT}){

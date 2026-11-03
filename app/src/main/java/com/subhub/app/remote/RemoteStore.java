@@ -17,7 +17,7 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
-    static final int DATABASE_VERSION = 8;
+    static final int DATABASE_VERSION = 9;
     static final int MAX_SESSION_PENDING = 16, MAX_SESSION_RECORDS = 128, MAX_SESSION_GLOBAL = 4096;
     private static final String SESSION_NATIVE_PREFIX = "session_native_prepared:";
     private final Context context;
@@ -44,6 +44,13 @@ public final class RemoteStore extends SQLiteOpenHelper {
     private java.util.function.BiConsumer<String,String> revoked=(identity,generation)->{};
     private java.util.function.Consumer<Peer> activated=peer->{};
     private java.util.function.Consumer<Peer> activityReceived=peer->{};
+    interface PairingApprovalListener {
+        /** Only a memory handoff is permitted under SQL/authority locks; the returned action attenuates on failure. */
+        Runnable stage(PairingLifecycleLedger.Operation approved,FormalRelationshipClock.Sample sampled);
+    }
+    private volatile PairingApprovalListener pairingApproval=(approved,sampled)->()->{};
+    void onPairingApproval(PairingApprovalListener listener){pairingApproval=java.util.Objects.requireNonNull(listener);}
+
     synchronized void onActivityReceived(java.util.function.Consumer<Peer> action){activityReceived=java.util.Objects.requireNonNull(action);}
     synchronized void onActivated(java.util.function.Consumer<Peer> action){activated=java.util.Objects.requireNonNull(action);}
     synchronized void onRevoked(java.util.function.BiConsumer<String,String> action){revoked=java.util.Objects.requireNonNull(action);}
@@ -125,6 +132,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
         createSessionClockJournal(db);
         FormalRelationshipStore.create(db);
         LinkingWitness.create(db);
+        PairingLifecycleLedger.addCoverage(db);
+        // A new database has no retained V1 authority. All covered tables now exist.
+        db.execSQL("UPDATE linking_state SET digest_version=2 WHERE id=1");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 1 || oldVersion >= newVersion || newVersion > DATABASE_VERSION)
@@ -140,6 +150,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (oldVersion < 6 && newVersion >= 6) createSessionClockJournal(db);
         if (oldVersion < 7 && newVersion >= 7) FormalRelationshipStore.create(db);
         if (oldVersion < 8 && newVersion >= 8) LinkingWitness.create(db);
+        if (oldVersion < 9 && newVersion >= 9) {
+            // DDL only: old receipts and V1 digest bytes remain authoritative until verified adoption.
+            PairingLifecycleLedger.addCoverage(db);
+        }
     }
 
     <T>T authorityTransition(String kind,String original,LinkingWitness.SqlWork<T> work) {
@@ -745,6 +759,276 @@ public final class RemoteStore extends SQLiteOpenHelper {
         try(Cursor row=getReadableDatabase().rawQuery("SELECT 1 FROM invites WHERE id=?",new String[]{id})){return row.moveToFirst();}
     }
 
+    PairingLifecycleLedger.Operation pairingOperation(String id,String generation,PairingLifecycleClock.Direction direction){
+        return authorityObservation(()->{synchronized(this){return PairingLifecycleLedger.find(getReadableDatabase(),id,generation,direction);}});
+    }
+    PairingLifecycleLedger.Operation currentPairingOperation(PairingLifecycleClock.Direction direction){
+        return authorityObservation(()->{synchronized(this){return PairingLifecycleLedger.current(getReadableDatabase(),direction);}});
+    }
+    void saveTimedInvite(PairingInvite invite,FormalRelationshipClock.Sample original,PairingLifecycleClock.Source clock){
+        requirePairingCapability(RemoteProtocol.Role.DOM);
+        newCommandTransition("pairing-create",invite.id+":"+invite.tokenHash(),RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
+            PairingLifecycleClock.Bounds bounds=PairingLifecycleClock.begin(original,invite.expiresAt);
+            if(PairingLifecycleClock.publicVerdict(bounds,clock.transition(original))!=PairingLifecycleClock.Verdict.LIVE)
+                throw new SecurityException("Original invitation clock unavailable");
+            PairingLifecycleLedger.insert(db,invite,PairingLifecycleClock.Direction.CREATE,original);
+            ContentValues values=new ContentValues();values.put("id",invite.id);values.put("token_hash",invite.tokenHash());values.put("expires",invite.expiresAt);
+            db.insertOrThrow("invites",null,values);return null;
+        });
+    }
+    void acceptTimedInvite(PairingInvite invite,String name,FormalRelationshipClock.Sample original,PairingLifecycleClock.Source clock){
+        requirePairingCapability(RemoteProtocol.Role.SUB);
+        newCommandTransition("pairing-accept",invite.id+":"+invite.domIdentity+":"+invite.tokenHash(),RemoteProtocol.Role.SUB,LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
+            PairingLifecycleClock.Bounds bounds=PairingLifecycleClock.begin(original,invite.expiresAt);
+            if(PairingLifecycleClock.publicVerdict(bounds,clock.transition(original))!=PairingLifecycleClock.Verdict.LIVE)
+                throw new SecurityException("Original invitation clock unavailable");
+            if(peer(db,invite.domIdentity,invite.id)!=null)throw new SecurityException("Invitation already used");
+            PairingLifecycleLedger.insert(db,invite,PairingLifecycleClock.Direction.ACCEPT,original);
+            putPending(db,invite.domIdentity,invite.id,name,RemoteProtocol.Role.SUB);
+            db.execSQL("UPDATE peers SET route=? WHERE peer=? AND generation=?",new Object[]{invite.route,invite.domIdentity,invite.id});return null;
+        });
+    }
+    void bindTimedInvite(String id,String candidate,String tokenHash,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        RemoteProtocol.identifier(id);RemoteProtocol.peerId(candidate);requirePairingCapability(RemoteProtocol.Role.DOM);
+        authorityTransition("pairing-claim",id+":"+candidate+":"+tokenHash,db->{
+            PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,id,id,PairingLifecycleClock.Direction.CREATE);
+            operation.requireToken(tokenHash);FormalRelationshipClock.Sample now=clock.transition(observed);
+            try(Cursor row=db.rawQuery("SELECT token_hash,expires,candidate,approved,consumed FROM invites WHERE id=?",new String[]{id})){
+                if(!row.moveToFirst()||!operation.tokenHash.equals(row.getString(0))||operation.bounds.publicWall!=row.getLong(1)
+                        ||!row.isNull(2)&&!candidate.equals(row.getString(2))||row.getInt(3)!=0||row.getInt(4)!=0)
+                    throw new SecurityException("Invitation unavailable");
+            }
+            PairingLifecycleLedger.bind(db,operation,candidate,now);
+            db.execSQL("UPDATE invites SET candidate=? WHERE id=?",new Object[]{candidate,id});return null;
+        });
+    }
+    void approveTimedInvite(String id,String candidate,String localIdentity,String fingerprint,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        requirePairingCapability(RemoteProtocol.Role.DOM);RemoteProtocol.identifier(id);RemoteProtocol.peerId(candidate);RemoteProtocol.peerId(localIdentity);
+        if(!PairingInvite.fingerprint(localIdentity,candidate,id).equals(fingerprint))throw new SecurityException("Pairing identity changed");
+        Runnable[] abort={()->{}};
+        try{newCommandTransition("pairing-approve",id+":"+candidate+":"+fingerprint,RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
+            PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,id,id,PairingLifecycleClock.Direction.CREATE);
+            operation.requirePeer(candidate);String name;
+            try(Cursor row=db.rawQuery("SELECT token_hash,expires,candidate,candidate_name,approved,consumed FROM invites WHERE id=?",new String[]{id})){
+                if(!row.moveToFirst()||!operation.tokenHash.equals(row.getString(0))||operation.bounds.publicWall!=row.getLong(1)||!candidate.equals(row.getString(2)))
+                    throw new SecurityException("Original invitation differs");
+                name=RemoteProtocol.deviceName(row.getString(3));
+                boolean approved=operation.stage==PairingLifecycleLedger.Stage.APPROVED;
+                if(approved?(row.getInt(4)!=1||row.getInt(5)!=1):(row.getInt(4)!=0||row.getInt(5)!=0))throw new SecurityException("Pairing approval changed");
+            }
+            String digest=LocalRelationshipAuthority.digest("pairing-approval:"+localIdentity+":"+candidate+":"+id+":"+operation.tokenHash+":"+fingerprint);
+            FormalRelationshipClock.Sample first=clock.transition(observed);
+            PairingLifecycleLedger.Operation approved=PairingLifecycleLedger.approve(db,operation,digest,first);
+            abort[0]=pairingApproval.stage(approved,first);
+            if(operation.stage!=PairingLifecycleLedger.Stage.APPROVED)putPending(db,candidate,id,name,RemoteProtocol.Role.DOM);
+            else pendingPairingPeer(db,candidate,id,RemoteProtocol.Role.DOM);
+            db.execSQL("UPDATE invites SET approved=1,consumed=1 WHERE id=?",new Object[]{id});return null;
+        });}catch(RuntimeException failure){abortPairingApproval(abort[0],failure);throw failure;}
+    }
+    void observeTimedApproval(Peer peer,String tokenHash,String localIdentity,String fingerprint,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        RemoteProtocol.peerId(localIdentity);requirePairingCapability(RemoteProtocol.Role.SUB);
+        if(peer.localRole!=RemoteProtocol.Role.SUB||!PairingInvite.fingerprint(peer.identity,localIdentity,peer.generation).equals(fingerprint))
+            throw new SecurityException("Pairing identity changed");
+        Runnable[] abort={()->{}};
+        try{authorityTransition("pairing-approval-observed",peer.identity+":"+peer.generation+":"+fingerprint,db->{
+            pendingPairingPeer(db,peer.identity,peer.generation,RemoteProtocol.Role.SUB);
+            PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,peer.generation,peer.generation,PairingLifecycleClock.Direction.ACCEPT);
+            operation.requirePeer(peer.identity);operation.requireToken(tokenHash);
+            String digest=LocalRelationshipAuthority.digest("pairing-approval:"+peer.identity+":"+localIdentity+":"+peer.generation+":"+operation.tokenHash+":"+fingerprint);
+            FormalRelationshipClock.Sample first=clock.transition(observed);
+            PairingLifecycleLedger.Operation approved=PairingLifecycleLedger.approve(db,operation,digest,first);
+            abort[0]=pairingApproval.stage(approved,first);return null;
+        });}catch(RuntimeException failure){abortPairingApproval(abort[0],failure);throw failure;}
+    }
+    private static void abortPairingApproval(Runnable abort,RuntimeException original){
+        try{abort.run();}catch(RuntimeException cleanup){original.addSuppressed(cleanup);}
+    }
+    boolean timedApproval(String id,String candidate,String tokenHash,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        return authorityObservation(()->{synchronized(this){
+            SQLiteDatabase db=getReadableDatabase();PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.find(db,id,id,PairingLifecycleClock.Direction.CREATE);
+            if(operation==null||operation.stage!=PairingLifecycleLedger.Stage.APPROVED)return false;
+            operation.requirePeer(candidate);operation.requireToken(tokenHash);
+            requireCompletion(db,pendingPairingPeer(db,candidate,id,RemoteProtocol.Role.DOM),tokenHash,clock.transition(observed));return true;
+        }});
+    }
+    Peer requireTimedCompletion(Peer selected,String tokenHash,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        return authorityObservation(()->{synchronized(this){
+            Peer current=pendingPairingPeer(getReadableDatabase(),selected.identity,selected.generation,selected.localRole);
+            requirePairingCapability(current.localRole);requireCompletion(getReadableDatabase(),current,tokenHash,clock.transition(observed));return current;
+        }});
+    }
+
+    Peer activateTimedPeer(Peer selected,String tokenHash,FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        requireCallbackBoundary();Peer committed=authorityTransition("pairing-activate",selected.identity+":"+selected.generation,db->{
+            Peer current=pendingPairingPeer(db,selected.identity,selected.generation,selected.localRole);requirePairingCapability(current.localRole);
+            FormalRelationshipClock.Sample now=clock.transition(observed);PairingLifecycleLedger.Operation operation=requireCompletion(db,current,tokenHash,now);
+            PairingLifecycleLedger.complete(db,operation,now,false);return activatePairingRows(db,current);
+        });
+        java.util.function.Consumer<Peer> listener;synchronized(this){listener=activated;}listener.accept(committed);return committed;
+    }
+    Peer activateRecoveredPeer(String localIdentity,PairingCompletionProof.Verified proof,String credentialDigest,
+            FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        requireCallbackBoundary();RemoteProtocol.peerId(localIdentity);
+        Peer prior=authorityObservation(()->{synchronized(this){
+            Peer current=peer(getReadableDatabase(),proof.dom,proof.generation);
+            if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state==State.REVOKED
+                    ||!proof.validFor(localIdentity,current.identity,current.generation,credentialDigest,clock.transition(observed)))
+                throw new SecurityException("Committed pairing outcome unavailable");return current;
+        }});
+        if(prior.state==State.ACTIVE)return prior;
+        boolean[] changed={false};Peer committed=authorityTransition("pairing-outcome-catchup",proof.dom+":"+proof.generation+":"+proof.credentialDigest,db->{
+            Peer current=peer(db,proof.dom,proof.generation);requirePairingCapability(RemoteProtocol.Role.SUB);
+            FormalRelationshipClock.Sample now=clock.transition(observed);
+            if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state==State.REVOKED
+                    ||!proof.validFor(localIdentity,current.identity,current.generation,credentialDigest,now)
+                    ||!"1".equals(metadata(current.identity,current.generation,"controller_auth_v1_provisioned","0")))
+                throw new SecurityException("Committed pairing outcome changed");
+            if(current.state==State.ACTIVE)return current;
+            PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.find(db,current.generation,current.generation,PairingLifecycleClock.Direction.ACCEPT);
+            if(operation!=null){operation.requirePeer(current.identity);PairingLifecycleLedger.complete(db,operation,now,true);}
+            changed[0]=true;return activatePairingRows(db,current);
+        });
+        if(changed[0]){java.util.function.Consumer<Peer> listener;synchronized(this){listener=activated;}listener.accept(committed);}return committed;
+    }
+    private static PairingLifecycleLedger.Operation requireCompletion(SQLiteDatabase db,Peer peer,String tokenHash,FormalRelationshipClock.Sample now){
+        PairingLifecycleClock.Direction direction=peer.localRole==RemoteProtocol.Role.DOM?PairingLifecycleClock.Direction.CREATE:PairingLifecycleClock.Direction.ACCEPT;
+        PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,peer.generation,peer.generation,direction);
+        operation.requirePeer(peer.identity);operation.requireToken(tokenHash);
+        if(operation.stage!=PairingLifecycleLedger.Stage.APPROVED||operation.approval==null)throw new SecurityException("Original pairing approval unavailable");
+        operation.requireLive(now);
+        if(peer.localRole==RemoteProtocol.Role.DOM)try(Cursor row=db.rawQuery("SELECT token_hash,candidate,approved,consumed,expires FROM invites WHERE id=?",new String[]{peer.generation})){
+            if(!row.moveToFirst()||!operation.tokenHash.equals(row.getString(0))||!peer.identity.equals(row.getString(1))||row.getInt(2)!=1||row.getInt(3)!=1
+                    ||row.getLong(4)!=operation.bounds.publicWall)
+                throw new SecurityException("Original invitation approval differs");
+        }
+        return operation;
+    }
+    private static Peer pendingPairingPeer(SQLiteDatabase db,String identity,String generation,RemoteProtocol.Role role){
+        Peer current=peer(db,identity,generation);
+        if(current==null||current.localRole!=role||current.state!=State.PENDING)throw new SecurityException("Original pending pairing unavailable");return current;
+    }
+    private static Peer activatePairingRows(SQLiteDatabase db,Peer peer){
+        db.execSQL("UPDATE peers SET state='ACTIVE' WHERE peer=? AND generation=? AND state='PENDING'",new Object[]{peer.identity,peer.generation});
+        FormalRelationshipStore.mapPeer(db,peer.identity,peer.generation,false);return peer(db,peer.identity,peer.generation);
+    }
+    private void requirePairingCapability(RemoteProtocol.Role role){
+        if(role==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))
+            throw new SecurityException("Device pairing capability unavailable");
+    }
+
+    String legacyPendingGeneration(PairingLifecycleClock.Direction direction){
+        return authorityObservation(()->{synchronized(this){
+            SQLiteDatabase db=getReadableDatabase();String role=direction==PairingLifecycleClock.Direction.CREATE?"DOM":"SUB";
+            try(Cursor row=db.rawQuery("SELECT p.generation FROM peers p WHERE p.local_role=? AND p.state='PENDING'"
+                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=p.generation AND l.direction=?) ORDER BY p.generation LIMIT 1",
+                    new String[]{role,direction.name()})){if(row.moveToFirst())return row.getString(0);}
+            if(direction==PairingLifecycleClock.Direction.CREATE)try(Cursor row=db.rawQuery("SELECT i.id FROM invites i WHERE i.consumed=0"
+                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=i.id AND l.direction='CREATE') ORDER BY i.expires DESC,i.id LIMIT 1",null)){
+                if(row.moveToFirst())return row.getString(0);
+            }
+            return null;
+        }});
+    }
+    PairingLifecycleLedger.Operation authorizePairingStart(String id,String generation,PairingLifecycleClock.Direction direction,String cancelHash,
+            FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        RemoteProtocol.Role role=direction==PairingLifecycleClock.Direction.CREATE?RemoteProtocol.Role.DOM:RemoteProtocol.Role.SUB;
+        requirePairingCapability(role);
+        return newCommandTransition("pairing-listener",id+":"+generation+":"+direction+":"+cancelHash,role,
+                role==RemoteProtocol.Role.DOM?LocalRelationshipAuthority.NewCommand.KEYHOLDER:LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
+            PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,id,generation,direction);
+            PairingLifecycleLedger.Operation current=PairingLifecycleLedger.current(db,direction);
+            if(current==null||!current.id.equals(id)||!current.generation.equals(generation))throw new SecurityException("Current pairing operation changed");
+            if(operation.peer!=null){Peer peer=peer(db,operation.peer,generation);
+                if(peer!=null&&(peer.state!=State.PENDING||peer.localRole!=role)||peer==null&&(direction==PairingLifecycleClock.Direction.ACCEPT||operation.stage==PairingLifecycleLedger.Stage.APPROVED))
+                    throw new SecurityException("Pairing is no longer pending");}
+            if(direction==PairingLifecycleClock.Direction.CREATE)try(Cursor row=db.rawQuery("SELECT token_hash,expires,candidate,approved,consumed FROM invites WHERE id=?",new String[]{id})){
+                boolean approved=operation.stage==PairingLifecycleLedger.Stage.APPROVED;
+                if(!row.moveToFirst()||!operation.tokenHash.equals(row.getString(0))||operation.bounds.publicWall!=row.getLong(1)
+                        ||!java.util.Objects.equals(operation.peer,row.getString(2))
+                        ||(approved?(row.getInt(3)!=1||row.getInt(4)!=1):(row.getInt(3)!=0||row.getInt(4)!=0)))
+                    throw new SecurityException("Original pairing invitation differs");
+            }
+            PairingLifecycleLedger.setCancelCapability(db,operation,cancelHash,clock.transition(observed));
+            return PairingLifecycleLedger.require(db,id,generation,direction);
+        });
+    }
+    boolean expirePairingOperation(String id,String generation,PairingLifecycleClock.Direction direction,
+            FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        return pairingOperation(()->{
+            PairingLifecycleLedger.Operation before=pairingOperation(id,generation,direction);
+            if(before==null||before.verdict(clock.transition(observed))!=PairingLifecycleClock.Verdict.EXPIRED
+                    ||before.stage!=PairingLifecycleLedger.Stage.PENDING&&before.stage!=PairingLifecycleLedger.Stage.APPROVED)return false;
+            if(before.peer!=null){Peer peer=authorityObservation(()->peer(before.peer,generation));if(peer!=null&&peer.state==State.ACTIVE)return false;}
+            return authorityTransition("pairing-expire",id+":"+generation+":"+direction,db->{
+                PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.require(db,id,generation,direction);
+                if(operation.peer!=null){Peer peer=peer(db,operation.peer,generation);if(peer!=null&&peer.state==State.ACTIVE)return false;}
+                if(!PairingLifecycleLedger.expire(db,operation,clock.transition(observed)))return false;
+                if(direction==PairingLifecycleClock.Direction.CREATE)db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{generation});
+                return true;
+            });
+        });
+    }
+    private static final class PairingCancellation {
+        final boolean changed;final List<Peer> peers;
+        PairingCancellation(boolean changed,List<Peer> peers){this.changed=changed;this.peers=peers;}
+    }
+    boolean cancelPairingOperation(String id,String generation,PairingLifecycleClock.Direction direction,String retainedHash,
+            FormalRelationshipClock.Sample observed,PairingLifecycleClock.Source clock){
+        requireCallbackBoundary();RemoteProtocol.identifier(id);RemoteProtocol.identifier(generation);
+        return pairingOperation(()->{
+            PairingCancellation eligibility=authorityObservation(()->{synchronized(this){return pairingCancellation(getReadableDatabase(),id,generation,direction,retainedHash,false,null);}});
+            if(!eligibility.changed)return false;
+            LinkingWitness.SqlWork<PairingCancellation> work=db->pairingCancellation(db,id,generation,direction,retainedHash,true,clock.transition(observed));
+            PairingCancellation result;
+            if(retainedHash!=null)result=authorityTransition("pairing-cancel-capability",id+":"+generation+":"+direction+":"+retainedHash,work);
+            else{
+                RemoteProtocol.Role role=direction==PairingLifecycleClock.Direction.CREATE?RemoteProtocol.Role.DOM:RemoteProtocol.Role.SUB;
+                result=newCommandTransition("pairing-cancel",id+":"+generation+":"+direction,role,
+                        role==RemoteProtocol.Role.DOM?LocalRelationshipAuthority.NewCommand.KEYHOLDER:LocalRelationshipAuthority.NewCommand.ENROLLMENT,work);
+            }
+            if(result.changed){java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}
+                for(Peer peer:result.peers)listener.accept(peer.identity,peer.generation);}
+            return result.changed;
+        });
+    }
+    private static PairingCancellation pairingCancellation(SQLiteDatabase db,String id,String generation,PairingLifecycleClock.Direction direction,
+            String retainedHash,boolean apply,FormalRelationshipClock.Sample now){
+        PairingLifecycleLedger.requireCovered(db);List<Peer> cancelled=new ArrayList<>();
+        PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.find(db,id,generation,direction),current=PairingLifecycleLedger.current(db,direction);
+        if(!id.equals(generation)||current!=null&&(!id.equals(current.id)||!generation.equals(current.generation)))return new PairingCancellation(false,cancelled);
+        if(operation!=null&&(operation.stage==PairingLifecycleLedger.Stage.COMPLETE||operation.stage==PairingLifecycleLedger.Stage.CANCELLED))return new PairingCancellation(false,cancelled);
+        if(retainedHash!=null&&(operation==null||operation.stage==PairingLifecycleLedger.Stage.EXPIRED||operation.cancelHash==null
+                ||!messageDigestEqual(operation.cancelHash,retainedHash)))return new PairingCancellation(false,cancelled);
+        String candidate=operation==null?null:operation.peer;boolean invite=false;
+        RemoteProtocol.Role role=direction==PairingLifecycleClock.Direction.CREATE?RemoteProtocol.Role.DOM:RemoteProtocol.Role.SUB;
+        if(direction==PairingLifecycleClock.Direction.CREATE)try(Cursor row=db.rawQuery("SELECT candidate,approved,consumed FROM invites WHERE id=?",new String[]{id})){
+            if(!row.moveToFirst())return new PairingCancellation(false,cancelled);
+            if(operation!=null&&!java.util.Objects.equals(candidate,row.getString(0)))throw new SecurityException("Pairing cancellation participant differs");
+            if(operation==null)candidate=row.getString(0);invite=row.getInt(1)==1||row.getInt(2)==0;
+        }
+        if(candidate==null&&direction==PairingLifecycleClock.Direction.ACCEPT)try(Cursor row=db.rawQuery("SELECT peer FROM peers WHERE generation=? AND local_role='SUB' AND state IN('PENDING','ACTIVE') LIMIT 2",new String[]{generation})){
+            if(row.moveToFirst()){candidate=row.getString(0);if(row.moveToNext())throw new SecurityException("Ambiguous pending pairing");}
+        }
+        if(candidate!=null){
+            Peer peer=peer(db,candidate,generation);
+            if(peer!=null){if(peer.localRole!=role)throw new SecurityException("Pairing cancellation role differs");
+                if(peer.state==State.ACTIVE||peer.state==State.REVOKED)return new PairingCancellation(false,cancelled);cancelled.add(peer);}
+            else if(direction==PairingLifecycleClock.Direction.ACCEPT||operation!=null&&operation.stage==PairingLifecycleLedger.Stage.APPROVED)
+                throw new SecurityException("Original pending pairing unavailable");
+        }
+        boolean changed=operation!=null&&operation.stage!=PairingLifecycleLedger.Stage.EXPIRED||invite||!cancelled.isEmpty();
+        if(apply&&changed){
+            if(operation!=null)PairingLifecycleLedger.cancel(db,operation,now); // Tombstone before retiring any pending peer.
+            if(direction==PairingLifecycleClock.Direction.CREATE)db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{id});
+            for(Peer peer:cancelled)revokeRows(db,peer.identity,peer.generation);
+        }
+        return new PairingCancellation(changed,cancelled);
+    }
+    private static boolean messageDigestEqual(String first,String second){
+        return second!=null&&second.matches("[0-9a-f]{64}")&&java.security.MessageDigest.isEqual(first.getBytes(StandardCharsets.US_ASCII),second.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    // Storage-level retained-data adapters below are not live network admission paths.
     void saveInvite(PairingInvite invite) {
         if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
         newCommandTransition("invite-create",invite.id+":"+invite.tokenHash(),RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{ContentValues values = new ContentValues();

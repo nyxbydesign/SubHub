@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
@@ -41,6 +43,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SubHub">
 
+        <service android:name=".remote.PairingForegroundService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
         <service android:name=".capture.export.ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
         <activity android:name=".tasks.TasksActivity" android:exported="false" />

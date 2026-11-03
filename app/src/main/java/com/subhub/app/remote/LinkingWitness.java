@@ -203,10 +203,45 @@ final class LinkingWitness {
         byte[] bytes;
         try(OwnedDescriptor opened=OwnedDescriptor.open(marker.getPath(),OsConstants.O_RDONLY|OsConstants.O_NOFOLLOW,0)){bytes=readBounded(opened.fd(),4096);}
         JSONObject value=new JSONObject(new String(bytes,StandardCharsets.UTF_8));
+        if(value.opt("version") instanceof Number&&exactNumber(value,"version")==2){
+            structuralReservation(value);return value;
+        }
         if(value.length()!=5||value.getInt("version")!=1||!value.getString("epoch").matches("[0-9a-f]{32}")
                 ||value.getLong("revision")<1||!value.getString("command").matches("[0-9a-f]{64}")
                 ||!"RESERVED".equals(value.getString("phase"))&&!"SEALED".equals(value.getString("phase")))throw new java.io.IOException("Invalid marker");
         return value;
+    }
+    private static long exactNumber(JSONObject value,String key)throws Exception{
+        Object number=value.get(key);
+        if(!(number instanceof Integer)&&!(number instanceof Long))throw new java.io.IOException("Integer marker field required");
+        return ((Number)number).longValue();
+    }
+    private static String exactText(JSONObject value,String key)throws Exception{
+        Object text=value.get(key);if(!(text instanceof String))throw new java.io.IOException("Text marker field required");return (String)text;
+    }
+    private static byte[] unbase64(String value,int maximum)throws Exception{
+        if(value.length()==0||value.length()>(maximum*4+2)/3)throw new java.io.IOException("Structural marker field too large");
+        byte[] bytes=java.util.Base64.getUrlDecoder().decode(value);
+        if(bytes.length==0||bytes.length>maximum||!java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(value))
+            throw new java.io.IOException("Noncanonical structural marker encoding");
+        return bytes;
+    }
+    private LinkingStructuralReservation structuralReservation(JSONObject value)throws Exception{
+        if(value.length()!=7||exactNumber(value,"version")!=2||!"RESERVED".equals(exactText(value,"phase")))
+            throw new java.io.IOException("Invalid structural marker");
+        LinkingStructuralReservation reservation=LinkingStructuralReservation.decode(
+                unbase64(exactText(value,"payload"),LinkingStructuralReservation.MAX_BYTES));
+        unbase64(exactText(value,"signature"),128);
+        if(!reservation.forDatabase(LocalRelationshipAuthority.digest(identity))
+                ||!reservation.epoch.equals(exactText(value,"epoch"))||reservation.nextRevision!=exactNumber(value,"revision")
+                ||!reservation.command.equals(exactText(value,"command")))throw new java.io.IOException("Structural marker differs");
+        return reservation;
+    }
+    private static JSONObject structuralMarker(LinkingStructuralReservation reservation,byte[] signature)throws Exception{
+        return new JSONObject().put("version",2).put("epoch",reservation.epoch).put("revision",reservation.nextRevision)
+                .put("command",reservation.command).put("phase","RESERVED")
+                .put("payload",java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(reservation.signingBytes()))
+                .put("signature",java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(signature));
     }
     private static JSONObject marker(String epoch,long revision,String command,String phase)throws Exception{
         return new JSONObject().put("version",1).put("epoch",epoch).put("revision",revision).put("command",command).put("phase",phase);
@@ -220,15 +255,38 @@ final class LinkingWitness {
                 +"PRIMARY KEY(relationship_id,generation),FOREIGN KEY(relationship_id,generation) REFERENCES formal_relationships(id,generation))");
     }
     private static final class State{
-        String epoch,command,digest,initial;long revision,readyRevision;boolean initialized;
+        String epoch,command,digest,initial,snapshotScope;long revision,readyRevision;boolean initialized;int digestVersion;
     }
     private static State state(SQLiteDatabase db){
-        try(Cursor row=db.rawQuery("SELECT epoch,revision,command,state_digest,init_digest,initialized,ready_revision FROM linking_state WHERE id=1",null)){
+        try(Cursor row=db.rawQuery("SELECT epoch,revision,command,state_digest,init_digest,initialized,ready_revision,snapshot_scope,digest_version FROM linking_state WHERE id=1",null)){
             if(!row.moveToFirst())throw new IllegalStateException("Linking state missing");
-            State s=new State();s.epoch=row.getString(0);s.revision=row.getLong(1);s.command=row.getString(2);s.digest=row.getString(3);s.initial=row.getString(4);s.initialized=row.getInt(5)!=0;s.readyRevision=row.getLong(6);return s;
+            for(int column:new int[]{1,5,6,8})if(row.getType(column)!=Cursor.FIELD_TYPE_INTEGER)
+                throw new IllegalStateException("Invalid linking state number");
+            if(row.getLong(1)<0||row.getLong(5)<0||row.getLong(5)>1||row.getLong(6)<0||row.getLong(6)>row.getLong(1)
+                    ||row.getLong(5)==1&&row.getLong(6)==0||row.getLong(5)==0&&row.getLong(6)!=0)
+                throw new IllegalStateException("Invalid linking readiness tuple");
+            for(int column:new int[]{0,2,3,4,7})if(!row.isNull(column)&&row.getType(column)!=Cursor.FIELD_TYPE_STRING)
+                throw new IllegalStateException("Invalid linking state text");
+            if(row.getType(8)!=Cursor.FIELD_TYPE_INTEGER||row.getLong(8)!=1&&row.getLong(8)!=2)
+                throw new IllegalStateException("Unsupported linking digest version");
+            State s=new State();s.epoch=row.getString(0);s.revision=row.getLong(1);s.command=row.getString(2);s.digest=row.getString(3);s.initial=row.getString(4);s.initialized=row.getInt(5)!=0;s.readyRevision=row.getLong(6);
+            s.snapshotScope=row.getString(7);s.digestVersion=row.getInt(8);return s;
         }
     }
     private static String digest(SQLiteDatabase db){
+        int version=state(db).digestVersion;
+        if(version==1){PairingLifecycleLedger.requireEmpty(db);return digestV1(db);}
+        if(version!=2)throw new IllegalStateException("Unsupported linking digest version");
+        try{
+            MessageDigest hash=MessageDigest.getInstance("SHA-256");
+            hash.update("subhub.linking.authority.v2\0".getBytes(StandardCharsets.US_ASCII));
+            hash.update(digestV1(db).getBytes(StandardCharsets.US_ASCII));
+            PairingLifecycleLedger.digestInto(hash,db);
+            StringBuilder value=new StringBuilder(64);for(byte b:hash.digest())value.append(Character.forDigit((b>>>4)&15,16)).append(Character.forDigit(b&15,16));return value.toString();
+        }catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+    // Frozen V1 coverage: adding a table name here would invalidate every retained V1 receipt.
+    private static String digestV1(SQLiteDatabase db){
         try{
             MessageDigest hash=MessageDigest.getInstance("SHA-256");
             String[][] tables={
@@ -258,6 +316,8 @@ final class LinkingWitness {
                 ||!current.epoch.equals(s.epoch)||current.revision!=s.revision||!current.digest.equals(s.command))throw new java.io.IOException("Linking receipts and database differ");
         synchronized(store){if(!s.digest.equals(digest(store.getWritableDatabase())))throw new java.io.IOException("Retained authority differs from current receipt");}
         JSONObject record=readMarker();
+        if(record!=null&&exactNumber(record,"version")==2)
+            throw new java.io.IOException("Structural reservation requires exact recovery");
         if(record==null){
             if(ever!=null)throw new java.io.IOException("Initialized marker missing");
             seal(s); // Exact committed first-initialization phase, protected by the CURRENT receipt.
@@ -272,6 +332,98 @@ final class LinkingWitness {
             receipts.write(LinkingReceiptStore.EVER,new LinkingReceiptStore.Receipt(s.epoch,0,s.initial));
         }
         return s;
+    }
+    private void requireStructuralReceipts(LinkingStructuralReservation reservation)throws Exception{
+        LinkingReceiptStore.Receipt init=receipts.read(LinkingReceiptStore.INIT),ever=receipts.read(LinkingReceiptStore.EVER);
+        if(init==null||ever==null||init.revision!=0||ever.revision!=0
+                ||!reservation.epoch.equals(init.epoch)||!reservation.epoch.equals(ever.epoch)
+                ||!reservation.initial.equals(init.digest)||!reservation.initial.equals(ever.digest))
+            throw new java.io.IOException("Structural initialization receipts differ");
+    }
+    private LinkingStructuralReservation structuralBefore(SQLiteDatabase db,State before){
+        if(before.digestVersion!=1)throw new IllegalStateException("V1 structural before-image required");
+        return new LinkingStructuralReservation(LocalRelationshipAuthority.digest(identity),before.epoch,before.revision,
+                before.command,before.digest,before.initial,before.initialized,before.readyRevision,before.snapshotScope,
+                FormalRelationshipStore.number(db,"migration_complete"));
+    }
+    private void requireStructuralBefore(SQLiteDatabase db,LinkingStructuralReservation reservation)throws Exception{
+        State before=state(db);PairingLifecycleLedger.requireEmpty(db);
+        LinkingStructuralReservation actual=structuralBefore(db,before);
+        if(!MessageDigest.isEqual(actual.signingBytes(),reservation.signingBytes())||!reservation.oldDigest.equals(digestV1(db)))
+            throw new java.io.IOException("Structural before-image differs");
+    }
+    private State requireStructuralAfter(SQLiteDatabase db,LinkingStructuralReservation reservation)throws Exception{
+        State after=state(db);PairingLifecycleLedger.requireEmpty(db);
+        if(after.digestVersion!=2||after.revision!=reservation.nextRevision||!reservation.command.equals(after.command))
+            throw new java.io.IOException("Structural after-image differs");
+        LinkingStructuralReservation retained=new LinkingStructuralReservation(LocalRelationshipAuthority.digest(identity),
+                after.epoch,reservation.oldRevision,reservation.oldCommand,digestV1(db),after.initial,after.initialized,
+                after.readyRevision,after.snapshotScope,FormalRelationshipStore.number(db,"migration_complete"));
+        if(!MessageDigest.isEqual(retained.signingBytes(),reservation.signingBytes())||!after.digest.equals(digest(db)))
+            throw new java.io.IOException("Structural retained authority differs");
+        return after;
+    }
+    /** No observation callback or generic rejection acknowledgement can run inside this transition. */
+    private void completeStructural(RemoteStore store,LinkingStructuralReservation reservation)throws Exception{
+        try{
+            State after;
+            synchronized(SubFeaturePolicy.LOCK){synchronized(store){synchronized(RuntimeSessionIdentity.LOCK){
+                SQLiteDatabase db=store.getWritableDatabase();
+                if(db.inTransaction())throw new IllegalStateException("Independent structural transaction required");
+                db.beginTransaction();
+                try{
+                    requireStructuralBefore(db,reservation);
+                    db.execSQL("UPDATE linking_state SET digest_version=2 WHERE id=1");
+                    db.execSQL("UPDATE linking_state SET revision=?,command=?,state_digest=? WHERE id=1",
+                            new Object[]{reservation.nextRevision,reservation.command,digest(db)});
+                    // Recompute after UPDATE as well: a successful statement is not an after-image proof.
+                    after=requireStructuralAfter(db,reservation);db.setTransactionSuccessful();
+                }finally{db.endTransaction();}
+            }}}
+            synchronized(store){after=requireStructuralAfter(store.getReadableDatabase(),reservation);}
+            seal(after);
+            if(authorityAnchor.get()!=null)authorityAnchor.set(after);
+        }catch(Exception failure){failed=true;throw failure;}
+    }
+    private void advanceStructuralReceipt(LinkingStructuralReservation reservation)throws Exception{
+        try{receipts.write(LinkingReceiptStore.CURRENT,new LinkingReceiptStore.Receipt(
+                reservation.epoch,reservation.nextRevision,reservation.command));}
+        catch(Exception failure){failed=true;throw failure;}
+    }
+    private void upgradeCoverage(RemoteStore store,State before)throws Exception{
+        LinkingStructuralReservation reservation;
+        synchronized(store){
+            reservation=structuralBefore(store.getReadableDatabase(),before);
+            requireStructuralBefore(store.getReadableDatabase(),reservation);
+        }
+        requireStructuralReceipts(reservation);
+        byte[] signature=receipts.signStructural(reservation);
+        writeMarker(structuralMarker(reservation,signature));
+        advanceStructuralReceipt(reservation);completeStructural(store,reservation);
+    }
+    private void recoverStructural(RemoteStore store)throws Exception{
+        JSONObject record=readMarker();
+        if(record==null||exactNumber(record,"version")!=2)return;
+        LinkingStructuralReservation reservation=structuralReservation(record);
+        requireStructuralReceipts(reservation);
+        LinkingReceiptStore.Receipt current=receipts.read(LinkingReceiptStore.CURRENT);
+        LinkingReceiptStore.Receipt old=new LinkingReceiptStore.Receipt(reservation.epoch,reservation.oldRevision,reservation.oldCommand);
+        LinkingReceiptStore.Receipt next=new LinkingReceiptStore.Receipt(reservation.epoch,reservation.nextRevision,reservation.command);
+        if(old.same(current)){
+            synchronized(store){requireStructuralBefore(store.getReadableDatabase(),reservation);}
+            receipts.verifyStructural(reservation,unbase64(exactText(record,"signature"),128));
+            advanceStructuralReceipt(reservation);completeStructural(store,reservation);
+        }else if(next.same(current)){
+            State actual=read(store);
+            if(actual.digestVersion==1){
+                synchronized(store){requireStructuralBefore(store.getReadableDatabase(),reservation);}
+                completeStructural(store,reservation);
+            }else{
+                synchronized(store){actual=requireStructuralAfter(store.getReadableDatabase(),reservation);}
+                seal(actual);
+                if(authorityAnchor.get()!=null)authorityAnchor.set(actual);
+            }
+        }else throw new java.io.IOException("Structural current receipt differs");
     }
     private <T>T commit(RemoteStore store,State before,String command,SqlWork<T> work,boolean initialized)throws Exception{
         return commitObserved(store,before,command,()->work,initialized);
@@ -337,6 +489,7 @@ final class LinkingWitness {
     }
     private void ensure(RemoteStore store)throws Exception{
         if(failed)throw new java.io.IOException("Unacknowledged persistence failure");
+        recoverStructural(store);
         State s=read(store);LinkingReceiptStore.Receipt init=receipts.read(LinkingReceiptStore.INIT);
         if(s.epoch==null){
             LinkingReceiptStore.Receipt ever=receipts.read(LinkingReceiptStore.EVER),current=receipts.read(LinkingReceiptStore.CURRENT);
@@ -369,6 +522,7 @@ final class LinkingWitness {
             }
             s=verify(store);
         }
+        if(s.digestVersion==1){upgradeCoverage(store,s);verify(store);}
     }
     <T>T readCurrent(RemoteStore store,CheckedWork<T> work){
         return exclusive(store,()->{ensure(store);return work.run();});
@@ -413,7 +567,7 @@ final class LinkingWitness {
     }
     private static void requireAnchor(SQLiteDatabase db,State expected){
         State actual=state(db);
-        if(actual.revision!=expected.revision||!java.util.Objects.equals(actual.epoch,expected.epoch)
+        if(actual.revision!=expected.revision||actual.digestVersion!=expected.digestVersion||!java.util.Objects.equals(actual.epoch,expected.epoch)
                 ||!java.util.Objects.equals(actual.command,expected.command)||!java.util.Objects.equals(actual.digest,expected.digest))
             throw new IllegalStateException("Continuity anchor changed");
     }
