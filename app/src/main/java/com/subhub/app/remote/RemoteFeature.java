@@ -310,17 +310,32 @@ public final class RemoteFeature {
     /** Exception messages and causes may contain private wire data; record only bounded code locations. */
     private static void logSessionFailure(String direction,Exception failure) {
         try {
-            StringBuilder value=new StringBuilder("Session failure ").append(direction).append(' ')
-                    .append(boundedCodeName(failure.getClass().getName()));
-            int count=0;
-            for(StackTraceElement frame:failure.getStackTrace()) {
+            android.util.Log.w("PeerSync",sessionFailureSummary(direction,failure));
+        } catch(RuntimeException ignored) { /* Diagnostics never replace the existing failure path. */ }
+    }
+    /** Code locations and numeric errno only: exception messages can contain peer data or secrets. */
+    static String sessionFailureSummary(String direction,Throwable failure) {
+        StringBuilder value=new StringBuilder("Session failure ").append(boundedCodeName(direction));
+        Set<Throwable> seen=Collections.newSetFromMap(new IdentityHashMap<Throwable,Boolean>());
+        Throwable current=failure;int causes=0;
+        while(current!=null&&causes<4) {
+            if(!seen.add(current)){value.append(" cause-cycle");break;}
+            value.append(causes++==0?" ":" caused-by ").append(boundedCodeName(current.getClass().getName()));
+            if(current instanceof android.system.ErrnoException)
+                value.append(" errno=").append(((android.system.ErrnoException)current).errno);
+            int frames=0,scanned=0;
+            for(StackTraceElement frame:current.getStackTrace()) {
+                if(++scanned>64)break;
                 if(!frame.getClassName().startsWith("com.subhub.app."))continue;
                 value.append(" at ").append(boundedCodeName(frame.getClassName())).append('.')
                         .append(boundedCodeName(frame.getMethodName())).append(':').append(frame.getLineNumber());
-                if(++count==8)break;
+                if(++frames==6)break;
             }
-            android.util.Log.w("PeerSync",value.toString());
-        } catch(RuntimeException ignored) { /* Diagnostics never replace the existing failure path. */ }
+            if(value.length()>=4000)return value.substring(0,4000)+" truncated";
+            current=current.getCause();
+        }
+        if(current!=null&&causes==4)value.append(" cause-truncated");
+        return value.length()>4096?value.substring(0,4096):value.toString();
     }
     private static String boundedCodeName(String name) {
         return name==null?"unknown":name.substring(0,Math.min(160,name.length()));
