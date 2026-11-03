@@ -202,7 +202,7 @@ public final class RemoteSessionControlPeerAndroidTest {
                 dom.metadata(st.localIdentity(), generation, RemoteSessionControlState.METADATA, "")));
         assertFalse(state.state.active); assertTrue(state.fresh(RemoteSessionClock.observe(target)));
         String wire = transcript.toString(); assertFalse(wire.contains(nativeId)); assertFalse(wire.contains("hardcore_start_proof"));
-        assertFalse(wire.contains("authSecret")); assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertFalse(wire.contains("authSecret")); assertTrue(RemoteSessionRuntime.applicationEnabled());
     }
     @Test public void lostFinalResultReplaysExactlyWithoutStoppingAReplacement() throws Exception {
         new AppModeManager(subContext).setArmed(true); Request request = queueStop();

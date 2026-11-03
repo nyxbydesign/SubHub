@@ -45,7 +45,7 @@ public class RemoteSessionCommandsTest {
         assertEquals(0, negotiatedVersion(new JSONObject().put("sessionControlVersion", 2)));
         assertThrows(Exception.class, () -> negotiatedVersion(new JSONObject().put("sessionControlVersion", "1")));
         assertThrows(Exception.class, () -> negotiatedVersion(new JSONObject().put("sessionControlVersion", 0)));
-        assertFalse(applicationEnabled());
+        assertTrue(applicationEnabled());
     }
 
     @Test public void startRequiresCurrentReceiverHardcoreReviewAndExactGeneration() throws Exception {

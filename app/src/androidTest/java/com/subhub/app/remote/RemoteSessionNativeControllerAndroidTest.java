@@ -190,7 +190,7 @@ public final class RemoteSessionNativeControllerAndroidTest {
         long chosen = first.result.proof.selectedDuration; assertTrue(chosen >= 1800000 && chosen <= 3600000);
         assertEquals(chosen, main().getLong("commitment_duration", 0));
         assertEquals(RemoteProtocol.canonical(first.result.json()), RemoteProtocol.canonical(advance(request).result.json()));
-        assertEquals(1, count()); assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertEquals(1, count()); assertTrue(RemoteSessionRuntime.applicationEnabled());
     }
     @Test public void preparationFailureCannotApplyNativeState() throws Exception {
         Request request = start(false);

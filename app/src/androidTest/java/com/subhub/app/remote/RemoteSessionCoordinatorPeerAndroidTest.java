@@ -87,6 +87,6 @@ public final class RemoteSessionCoordinatorPeerAndroidTest {
         assertNotNull(applied.latestResult.proof); assertFalse(applied.latestResult.proof.active); assertFalse(applied.canStop);
         assertFalse(new AppModeManager(subContext).isArmed()); assertEquals(1, stats.getSessionHistory().size());
         assertEquals(review.request.id, coordinator.confirm(review)); exchange(); assertEquals(1, stats.getSessionHistory().size());
-        assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertTrue(RemoteSessionRuntime.applicationEnabled());
     }
 }

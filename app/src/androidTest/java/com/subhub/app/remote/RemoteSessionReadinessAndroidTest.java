@@ -88,6 +88,6 @@ public final class RemoteSessionReadinessAndroidTest {
         assertEquals(RemoteSessionRuntime.Readiness.NEEDS_SUB_ACTION, observed.readiness);
         assertTrue(observed.fresh(RemoteSessionClock.local()));
         assertFalse(ScreenshotAccessibilityService.isRunning());
-        assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertTrue(RemoteSessionRuntime.applicationEnabled());
     }
 }

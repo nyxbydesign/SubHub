@@ -32,7 +32,11 @@ public final class RemoteFeature {
     private final Object endpointLock=new Object();
     private final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"subhub-peer-clock"));
     private final ExecutorService acceptor=Executors.newSingleThreadExecutor(r->new Thread(r,"subhub-peer-accept"));
-    private final ThreadPoolExecutor sessions=new ThreadPoolExecutor(4,4,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(12),r->new Thread(r,"subhub-peer-session"),new ThreadPoolExecutor.AbortPolicy());
+    // Keep four workers and twelve queued slots; old outgoing work cannot consume UI or inbound capacity.
+    private final ThreadPoolExecutor operations=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),r->new Thread(r,"subhub-peer-operation"),new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor incomingSessions=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->new Thread(r,"subhub-peer-incoming"),new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor sessions=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new SynchronousQueue<>(),r->new Thread(r,"subhub-peer-session"),new ThreadPoolExecutor.AbortPolicy());
+    private final Semaphore revocations=new Semaphore(1);
     private final Set<String> busy=ConcurrentHashMap.newKeySet();
     private final Map<String,Long> nextAttempt=new ConcurrentHashMap<>();
     private final Map<PeerTransport.Connection,String> connections=new ConcurrentHashMap<>();
@@ -41,6 +45,7 @@ public final class RemoteFeature {
     private final java.util.concurrent.atomic.AtomicBoolean warming=new java.util.concurrent.atomic.AtomicBoolean();
     private volatile PeerTransport endpoint;
     private volatile boolean foreground,recovered;
+    private final java.util.concurrent.atomic.AtomicBoolean idleCheckPending=new java.util.concurrent.atomic.AtomicBoolean();
     private boolean installed;
     private boolean librariesRetired;
 
@@ -58,7 +63,7 @@ public final class RemoteFeature {
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
-        sessions.allowCoreThreadTimeOut(true);
+        sessions.allowCoreThreadTimeOut(true);operations.allowCoreThreadTimeOut(true);incomingSessions.allowCoreThreadTimeOut(true);
         try{writer.recover();writer.prunePrepared();if(com.subhub.app.configuration.LegacyPackMigration.isReady(this.context)){store.retireLibraries();librariesRetired=true;}for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){cleanupRevokedSecrets(old.identity,old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
     }
     private void cleanupRevokedSecrets(String identity,String generation){
@@ -86,10 +91,32 @@ public final class RemoteFeature {
         timer.scheduleWithFixedDelay(()->{try{if(foreground)tick();}catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}},2,2,TimeUnit.SECONDS);
         RemoteScheduler.synchronize(context,needsBackground());
     }
+    /** Admission survives future cancellation until the actual resource-using callable exits. */
+    private static class AdmittedTask<T> extends FutureTask<T> {
+        private final java.util.concurrent.atomic.AtomicBoolean started=new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicBoolean released=new java.util.concurrent.atomic.AtomicBoolean();
+        private final Runnable release;
+        AdmittedTask(Callable<T> work,Runnable release){super(work);this.release=release;}
+        private void release(){if(released.compareAndSet(false,true))release.run();}
+        @Override public void run(){started.set(true);try{super.run();}finally{release();}}
+        @Override protected void done(){if(!started.get())release();}
+    }
     public <T> CompletableFuture<T> submit(Callable<T> work) {
         CompletableFuture<T> result=new CompletableFuture<>();
-        try{sessions.execute(()->{leases.incrementAndGet();try{result.complete(store.authorityAccess(work::call));}catch(Exception failure){result.completeExceptionally(failure);}finally{leases.decrementAndGet();suspendIfIdle();}});}
-        catch(RejectedExecutionException full){result.completeExceptionally(new IOException("Sync is busy"));}
+        leases.incrementAndGet();
+        AdmittedTask<T> task=new AdmittedTask<T>(() -> store.authorityAccess(work::call),()->{leases.decrementAndGet();deferSuspendIfIdle();}) {
+            @Override protected void done(){
+                super.done();
+                if(isCancelled())operations.remove(this);
+                try{result.complete(get());}
+                catch(CancellationException cancelled){result.cancel(false);}
+                catch(ExecutionException failure){result.completeExceptionally(failure.getCause());}
+                catch(InterruptedException interrupted){Thread.currentThread().interrupt();result.completeExceptionally(interrupted);}
+            }
+        };
+        result.whenComplete((value,error)->{if(result.isCancelled())task.cancel(true);});
+        try{operations.execute(task);}
+        catch(RejectedExecutionException full){result.completeExceptionally(new IOException("Sync is busy"));task.cancel(false);}
         return result;
     }
     PairingInvite restoreInvitation(String id)throws Exception {
@@ -228,23 +255,45 @@ public final class RemoteFeature {
         if(endpoint==null && (needsBackground() || !store.invitations(System.currentTimeMillis()).isEmpty()) && warming.compareAndSet(false,true)) {
             submit(()->{transport();return null;}).whenComplete((value,error)->warming.set(false));
         }
-        for(RemoteStore.Peer peer:store.peers(true)) {
+        for(RemoteStore.Peer peer:outgoingPeers()) {
             if(peer.state==RemoteStore.State.PENDING && peer.localRole==RemoteProtocol.Role.DOM)continue;
             if(peer.state==RemoteStore.State.REVOKED && "true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))continue;
             String key=key(peer);if(now<nextAttempt.getOrDefault(key,0L) || !busy.add(key))continue;
             schedulePeer(peer,System.nanoTime()+TimeUnit.SECONDS.toNanos(55));
         }
     }
+    private List<RemoteStore.Peer> outgoingPeers() {
+        List<RemoteStore.Peer> peers=new ArrayList<>(store.peers(true));
+        // Offer retained delivery first; its single permit leaves the other worker for a current peer.
+        peers.sort(Comparator.comparingInt((RemoteStore.Peer peer)->peer.state==RemoteStore.State.REVOKED?0:1)
+                .thenComparingLong(peer->nextAttempt.getOrDefault(key(peer),0L)));
+        return peers;
+    }
     private Future<Boolean> schedulePeer(RemoteStore.Peer peer,long deadline) {
-        String key=key(peer);
-        FutureTask<Boolean> task=new FutureTask<Boolean>(()->runPeer(peer,deadline)) {
-            private final java.util.concurrent.atomic.AtomicBoolean started=new java.util.concurrent.atomic.AtomicBoolean();
-            private final java.util.concurrent.atomic.AtomicBoolean released=new java.util.concurrent.atomic.AtomicBoolean();
-            private void release(){if(released.compareAndSet(false,true)){busy.remove(key);suspendIfIdle();}}
-            @Override public void run(){started.set(true);try{super.run();}finally{release();}}
-            @Override protected void done(){if(!started.get())release();}
-        };
+        String key=key(peer);boolean revoked=peer.state==RemoteStore.State.REVOKED;
+        if(revoked&&!revocations.tryAcquire()){busy.remove(key);return null;}
+        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline),()->{
+            if(revoked)revocations.release();busy.remove(key);suspendIfIdle();
+        });
         try{sessions.execute(task);return task;}catch(RejectedExecutionException full){task.cancel(false);return null;}
+    }
+    /** Exception messages and causes may contain private wire data; record only bounded code locations. */
+    private static void logSessionFailure(String direction,Exception failure) {
+        try {
+            StringBuilder value=new StringBuilder("Session failure ").append(direction).append(' ')
+                    .append(boundedCodeName(failure.getClass().getName()));
+            int count=0;
+            for(StackTraceElement frame:failure.getStackTrace()) {
+                if(!frame.getClassName().startsWith("com.subhub.app."))continue;
+                value.append(" at ").append(boundedCodeName(frame.getClassName())).append('.')
+                        .append(boundedCodeName(frame.getMethodName())).append(':').append(frame.getLineNumber());
+                if(++count==8)break;
+            }
+            android.util.Log.w("PeerSync",value.toString());
+        } catch(RuntimeException ignored) { /* Diagnostics never replace the existing failure path. */ }
+    }
+    private static String boundedCodeName(String name) {
+        return name==null?"unknown":name.substring(0,Math.min(160,name.length()));
     }
     private void track(PeerTransport.Connection connection,String key,long deadline) {
         connections.put(connection,key);connectionDeadlines.put(connection,deadline);
@@ -267,7 +316,10 @@ public final class RemoteFeature {
                 else{session(active).outgoing(selected,peer,deadline);success=true;}
             } finally{untrack(connection);}
             if(success)store.putMetadata(peer.identity,peer.generation,"connection_error","");
-        } catch(Exception unavailable){store.putMetadata(peer.identity,peer.generation,"connection_error","Unable to sync");}
+        } catch(Exception unavailable){
+            logSessionFailure(peer.state==RemoteStore.State.ACTIVE?"outgoing-active":peer.state==RemoteStore.State.REVOKED?"outgoing-revoked":"outgoing-pending",unavailable);
+            store.putMetadata(peer.identity,peer.generation,"connection_error","Unable to sync");
+        }
         finally{nextAttempt.put(key,SystemClock.elapsedRealtime()+(success && peer.state!=RemoteStore.State.PENDING?30_000:2_000+ThreadLocalRandom.current().nextInt(4000)));}
         return success;
     }
@@ -277,7 +329,11 @@ public final class RemoteFeature {
             try{connection=active.accept(2000);}catch(SocketTimeoutException waiting){continue;}
             catch(IOException unavailable){break;}
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(55);track(connection,"",deadline);
-            try{sessions.execute(()->incoming(active,connection,deadline));}catch(RejectedExecutionException full){untrack(connection);close(connection);}
+            leases.incrementAndGet();
+            AdmittedTask<Void> task=new AdmittedTask<>(()->{incoming(active,connection,deadline);return null;},()->{
+                untrack(connection);close(connection);leases.decrementAndGet();suspendIfIdle();
+            });
+            try{incomingSessions.execute(task);}catch(RejectedExecutionException full){task.cancel(false);}
         }
     }
     private void incoming(PeerTransport active,PeerTransport.Connection connection,long deadline) {
@@ -294,7 +350,7 @@ public final class RemoteFeature {
             if("revoke".equals(type))session(active).receiveRevocation(selected,first,deadline);
             else session(active).incoming(selected,first,deadline);
             store.putMetadata(peer.identity,peer.generation,"connection_error","");
-        }catch(Exception unavailable){android.util.Log.w("PeerSync","Peer session ended before completion");}
+        }catch(Exception unavailable){logSessionFailure("incoming",unavailable);}
         finally{untrack(connection);if(reservation!=null)busy.remove(reservation);RemoteScheduler.synchronize(context,needsBackground());suspendIfIdle();}
     }
     private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
@@ -408,7 +464,7 @@ public final class RemoteFeature {
         Map<Future<Boolean>,String> attempts=new LinkedHashMap<>();
         try {
             transport();
-            for(RemoteStore.Peer peer:store.peers(true)) {
+            for(RemoteStore.Peer peer:outgoingPeers()) {
                 if(peer.state==RemoteStore.State.PENDING && peer.localRole==RemoteProtocol.Role.DOM)continue;
                 if(peer.state==RemoteStore.State.REVOKED && "true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))continue;
                 String key=key(peer);if(!busy.add(key))continue;
@@ -432,6 +488,11 @@ public final class RemoteFeature {
             leases.decrementAndGet();suspendIfIdle();
         }
     }
+    private void deferSuspendIfIdle() {
+        if(foreground||leases.get()>0||!busy.isEmpty()||!idleCheckPending.compareAndSet(false,true))return;
+        try{timer.execute(()->{idleCheckPending.set(false);suspendIfIdle();});}
+        catch(RejectedExecutionException stopped){idleCheckPending.set(false);}
+    }
     private void suspendIfIdle() {
         if(foreground || leases.get()>0 || !busy.isEmpty())return;
         synchronized(endpointLock){if(foreground || leases.get()>0 || !busy.isEmpty())return;PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
@@ -439,7 +500,13 @@ public final class RemoteFeature {
     void shutdownForTest() throws Exception {
         appIcons.close();
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
-        acceptor.shutdownNow();sessions.shutdownNow();sessions.awaitTermination(10,TimeUnit.SECONDS);acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();
+        acceptor.shutdownNow();
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions}) {
+            for(Runnable queued:pool.shutdownNow())if(queued instanceof Future<?>)((Future<?>)queued).cancel(false);
+        }
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions})
+            if(!pool.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Peer work did not stop");
+        acceptor.awaitTermination(10,TimeUnit.SECONDS);activity.close();
         com.subhub.app.security.SubFeaturePolicy.unregisterHardcoreAuthority(context, store);store.close();
     }
     private static long remaining(long deadline) throws SocketTimeoutException {long millis=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());if(millis<=0)throw new SocketTimeoutException("Sync window expired");return millis;}

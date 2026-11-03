@@ -4,7 +4,7 @@ import java.util.Objects;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Admission and journal vocabulary only; this version has no session-application implementation. */
+/** Current-peer session reviews, durable command results and receiver-owned native application. */
 public final class RemoteSessionRuntime {
     public static final int HARDCORE_START_CONSENT_VERSION = 1;
     private static final String PROCESS = java.util.UUID.randomUUID().toString();
@@ -189,8 +189,8 @@ public final class RemoteSessionRuntime {
         }
     }
 
-    /** No production caller may mistake the inactive codec/storage checkpoint for supported Start. */
-    public static boolean applicationEnabled() { return false; }
+    /** The facade advertises v1; current authority, local consent and native readiness still gate every effect. */
+    public static boolean applicationEnabled() { return true; }
 
     static RemoteSessionCommands.Reason validateIncoming(RemoteSessionCommands.Request request, Facts facts, long now)
             throws JSONException {

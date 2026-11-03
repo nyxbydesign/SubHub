@@ -77,7 +77,7 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
         target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         pinApplication = ControllerPinManager.class.getDeclaredField("application");
         pinApplication.setAccessible(true); originalPinApplication = pinApplication.get(null);
-        assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertTrue(RemoteSessionRuntime.applicationEnabled());
         assertTrue("Keep the runner's ordinary controller fixture enabled",
                 ControllerPinManager.hasCredentials(target));
         assertTrue("Application startup must have completed recovery", LegacyPackMigration.isReady(target));
@@ -196,7 +196,7 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
             drainMain();
             assertEquals(1, gateway.reviews.get()); assertEquals(1, gateway.confirms.get());
             assertQueued(attempt.minted);
-            assertFalse(RemoteSessionRuntime.applicationEnabled());
+            assertTrue(RemoteSessionRuntime.applicationEnabled());
         }
     }
 
@@ -245,7 +245,7 @@ public final class RemoteSessionCoordinatorControlsAndroidTest {
             locked.release(); awaitReviewDrained(newScope);
             assertFalse(ControllerPinManager.isSessionUnlocked());
             assertEquals(4, gateway.reviews.get()); assertEquals(1, gateway.confirms.get()); assertNoIntent();
-            assertFalse(RemoteSessionRuntime.applicationEnabled());
+            assertTrue(RemoteSessionRuntime.applicationEnabled());
         }
     }
 

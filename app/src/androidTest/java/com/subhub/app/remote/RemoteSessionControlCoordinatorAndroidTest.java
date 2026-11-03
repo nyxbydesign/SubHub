@@ -42,6 +42,8 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
     private Object originalApplication;
     private Runnable afterObservation;
     private RemoteFeature feature;
+    private java.io.File facadeDirectory;
+    private Context facadeContext;
     private int observations;
     @Before public void setup() throws Exception {
         target = InstrumentationRegistry.getInstrumentation().getTargetContext(); prefix = "session-coordinator-" + UUID.randomUUID() + "-";
@@ -88,6 +90,7 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
             if (applicationField != null) applicationField.set(null, originalApplication);
             if (feature != null) feature.shutdownForTest();
         } finally {
+            try {
             if (store != null) store.close(); if (independent != null) independent.close();
             if (database != null) assertTrue(target.deleteDatabase(database));
             if (prefix != null) for (String name : new String[]{SettingsRepository.PREFERENCES_NAME, "subhub_controller_auth", "secrets",
@@ -97,6 +100,24 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
                 assertTrue(wrappingAlias.startsWith("subhub.test.coordinator."));
                 java.security.KeyStore keys = java.security.KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
                 if (keys.containsAlias(wrappingAlias)) keys.deleteEntry(wrappingAlias); assertFalse(keys.containsAlias(wrappingAlias));
+            }
+            } finally { cleanupFacadeStorage(); }
+        }
+    }
+    private void cleanupFacadeStorage() throws Exception {
+        if (facadeContext != null) {
+            Field ready = com.subhub.app.configuration.LegacyPackMigration.class.getDeclaredField("READY"); ready.setAccessible(true);
+            synchronized (com.subhub.app.configuration.LegacyPackMigration.class) {
+                ((java.util.Set<?>) ready.get(null)).remove(facadeContext.getFilesDir().getAbsoluteFile());
+            }
+        }
+        if (facadeDirectory == null || !facadeDirectory.exists()) return;
+        java.nio.file.Path root = facadeDirectory.getCanonicalFile().toPath();
+        assertTrue(root.startsWith(target.getCacheDir().getCanonicalFile().toPath()));
+        assertEquals(prefix + "facade", root.getFileName().toString());
+        try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path path : (Iterable<java.nio.file.Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator) {
+                assertFalse(java.nio.file.Files.isSymbolicLink(path)); assertTrue(path.toRealPath().startsWith(root)); java.nio.file.Files.delete(path);
             }
         }
     }
@@ -277,31 +298,74 @@ public final class RemoteSessionControlCoordinatorAndroidTest {
         try { future.get(5, java.util.concurrent.TimeUnit.SECONDS); fail("Expected " + type.getSimpleName()); }
         catch (java.util.concurrent.ExecutionException failure) { assertTrue(String.valueOf(failure.getCause()), type.isInstance(failure.getCause())); }
     }
-    @Test public void disabledFacadeAndHooksCannotCreateCoordinatorTransportOrOutboxEffects() throws Exception {
-        assertFalse(RemoteSessionRuntime.applicationEnabled()); feature = new RemoteFeature(context, store);
-        String source = store.metadata(SUB, generation, RemoteSessionControlState.METADATA, "");
-        RemoteSessionRuntime.Snapshot snapshot = feature.sessionSnapshot(peer()).get(5, java.util.concurrent.TimeUnit.SECONDS);
-        assertFalse(snapshot.supported); assertFalse(snapshot.canStart); assertFalse(snapshot.canStop);
-        futureFailure(UnsupportedOperationException.class, feature.reviewSession(peer(), Action.STOP));
-        RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
-        Request request = Request.stop(UUID.randomUUID().toString(), DOM, SUB, generation, 1, 7, now.wall, now.wall + LIFETIME_MILLIS, SESSION);
-        futureFailure(UnsupportedOperationException.class, feature.confirmSession(new RemoteSessionRuntime.Review(request, "disabled", now.wall)));
-        PeerTransport noTransport = new PeerTransport() {
-            public String localIdentity() { fail("Disabled hook resolved transport identity"); return DOM; }
-            public String inviteRoute() { throw new AssertionError("Disabled hook resolved route"); }
-            public Connection connect(String identity, String route, long timeout) { throw new AssertionError("Disabled hook connected"); }
-            public Connection accept(long timeout) { throw new AssertionError("Disabled hook accepted"); }
+    @Test public void enabledFacadeAndHooksRefuseUnsupportedOrUnauthenticatedCommandsWithoutEffects() throws Exception {
+        assertTrue(RemoteSessionRuntime.applicationEnabled());
+        facadeDirectory = new java.io.File(target.getCacheDir(), prefix + "facade");
+        facadeContext = new ContextWrapper(context) {
+            @Override public Context getApplicationContext() { return this; }
+            @Override public java.io.File getFilesDir() { return owned("files"); }
+            @Override public java.io.File getNoBackupFilesDir() { return owned("no-backup"); }
+            @Override public java.io.File getCacheDir() { return owned("cache"); }
+            private java.io.File owned(String name) {
+                java.io.File child = new java.io.File(facadeDirectory, name);
+                if (!child.isDirectory() && !child.mkdirs()) throw new IllegalStateException("Cannot create owned facade storage");
+                return child;
+            }
+        };
+        assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(facadeContext));
+        feature = new RemoteFeature(facadeContext, store);
+        assertTrue(feature.recoveryReady());
+        PeerTransport noNetwork = new PeerTransport() {
+            public String localIdentity() { return DOM; }
+            public String inviteRoute() { throw new AssertionError("Unsupported facade resolved route"); }
+            public Connection connect(String identity, String route, long timeout) { throw new AssertionError("Unsupported facade connected"); }
+            public Connection accept(long timeout) { throw new AssertionError("Unsupported facade accepted"); }
             public void close() { }
         };
-        java.lang.reflect.Method sessionMethod = RemoteFeature.class.getDeclaredMethod("session", PeerTransport.class); sessionMethod.setAccessible(true);
-        RemoteSession session = (RemoteSession) sessionMethod.invoke(feature, noTransport);
-        RemoteSession.Hooks hooks = (RemoteSession.Hooks) field(session, "hooks"); assertEquals(0, hooks.sessionControlVersion());
-        assertThrows(UnsupportedOperationException.class, () -> hooks.sessionControl(null, peer(), System.nanoTime() + 1000000000));
-        assertNull(field(feature, "sessionControlCoordinator")); assertNull(field(feature, "endpoint"));
-        assertEquals(0, ((java.util.concurrent.atomic.AtomicInteger) field(feature, "leases")).get());
-        assertTrue(((Map<?, ?>) field(feature, "connections")).isEmpty()); assertTrue(((Map<?, ?>) field(feature, "nextAttempt")).isEmpty());
-        assertEquals(0, count()); assertEquals("0", floor()); assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0"));
-        assertEquals(source, store.metadata(SUB, generation, RemoteSessionControlState.METADATA, ""));
-        ControllerPinManager.lockNow(); futureFailure(SecurityException.class, feature.sessionSnapshot(peer()));
+        Field endpoint = RemoteFeature.class.getDeclaredField("endpoint"); endpoint.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger leases = (java.util.concurrent.atomic.AtomicInteger) field(feature, "leases");
+        // A fixture-owned lease keeps asynchronous facade reads on this exact endpoint until cleanup.
+        leases.incrementAndGet(); synchronized (field(feature, "endpointLock")) { endpoint.set(feature, noNetwork); }
+        try {
+            String source = store.metadata(SUB, generation, RemoteSessionControlState.METADATA, "");
+            store.putMetadata(SUB, generation, "session_control_version", "0");
+            RemoteSessionRuntime.Snapshot unsupported = feature.sessionSnapshot(peer()).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse(unsupported.supported); assertFalse(unsupported.canStart); assertFalse(unsupported.canStop);
+            futureFailure(UnsupportedOperationException.class, feature.reviewSession(peer(), Action.STOP));
+            RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
+            Request request = Request.stop(UUID.randomUUID().toString(), DOM, SUB, generation, 1, 7, now.wall, now.wall + LIFETIME_MILLIS, SESSION);
+            RemoteSessionRuntime.Review forged = new RemoteSessionRuntime.Review(request, "not-a-minted-review", now.wall);
+            futureFailure(UnsupportedOperationException.class, feature.confirmSession(forged));
+            store.putMetadata(SUB, generation, "session_control_version", "1");
+            RemoteSessionRuntime.Snapshot enabled = feature.sessionSnapshot(peer()).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(enabled.supported); assertFalse(enabled.canStart); assertTrue(enabled.canStop);
+            futureFailure(SecurityException.class, feature.confirmSession(forged));
+            java.lang.reflect.Method sessionMethod = RemoteFeature.class.getDeclaredMethod("session", PeerTransport.class); sessionMethod.setAccessible(true);
+            RemoteSession session = (RemoteSession) sessionMethod.invoke(feature, noNetwork);
+            RemoteSession.Hooks hooks = (RemoteSession.Hooks) field(session, "hooks"); assertEquals(VERSION, hooks.sessionControlVersion());
+            PeerTransport.Connection wrongPeer = new PeerTransport.Connection() {
+                public String authenticatedPeerIdentity() { return DOM; }
+                public java.io.InputStream input() { throw new AssertionError("Unauthenticated hook read application data"); }
+                public java.io.OutputStream output() { throw new AssertionError("Unauthenticated hook wrote application data"); }
+                public void setReadTimeoutMillis(long timeout) { throw new AssertionError("Unauthenticated hook began I/O"); }
+                public boolean isDirect() { return true; }
+                public void close() { }
+            };
+            assertThrows(SecurityException.class, () -> hooks.sessionControl(wrongPeer, peer(), System.nanoTime() + 1000000000));
+            assertNotNull(field(feature, "sessionControlCoordinator")); assertSame(noNetwork, field(feature, "endpoint"));
+            awaitOwnedLease(leases); assertTrue(((Map<?, ?>) field(feature, "connections")).isEmpty());
+            assertTrue(((Map<?, ?>) field(feature, "nextAttempt")).isEmpty());
+            assertEquals(0, count()); assertEquals("0", floor()); assertEquals("0", store.metadata(SUB, generation, "session_control_allocated", "0"));
+            assertEquals(source, store.metadata(SUB, generation, RemoteSessionControlState.METADATA, ""));
+            assertFalse(main().getBoolean(com.subhub.app.appmode.AppModeManager.KEY_ARMED, false));
+            ControllerPinManager.lockNow(); futureFailure(SecurityException.class, feature.sessionSnapshot(peer()));
+            awaitOwnedLease(leases);
+            assertEquals(0, count()); assertEquals("0", floor());
+        } finally { assertTrue(leases.decrementAndGet() >= 0); }
+    }
+    private static void awaitOwnedLease(java.util.concurrent.atomic.AtomicInteger leases) throws InterruptedException {
+        long deadline = android.os.SystemClock.uptimeMillis() + 5000;
+        while (leases.get() != 1 && android.os.SystemClock.uptimeMillis() < deadline) Thread.sleep(10);
+        assertEquals("Facade work must release its query leases before the fixture lease", 1, leases.get());
     }
 }

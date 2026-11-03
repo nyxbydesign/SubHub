@@ -163,7 +163,7 @@ public final class RemoteSessionControlNegotiationAndroidTest {
         assertFalse(new AppModeManager(subContext).isArmed());
         assertEquals("0", dom.metadata(st.localIdentity(), generation, "tasks_version", "missing"));
         assertEquals("0", dom.metadata(st.localIdentity(), generation, "journal_version", "missing"));
-        assertFalse(RemoteSessionRuntime.applicationEnabled());
+        assertTrue(RemoteSessionRuntime.applicationEnabled());
     }
     @Test public void independentlyNegotiatedControlWorksWhenDomInitiates() throws Exception { negotiatedStop(true); }
     @Test public void independentlyNegotiatedControlWorksWhenSubInitiates() throws Exception { negotiatedStop(false); }
