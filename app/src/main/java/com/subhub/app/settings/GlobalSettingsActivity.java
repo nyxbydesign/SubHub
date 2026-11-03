@@ -171,18 +171,37 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     }
 
     private void openConnectionOrKeyholder() {
-        if (hasAssignedConnection()) com.subhub.app.people.People.connectionUi().openConnection(this, PersonId.LOCAL);
-        else startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
+        observeConnection("settings-open-connection", true);
     }
 
-    private boolean hasAssignedConnection() {
-        try {
-            com.subhub.app.security.KeyholderProvider.State state = com.subhub.app.people.People.keyholder().state();
-            return !DeviceRolePreferences.isDomWorkspace(this)
-                    && (state == com.subhub.app.security.KeyholderProvider.State.READY
-                        || state == com.subhub.app.security.KeyholderProvider.State.PENDING)
+    private void refreshConnection() {
+        if (!consentWork.isPending("settings-connection")) observeConnection("settings-connection", false);
+    }
+
+    private void observeConnection(String key, boolean open) {
+        com.subhub.app.security.KeyholderProvider provider = com.subhub.app.people.People.keyholder();
+        DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(this);
+        boolean dom = DeviceRolePreferences.isDomWorkspace(this);
+        View link = findViewById(R.id.settings_connections_security);
+        link.setEnabled(false);
+        // Credential availability is a display/routing observation; guarded actions retain their own checks.
+        consentWork.load(key, provider::state, state -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (com.subhub.app.people.People.keyholder() != provider
+                    || DeviceRolePreferences.get(this) != mode
+                    || DeviceRolePreferences.isDomWorkspace(this) != dom) {
+                refreshConnection(); return;
+            }
+            boolean assigned = !dom && (state == com.subhub.app.security.KeyholderProvider.State.READY
+                    || state == com.subhub.app.security.KeyholderProvider.State.PENDING)
                     && com.subhub.app.people.People.connectionUi() != null;
-        } catch (RuntimeException unavailable) { return false; }
+            ((TextView) link).setText(assigned ? R.string.role_connection : R.string.keyholder_home_title);
+            boolean available = state != com.subhub.app.security.KeyholderProvider.State.UNAVAILABLE;
+            link.setEnabled(available);
+            if (!open || !available) return;
+            if (assigned) com.subhub.app.people.People.connectionUi().openConnection(this, PersonId.LOCAL);
+            else startActivity(new Intent(this, com.subhub.app.security.AuthenticatorActivity.class));
+        }, failure -> { if (!isFinishing() && !isDestroyed()) link.setEnabled(false); });
     }
 
     private void heading(LinearLayout parent, int title, String key) {
@@ -239,8 +258,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
-        ((TextView) findViewById(R.id.settings_connections_security)).setText(
-                hasAssignedConnection() ? R.string.role_connection : R.string.keyholder_home_title);
+        refreshConnection();
         boolean local = DeviceRolePreferences.supportsSub(this);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);

@@ -18,11 +18,14 @@ public final class DeviceRoleView extends LinearLayout {
     private final RadioGroup choices;
     private final TextView status;
     private boolean binding;
+    private final com.subhub.app.util.AsyncUiScope work;
+    private final String authorityJob = "device-role-authority:" + View.generateViewId();
 
     public DeviceRoleView(Activity activity, Runnable changed) {
         super(activity);
         this.activity = activity;
         this.changed = changed;
+        work = com.subhub.app.util.AsyncUiScope.forContext(activity);
         setOrientation(VERTICAL);
         setTag("device_role_selector");
         PersonUi.text(this, activity.getString(R.string.device_role_title), true);
@@ -64,22 +67,49 @@ public final class DeviceRoleView extends LinearLayout {
     }
 
     public void refresh() {
+        // A witness read can decrypt credentials through Binder. Rendering must never wait for it.
+        if (work.isPending(authorityJob)) return;
+        DeviceRolePreferences.Mode selected = DeviceRolePreferences.get(activity);
+        KeyholderProvider provider = People.keyholder();
+        render(selected, false, true);
+        work.load(authorityJob, () -> {
+            KeyholderProvider.State state = provider.state();
+            boolean local = state == KeyholderProvider.State.NONE && People.isLocalConfigurationAllowed();
+            return new AuthorityDisplay(local, state == KeyholderProvider.State.UNAVAILABLE);
+        }, display -> {
+            if (!isAttachedToWindow()) return;
+            if (People.keyholder() != provider || DeviceRolePreferences.get(activity) != selected) {
+                refresh(); return;
+            }
+            render(selected, display.local, display.unavailable);
+        }, failure -> { if (isAttachedToWindow()) render(DeviceRolePreferences.get(activity), false, true); });
+    }
+    private void render(DeviceRolePreferences.Mode selected, boolean local, boolean unavailable) {
         binding = true;
         try {
-            DeviceRolePreferences.Mode selected = DeviceRolePreferences.get(activity);
-            boolean local = localAuthority();
             for (int index = 0; index < choices.getChildCount(); index++) {
                 RadioButton choice = (RadioButton) choices.getChildAt(index);
                 choice.setEnabled(local);
                 if (choice.getTag().equals("device_role:" + selected.name())) choices.check(choice.getId());
             }
-            boolean unavailable;
-            try { unavailable = People.keyholder().state() == KeyholderProvider.State.UNAVAILABLE; }
-            catch (RuntimeException failure) { unavailable = true; }
             status.setText(local ? "" : activity.getString(unavailable
                     ? R.string.device_role_unavailable : R.string.device_role_managed));
             status.setVisibility(local ? GONE : VISIBLE);
         } finally { binding = false; }
+    }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        refresh();
+    }
+    @Override protected void onDetachedFromWindow() {
+        work.cancel(authorityJob);
+        super.onDetachedFromWindow();
+    }
+    private static final class AuthorityDisplay {
+        final boolean local, unavailable;
+        AuthorityDisplay(boolean local, boolean unavailable) {
+            this.local = local; this.unavailable = unavailable;
+        }
     }
     private boolean localAuthority() {
         try { return People.keyholder().state() == KeyholderProvider.State.NONE && People.isLocalConfigurationAllowed(); }
