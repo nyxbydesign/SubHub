@@ -142,8 +142,7 @@ public final class PersonUi {
                 if (person.lastSyncedAt <= 0 || person.lastSyncedAt > System.currentTimeMillis())
                     return context.getString(R.string.role_offline_last_online_unknown);
                 return context.getString(R.string.role_offline_last_online,
-                        android.text.format.DateUtils.getRelativeTimeSpanString(person.lastSyncedAt,
-                                System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS));
+                        ProfileViews.formatLastSeen(person.lastSyncedAt));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);
             default: return context.getString(R.string.role_connection_unpaired);

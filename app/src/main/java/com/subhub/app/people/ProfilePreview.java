@@ -43,9 +43,7 @@ public final class ProfilePreview extends LinearLayout {
     }
 
     public static ProfilePreview own(Context context, ProfileData profile, boolean dom) {
-        int role = profile.isSwitch
-                ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub;
-        return new ProfilePreview(context, profile, dom, "self_profile", false, null, false, role);
+        return new ProfilePreview(context, profile, dom, "self_profile", false, null, false);
     }
 
     public static ProfilePreview roster(Context context, ProfileData profile, String prefix) {
@@ -54,11 +52,6 @@ public final class ProfilePreview extends LinearLayout {
 
     private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
             boolean expanded, Consumer<Boolean> expansion, boolean roster) {
-        this(context, profile, dom, prefix, expanded, expansion, roster, profile.isSwitch ? R.string.profile_role_switch : dom ? R.string.role_dom : R.string.role_sub);
-    }
-
-    private ProfilePreview(Context context, ProfileData profile, boolean dom, String prefix,
-            boolean expanded, Consumer<Boolean> expansion, boolean roster, int role) {
         super(context);
         this.expansion = expansion; stateKey = prefix + ":" + dom;
         state = !roster && context instanceof androidx.lifecycle.ViewModelStoreOwner
@@ -81,11 +74,12 @@ public final class ProfilePreview extends LinearLayout {
         ViewCompat.setAccessibilityHeading(name, true);
         copy.addView(name, new LayoutParams(-1, -2));
         List<String> details = new ArrayList<>();
-        details.add(context.getString(role));
+        if (profile.isSwitch) details.add(context.getString(R.string.profile_role_switch));
         if (profile.age != 0) details.add(getResources().getQuantityString(R.plurals.profile_age_value, profile.age, profile.age));
         if (!profile.gender.isEmpty()) details.add(profile.gender);
         TextView summary = PersonUi.text(copy, String.join(" · ", details), false);
         summary.setTag(prefix + "_details"); summary.setTextSize(14);
+        summary.setVisibility(details.isEmpty() ? GONE : VISIBLE);
         summary.setPadding(0, PersonUi.dp(context, 4), 0, 0);
         if (roster) {
             TextView arrow = new TextView(context); arrow.setText("›"); arrow.setTextSize(24);

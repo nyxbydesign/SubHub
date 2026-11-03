@@ -575,7 +575,8 @@ public final class ProfileAndroidTest {
             scenario.onActivity(a -> {
                 View root = a.findViewById(android.R.id.content); ViewGroup avatar = root.findViewWithTag("contract_dom_avatar");
                 assertNotEquals(View.VISIBLE, avatar.getChildAt(1).getVisibility());
-                assertEquals(a.getString(R.string.role_dom), ((TextView) root.findViewWithTag("contract_dom_details")).getText().toString());
+                TextView details = root.findViewWithTag("contract_dom_details");
+                assertEquals("", details.getText().toString()); assertEquals(View.GONE, details.getVisibility());
                 assertEquals(View.GONE, root.findViewWithTag("contract_dom_about_expand").getVisibility()); textFits(root);
             });
         }
@@ -796,8 +797,12 @@ public final class ProfileAndroidTest {
                 try(ActivityScenario<ProfileActivity> scenario=ActivityScenario.launch(ProfileActivity.class)) {
                     scenario.onActivity(a->{
                         TextView details=a.findViewById(android.R.id.content).findViewWithTag("self_profile_details");
-                        String role=a.getString(mode==DeviceRolePreferences.Mode.BOTH?R.string.profile_role_switch:dom?R.string.role_dom:R.string.role_sub);
-                        assertTrue(details.getText().toString().equals(role)||details.getText().toString().startsWith(role+" · "));
+                        ProfileData profile=ProfileStore.load(a,dom);java.util.List<String> metadata=new java.util.ArrayList<>();
+                        if(mode==DeviceRolePreferences.Mode.BOTH)metadata.add(a.getString(R.string.profile_role_switch));
+                        if(profile.age!=0)metadata.add(a.getResources().getQuantityString(R.plurals.profile_age_value,profile.age,profile.age));
+                        if(!profile.gender.isEmpty())metadata.add(profile.gender);
+                        assertEquals(String.join(" · ",metadata),details.getText().toString());
+                        assertEquals(metadata.isEmpty()?View.GONE:View.VISIBLE,details.getVisibility());
                         assertEquals(dom,DeviceRolePreferences.isDomWorkspace(a));
                     });
                     if(mode==DeviceRolePreferences.Mode.BOTH) {
@@ -805,7 +810,15 @@ public final class ProfileAndroidTest {
                         ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),dom?"switch-own-dom":"switch-own-sub","profile_preview:"+(dom?"dom":"sub"));
                     }
                     scenario.recreate();
-                    scenario.onActivity(a->assertTrue(((TextView)a.findViewById(android.R.id.content).findViewWithTag("self_profile_details")).getText().toString().startsWith(a.getString(mode==DeviceRolePreferences.Mode.BOTH?R.string.profile_role_switch:dom?R.string.role_dom:R.string.role_sub))));
+                    scenario.onActivity(a->{
+                        TextView details=a.findViewById(android.R.id.content).findViewWithTag("self_profile_details");
+                        ProfileData profile=ProfileStore.load(a,dom);java.util.List<String> metadata=new java.util.ArrayList<>();
+                        if(mode==DeviceRolePreferences.Mode.BOTH)metadata.add(a.getString(R.string.profile_role_switch));
+                        if(profile.age!=0)metadata.add(a.getResources().getQuantityString(R.plurals.profile_age_value,profile.age,profile.age));
+                        if(!profile.gender.isEmpty())metadata.add(profile.gender);
+                        assertEquals(String.join(" · ",metadata),details.getText().toString());
+                        assertEquals(metadata.isEmpty()?View.GONE:View.VISIBLE,details.getVisibility());
+                    });
                 }
             }
         }

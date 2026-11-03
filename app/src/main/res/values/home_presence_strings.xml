@@ -5,7 +5,7 @@
     <string name="home_devices">Devices</string>
     <string name="home_devices_counts">%1$d online · %2$d offline</string>
     <string name="home_status_unknown">%1$d unknown</string>
-    <string name="role_last_online">Last online: %1$s</string>
-    <string name="role_offline_last_online">Offline · Last online %1$s</string>
-    <string name="role_offline_last_online_unknown">Offline · Last online unknown</string>
+    <string name="role_last_online">Last seen: %1$s</string>
+    <string name="role_offline_last_online">Offline · Last seen %1$s</string>
+    <string name="role_offline_last_online_unknown">Offline · Last seen unknown</string>
 </resources>

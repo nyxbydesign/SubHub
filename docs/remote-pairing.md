@@ -19,7 +19,21 @@ While a Dom is assigned, the Sub’s keyholder screen offers code-based recovery
 
 On a Both device, its existing local PIN can independently open its Dom profile and manage its outgoing Sub relationships, including while its own Dom is offline. That workspace unlock leaves the incoming Sub session, timer, configuration, and protection unchanged. It does not authorize stopping local Sub protection, changing its managed configuration, or unpairing its assigned Dom. Settings → Keyholder remains available for inspecting status when connection or credential checks are unavailable.
 
+The Dom's lists, Activity, Tasks, and aggregate statistics include the local Sub only after an explicit local relationship is approved. The Sub's own profile, history, and tasks remain independent of that relationship.
+
 An invitation expires and is limited to one relationship. Pairing by itself preserves the Sub's current configuration and running session. Android permissions remain local: pairing cannot grant Accessibility, screen capture, usage access, or other platform permissions.
+
+## Pending pairing and cancellation
+
+An invitation has an original public lifetime of ten minutes. Reopening the page, rotating the phone, or resuming background work does not restart that clock. A request already approved within its original bounds has a separate bounded completion period. The page shows the backend's sampled remaining time; an established relationship is not revoked when an invitation expires.
+
+Creating an invitation or accepting the existing fingerprint review can start background pairing work while the page is still visible. A result that arrives after leaving or rotating the page cannot start that service. Returning to a pending operation reuses it; it does not create a replacement invitation. Choose Resume pairing to restart stopped work while the page is open. Merely opening the page or a notification does not restart background work. Back and leaving the page do not cancel the request.
+
+Starting, running, and unavailable describe background pairing work, not proof that the other phone is connected or has approved. If the original clock cannot be verified, the request cannot resume. Cancel the pending request and use a fresh invitation. This also applies to older pending requests without retained clock information; existing active relationships remain intact.
+
+Cancel on the pairing page uses the existing Dom or enrollment authentication. Each ongoing pairing notification has a Cancel action for its own pending operation. A stale action cannot cancel a replacement or revoke an active relationship. A Both device can keep an outgoing invitation and an incoming request independently; cancelling one does not stop the other's background work.
+
+Pairing notifications use generic text and a low-importance channel. If notification permission or the channel is blocked, Android can still allow the foreground service and show work in its active apps list, but notification drawer controls may be unavailable. The page shows that limitation, retains Cancel and status, and links to pairing notification settings. Pairing does not request a notification grant or a battery exemption.
 
 ## Shared information and controls
 
@@ -43,7 +57,9 @@ Profiles show recent events for the selected person. This device's history stays
 
 Changes remain in a local outbox while the peer is unavailable. Sync sends bounded batches and resumes from acknowledged updates; interrupted transfers and duplicate deliveries can be retried safely. Pending changes need the original installation's data to survive.
 
-Keep both apps open for initial pairing and large transfers. With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. One open app and one backgrounded app is best effort. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
+Keep both apps open for the fingerprint reviews and large transfers. Pending pairing can continue through its user-started foreground service within the original operation's bounds. Android may stop the service; it does not automatically restart after process loss or reboot. Open the pairing page and explicitly resume eligible pending work. This is best effort and does not guarantee progress during Doze, under battery restrictions, or while either phone is offline.
+
+With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. One open app and one backgrounded app is best effort. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
 
 ## Unpair, reinstall, and recovery
 

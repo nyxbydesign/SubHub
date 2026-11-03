@@ -8,9 +8,15 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 /** Person identity and device selection stay visible throughout profile navigation. */
 public final class ProfileViews {
+    private static final DateTimeFormatter LAST_SEEN_FORMAT =
+            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.ROOT);
     private ProfileViews() {}
 
     public static String targetDiscriminator(Context context, PersonSnapshot person) {
@@ -33,6 +39,7 @@ public final class ProfileViews {
         Context context = parent.getContext();
         LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
+        inlineLastOnline(identity, "person", person.id, person.lastSyncedAt);
         View about = identity.findViewWithTag("person_about");
         if (about != null) about.setTag("person_about:" + person.id.value());
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
@@ -50,7 +57,9 @@ public final class ProfileViews {
         LinearLayout card = PersonUi.card(parent);
         card.setBackgroundResource(R.drawable.bg_home_composition_person);
         String prefix = "roster:" + person.id.value();
-        card.addView(ProfilePreview.roster(context, person.profile, prefix), new LinearLayout.LayoutParams(-1, -2));
+        ProfilePreview preview = ProfilePreview.roster(context, person.profile, prefix);
+        inlineLastOnline(preview, prefix, person.id, person.lastSyncedAt);
+        card.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(card, person, prefix + "_connection", false);
         card.setOnClickListener(view -> open.run());
         card.setFocusable(true);
@@ -65,12 +74,11 @@ public final class ProfileViews {
 
     private static void connectionSummary(LinearLayout parent, PersonSnapshot person, String tag, boolean profile) {
         if (person.connection == PersonSnapshot.Connection.LOCAL) return;
-        TextView state = PersonUi.text(parent, profile && person.connection == PersonSnapshot.Connection.OFFLINE
+        TextView state = PersonUi.text(parent, person.connection == PersonSnapshot.Connection.OFFLINE
                 ? parent.getContext().getString(R.string.role_connection_offline)
                 : PersonUi.connection(parent.getContext(), person), false);
         state.setTag(tag); state.setTextSize(12); state.setPadding(0, PersonUi.dp(parent.getContext(), 10), 0, 0);
         if (profile) {
-            lastOnline(parent, person.id, person.lastSyncedAt);
             if (person.sync.contract == PersonSnapshot.Freshness.STALE || person.sync.stats == PersonSnapshot.Freshness.STALE
                     || person.sync.runtime == PersonSnapshot.Freshness.STALE)
                 PersonUi.text(parent, parent.getContext().getString(R.string.peer_cached_data), false)
@@ -79,14 +87,35 @@ public final class ProfileViews {
     }
 
     public static void lastOnline(LinearLayout parent, PersonId target, long observed) {
-        if (target == null || target.isLocal()) return;
-        Context context = parent.getContext(); long now = System.currentTimeMillis();
-        CharSequence time = observed <= 0 || observed > now ? context.getString(R.string.remote_unknown)
-                : android.text.format.DateUtils.formatDateTime(context, observed,
-                        android.text.format.DateUtils.FORMAT_SHOW_DATE | android.text.format.DateUtils.FORMAT_SHOW_TIME
-                                | android.text.format.DateUtils.FORMAT_SHOW_YEAR);
-        TextView value = PersonUi.text(parent, context.getString(R.string.peer_last_online, time), false);
+        if (!remoteContactTarget(target)) return;
+        TextView value = PersonUi.text(parent, lastOnlineText(parent.getContext(), observed), false);
         value.setTextSize(12); value.setTag("profile_last_online:" + target.value());
+    }
+
+    /** Presence shares the existing metadata row; the profile's role choice and tags stay intact. */
+    static void inlineLastOnline(ProfilePreview preview, String prefix, PersonId target, long observed) {
+        if (!remoteContactTarget(target)) return;
+        TextView details = preview.findViewWithTag(prefix + "_details");
+        CharSequence existing = details.getText();
+        details.setText(android.text.TextUtils.concat(lastOnlineText(preview.getContext(), observed),
+                existing.length() == 0 ? "" : " · ", existing));
+        details.setVisibility(View.VISIBLE);
+    }
+
+    /** Journal targets route local profiles; only a transport peer generation can carry contact time. */
+    private static boolean remoteContactTarget(PersonId target) {
+        return target != null && target.value().matches("remote_[0-9a-f]{64}_[A-Za-z0-9_-]{1,128}");
+    }
+
+    private static String lastOnlineText(Context context, long observed) {
+        long now = System.currentTimeMillis();
+        CharSequence time = observed <= 0 || observed > now ? context.getString(R.string.remote_unknown)
+                : formatLastSeen(observed);
+        return context.getString(R.string.peer_last_online, time);
+    }
+
+    public static String formatLastSeen(long observed) {
+        return LAST_SEEN_FORMAT.format(Instant.ofEpochMilli(observed).atZone(ZoneId.systemDefault()));
     }
 
     public static View avatar(Context context, ProfileData profile) {

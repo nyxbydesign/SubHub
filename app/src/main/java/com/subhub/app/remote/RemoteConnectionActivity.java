@@ -37,7 +37,7 @@ public final class RemoteConnectionActivity extends RemotePage {
         String model=getString(R.string.remote_unknown);
         try{org.json.JSONObject runtime=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");if(RemoteTelemetry.validRuntime(runtime))model=runtime.optString("device",model);}catch(Exception unavailable){/* Keep unavailable source observations distinct from this phone. */}
         PersonUi.row(device,0,getString(R.string.role_device),model,null);
-        text(device,getString(R.string.role_last_online,peer.lastSyncedAt<=0 || peer.lastSyncedAt>System.currentTimeMillis()?getString(R.string.remote_unknown):java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(peer.lastSyncedAt))),false);
+        text(device,getString(R.string.role_last_online,peer.lastSyncedAt<=0 || peer.lastSyncedAt>System.currentTimeMillis()?getString(R.string.remote_unknown):com.subhub.app.people.ProfileViews.formatLastSeen(peer.lastSyncedAt)),false);
         String error=feature.store.metadata(peer.identity,peer.generation,"connection_error","");if(!error.isEmpty())text(device,getString(R.string.remote_failure),false);
         if(peer.state==RemoteStore.State.ACTIVE){
             android.widget.LinearLayout shared=PersonUi.card(body);text(shared,getString(R.string.remote_shared_controls),true);

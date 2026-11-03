@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="role_last_online">Zuletzt gesehen: %1$s</string>
+    <string name="role_offline_last_online">Offline · Zuletzt gesehen %1$s</string>
+    <string name="role_offline_last_online_unknown">Offline · Zuletzt gesehen unbekannt</string>
+</resources>
