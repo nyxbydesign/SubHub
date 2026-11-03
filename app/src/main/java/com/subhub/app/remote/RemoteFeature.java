@@ -25,6 +25,9 @@ public final class RemoteFeature {
     private final RemoteSecrets secrets;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
+    private final Object sessionControlLock = new Object();
+    private RemoteSessionControlCoordinator sessionControlCoordinator;
+    private String sessionControlIdentity = "";
     private final Object endpointLock=new Object();
     private final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"subhub-peer-clock"));
     private final ExecutorService acceptor=Executors.newSingleThreadExecutor(r->new Thread(r,"subhub-peer-accept"));
@@ -130,15 +133,24 @@ public final class RemoteFeature {
             RemoteStore.Peer current = store.peer(peer.identity, peer.generation);
             if (current == null || current.state != RemoteStore.State.ACTIVE || current.localRole != RemoteProtocol.Role.DOM)
                 throw new SecurityException("Current Sub relationship required");
-            return RemoteSessionRuntime.Snapshot.unsupported(current);
+            if (!RemoteSessionRuntime.applicationEnabled()) return RemoteSessionRuntime.Snapshot.unsupported(current);
+            return controlCoordinator(transport()).snapshot(current);
         });
     }
     public CompletableFuture<RemoteSessionRuntime.Review> reviewSession(RemoteStore.Peer peer,
             RemoteSessionCommands.Action action) {
-        return submit(() -> { requireKeyholder(); throw new UnsupportedOperationException("Session control unavailable"); });
+        return submit(() -> {
+            requireKeyholder();
+            if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
+            return controlCoordinator(transport()).review(peer, action);
+        });
     }
     public CompletableFuture<String> confirmSession(RemoteSessionRuntime.Review review) {
-        return submit(() -> { requireKeyholder(); throw new UnsupportedOperationException("Session control unavailable"); });
+        return submit(() -> {
+            requireKeyholder();
+            if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
+            String id = controlCoordinator(transport()).confirm(review); changed(); return id;
+        });
     }
     public CompletableFuture<RemoteSessionRuntime.HardcoreReview> reviewHardcoreStart() {
         return submit(() -> {
@@ -269,8 +281,27 @@ public final class RemoteFeature {
         }catch(Exception unavailable){android.util.Log.w("PeerSync","Peer session ended before completion");}
         finally{untrack(connection);if(reservation!=null)busy.remove(reservation);RemoteScheduler.synchronize(context,needsBackground());suspendIfIdle();}
     }
+    private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
+        if (Thread.holdsLock(store) || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
+                || Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK))
+            throw new IllegalStateException("Resolve session identity outside authority locks");
+        String identity = RemoteProtocol.peerId(active.localIdentity());
+        synchronized (sessionControlLock) {
+            if (sessionControlCoordinator == null || !sessionControlIdentity.equals(identity)) {
+                sessionControlCoordinator = new RemoteSessionControlCoordinator(context, store, identity);
+                sessionControlIdentity = identity;
+            }
+            return sessionControlCoordinator;
+        }
+    }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public int sessionControlVersion() { return RemoteSessionRuntime.applicationEnabled() ? RemoteSessionCommands.VERSION : 0; }
+            @Override public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
+                RemoteSessionControlCoordinator coordinator = controlCoordinator(active);
+                new RemoteSessionControlPeer(context, store, active.localIdentity(), coordinator::receiverState).exchange(connection, peer, deadline);
+            }
             @Override public int journalVersion() { return 1; }
             @Override public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
