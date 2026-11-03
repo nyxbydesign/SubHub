@@ -61,9 +61,19 @@ public final class RemoteSecrets {
         }
     }
     public synchronized void removePending(String generation) {
-        if (!prefs.edit().remove("pending_" + RemoteProtocol.identifier(generation)).commit()) {
-            throw new IllegalStateException("Could not remove pairing secret");
+        synchronized(LOCK){removePendingValue(generation);}
+    }
+    /** The caller also holds its shared pairing operation boundary; a stale owner never deletes a replacement. */
+    synchronized boolean removePendingIfMatches(String generation,String expectedLink)throws GeneralSecurityException{
+        if(expectedLink==null)return false;
+        synchronized(LOCK){
+            String current=pendingLink(generation);
+            if(!expectedLink.equals(current))return false;
+            removePendingValue(generation);return true;
         }
+    }
+    private void removePendingValue(String generation){
+        if(!prefs.edit().remove("pending_"+RemoteProtocol.identifier(generation)).commit())throw new IllegalStateException("Could not remove pairing secret");
     }
 
     synchronized String controllerSecret(RemoteProtocol.Role role, String identity, String generation)

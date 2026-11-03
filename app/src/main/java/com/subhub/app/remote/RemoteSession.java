@@ -71,7 +71,7 @@ public final class RemoteSession {
         send(connection,hello,deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
-            requireType(response,"revoked",peer);store.revoke(peer.identity,peer.generation);
+            requireType(response,"revoked",peer);store.revokeAuthenticatedPeer(connection,peer);
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(response,"hello_ack",peer);
@@ -95,6 +95,7 @@ public final class RemoteSession {
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
+        store.authorityAccess(()->null);
         String identity=RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
         String generation=RemoteProtocol.identifier(hello.getString("generation"));
         RemoteStore.Peer peer=store.peer(identity,generation);
@@ -139,6 +140,7 @@ public final class RemoteSession {
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
+        store.authorityAccess(()->{RemoteStore.Peer current=store.peer(peer.identity,peer.generation);if(current==null||current.state!=RemoteStore.State.REVOKED||current.localRole!=peer.localRole)throw new SecurityException("Current revocation required");return null;});
         if(peer.state!=RemoteStore.State.REVOKED || !peer.identity.equals(connection.authenticatedPeerIdentity()))throw new SecurityException("Invalid revocation target");
         send(connection,message("revoke",peer),deadline);requireType(read(connection,deadline),"revoke_ack",peer);
         store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
@@ -147,7 +149,7 @@ public final class RemoteSession {
     public void receiveRevocation(PeerTransport.Connection connection,JSONObject frame,long deadline) throws Exception {
         RemoteStore.Peer peer=store.peer(connection.authenticatedPeerIdentity(),RemoteProtocol.identifier(frame.getString("generation")));
         if(peer==null)throw new SecurityException("Unknown relationship");requireType(frame,"revoke",peer);
-        store.revoke(peer.identity,peer.generation);store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
+        store.revokeAuthenticatedPeer(connection,peer);store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
         send(connection,message("revoke_ack",peer),deadline);terminalDrain(connection,"revoke_complete",peer,deadline);
     }
 
@@ -336,8 +338,10 @@ public final class RemoteSession {
         throw new IOException("Unrequested asset");
     }
     private void checkActive(RemoteStore.Peer peer) {
-        RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
-        if(current==null || current.state!=RemoteStore.State.ACTIVE) throw new SecurityException("Pairing revoked");
+        store.authorityAccess(()->{
+            RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
+            if(current==null||current.state!=RemoteStore.State.ACTIVE||current.localRole!=peer.localRole)throw new SecurityException("Pairing revoked");return null;
+        });
     }
     private void requirePeer(PeerTransport.Connection connection,RemoteStore.Peer peer) {
         if(peer==null || !peer.identity.equals(connection.authenticatedPeerIdentity())) throw new SecurityException("Unknown peer");

@@ -501,6 +501,155 @@ public final class RelationshipUiAndroidTest {
         Files.write(new File(directory, "writer-proof.json").toPath(), proof.toString(2).getBytes(StandardCharsets.UTF_8));
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void recoveryProviderFixtureRecreatesAndRequiresFreshReviewThenAnExplicitCredentialTap() throws Exception {
+        RecoveryFixture provider = new RecoveryFixture(); RelationshipUi.install(provider); tour();
+        try (ActivityScenario<OnboardingActivity> scenario = ActivityScenario.launch(OnboardingActivity.class)) {
+            AtomicReference<OnboardingActivity> host = host(scenario);
+            await(() -> tagged(host.get(), "relationship_prepare") != null);
+            onView(tag("relationship_prepare")).perform(revealAboveNavigation(), click());
+            await(() -> tagged(host.get(), "relationship_confirm") != null);
+            assertTrue(provider.preparations.get(0).get(0).matches("fr1\\.[0-9a-f]{32}\\.7\\.[0-9a-f]{32}"));
+            assertTrue(provider.confirmations.isEmpty());
+            scenario.recreate(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "relationship_resume") != null);
+            scenario.onActivity(a -> assertNull(tagged(a, "relationship_confirm")));
+            assertTrue(provider.reviews.isEmpty());
+            onView(tag("relationship_resume")).perform(revealAboveNavigation(), click());
+            await(() -> tagged(host.get(), "relationship_confirm") != null);
+            assertEquals(Collections.singletonList(Arrays.asList("operation", DIGEST)), provider.reviews);
+            scenario.onActivity(a -> {
+                assertTrue(summaryLabel(a, true, "Original Dom", "")); assertTrue(summaryLabel(a, false, "Original Sub", ""));
+                assertEquals(provider.review("dom", "sub").scopeSummary, ((TextView) tagged(a, "relationship_scope")).getText().toString());
+            });
+            assertTrue(provider.confirmations.isEmpty());
+            scenario.recreate(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "relationship_resume") != null);
+            onView(tag("relationship_resume")).perform(revealAboveNavigation(), click());
+            await(() -> tagged(host.get(), "relationship_confirm") != null);
+            assertEquals(2, provider.reviews.size()); assertTrue(provider.confirmations.isEmpty());
+            onView(tag("relationship_confirm")).perform(revealAboveNavigation(), click());
+            onView(withHint(R.string.controller_pin_label)).perform(replaceText("2468"), closeSoftKeyboard());
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            onView(withText(R.string.controller_pin_unlock)).perform(click());
+            await(() -> textExists(host.get(), R.string.relationships_pending));
+            assertEquals(Collections.singletonList(Arrays.asList("operation", DIGEST)), provider.confirmations);
+            assertEquals(1, provider.preparations.size()); assertTrue(provider.resumes.isEmpty());
+            assertEquals("operation", RelationshipPanel.journal(context).read().operationId);
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void recoveryProviderFixtureLostResponseKeepsOriginalKeyUntilLookupAndFreshReview() throws Exception {
+        RecoveryFixture provider = new RecoveryFixture(); provider.preparation = new CompletableFuture<>();
+        RelationshipUi.install(provider); tour();
+        try (ActivityScenario<OnboardingActivity> scenario = ActivityScenario.launch(OnboardingActivity.class)) {
+            AtomicReference<OnboardingActivity> host = host(scenario);
+            await(() -> tagged(host.get(), "relationship_prepare") != null);
+            onView(tag("relationship_prepare")).perform(revealAboveNavigation(), click());
+            await(() -> provider.preparations.size() == 1);
+            List<String> original = provider.preparations.get(0);
+            RelationshipPresentation.Saved saved = RelationshipPanel.journal(context).read();
+            scenario.recreate(); scenario.onActivity(host::set);
+            provider.preparation.complete(provider.review("dom", "sub"));
+            await(() -> tagged(host.get(), "relationship_resume") != null && !provider.lookups.isEmpty());
+            assertEquals(saved, RelationshipPanel.journal(context).read());
+            int lookups = provider.lookups.size();
+            onView(tag("relationship_resume")).perform(revealAboveNavigation(), click());
+            await(() -> provider.lookups.size() > lookups);
+            assertEquals(saved, RelationshipPanel.journal(context).read());
+            scenario.onActivity(a -> assertNull(tagged(a, "relationship_confirm")));
+            provider.lookup = CompletableFuture.completedFuture(new RelationshipRecoveryUi.PreparationLookup(
+                    RelationshipRecoveryUi.PreparationLookup.Kind.FOUND, provider.localSummary()));
+            provider.localReview = new CompletableFuture<>();
+            onView(tag("relationship_resume")).perform(revealAboveNavigation(), click());
+            await(() -> !provider.reviews.isEmpty());
+            assertTrue(provider.confirmations.isEmpty());
+            provider.localReview.complete(provider.reviewed());
+            await(() -> tagged(host.get(), "relationship_confirm") != null);
+            assertEquals(1, provider.preparations.size());
+            for (List<String> request : provider.lookups) assertEquals(original, request);
+            assertEquals("operation", RelationshipPanel.journal(context).read().operationId);
+            assertEquals(DIGEST, RelationshipPanel.journal(context).read().digest);
+            assertTrue(provider.confirmations.isEmpty()); assertTrue(provider.cancellations.isEmpty());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void recoveryProviderFixtureMultipleSummariesKeepKindLabelsAndExactTappedIdentity() throws Exception {
+        RecoveryFixture provider = new RecoveryFixture();
+        RelationshipRecoveryUi.OperationSummary peer = new RelationshipRecoveryUi.OperationSummary(
+                new RelationshipUi.Operation("peer-operation", DIGEST, RelationshipUi.OperationState.PREPARED,
+                        provider.deadline, null, null, null), RelationshipRecoveryUi.OperationKind.PEER_INVITE_CREATE,
+                RelationshipUi.Delivery.PEER, "dom", null, "Invitation Dom", null);
+        provider.projection = CompletableFuture.completedFuture(recoveryProjection(Arrays.asList(provider.localSummary(), peer)));
+        RelationshipUi.install(provider); tour();
+        try (ActivityScenario<OnboardingActivity> scenario = ActivityScenario.launch(OnboardingActivity.class)) {
+            AtomicReference<OnboardingActivity> host = host(scenario);
+            await(() -> tagged(host.get(), "relationship_resume_summary:peer-operation") != null);
+            scenario.onActivity(a -> {
+                assertTrue(summaryLabel(a, true, "Original Dom", ":operation"));
+                assertTrue(summaryLabel(a, true, "Invitation Dom", ":peer-operation"));
+                assertNotNull(tagged(a, "relationship_operation_kind:operation"));
+                assertNotNull(tagged(a, "relationship_operation_kind:peer-operation"));
+                assertNotNull(tagged(a, "relationship_operation_id:operation"));
+                assertNotNull(tagged(a, "relationship_operation_id:peer-operation"));
+                assertFalse(textExists(a, "operation")); assertFalse(textExists(a, "peer-operation"));
+                assertNull(tagged(a, "relationship_prepare"));
+            });
+            onView(tag("relationship_resume_summary:peer-operation")).perform(revealAboveNavigation(), click());
+            await(() -> tagged(host.get(), "relationship_resume") != null);
+            assertEquals("peer-operation", RelationshipPanel.journal(context).read().operationId);
+            assertEquals(Collections.singletonList("peer-operation"), provider.resumes);
+            scenario.onActivity(a -> {
+                assertTrue(summaryLabel(a, true, "Invitation Dom", ""));
+                assertFalse(summaryLabel(a, true, "Original Dom", ""));
+                assertNull(tagged(a, "relationship_confirm"));
+            });
+            assertTrue(provider.reviews.isEmpty()); assertTrue(provider.preparations.isEmpty());
+            assertTrue(provider.confirmations.isEmpty());
+        }
+    }
+
+    private static RelationshipRecoveryUi.RecoverySnapshot recoveryProjection(List<RelationshipRecoveryUi.OperationSummary> summaries) {
+        List<RelationshipUi.Operation> operations = new ArrayList<>();
+        for (RelationshipRecoveryUi.OperationSummary value : summaries) operations.add(value.operation);
+        return new RelationshipRecoveryUi.RecoverySnapshot(new RelationshipUi.Snapshot(true,
+                "fr1:0123456789abcdef0123456789abcdef:7", participants(), Collections.emptyList(), null, operations), summaries);
+    }
+
+    private static boolean summaryLabel(Activity activity, boolean dom, String label, String suffix) {
+        View view = tagged(activity, (dom ? "relationship_dom_profile" : "relationship_sub_profile") + suffix);
+        String expected = activity.getString(R.string.relationships_participant,
+                activity.getString(dom ? R.string.role_dom : R.string.role_sub), label);
+        return view instanceof TextView && expected.contentEquals(((TextView) view).getText());
+    }
+
+    private static final class RecoveryFixture extends Fixture implements RelationshipRecoveryUi.Provider {
+        volatile CompletableFuture<RelationshipRecoveryUi.RecoverySnapshot> projection = CompletableFuture.completedFuture(recoveryProjection(Collections.emptyList()));
+        volatile CompletableFuture<RelationshipRecoveryUi.PreparationLookup> lookup = CompletableFuture.completedFuture(
+                new RelationshipRecoveryUi.PreparationLookup(RelationshipRecoveryUi.PreparationLookup.Kind.UNKNOWN, null));
+        volatile CompletableFuture<RelationshipRecoveryUi.ReviewResult> localReview;
+        final List<List<String>> lookups = new java.util.concurrent.CopyOnWriteArrayList<>(), reviews = new java.util.concurrent.CopyOnWriteArrayList<>();
+        public CompletableFuture<RelationshipRecoveryUi.RecoverySnapshot> recoverySnapshot() { return projection; }
+        public CompletableFuture<RelationshipRecoveryUi.PreparationLookup> lookupPreparation(String key, String dom, String sub, String revision) {
+            lookups.add(Arrays.asList(key, dom, sub, revision)); return lookup;
+        }
+        public CompletableFuture<RelationshipRecoveryUi.ReviewResult> reviewLocal(String id, String digest) {
+            assertEquals("operation", id); assertEquals(DIGEST, digest);
+            reviews.add(Arrays.asList(id, digest));
+            return localReview == null ? CompletableFuture.completedFuture(reviewed()) : localReview;
+        }
+        RelationshipRecoveryUi.OperationSummary localSummary() {
+            return new RelationshipRecoveryUi.OperationSummary(new RelationshipUi.Operation("operation", DIGEST,
+                    RelationshipUi.OperationState.PREPARED, deadline, null, null, null), RelationshipRecoveryUi.OperationKind.LOCAL_LINK,
+                    RelationshipUi.Delivery.LOCAL, "dom", "sub", "Original Dom", "Original Sub");
+        }
+        RelationshipRecoveryUi.ReviewResult reviewed() {
+            return new RelationshipRecoveryUi.ReviewResult(RelationshipRecoveryUi.ReviewResult.Kind.REVIEW, localSummary(), review("dom", "sub"));
+        }
+    }
+
     private void tour() {
         assertTrue(context.getSharedPreferences("subhub_onboarding", 0).edit().putBoolean("completed", false)
                 .putBoolean("in_progress", true).putInt("draft_flow_version", OnboardingFlow.VERSION)
@@ -531,7 +680,7 @@ public final class RelationshipUiAndroidTest {
         CompletableFuture<T> future = new CompletableFuture<>(); future.completeExceptionally(new IllegalStateException("Unavailable"));
         return future;
     }
-    private static final class Fixture implements RelationshipUi.Provider {
+    private static class Fixture implements RelationshipUi.Provider {
         volatile CompletableFuture<RelationshipUi.Snapshot> snapshot = CompletableFuture.completedFuture(
                 RelationshipUiAndroidTest.snapshot(Collections.emptyList(), participants()));
         volatile CompletableFuture<RelationshipUi.LocalReview> preparation;

@@ -16,6 +16,7 @@ import java.util.function.Supplier;
 /** Lifecycle-bound presentation of coordinator results; authorization stays in the provider. */
 public final class RelationshipPresentation {
     public enum Mode { LEGACY, LOADING, READY, UNAVAILABLE }
+    public enum RecoveryState { NONE, UNKNOWN, UNAVAILABLE, REFUSED, ABSENT_NEVER_CREATED }
 
     public interface Journal {
         boolean authoritativeSeen();
@@ -57,9 +58,12 @@ public final class RelationshipPresentation {
         public final boolean legacy;
         public final RelationshipUi.Provider provider;
         public final RelationshipUi.Snapshot snapshot;
+        public final RelationshipRecoveryUi.RecoverySnapshot recovery;
         private final Journal journal;
-        private Access(boolean legacy, RelationshipUi.Provider provider, RelationshipUi.Snapshot snapshot, Journal journal) {
-            this.legacy = legacy; this.provider = provider; this.snapshot = snapshot; this.journal = journal;
+        private Access(boolean legacy, RelationshipUi.Provider provider, RelationshipUi.Snapshot snapshot,
+                RelationshipRecoveryUi.RecoverySnapshot recovery, Journal journal) {
+            this.legacy = legacy; this.provider = provider; this.snapshot = snapshot;
+            this.recovery = recovery; this.journal = journal;
         }
         public boolean current(Supplier<RelationshipUi.Provider> source) {
             return provider == source.get() && (!legacy || !journal.authoritativeSeen());
@@ -71,12 +75,19 @@ public final class RelationshipPresentation {
         try {
             if (provider == RelationshipUi.unavailable()) {
                 if (journal.authoritativeSeen()) return failed();
-                return CompletableFuture.completedFuture(new Access(true, provider, null, journal));
+                return CompletableFuture.completedFuture(new Access(true, provider, null, null, journal));
             }
             if (!journal.markAuthoritativeSeen()) return failed();
+            if (provider instanceof RelationshipRecoveryUi.Provider) {
+                return Objects.requireNonNull(((RelationshipRecoveryUi.Provider) provider).recoverySnapshot()).thenApply(value -> {
+                    if (value == null || !value.snapshot.supported)
+                        throw new RelationshipUi.Failure(RelationshipUi.Reason.UNAVAILABLE);
+                    return new Access(false, provider, value.snapshot, value, journal);
+                });
+            }
             return Objects.requireNonNull(provider.snapshot()).thenApply(snapshot -> {
                 if (snapshot == null || !snapshot.supported) throw new RelationshipUi.Failure(RelationshipUi.Reason.UNAVAILABLE);
-                return new Access(false, provider, snapshot, journal);
+                return new Access(false, provider, snapshot, null, journal);
             });
         } catch (RuntimeException failure) { return failed(); }
     }
@@ -102,6 +113,13 @@ public final class RelationshipPresentation {
     private RelationshipUi.Snapshot snapshot;
     private RelationshipUi.LocalReview review;
     private RelationshipUi.Operation operation;
+    private RelationshipRecoveryUi.RecoverySnapshot recovery;
+    private RelationshipRecoveryUi.OperationSummary summary;
+    private RelationshipUi.LocalReview reviewBasis;
+    private RecoveryState recoveryState = RecoveryState.NONE;
+    private boolean unlinkUnavailable;
+    private long completedUnlinks;
+    private long rosterChanges;
 
     public RelationshipPresentation(Supplier<RelationshipUi.Provider> source, Journal journal,
             Executor delivery, Supplier<String> context, BooleanSupplier mayLink,
@@ -116,6 +134,16 @@ public final class RelationshipPresentation {
     public RelationshipUi.Snapshot snapshot() { return snapshot; }
     public RelationshipUi.LocalReview review() { return review; }
     public RelationshipUi.Operation operation() { return operation; }
+    public RelationshipRecoveryUi.OperationSummary summary() { return summary; }
+    public List<RelationshipRecoveryUi.OperationSummary> summaries() {
+        return recovery == null ? Collections.emptyList() : recovery.summaries;
+    }
+    public boolean recoveryAware() { return provider instanceof RelationshipRecoveryUi.Provider; }
+    public RecoveryState recoveryState() { return recoveryState; }
+    public long reviewEpoch() { return epoch; }
+    public boolean unlinkUnavailable() { return unlinkUnavailable; }
+    public long completedUnlinks() { return completedUnlinks; }
+    public long rosterChanges() { return rosterChanges; }
     public Saved saved() { return journal.read(); }
     public String domChoice() { return domChoice; }
     public String subChoice() { return subChoice; }
@@ -124,6 +152,8 @@ public final class RelationshipPresentation {
         boundContext = context.get(); attached = boundContext != null;
         long request = ++epoch;
         provider = source.get(); snapshot = null; review = null; operation = null;
+        recovery = null; summary = null; reviewBasis = null; recoveryState = RecoveryState.NONE;
+        unlinkUnavailable = false;
         busy = attached; mode = Mode.LOADING;
         if (!attached) return;
         notifyChanged();
@@ -134,9 +164,9 @@ public final class RelationshipPresentation {
     private void loaded(long request, Access value, Throwable failure) {
         if (!valid(request)) return;
         busy = false;
-        if (failure != null || !value.current(source)) { unavailable(); return; }
+        if (failure != null || value == null || !value.current(source)) { unavailable(); return; }
         if (value.legacy) { mode = Mode.LEGACY; notifyChanged(); return; }
-        snapshot = value.snapshot; mode = Mode.READY;
+        snapshot = value.snapshot; recovery = value.recovery; mode = Mode.READY;
         Saved saved = journal.read();
         if (saved != null && saved.unresolved()) {
             domChoice = saved.domRef; subChoice = saved.subRef;
@@ -144,11 +174,21 @@ public final class RelationshipPresentation {
             if (!has(domChoice, RelationshipUi.Role.DOM)) domChoice = first(RelationshipUi.Role.DOM);
             if (!has(subChoice, RelationshipUi.Role.SUB)) subChoice = first(RelationshipUi.Role.SUB);
         }
+        if (saved != null && recoveryAware()) {
+            if (saved.unresolved()) { lookup(saved); return; }
+            summary = findSummary(saved.operationId);
+            if (summary != null) {
+                if (!matches(saved, summary.operation)) { unavailable(); return; }
+                if (terminal(summary.operation.state)) { applyStatus(saved, summary.operation, summary, true); return; }
+                operation = summary.operation;
+            } else recoveryState = RecoveryState.UNKNOWN;
+        }
         notifyChanged();
     }
 
     public void detach() {
         attached = false; ++epoch; busy = false; snapshot = null; review = null; operation = null;
+        recovery = null; summary = null; reviewBasis = null; recoveryState = RecoveryState.NONE;
     }
 
     public void choose(String domRef, String subRef) {
@@ -156,14 +196,67 @@ public final class RelationshipPresentation {
         if (!has(domRef, RelationshipUi.Role.DOM) || !has(subRef, RelationshipUi.Role.SUB)) return;
         if (Objects.equals(domChoice, domRef) && Objects.equals(subChoice, subRef)) return;
         domChoice = domRef; subChoice = subRef; ++epoch; review = null; operation = null;
+        summary = null;
         notifyChanged();
     }
 
     public boolean canPrepare() {
-        return mode == Mode.READY && !busy && valid(epoch) && mayLink.getAsBoolean()
+        Saved saved = journal.read();
+        return localAllowed()
                 && snapshot.governingDom == null && has(domChoice, RelationshipUi.Role.DOM)
                 && has(subChoice, RelationshipUi.Role.SUB)
-                && (journal.read() != null || !hasPendingSummary());
+                && (saved == null ? !hasPendingSummary() : saved.unresolved() && !recoveryAware());
+    }
+
+    private boolean localAllowed() {
+        return mode == Mode.READY && !busy && valid(epoch) && mayLink.getAsBoolean();
+    }
+
+    public boolean canConfirm() {
+        Saved saved = journal.read();
+        return localAllowed() && review != null && snapshot.governingDom == null
+                && saved != null && !saved.unresolved() && saved.operationId.equals(review.operationId)
+                && saved.digest.equals(review.requestDigest) && review.domParticipantRef.equals(domChoice)
+                && review.subParticipantRef.equals(subChoice) && has(domChoice, RelationshipUi.Role.DOM)
+                && has(subChoice, RelationshipUi.Role.SUB);
+    }
+
+    /** A proven absence permits only an explicit retry of the original versioned request. */
+    public boolean canRetryPreparation() {
+        Saved saved = journal.read();
+        return recoveryAware() && localAllowed() && recoveryState == RecoveryState.ABSENT_NEVER_CREATED
+                && saved != null && saved.unresolved() && saved.operationKey.startsWith("fr1.")
+                && snapshot.governingDom == null && saved.domRef.equals(domChoice) && saved.subRef.equals(subChoice)
+                && has(domChoice, RelationshipUi.Role.DOM) && has(subChoice, RelationshipUi.Role.SUB);
+    }
+
+    public boolean canUnlink(RelationshipUi.Edge expected) {
+        if (!recoveryAware() || !localAllowed() || expected == null || expected.delivery != RelationshipUi.Delivery.LOCAL
+                || !"ACTIVE".equals(expected.state) || !has(expected.domParticipantRef, RelationshipUi.Role.DOM)
+                || !has(expected.subParticipantRef, RelationshipUi.Role.SUB)) return false;
+        if (snapshot.governingDom == expected) return true;
+        for (RelationshipUi.Edge edge : snapshot.eligibleSubs) if (edge == expected) return true;
+        return false;
+    }
+
+    public void unlink(RelationshipUi.Edge expected, long expectedEpoch) {
+        if (expectedEpoch != epoch || !canUnlink(expected)) return;
+        long request = ++epoch;
+        busy = true; review = null; unlinkUnavailable = false; notifyChanged();
+        CompletableFuture<Void> future;
+        try { future = ((RelationshipRecoveryUi.Provider) provider).unlink(expected.relationshipId, expected.generation); }
+        catch (RuntimeException failure) { busy = false; unlinkUnavailable = true; notifyChanged(); return; }
+        if (future == null) { busy = false; unlinkUnavailable = true; notifyChanged(); return; }
+        observe(this, future, (owner, value, failure) -> owner.unlinked(request, failure));
+    }
+
+    private void unlinked(long request, Throwable failure) {
+        if (!valid(request)) return;
+        busy = false;
+        if (failure != null) { unlinkUnavailable = true; notifyChanged(); return; }
+        completedUnlinks++;
+        rosterChanges++;
+        refresh();
     }
 
     private boolean hasPendingSummary() {
@@ -174,19 +267,33 @@ public final class RelationshipPresentation {
     }
 
     public void prepare() {
-        if (!canPrepare()) return;
         Saved saved = journal.read();
+        if (saved != null && saved.unresolved() && recoveryAware()) {
+            if (!recoverAllowed(saved)) return;
+            if (canRetryPreparation()) submitPreparation(saved, false);
+            else lookup(saved);
+            return;
+        }
+        if (!canPrepare()) return;
         boolean acknowledged = false;
         if (saved == null) {
-            saved = Saved.preparing(UUID.randomUUID().toString(), domChoice, subChoice, snapshot.revision);
+            String key;
+            try {
+                key = recoveryAware() ? RelationshipPreparationKey.create(snapshot.revision) : UUID.randomUUID().toString();
+            } catch (RuntimeException failure) { unavailable(); return; }
+            saved = Saved.preparing(key, domChoice, subChoice, snapshot.revision);
             if (!journal.replace(null, saved)) { unavailable(); return; }
             acknowledged = true;
         }
         if (!saved.unresolved() || !saved.domRef.equals(domChoice) || !saved.subRef.equals(subChoice)) return;
+        submitPreparation(saved, acknowledged);
+    }
+
+    private void submitPreparation(Saved saved, boolean acknowledged) {
         if (!acknowledged && !journal.replace(saved, saved)) { unavailable(); return; }
         final Saved requestSaved = saved;
         final long request = ++epoch;
-        busy = true; review = null; operation = null; notifyChanged();
+        busy = true; review = null; reviewBasis = null; operation = null; summary = null; recoveryState = RecoveryState.NONE; notifyChanged();
         CompletableFuture<RelationshipUi.LocalReview> future;
         try { future = provider.prepareLocal(saved.operationKey, saved.domRef, saved.subRef, saved.revision); }
         catch (RuntimeException failure) { unavailable(); return; }
@@ -204,13 +311,16 @@ public final class RelationshipPresentation {
                 || !journal.replace(requestSaved, Saved.operation(value.operationId, value.requestDigest))) {
             unavailable(); return;
         }
-        review = value; notifyChanged();
+        review = value; reviewBasis = value; notifyChanged();
     }
 
     /** The expected object binds a credential callback to the exact review the user saw. */
     public void confirm(RelationshipUi.LocalReview expected) {
+        confirm(expected, epoch);
+    }
+    public void confirm(RelationshipUi.LocalReview expected, long expectedEpoch) {
         Saved saved = journal.read();
-        if (!canPrepare() || expected == null || expected != review || saved == null || saved.unresolved()
+        if (expectedEpoch != epoch || !canConfirm() || expected == null || expected != review || saved == null || saved.unresolved()
                 || !saved.operationId.equals(expected.operationId) || !saved.digest.equals(expected.requestDigest)) return;
         run(saved, () -> provider.confirmLocal(saved.operationId, saved.digest));
     }
@@ -219,12 +329,122 @@ public final class RelationshipPresentation {
         resume(journal.read());
     }
     public void resume(Saved expected) {
+        if (expected != null && expected.unresolved() && recoveryAware()) {
+            if (recoverAllowed(expected)) lookup(expected);
+            return;
+        }
         if (!actionAllowed(expected) || !expected.equals(journal.read())) return;
+        if (recoveryAware()) {
+            RelationshipRecoveryUi.OperationSummary current = boundSummary(expected);
+            if (current == null || current.kind == RelationshipRecoveryUi.OperationKind.LOCAL_LINK) {
+                obtainReview(expected, current); return;
+            }
+        }
         run(expected, () -> provider.resume(expected.operationId));
+    }
+
+    private boolean recoverAllowed(Saved saved) {
+        return saved != null && mode == Mode.READY && !busy && valid(epoch) && saved.equals(journal.read());
+    }
+
+    private void lookup(Saved saved) {
+        if (!journal.replace(saved, saved)) { unavailable(); return; }
+        long request = ++epoch;
+        busy = true; review = null; operation = null; summary = null; recoveryState = RecoveryState.NONE; notifyChanged();
+        CompletableFuture<RelationshipRecoveryUi.PreparationLookup> future;
+        try {
+            future = ((RelationshipRecoveryUi.Provider) provider).lookupPreparation(
+                    saved.operationKey, saved.domRef, saved.subRef, saved.revision);
+        } catch (RuntimeException failure) { unavailable(); return; }
+        if (future == null) { unavailable(); return; }
+        observe(this, future, (owner, value, failure) -> owner.lookedUp(request, saved, value, failure));
+    }
+
+    private void lookedUp(long request, Saved saved, RelationshipRecoveryUi.PreparationLookup value, Throwable failure) {
+        if (!valid(request)) return;
+        busy = false;
+        if (!saved.equals(journal.read())) { unavailable(); return; }
+        if (failure != null || value == null) { recoveryState = RecoveryState.UNAVAILABLE; notifyChanged(); return; }
+        if (value.kind != RelationshipRecoveryUi.PreparationLookup.Kind.FOUND) {
+            switch (value.kind) {
+                case REFUSED: recoveryState = RecoveryState.REFUSED; break;
+                case UNAVAILABLE: recoveryState = RecoveryState.UNAVAILABLE; break;
+                case ABSENT_NEVER_CREATED: recoveryState = RecoveryState.ABSENT_NEVER_CREATED; break;
+                default: recoveryState = RecoveryState.UNKNOWN;
+            }
+            notifyChanged(); return;
+        }
+        RelationshipRecoveryUi.OperationSummary found = value.summary;
+        RelationshipRecoveryUi.OperationSummary listed = findSummary(found.operation.operationId);
+        if (found.kind != RelationshipRecoveryUi.OperationKind.LOCAL_LINK
+                || found.delivery != RelationshipUi.Delivery.LOCAL || !saved.domRef.equals(found.domParticipantRef)
+                || !saved.subRef.equals(found.subParticipantRef) || listed != null && !sameScope(listed, found)) {
+            recoveryState = RecoveryState.REFUSED; notifyChanged(); return;
+        }
+        Saved reference = Saved.operation(found.operation.operationId, found.operation.requestDigest);
+        if (!journal.replace(saved, reference)) { unavailable(); return; }
+        summary = found; domChoice = found.domParticipantRef; subChoice = found.subParticipantRef;
+        if (found.operation.state == RelationshipUi.OperationState.PREPARED) obtainReview(reference, found);
+        else applyStatus(reference, found.operation, found);
+    }
+
+    private void obtainReview(Saved saved, RelationshipRecoveryUi.OperationSummary expected) {
+        if (!journal.replace(saved, saved)) { unavailable(); return; }
+        if (reviewBasis != null && !saved.operationId.equals(reviewBasis.operationId)) reviewBasis = null;
+        summary = expected;
+        long request = ++epoch;
+        busy = true; review = null; operation = null; recoveryState = RecoveryState.NONE; notifyChanged();
+        CompletableFuture<RelationshipRecoveryUi.ReviewResult> future;
+        try { future = ((RelationshipRecoveryUi.Provider) provider).reviewLocal(saved.operationId, saved.digest); }
+        catch (RuntimeException failure) { unavailable(); return; }
+        if (future == null) { unavailable(); return; }
+        observe(this, future, (owner, value, failure) -> owner.reviewed(request, saved, expected, value, failure));
+    }
+
+    private void reviewed(long request, Saved saved, RelationshipRecoveryUi.OperationSummary expected,
+            RelationshipRecoveryUi.ReviewResult value, Throwable failure) {
+        if (!valid(request)) return;
+        busy = false;
+        if (!saved.equals(journal.read())) { unavailable(); return; }
+        if (failure != null || value == null) { recoveryState = RecoveryState.UNAVAILABLE; notifyChanged(); return; }
+        if (value.kind != RelationshipRecoveryUi.ReviewResult.Kind.REVIEW
+                && value.kind != RelationshipRecoveryUi.ReviewResult.Kind.STATUS) {
+            recoveryState = value.kind == RelationshipRecoveryUi.ReviewResult.Kind.REFUSED ? RecoveryState.REFUSED
+                    : value.kind == RelationshipRecoveryUi.ReviewResult.Kind.UNAVAILABLE ? RecoveryState.UNAVAILABLE : RecoveryState.UNKNOWN;
+            notifyChanged(); return;
+        }
+        RelationshipRecoveryUi.OperationSummary current = value.summary;
+        if (!matches(saved, current.operation) || expected != null && !sameScope(expected, current)
+                || reviewBasis != null && (current.kind != RelationshipRecoveryUi.OperationKind.LOCAL_LINK
+                        || current.delivery != RelationshipUi.Delivery.LOCAL
+                        || reviewBasis.originalDeadline != current.operation.originalDeadline
+                        || !reviewBasis.domParticipantRef.equals(current.domParticipantRef)
+                        || !reviewBasis.subParticipantRef.equals(current.subParticipantRef))) {
+            recoveryState = RecoveryState.REFUSED; notifyChanged(); return;
+        }
+        if (value.kind == RelationshipRecoveryUi.ReviewResult.Kind.STATUS) {
+            applyStatus(saved, current.operation, current); return;
+        }
+        RelationshipUi.LocalReview fresh = value.review;
+        if (!mayLink.getAsBoolean() || !has(fresh.domParticipantRef, RelationshipUi.Role.DOM)
+                || !has(fresh.subParticipantRef, RelationshipUi.Role.SUB)
+                || snapshot.governingDom != null || reviewBasis != null && !sameReviewScope(reviewBasis, fresh)) {
+            recoveryState = RecoveryState.REFUSED; notifyChanged(); return;
+        }
+        summary = current; operation = current.operation; review = fresh; reviewBasis = fresh;
+        domChoice = fresh.domParticipantRef; subChoice = fresh.subParticipantRef;
+        notifyChanged();
     }
 
     /** A user may observe an exact current summary without preparing or authorizing a new link. */
     public void resumeSummary(RelationshipUi.Operation expected) {
+        if (mode != Mode.READY || busy || !valid(epoch) || snapshot == null) return;
+        if (recoveryAware()) {
+            if (recovery == null) return;
+            for (int index = 0; index < snapshot.operations.size(); index++)
+                if (snapshot.operations.get(index) == expected) { resumeSummary(recovery.summaries.get(index)); return; }
+            return;
+        }
         if (mode != Mode.READY || busy || !valid(epoch) || journal.read() != null || expected == null
                 || expected.state != RelationshipUi.OperationState.PREPARED
                         && expected.state != RelationshipUi.OperationState.PENDING) return;
@@ -233,6 +453,15 @@ public final class RelationshipPresentation {
         if (!current) return;
         Saved reference = Saved.operation(expected.operationId, expected.requestDigest);
         if (!journal.replace(null, reference)) { unavailable(); return; }
+        resume(reference);
+    }
+
+    public void resumeSummary(RelationshipRecoveryUi.OperationSummary expected) {
+        if (mode != Mode.READY || busy || !valid(epoch) || journal.read() != null || expected == null || recovery == null
+                || !pending(expected.operation.state) || !recovery.summaries.contains(expected)) return;
+        Saved reference = Saved.operation(expected.operation.operationId, expected.operation.requestDigest);
+        if (!journal.replace(null, reference)) { unavailable(); return; }
+        summary = expected;
         resume(reference);
     }
 
@@ -251,7 +480,7 @@ public final class RelationshipPresentation {
     private void run(Saved saved, Supplier<CompletableFuture<RelationshipUi.Operation>> action) {
         if (!journal.replace(saved, saved)) { unavailable(); return; }
         long request = ++epoch;
-        busy = true; review = null; operation = null; notifyChanged();
+        busy = true; review = null; operation = null; recoveryState = RecoveryState.NONE; notifyChanged();
         CompletableFuture<RelationshipUi.Operation> future;
         try { future = action.get(); }
         catch (RuntimeException failure) { unavailable(); return; }
@@ -262,14 +491,62 @@ public final class RelationshipPresentation {
     private void completed(long request, Saved saved, RelationshipUi.Operation value, Throwable failure) {
         if (!valid(request)) return;
         busy = false;
-        if (failure != null || value == null || !saved.operationId.equals(value.operationId)
-                || !saved.digest.equals(value.requestDigest) || !saved.equals(journal.read())) {
+        RelationshipRecoveryUi.OperationSummary expected = boundSummary(saved);
+        if (failure != null || value == null || !matches(saved, value) || !saved.equals(journal.read())
+                || expected != null && expected.operation.originalDeadline != value.originalDeadline
+                || reviewBasis != null && reviewBasis.originalDeadline != value.originalDeadline) {
             unavailable(); return;
         }
-        boolean terminal = value.state != RelationshipUi.OperationState.PREPARED
-                && value.state != RelationshipUi.OperationState.PENDING;
-        if (terminal && !journal.replace(saved, null)) { unavailable(); return; }
-        operation = value; notifyChanged();
+        applyStatus(saved, value, expected);
+    }
+
+    private void applyStatus(Saved saved, RelationshipUi.Operation value, RelationshipRecoveryUi.OperationSummary typed) {
+        applyStatus(saved, value, typed, false);
+    }
+
+    private void applyStatus(Saved saved, RelationshipUi.Operation value,
+            RelationshipRecoveryUi.OperationSummary typed, boolean authoritativeSnapshot) {
+        if (terminal(value.state) && !journal.replace(saved, null)) { unavailable(); return; }
+        operation = value; summary = typed; review = null; recoveryState = RecoveryState.NONE;
+        if (value.state == RelationshipUi.OperationState.ACTIVE) {
+            rosterChanges++;
+            if (!authoritativeSnapshot) { refresh(); return; }
+        }
+        notifyChanged();
+    }
+
+    private static boolean terminal(RelationshipUi.OperationState state) {
+        return !pending(state) && state != RelationshipUi.OperationState.UNAVAILABLE;
+    }
+
+    private static boolean pending(RelationshipUi.OperationState state) {
+        return state == RelationshipUi.OperationState.PREPARED || state == RelationshipUi.OperationState.PENDING;
+    }
+    private static boolean matches(Saved saved, RelationshipUi.Operation value) {
+        return saved.operationId.equals(value.operationId) && saved.digest.equals(value.requestDigest);
+    }
+    private RelationshipRecoveryUi.OperationSummary findSummary(String id) {
+        if (recovery != null) for (RelationshipRecoveryUi.OperationSummary value : recovery.summaries)
+            if (value.operation.operationId.equals(id)) return value;
+        return null;
+    }
+    private RelationshipRecoveryUi.OperationSummary boundSummary(Saved saved) {
+        if (summary != null && summary.operation.operationId.equals(saved.operationId)) return summary;
+        return findSummary(saved.operationId);
+    }
+    private static boolean sameScope(RelationshipRecoveryUi.OperationSummary first, RelationshipRecoveryUi.OperationSummary second) {
+        return first.operation.operationId.equals(second.operation.operationId)
+                && first.operation.requestDigest.equals(second.operation.requestDigest)
+                && first.operation.originalDeadline == second.operation.originalDeadline
+                && first.kind == second.kind && first.delivery == second.delivery
+                && Objects.equals(first.domParticipantRef, second.domParticipantRef)
+                && Objects.equals(first.subParticipantRef, second.subParticipantRef);
+    }
+    private static boolean sameReviewScope(RelationshipUi.LocalReview first, RelationshipUi.LocalReview second) {
+        return first.operationId.equals(second.operationId) && first.requestDigest.equals(second.requestDigest)
+                && first.originalDeadline == second.originalDeadline && first.scopeDigest.equals(second.scopeDigest)
+                && first.domParticipantRef.equals(second.domParticipantRef) && first.subParticipantRef.equals(second.subParticipantRef)
+                && first.scopeSummary.equals(second.scopeSummary);
     }
 
     private interface Completion<T> {
@@ -291,6 +568,7 @@ public final class RelationshipPresentation {
     }
     private void unavailable() {
         mode = Mode.UNAVAILABLE; busy = false; snapshot = null; review = null; operation = null;
+        recovery = null; summary = null;
         notifyChanged();
     }
     private void notifyChanged() { if (attached) changed.accept(this); }

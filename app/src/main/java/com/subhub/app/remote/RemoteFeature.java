@@ -44,22 +44,31 @@ public final class RemoteFeature {
     private boolean librariesRetired;
 
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
-    RemoteFeature(Context context,RemoteStore store) {
-        this.context=context.getApplicationContext();this.store=store;secrets=new RemoteSecrets(this.context);
+    RemoteFeature(Context context,RemoteStore store) {this(context,store,new RemoteSecrets(context.getApplicationContext()));}
+    RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets) {
+        this.context=context.getApplicationContext();this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
         activity=new RemoteActivityRepository(this.context,store,this::changed);
         store.onActivityReceived(activity::received);
-        store.onRevoked((identity,generation)->{keyholder.revoked(identity,generation);secrets.removePending(generation);activity.revoked(store.peer(identity,generation));});
+        store.onRevoked((identity,generation)->{cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));});
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
         sessions.allowCoreThreadTimeOut(true);
-        try{writer.recover();writer.prunePrepared();if(com.subhub.app.configuration.LegacyPackMigration.isReady(this.context)){store.retireLibraries();librariesRetired=true;}for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){keyholder.revoked(old.identity,old.generation);secrets.removePending(old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
+        try{writer.recover();writer.prunePrepared();if(com.subhub.app.configuration.LegacyPackMigration.isReady(this.context)){store.retireLibraries();librariesRetired=true;}for(RemoteStore.Peer old:store.peers(true))if(old.state==RemoteStore.State.REVOKED){cleanupRevokedSecrets(old.identity,old.generation);}recovered=true;}catch(Exception unavailable){recovered=false;}
+    }
+    private void cleanupRevokedSecrets(String identity,String generation){
+        store.authorityAccess(()->{
+            keyholder.revoked(identity,generation);
+            String expected=secrets.pendingLink(generation);
+            if(store.ownsPendingSecret(identity,generation,expected))secrets.removePendingIfMatches(generation,expected);
+            return null;
+        });
     }
     public boolean recoveryReady(){return recovered&&com.subhub.app.configuration.LegacyPackMigration.isReady(context);}
-    public boolean controlsLocal(){return !recoveryReady() || store.isRemotelyControlled();}
+    public boolean controlsLocal(){try{return !recoveryReady()||store.authorityObservation(store::isRemotelyControlled);}catch(RuntimeException unavailable){return true;}}
 
     public synchronized void installLifecycle(Application app) {
         if(installed)return;installed=true;
@@ -76,7 +85,7 @@ public final class RemoteFeature {
     }
     public <T> CompletableFuture<T> submit(Callable<T> work) {
         CompletableFuture<T> result=new CompletableFuture<>();
-        try{sessions.execute(()->{leases.incrementAndGet();try{result.complete(work.call());}catch(Exception failure){result.completeExceptionally(failure);}finally{leases.decrementAndGet();suspendIfIdle();}});}
+        try{sessions.execute(()->{leases.incrementAndGet();try{result.complete(store.authorityAccess(work::call));}catch(Exception failure){result.completeExceptionally(failure);}finally{leases.decrementAndGet();suspendIfIdle();}});}
         catch(RejectedExecutionException full){result.completeExceptionally(new IOException("Sync is busy"));}
         return result;
     }
@@ -115,7 +124,8 @@ public final class RemoteFeature {
     public void cancelEnrollment(RemoteStore.Peer peer){
         requireEnrollmentAccess();RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
         if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state!=RemoteStore.State.PENDING)throw new SecurityException("Enrollment is not pending");
-        store.revoke(current.identity,current.generation);secrets.removePending(current.generation);changed();
+        if(!store.cancelPendingPeer(current.identity,current.generation))throw new SecurityException("Enrollment is no longer pending");
+        changed();
     }
     public CompletableFuture<Void> acceptInvite(String link,String name) {return submit(()->{
         if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
@@ -175,10 +185,10 @@ public final class RemoteFeature {
         });
     }
     public void cancel(String invitation) {
-        requireKeyholder();store.cancelInvite(invitation);secrets.removePending(invitation);changed();
+        requireKeyholder();store.authorityAccess(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});changed();
     }
     public void revoke(RemoteStore.Peer peer) {
-        requireKeyholder();store.revoke(peer.identity,peer.generation);secrets.removePending(peer.generation);
+        requireKeyholder();store.revoke(peer.identity,peer.generation);
         for(Map.Entry<PeerTransport.Connection,String> entry:connections.entrySet())if(key(peer).equals(entry.getValue()))timer.execute(()->close(entry.getKey()));
         changed();
     }
@@ -186,7 +196,7 @@ public final class RemoteFeature {
     public void kick(){try{timer.execute(()->{try{if(foreground)tick();}catch(RuntimeException ignored){android.util.Log.w("PeerSync","Sync attempt deferred");}});}catch(RejectedExecutionException ignored){}}
     public boolean isConnected(RemoteStore.Peer peer){return connections.containsValue(key(peer));}
     private static String key(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
-    private void requireKeyholder(){if(!ControllerPinManager.isSessionUnlocked() || !ControllerPinManager.hasCredentials(context))throw new SecurityException("Keyholder access required");}
+    private void requireKeyholder(){store.authorityAccess(()->{if(!ControllerPinManager.isSessionUnlocked()||!ControllerPinManager.hasCredentials(context))throw new SecurityException("Keyholder access required");return null;});}
     private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),android.os.Build.MODEL);}
 
     private PeerTransport transport() throws Exception {
@@ -242,6 +252,8 @@ public final class RemoteFeature {
     private boolean runPeer(RemoteStore.Peer peer,long deadline) {
         String key=key(peer);boolean success=false;
         try {
+            RemoteStore.Peer requested=peer;
+            peer=store.authorityAccess(()->{RemoteStore.Peer current=store.peer(requested.identity,requested.generation);if(current==null||current.localRole!=requested.localRole)throw new SecurityException("Retained peer changed");return current;});
             remaining(deadline);PeerTransport active=transport();PeerTransport.Connection connection;
             try{connection=active.connect(peer.identity,peer.route,Math.min(8_000,remaining(deadline)));}
             catch(IOException oldRoute){if(peer.route.isEmpty())throw oldRoute;connection=active.connect(peer.identity,"",Math.min(8_000,remaining(deadline)));}
@@ -269,9 +281,10 @@ public final class RemoteFeature {
         String reservation=null;
         try(PeerTransport.Connection selected=connection) {
             selected.setReadTimeoutMillis(8000);JSONObject first=RemoteProtocol.read(selected.input());
+            store.authorityAccess(()->null);
             String type=first.optString("type");
             if("pair_request".equals(type)){if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;}
-            String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.peer(selected.authenticatedPeerIdentity(),generation);
+            String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.authorityAccess(()->store.peer(selected.authenticatedPeerIdentity(),generation));
             if(peer==null)throw new SecurityException("Unknown peer");
             reservation=key(peer);if(!busy.add(reservation)){reservation=null;return;}
             connections.put(selected,reservation);
@@ -298,54 +311,59 @@ public final class RemoteFeature {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
             @Override public int sessionControlVersion() { return RemoteSessionRuntime.applicationEnabled() ? RemoteSessionCommands.VERSION : 0; }
             @Override public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                requireActive(peer);
                 if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
                 RemoteSessionControlCoordinator coordinator = controlCoordinator(active);
                 new RemoteSessionControlPeer(context, store, active.localIdentity(), coordinator::receiverState).exchange(connection, peer, deadline);
             }
             @Override public int journalVersion() { return 1; }
             @Override public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                requireActive(peer);
                 com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
             }
             @Override public int profileVersion() { return 1; }
             @Override public int profileDetailsVersion() { return 1; }
             @Override public int profileRoleVersion() { return 1; }
             @Override public JSONObject profile(RemoteStore.Peer peer) throws Exception {
-                requireActive(peer);
-                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
-                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole);
+                return withActivePeer(peer,()->RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole));
             }
             @Override public JSONObject profile(RemoteStore.Peer peer, boolean details) throws Exception {
-                requireActive(peer);
-                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
-                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details);
+                return withActivePeer(peer,()->RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details));
             }
             @Override public JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception {
-                requireActive(peer);
-                return RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
-                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details, roleIdentity);
+                return withActivePeer(peer,()->RemoteProfiles.encode(com.subhub.app.people.ProfileStore.load(context,
+                        peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details, roleIdentity));
             }
             @Override public int tasksVersion() { return 1; }
             @Override public int taskCancelVersion() { return 1; }
             @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                requireActive(peer);
                 com.subhub.app.tasks.TaskPeer.exchange(context, connection, peer, deadline);
             }
             @Override public String displayName(RemoteStore.Peer peer) {
-                return com.subhub.app.people.ProfileNames.get(context, peer.localRole == RemoteProtocol.Role.DOM);
+                return withActivePeer(peer,()->com.subhub.app.people.ProfileNames.get(context,peer.localRole==RemoteProtocol.Role.DOM));
             }
             @Override public void authenticate(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception {
                 connection.setReadTimeoutMillis(Math.min(10_000,remaining(deadline)));
                 if(peer.localRole==RemoteProtocol.Role.SUB) {
-                    String secret=keyholder.provisionSub(peer,active.localIdentity());
-                    JSONObject credential=new JSONObject().put("version",1).put("type","keyholder_credential").put("generation",peer.generation).put("authVersion",1).put("authSecret",secret);
-                    requireActive(peer);RemoteProtocol.write(connection.output(),credential);
+                    withActivePeer(peer,()->{
+                        String secret=keyholder.provisionSub(peer,active.localIdentity());
+                        JSONObject credential=new JSONObject().put("version",1).put("type","keyholder_credential").put("generation",peer.generation).put("authVersion",1).put("authSecret",secret);
+                        RemoteProtocol.write(connection.output(),credential);return null;
+                    });
                     JSONObject receipt=RemoteProtocol.read(connection.input());requireKeyholderFrame(receipt,"keyholder_receipt",peer);requireActive(peer);
                 } else {
                     JSONObject credential=RemoteProtocol.read(connection.input());requireKeyholderFrame(credential,"keyholder_credential",peer);
-                    keyholder.receiveDom(peer,active.localIdentity(),credential.getString("authSecret"));requireActive(peer);
-                    RemoteProtocol.write(connection.output(),new JSONObject().put("version",1).put("type","keyholder_receipt").put("generation",peer.generation).put("authVersion",1));
+                    withActivePeer(peer,()->{
+                        keyholder.receiveDom(peer,active.localIdentity(),credential.getString("authSecret"));
+                        RemoteProtocol.write(connection.output(),new JSONObject().put("version",1).put("type","keyholder_receipt").put("generation",peer.generation).put("authVersion",1));return null;
+                    });
                 }
             }
             @Override public void prepare(RemoteStore.Peer peer) throws Exception {
+                withActivePeer(peer,()->{
                 activity.prepare(peer);
                 endCommands.process(peer,System.currentTimeMillis());
                 if(peer.localRole==RemoteProtocol.Role.SUB) {
@@ -356,14 +374,21 @@ public final class RemoteFeature {
                 }
                 try{contracts.prepare(peer);store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","false");}
                 catch(Exception unavailable){store.putMetadata(peer.identity,peer.generation,"unavailable_BASELINE","true");store.putMetadata(peer.identity,peer.generation,"contract_error","Contract data could not be refreshed");}
+                return null;});
             }
-            @Override public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception {endCommands.process(peer,System.currentTimeMillis());contracts.process(peer);}
-            @Override public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception{return contracts.missing(peer);}
-            @Override public RemoteAssets assets(RemoteStore.Peer peer) throws Exception{return contracts.assets(peer);}
-            @Override public void complete(RemoteStore.Peer peer) throws Exception{contracts.process(peer);}
+            @Override public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) throws Exception {withActivePeer(peer,()->{endCommands.process(peer,System.currentTimeMillis());contracts.process(peer);return null;});}
+            @Override public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception{return withActivePeer(peer,()->contracts.missing(peer));}
+            @Override public RemoteAssets assets(RemoteStore.Peer peer) throws Exception{return withActivePeer(peer,()->contracts.assets(peer));}
+            @Override public void complete(RemoteStore.Peer peer) throws Exception{withActivePeer(peer,()->{contracts.process(peer);return null;});}
         });
     }
-    private void requireActive(RemoteStore.Peer peer){RemoteStore.Peer current=store.peer(peer.identity,peer.generation);if(current==null||current.state!=RemoteStore.State.ACTIVE||current.localRole!=peer.localRole)throw new SecurityException("Pairing is not active");}
+    private <T>T withActivePeer(RemoteStore.Peer peer,LinkingWitness.CheckedWork<T> work){
+        return store.authorityAccess(()->{
+            RemoteStore.Peer current=store.peer(peer.identity,peer.generation);
+            if(current==null||current.state!=RemoteStore.State.ACTIVE||current.localRole!=peer.localRole)throw new SecurityException("Pairing is not active");return work.run();
+        });
+    }
+    private void requireActive(RemoteStore.Peer peer){withActivePeer(peer,()->null);}
     private static void requireKeyholderFrame(JSONObject frame,String type,RemoteStore.Peer peer)throws Exception {
         RemoteProtocol.requireVersion(frame);if(!type.equals(frame.getString("type"))||!peer.generation.equals(frame.getString("generation"))||RemoteProtocol.integer(frame,"authVersion")!=1)throw new SecurityException("Keyholder identity mismatch");
     }

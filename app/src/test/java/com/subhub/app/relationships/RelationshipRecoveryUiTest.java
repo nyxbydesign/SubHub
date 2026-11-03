@@ -263,7 +263,7 @@ public final class RelationshipRecoveryUiTest {
                 null, "dom", "sub", null, null));
     }
 
-    @Test public void recoveryDtoSurfaceIsFinalWithoutProviderStateOrExtraProfileData() {
+    @Test public void recoveryDtoSurfaceIsFinalWithoutProviderStateOrExtraProfileData() throws Exception {
         for (Class<?> type : Arrays.asList(RelationshipRecoveryUi.OperationSummary.class,
                 RelationshipRecoveryUi.RecoverySnapshot.class, RelationshipRecoveryUi.ReviewResult.class,
                 RelationshipRecoveryUi.PreparationLookup.class)) {
@@ -279,9 +279,39 @@ public final class RelationshipRecoveryUiTest {
             assertTrue(field.getType() == RelationshipUi.Operation.class
                     || field.getType() == RelationshipRecoveryUi.OperationKind.class
                     || field.getType() == RelationshipUi.Delivery.class || field.getType() == String.class);
-        assertEquals(3, RelationshipRecoveryUi.Provider.class.getDeclaredMethods().length);
+        assertEquals(4, RelationshipRecoveryUi.Provider.class.getDeclaredMethods().length);
+        assertEquals(CompletableFuture.class, RelationshipRecoveryUi.Provider.class
+                .getDeclaredMethod("recoverySnapshot").getReturnType());
+        assertEquals(CompletableFuture.class, RelationshipRecoveryUi.Provider.class
+                .getDeclaredMethod("reviewLocal", String.class, String.class).getReturnType());
+        assertEquals(CompletableFuture.class, RelationshipRecoveryUi.Provider.class
+                .getDeclaredMethod("lookupPreparation", String.class, String.class, String.class, String.class).getReturnType());
+        java.lang.reflect.Method unlink = RelationshipRecoveryUi.Provider.class
+                .getDeclaredMethod("unlink", String.class, String.class);
+        assertTrue(unlink.isDefault());
+        assertEquals(CompletableFuture.class, unlink.getReturnType());
         for (Field field : RelationshipRecoveryUi.PreparationLookup.class.getDeclaredFields())
             assertNotEquals(RelationshipUi.LocalReview.class, field.getType());
+    }
+
+    @Test public void defaultUnlinkFailsUnavailableWithoutBreakingExistingProvider() {
+        RecoveryProviderFixture provider = new RecoveryProviderFixture() {
+            @Override public CompletableFuture<RelationshipUi.Snapshot> snapshot() { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipUi.LocalReview> prepareLocal(
+                    String key, String dom, String sub, String revision) { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipUi.Operation> confirmLocal(String id, String digest) { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipUi.Operation> resume(String id) { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipUi.Operation> cancel(String id) { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipRecoveryUi.RecoverySnapshot> recoverySnapshot() { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipRecoveryUi.ReviewResult> reviewLocal(String id, String digest) { throw new AssertionError(); }
+            @Override public CompletableFuture<RelationshipRecoveryUi.PreparationLookup> lookupPreparation(
+                    String key, String dom, String sub, String revision) { throw new AssertionError(); }
+        };
+        CompletableFuture<Void> result = provider.unlink("relationship", "generation");
+        assertTrue(result.isCompletedExceptionally());
+        java.util.concurrent.CompletionException failure = assertThrows(java.util.concurrent.CompletionException.class, result::join);
+        assertTrue(failure.getCause() instanceof RelationshipUi.Failure);
+        assertEquals(RelationshipUi.Reason.UNAVAILABLE, ((RelationshipUi.Failure) failure.getCause()).reason);
     }
 
     // Compilation of these declarations checks source compatibility without installing a provider.

@@ -17,11 +17,12 @@ import java.util.List;
 
 /** Per-relationship mirrors and acknowledgements never share the device's live preference stores. */
 public final class RemoteStore extends SQLiteOpenHelper {
-    static final int DATABASE_VERSION = 7;
+    static final int DATABASE_VERSION = 8;
     static final int MAX_SESSION_PENDING = 16, MAX_SESSION_RECORDS = 128, MAX_SESSION_GLOBAL = 4096;
     private static final String SESSION_NATIVE_PREFIX = "session_native_prepared:";
     private final Context context;
     private volatile SQLiteDatabase openedDatabase;
+    volatile LinkingWitness attachedWitness;
     public enum State { PENDING, ACTIVE, REVOKED }
     public static final class Peer {
         public final String identity, generation, name;
@@ -59,6 +60,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (getDatabaseName() == null) throw new java.io.IOException("Named database required");
         return context.getDatabasePath(getDatabaseName()).getCanonicalFile();
     }
+    boolean isApplicationDatabase() throws java.io.IOException {
+        return resolvedDatabaseFile().equals(context.getDatabasePath("remote_sync_v1.db").getCanonicalFile());
+    }
+    Context applicationContext(){return context;}
     // Publish under SQLiteOpenHelper's lifecycle monitor so an older getter cannot replace a reopened handle.
     @Override public synchronized SQLiteDatabase getWritableDatabase() {
         SQLiteDatabase db = super.getWritableDatabase(); openedDatabase = db; return db;
@@ -68,6 +73,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
     @Override public synchronized void close() {
         super.close(); openedDatabase = null;
+    }
+    SQLiteDatabase openedFormalDatabase(){
+        SQLiteDatabase db=openedDatabase;if(db==null||!db.isOpen())throw new IllegalStateException("Open continuity connection required");return db;
     }
     /** Inspect only an existing connection; this must never open a database to reject an entry. */
     boolean hasCurrentFormalTransaction() {
@@ -116,6 +124,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
         createSessionControls(db);
         createSessionClockJournal(db);
         FormalRelationshipStore.create(db);
+        LinkingWitness.create(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 1 || oldVersion >= newVersion || newVersion > DATABASE_VERSION)
@@ -130,17 +139,64 @@ public final class RemoteStore extends SQLiteOpenHelper {
         if (oldVersion < 5 && newVersion >= 5) createSessionControls(db);
         if (oldVersion < 6 && newVersion >= 6) createSessionClockJournal(db);
         if (oldVersion < 7 && newVersion >= 7) FormalRelationshipStore.create(db);
+        if (oldVersion < 8 && newVersion >= 8) LinkingWitness.create(db);
     }
 
+    <T>T authorityTransition(String kind,String original,LinkingWitness.SqlWork<T> work) {
+        LinkingWitness.outside(this);
+        LinkingWitness witness=LinkingWitness.registered(this);
+        if(witness!=null)return witness.mutate(this,kind,original,work);
+        synchronized(this){
+            SQLiteDatabase db=getWritableDatabase();requireNoOuterTransaction(db);db.beginTransaction();
+            RuntimeException rejected=null;boolean successful=false;
+            try{T result=work.run(db);db.setTransactionSuccessful();successful=true;return result;}
+            catch(RuntimeException failure){rejected=failure;throw failure;}
+            finally{
+                try{db.endTransaction();}catch(RuntimeException completionFailure){if(rejected!=null)completionFailure.addSuppressed(rejected);throw completionFailure;}
+                if(!successful&&rejected!=null)LinkingWitness.markAcknowledgedRejection(rejected);
+            }
+        }
+    }
+    private <T>T newCommandTransition(String kind,String original,RemoteProtocol.Role capability,LocalRelationshipAuthority.NewCommand command,LinkingWitness.SqlWork<T> work){
+        LinkingWitness.outside(this);LinkingWitness witness=LinkingWitness.registered(this);
+        if(witness==null)return authorityTransition(kind,original,work);
+        FormalRelationshipClock.Source clock=FormalRelationshipClock.source(context);
+        LocalRelationshipAuthority authority=new LocalRelationshipAuthority(context,this,clock);
+        return witness.mutateObserved(this,kind,original,()->{
+            LocalRelationshipAuthority.Observation observed=authority.observeCommand(capability,command);
+            return db->{authority.requireCommand(observed,clock.transition(authority.anchor(observed)),capability,command);return work.run(db);};
+        });
+    }
+    <T>T authorityRead(LinkingWitness.CheckedWork<T> work){
+        LinkingWitness.outside(this);LinkingWitness witness=LinkingWitness.registered(this);
+        if(witness!=null)return witness.readCurrent(this,work);
+        try{return work.run();}catch(RuntimeException failure){throw failure;}catch(Exception failure){throw LinkingWitness.unavailable(failure);}
+    }
+    <T>T authorityAccess(LinkingWitness.CheckedWork<T> work){return authorityAccess(LinkingWitness.AuthorityUse.ACTION,work);}
+    <T>T authorityObservation(LinkingWitness.CheckedWork<T> work){return authorityAccess(LinkingWitness.AuthorityUse.OBSERVATION,work);}
+    private <T>T authorityAccess(LinkingWitness.AuthorityUse use,LinkingWitness.CheckedWork<T> work){
+        // Under existing monitors only an already entered, verified witness may provide a cheap fence.
+        if(Thread.holdsLock(this)||Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
+                ||Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK)||hasCurrentFormalTransaction()){
+            LinkingWitness witness=LinkingWitness.attachedWithoutIo(this);
+            if(witness==null)throw new IllegalStateException("Current continuity gate required");
+            return witness.readAuthority(this,use,work);
+        }
+        LinkingWitness witness=LinkingWitness.registered(this);
+        if(witness!=null)return witness.readAuthority(this,use,work);
+        try{return work.run();}catch(RuntimeException failure){throw failure;}catch(Exception failure){throw LinkingWitness.unavailable(failure);}
+    }
+    <T>T pairingOperation(LinkingWitness.CheckedWork<T> work){
+        LinkingWitness.outside(this);LinkingWitness witness=LinkingWitness.registered(this);
+        if(witness!=null)return witness.exclusive(this,work);
+        // Unbound historical fixtures still need to serialize secret staging without holding the Store monitor.
+        synchronized(pairingLock){try{return work.run();}catch(RuntimeException failure){throw failure;}catch(Exception failure){throw LinkingWitness.unavailable(failure);}}
+    }
+    private final Object pairingLock=new Object();
+
     /** Bounded adaptation is independent of application readiness; this foundation stays INERT. */
-    synchronized int migrateFormalRelationships() {
-        SQLiteDatabase db = getWritableDatabase();
-        if (db.inTransaction()) throw new IllegalStateException("Independent migration transaction required");
-        db.beginTransaction();
-        try {
-            int migrated = FormalRelationshipStore.migrate(db);
-            db.setTransactionSuccessful(); return migrated;
-        } finally { db.endTransaction(); }
+    int migrateFormalRelationships() {
+        return authorityTransition("legacy-adaptation","bounded-batch",FormalRelationshipStore::migrate);
     }
 
     private static void createSessionControls(SQLiteDatabase db) {
@@ -674,17 +730,32 @@ public final class RemoteStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    synchronized void saveInvite(PairingInvite invite) {
-        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
-        ContentValues values = new ContentValues();
-        values.put("id", invite.id); values.put("token_hash", invite.tokenHash());
-        values.put("expires", invite.expiresAt);
-        getWritableDatabase().insertOrThrow("invites", null, values);
+    synchronized boolean ownsPendingSecret(String identity,String generation,String link){
+        Peer owner=peer(getReadableDatabase(),identity,generation);if(owner==null||link==null)return false;
+        PairingInvite invite=PairingInvite.restore(link);if(!generation.equals(invite.id))return false;
+        try(Cursor other=getReadableDatabase().rawQuery("SELECT 1 FROM peers WHERE generation=? AND peer!=? AND state IN('PENDING','ACTIVE') LIMIT 1",new String[]{generation,identity})){
+            if(other.moveToFirst())return false;
+        }
+        if(owner.localRole==RemoteProtocol.Role.SUB)return identity.equals(invite.domIdentity);
+        try(Cursor row=getReadableDatabase().rawQuery("SELECT token_hash,candidate FROM invites WHERE id=?",new String[]{generation})){
+            return row.moveToFirst()&&invite.tokenHash().equals(row.getString(0))&&identity.equals(row.getString(1));
+        }
+    }
+    synchronized boolean hasInvite(String id) {
+        try(Cursor row=getReadableDatabase().rawQuery("SELECT 1 FROM invites WHERE id=?",new String[]{id})){return row.moveToFirst();}
     }
 
-    synchronized String bindInvite(String id, String candidate, String tokenHash, long now) {
+    void saveInvite(PairingInvite invite) {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
+        newCommandTransition("invite-create",invite.id+":"+invite.tokenHash(),RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{ContentValues values = new ContentValues();
+        values.put("id", invite.id); values.put("token_hash", invite.tokenHash());
+        values.put("expires", invite.expiresAt);
+        db.insertOrThrow("invites", null, values);return null;});
+    }
+
+    String bindInvite(String id, String candidate, String tokenHash, long now) {
         RemoteProtocol.identifier(id); RemoteProtocol.peerId(candidate);
-        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        return authorityTransition("invite-bind",id+":"+candidate+":"+tokenHash,db->{
         try (Cursor c = db.rawQuery("SELECT token_hash,expires,candidate,consumed FROM invites WHERE id=?", new String[]{id})) {
             if (!c.moveToFirst() || now <= 0 || now >= c.getLong(1) || c.getInt(3) != 0
                     || !java.security.MessageDigest.isEqual(c.getString(0).getBytes(StandardCharsets.US_ASCII),
@@ -693,9 +764,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 throw new SecurityException("Invitation unavailable");
             }
             db.execSQL("UPDATE invites SET candidate=? WHERE id=?", new Object[]{candidate, id});
-            db.setTransactionSuccessful();
             return id;
-        } finally { db.endTransaction(); }
+        }});
     }
 
     synchronized void describeCandidate(String id,String candidate,String name,String route) {
@@ -733,65 +803,72 @@ public final class RemoteStore extends SQLiteOpenHelper {
         }
     }
 
-    synchronized void approveInvite(String id, String candidate, String name, long now) {
+    void approveInvite(String id, String candidate, String name, long now) {
         if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
-        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        newCommandTransition("invite-approve",id+":"+candidate,RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
         try (Cursor c = db.rawQuery("SELECT expires,candidate,consumed FROM invites WHERE id=?", new String[]{id})) {
             if (!c.moveToFirst() || now <= 0 || now >= c.getLong(0) || !candidate.equals(c.getString(1))
                     || c.getInt(2) != 0) throw new SecurityException("Invitation unavailable");
             putPending(db, candidate, id, name, RemoteProtocol.Role.DOM);
             db.execSQL("UPDATE invites SET approved=1,consumed=1 WHERE id=?", new Object[]{id});
-            db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
+            return null;
+        }});
     }
 
-    synchronized void acceptInvite(PairingInvite invite, String name) {
+    void acceptInvite(PairingInvite invite, String name) {
         if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Sub capability unavailable");
-        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
-        try {
+        newCommandTransition("invite-accept",invite.id+":"+invite.domIdentity+":"+invite.tokenHash(),RemoteProtocol.Role.SUB,LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
             if (peer(db, invite.domIdentity, invite.id) != null) throw new SecurityException("Invitation already used");
             putPending(db, invite.domIdentity, invite.id, name, RemoteProtocol.Role.SUB);
             db.execSQL("UPDATE peers SET route=? WHERE peer=? AND generation=?",new Object[]{invite.route,invite.domIdentity,invite.id});
-            db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
+            return null;
+        });
     }
 
     void activate(String identity, String generation) {
         requireCallbackBoundary();
-        Peer committed; java.util.function.Consumer<Peer> listener;
-        synchronized (this) {
-            SQLiteDatabase db = getWritableDatabase(); requireNoOuterTransaction(db);
-            db.beginTransaction();
-            try {
-                Peer peer = peer(db, identity, generation);
-                if (peer == null || peer.state == State.REVOKED) throw new SecurityException("Pairing unavailable");
-                if(peer.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
-                db.execSQL("UPDATE peers SET state='ACTIVE' WHERE peer=? AND generation=? AND state='PENDING'", new Object[]{identity,generation});
-                FormalRelationshipStore.mapPeer(db, identity, generation, false);
-                committed = peer(db, identity, generation);
-                db.setTransactionSuccessful();
-            } finally { db.endTransaction(); }
-            listener = activated;
-        }
-        listener.accept(committed);
+        Peer existing=authorityRead(()->peer(identity,generation));
+        if(existing==null||existing.state==State.REVOKED)throw new SecurityException("Pairing unavailable");
+        Peer committed=existing.state==State.ACTIVE?existing:authorityTransition("peer-activate",identity+":"+generation,db->{
+            Peer current=peer(db,identity,generation);
+            if(current==null||current.state==State.REVOKED)throw new SecurityException("Pairing unavailable");
+            if(current.localRole==RemoteProtocol.Role.DOM?!com.subhub.app.security.DeviceRolePreferences.supportsDom(context):!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))throw new SecurityException("Device role unavailable");
+            db.execSQL("UPDATE peers SET state='ACTIVE' WHERE peer=? AND generation=? AND state='PENDING'",new Object[]{identity,generation});
+            FormalRelationshipStore.mapPeer(db,identity,generation,false);return peer(db,identity,generation);
+        });
+        java.util.function.Consumer<Peer> listener;synchronized(this){listener=activated;}listener.accept(committed);
     }
 
     public void cancelInvite(String id) {
-        requireCallbackBoundary(); id=RemoteProtocol.identifier(id);
-        List<Peer> cancelled=new ArrayList<>(); java.util.function.BiConsumer<String,String> listener;
-        synchronized (this) {
-            SQLiteDatabase db=getWritableDatabase(); requireNoOuterTransaction(db); db.beginTransaction();
-            try {
-                db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{id});
-                try(Cursor cursor=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state!='REVOKED'",new String[]{id})){
-                    while(cursor.moveToNext())cancelled.add(readPeer(cursor));
-                }
-                for(Peer peer:cancelled)revokeRows(db,peer.identity,peer.generation);
-                db.setTransactionSuccessful();
-            }finally{db.endTransaction();}
-            listener = revoked;
-        }
+        requireCallbackBoundary();final String invitation=RemoteProtocol.identifier(id);
+        List<Peer> cancelled=newCommandTransition("invite-cancel",invitation,RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
+            try(Cursor active=db.rawQuery("SELECT 1 FROM peers WHERE generation=? AND state='ACTIVE' LIMIT 1",new String[]{invitation})){
+                if(active.moveToFirst())throw new SecurityException("Active relationships require explicit unlink");
+            }
+            List<Peer> result=new ArrayList<>();
+            db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{invitation});
+            try(Cursor rows=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND state='PENDING'",new String[]{invitation})){
+                while(rows.moveToNext())result.add(readPeer(rows));
+            }
+            for(Peer peer:result)revokeRows(db,peer.identity,peer.generation);return result;
+        });
+        java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}
         for(Peer peer:cancelled)listener.accept(peer.identity,peer.generation);
+    }
+
+    boolean cancelPendingPeer(String identity,String generation) {
+        requireCallbackBoundary();RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
+        return pairingOperation(()->{
+            Peer current=authorityRead(()->peer(identity,generation));
+            if(current==null||current.localRole!=RemoteProtocol.Role.SUB||current.state!=State.PENDING)return false;
+            boolean cancelled=newCommandTransition("pending-cancel",identity+":"+generation,RemoteProtocol.Role.SUB,LocalRelationshipAuthority.NewCommand.ENROLLMENT,db->{
+                Peer exact=peer(db,identity,generation);
+                if(exact==null||exact.localRole!=RemoteProtocol.Role.SUB||exact.state!=State.PENDING)return false;
+                revokeRows(db,identity,generation);return true;
+            });
+            if(cancelled){java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}listener.accept(identity,generation);}
+            return cancelled;
+        });
     }
 
     synchronized void setRoute(String identity,String generation,String route) {
@@ -810,14 +887,27 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     void revoke(String identity, String generation) {
-        requireCallbackBoundary(); RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
-        java.util.function.BiConsumer<String,String> listener;
-        synchronized (this) {
-            SQLiteDatabase db=getWritableDatabase(); requireNoOuterTransaction(db); db.beginTransaction();
-            try{revokeRows(db,identity,generation);db.setTransactionSuccessful();}finally{db.endTransaction();}
-            listener = revoked;
-        }
-        listener.accept(identity,generation);
+        requireCallbackBoundary();RemoteProtocol.peerId(identity);RemoteProtocol.identifier(generation);
+        Peer current=authorityRead(()->peer(identity,generation));
+        if(current==null)throw new SecurityException("Relationship unavailable");
+        if(current.state!=State.REVOKED)newCommandTransition("peer-unlink",identity+":"+generation,current.localRole,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{revokeRows(db,identity,generation);return null;});
+        java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}listener.accept(identity,generation);
+    }
+    /** The authenticated transport endpoint may withdraw its exact retained generation without a local unlock. */
+    void revokeAuthenticatedPeer(PeerTransport.Connection connection,Peer retained){
+        requireCallbackBoundary();
+        if(retained==null||!retained.identity.equals(RemoteProtocol.peerId(connection.authenticatedPeerIdentity())))throw new SecurityException("Authenticated relationship required");
+        final String identity=retained.identity,generation=RemoteProtocol.identifier(retained.generation);
+        pairingOperation(()->{
+            Peer current=authorityRead(()->peer(identity,generation));
+            if(current==null||current.localRole!=retained.localRole)throw new SecurityException("Retained relationship changed");
+            if(current.state!=State.REVOKED)authorityTransition("authenticated-peer-revocation",identity+":"+generation,db->{
+                Peer exact=peer(db,identity,generation);
+                if(exact==null||exact.localRole!=retained.localRole)throw new SecurityException("Retained relationship changed");
+                revokeRows(db,identity,generation);return null;
+            });
+            java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}listener.accept(identity,generation);return null;
+        });
     }
     private void requireCallbackBoundary() {
         if (Thread.holdsLock(this)) throw new IllegalStateException("Callback mutation requires an unlocked caller");

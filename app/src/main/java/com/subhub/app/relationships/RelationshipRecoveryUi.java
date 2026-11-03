@@ -14,6 +14,11 @@ public final class RelationshipRecoveryUi {
     public enum OperationKind { LOCAL_LINK, PEER_INVITE_CREATE, PEER_INVITE_ACCEPT }
 
     public interface Provider extends RelationshipUi.Provider {
+        /** Explicit LOCAL unlink is separate from cancelling an original operation. */
+        default CompletableFuture<Void> unlink(String relationshipId,String generation) {
+            CompletableFuture<Void> result=new CompletableFuture<>();
+            result.completeExceptionally(new RelationshipUi.Failure(RelationshipUi.Reason.UNAVAILABLE));return result;
+        }
         /** Supply both projections from one authorized, consistent coordinator read. */
         CompletableFuture<RecoverySnapshot> recoverySnapshot();
 

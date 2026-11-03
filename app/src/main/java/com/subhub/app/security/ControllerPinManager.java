@@ -113,11 +113,11 @@ public final class ControllerPinManager {
     }
 
     public static void enterDomMode() {
-        domModeActive = true;
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){domModeActive = true;}
     }
 
     public static void enterSubMode() {
-        domModeActive = false;
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){domModeActive = false;}
     }
 
     static KeyholderProvider.State remoteKeyholderState() {

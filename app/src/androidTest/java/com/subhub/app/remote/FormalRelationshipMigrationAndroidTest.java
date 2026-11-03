@@ -11,7 +11,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
         // Build a real v6 table inventory, then remove only the not-yet-shipped additive v7 tables.
         RemoteStore seed=open(database);SQLiteDatabase db=seed.getWritableDatabase();db.beginTransaction();
         try {
-            for(String table:new String[]{"formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority"})db.execSQL("DROP TABLE "+table);
+            for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority"})db.execSQL("DROP TABLE "+table);
             db.setVersion(6);
             for(int i=1;i<=145;i++)db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Legacy pending','DOM','PENDING')",new Object[]{identity(i),"legacy_"+i});
             db.execSQL("INSERT INTO remote_metadata(peer,generation,name,value) VALUES(?,?,'retained','raw legacy value')",new Object[]{identity(1),"legacy_1"});
@@ -56,7 +56,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
         for(int version:new int[]{4,5}){
             String name=prefix+"version-"+version;RemoteStore seed=open(name);SQLiteDatabase original=seed.getWritableDatabase();original.beginTransaction();
             try{
-                for(String table:new String[]{"formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority","session_control_journal"})original.execSQL("DROP TABLE "+table);
+                for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots","formal_operations","formal_relationships","formal_participants","formal_authority","session_control_journal"})original.execSQL("DROP TABLE "+table);
                 if(version==4)original.execSQL("DROP TABLE session_controls");
                 else original.execSQL("INSERT INTO session_controls(peer,generation,id,direction,request_digest,request,result,state,updated) VALUES('legacy','generation','old','OUTGOING','digest','original/raw','original/result','QUEUED',99)");
                 original.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Original','DOM','REVOKED')",new Object[]{identity(version),"v"+version});
@@ -64,7 +64,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
                 original.setVersion(version);original.setTransactionSuccessful();
             }finally{original.endTransaction();}
             java.util.Map<String,String> retained=fingerprint(original);seed.close();RemoteStore upgraded=open(name);SQLiteDatabase next=upgraded.getWritableDatabase();
-            assertEquals(7,next.getVersion());upgraded.migrateFormalRelationships();
+            assertEquals(8,next.getVersion());upgraded.migrateFormalRelationships();
             java.util.Map<String,String> after=fingerprint(next);for(java.util.Map.Entry<String,String> entry:retained.entrySet())assertEquals(entry.getKey(),entry.getValue(),after.get(entry.getKey()));
         }
     }
@@ -77,7 +77,7 @@ public final class FormalRelationshipMigrationAndroidTest extends FormalRelation
     }
     private static java.util.Map<String,String> fingerprint(SQLiteDatabase db){
         java.util.Map<String,String> result=new java.util.LinkedHashMap<>();java.util.List<String> tables=new java.util.ArrayList<>();
-        try(Cursor rows=db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'formal_%' ORDER BY name",null)){while(rows.moveToNext())tables.add(rows.getString(0));}
+        try(Cursor rows=db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'formal_%' AND name NOT LIKE 'linking_%' ORDER BY name",null)){while(rows.moveToNext())tables.add(rows.getString(0));}
         for(String table:tables){StringBuilder body=new StringBuilder();try(Cursor rows=db.rawQuery("SELECT * FROM \""+table+"\" ORDER BY rowid",null)){
             while(rows.moveToNext()){for(int column=0;column<rows.getColumnCount();column++){
                 body.append(rows.getType(column)).append(':');

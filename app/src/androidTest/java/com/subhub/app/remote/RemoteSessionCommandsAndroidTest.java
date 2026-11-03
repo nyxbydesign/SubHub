@@ -205,7 +205,7 @@ public class RemoteSessionCommandsAndroidTest {
         String result=RemoteProtocol.canonical(new Result(request,State.ACKNOWLEDGED,Reason.NONE,1001,null).json().put("requestDigest",hash));
         db.execSQL("INSERT INTO session_controls VALUES(?,'generation','legacy','INCOMING',?,?,?,'ACKNOWLEDGED',1001)",
                 new Object[]{DOM,hash,raw,result});
-        db.execSQL("DROP TABLE session_control_journal");db.setVersion(5);old.close();
+        dropPostVersionFiveSchema(db);db.setVersion(5);old.close();
         RemoteStore upgraded=open(name);
         assertEquals(RemoteStore.DATABASE_VERSION,upgraded.getReadableDatabase().getVersion());
         try(android.database.Cursor row=upgraded.getReadableDatabase().rawQuery("SELECT request,result FROM session_controls WHERE id='legacy'",null)) {
@@ -221,12 +221,19 @@ public class RemoteSessionCommandsAndroidTest {
         db.execSQL("INSERT INTO outgoing(peer,generation,stream,next_seq,acked) VALUES(?,'generation','STATS',4,2)",new Object[]{DOM});
         db.execSQL("INSERT INTO outbox VALUES(?,'generation','STATS','summary',4,'{\"count\":9}',0,1000)",new Object[]{DOM});
         String before=StorageCompressionAndroidTest.digest(db);
-        db.execSQL("DROP TABLE session_controls");db.execSQL("DROP TABLE session_control_journal");db.setVersion(4);old.close();
+        dropPostVersionFiveSchema(db);db.execSQL("DROP TABLE session_controls");db.setVersion(4);old.close();
         RemoteStore upgraded=open(name);
         assertEquals(RemoteStore.DATABASE_VERSION,upgraded.getReadableDatabase().getVersion());
         assertEquals(before,StorageCompressionAndroidTest.digest(upgraded.getReadableDatabase()));
         assertEquals("value",upgraded.metadata(DOM,"generation","retained","missing"));
         assertEquals(2,upgraded.nextBatch(DOM,"generation",RemoteProtocol.Stream.STATS).after);
         assertTrue(upgraded.pendingSessionControls(DOM,"generation",Direction.INCOMING,1).isEmpty());
+    }
+
+    private static void dropPostVersionFiveSchema(SQLiteDatabase db) {
+        // Remove only v6-v8 additions, dropping foreign-key children before their parents.
+        for(String table:new String[]{"linking_unlinks","linking_state","formal_governing_slots",
+                "formal_operations","formal_relationships","formal_participants","formal_authority",
+                "session_control_journal"})db.execSQL("DROP TABLE "+table);
     }
 }

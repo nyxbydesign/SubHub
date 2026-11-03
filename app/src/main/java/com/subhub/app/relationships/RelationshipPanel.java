@@ -24,7 +24,9 @@ import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderProvider;
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Map;
@@ -43,9 +45,14 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
     private final String selectionKey;
     private final BooleanSupplier present, localActions;
     private final Runnable retry;
+    private final boolean pageRetry;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final RelationshipPresentation model;
     private String renderedContext;
+    private KeyholderProvider authorityProvider;
+    private RelationshipUi.Provider presentationProvider;
+    private long contextEpoch;
+    private long rosterChangesSeen;
     private final Runnable checkContext = new Runnable() {
         @Override public void run() {
             if (!isAttachedToWindow() || !activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)) return;
@@ -68,11 +75,24 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         super(activity);
         this.activity = activity; this.selectionKey = selectionKey;
         this.present = present; this.localActions = localActions;
+        pageRetry = retry != null;
         this.retry = retry == null ? this::refresh : retry;
         setOrientation(VERTICAL); setTag("relationship_panel"); setVisibility(GONE);
         model = new RelationshipPresentation(RelationshipUi::provider, journal(activity),
-                main::post, this::currentContext, this::mayLink, ignored -> render());
+                main::post, this::currentContext, this::mayLink, ignored -> presentationChanged());
         activity.getLifecycle().addObserver(this);
+    }
+
+    private void presentationChanged() {
+        render();
+        if (pageRetry && model.mode() == RelationshipPresentation.Mode.READY && !model.busy() && rosterChangesSeen != model.rosterChanges()) {
+            rosterChangesSeen = model.rosterChanges();
+            String expectedContext = currentContext(); long expectedEpoch = model.reviewEpoch();
+            main.post(() -> {
+                if (expectedContext != null && expectedContext.equals(currentContext()) && model.reviewEpoch() == expectedEpoch)
+                    retry.run();
+            });
+        }
     }
 
     public void refresh() {
@@ -92,8 +112,13 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         if (!isAttachedToWindow() || activity.isFinishing() || activity.isDestroyed()
                 || !activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)
                 || !present.getAsBoolean()) return null;
+        KeyholderProvider authority = People.keyholder();
+        RelationshipUi.Provider provider = RelationshipUi.provider();
+        if (authorityProvider != authority || presentationProvider != provider) {
+            authorityProvider = authority; presentationProvider = provider; ++contextEpoch;
+        }
         return selectionKey + ":" + DeviceRolePreferences.get(activity).name()
-                + ":" + ControllerPinManager.isDomModeActive();
+                + ":" + ControllerPinManager.isDomModeActive() + ":" + contextEpoch;
     }
 
     private boolean mayLink() {
@@ -120,28 +145,49 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             action(R.string.relationships_retry, "relationship_refresh", retry, true); return;
         }
         RelationshipUi.Snapshot snapshot = model.snapshot();
+        localUnlink(snapshot);
         RelationshipPresentation.Saved saved = model.saved();
         RelationshipUi.LocalReview review = model.review();
         RelationshipUi.Operation operation = model.operation();
+        RelationshipRecoveryUi.OperationSummary selected = model.summary();
+        if (model.unlinkUnavailable() && (saved != null || operation == null))
+            action(R.string.relationships_refresh, "relationship_unlink_refresh", retry, !model.busy());
         if (review != null) {
             text(R.string.relationships_review_title, "relationship_review_title");
-            participantName(snapshot, review.domParticipantRef, RelationshipUi.Role.DOM);
-            participantName(snapshot, review.subParticipantRef, RelationshipUi.Role.SUB);
+            if (selected != null) summaryNames(selected, "");
+            else {
+                participantName(snapshot, review.domParticipantRef, RelationshipUi.Role.DOM);
+                participantName(snapshot, review.subParticipantRef, RelationshipUi.Role.SUB);
+            }
             TextView scope = text(review.scopeSummary, "relationship_scope");
             scope.setTextIsSelectable(true);
+            long reviewEpoch = model.reviewEpoch();
             action(R.string.relationships_link, "relationship_confirm", () -> {
                 if (!mayLink() || model.review() != review || model.busy()) return;
-                ControllerPinGate.authenticate(activity, () -> model.confirm(review), false);
-            }, model.canPrepare());
+                ControllerPinGate.authenticate(activity, () -> model.confirm(review, reviewEpoch), false);
+            }, model.canConfirm());
             action(android.R.string.cancel, "relationship_cancel", () -> model.cancel(saved), !model.busy());
             return;
         }
         if (saved != null || operation != null) {
-            int status = operation == null ? saved != null && saved.unresolved()
-                    ? R.string.relationships_preparing : R.string.relationships_unavailable
-                    : status(operation.state);
-            text(status, "relationship_operation_status");
-            if (saved != null && saved.unresolved()) {
+            if (selected != null) summaryNames(selected, "");
+            if (model.busy()) text(R.string.role_loading, "relationship_operation_status");
+            else if (model.recoveryState() == RelationshipPresentation.RecoveryState.UNKNOWN)
+                text("Couldn’t verify this link request.", "relationship_operation_status");
+            else if (model.recoveryState() == RelationshipPresentation.RecoveryState.ABSENT_NEVER_CREATED)
+                text("No link was prepared.", "relationship_operation_status");
+            else if (model.recoveryState() == RelationshipPresentation.RecoveryState.REFUSED)
+                text(R.string.relationships_refused, "relationship_operation_status");
+            else {
+                int status = operation == null ? saved != null && saved.unresolved() && !model.recoveryAware()
+                        ? R.string.relationships_preparing : R.string.relationships_unavailable : status(operation.state);
+                text(status, "relationship_operation_status");
+            }
+            if (saved != null && saved.unresolved() && model.recoveryAware()) {
+                action(R.string.relationships_resume, "relationship_resume", () -> model.resume(saved), !model.busy());
+                if (model.canRetryPreparation())
+                    action(R.string.relationships_retry, "relationship_retry_prepare", model::prepare, true);
+            } else if (saved != null && saved.unresolved()) {
                 action(R.string.relationships_retry, "relationship_retry_prepare", model::prepare,
                         model.canPrepare() && saved.domRef.equals(model.domChoice())
                                 && saved.subRef.equals(model.subChoice()));
@@ -151,19 +197,33 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             } else action(R.string.relationships_refresh, "relationship_refresh", retry, true);
             return;
         }
+        if (model.recoveryAware()) {
+            List<RelationshipRecoveryUi.OperationSummary> pending = new ArrayList<>();
+            for (RelationshipRecoveryUi.OperationSummary value : model.summaries())
+                if (value.operation.state == RelationshipUi.OperationState.PREPARED
+                        || value.operation.state == RelationshipUi.OperationState.PENDING) pending.add(value);
+            if (!pending.isEmpty()) {
+                for (RelationshipRecoveryUi.OperationSummary value : pending) {
+                    String suffix = pending.size() == 1 ? "" : ":" + value.operation.operationId;
+                    summaryNames(value, suffix);
+                    text(status(value.operation.state), "relationship_operation_status" + suffix);
+                    action(R.string.relationships_resume, "relationship_resume_summary" + suffix,
+                            () -> model.resumeSummary(value), !model.busy());
+                }
+                return;
+            }
+        }
         List<RelationshipUi.Operation> pending = new ArrayList<>();
         for (RelationshipUi.Operation summary : snapshot.operations)
             if (summary.state == RelationshipUi.OperationState.PREPARED
                     || summary.state == RelationshipUi.OperationState.PENDING) pending.add(summary);
         if (!pending.isEmpty()) {
-            if (pending.size() == 1) {
-                RelationshipUi.Operation summary = pending.get(0);
-                text(status(summary.state), "relationship_operation_status");
-                action(R.string.relationships_resume, "relationship_resume_summary",
+            for (RelationshipUi.Operation summary : pending) {
+                String suffix = pending.size() == 1 ? "" : ":" + summary.operationId;
+                if (pending.size() > 1) operationExpiry(summary, suffix);
+                text(status(summary.state), "relationship_operation_status" + suffix);
+                action(R.string.relationships_resume, "relationship_resume_summary" + suffix,
                         () -> model.resumeSummary(summary), !model.busy());
-            } else {
-                text(R.string.relationships_unavailable, "relationship_unavailable");
-                action(R.string.relationships_retry, "relationship_refresh", retry, true);
             }
             return;
         }
@@ -177,6 +237,51 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         select(doms, true); select(subs, false);
         if (!mayLink()) text(R.string.relationships_controller_required, "relationship_controller_required");
         action(R.string.relationships_review, "relationship_prepare", model::prepare, model.canPrepare());
+    }
+
+    private void localUnlink(RelationshipUi.Snapshot snapshot) {
+        if (!model.recoveryAware()) return;
+        List<RelationshipUi.Edge> local = new ArrayList<>();
+        for (RelationshipUi.Edge edge : snapshot.eligibleSubs)
+            if (edge.delivery == RelationshipUi.Delivery.LOCAL) local.add(edge);
+        RelationshipUi.Edge governing = snapshot.governingDom;
+        if (governing != null && governing.delivery == RelationshipUi.Delivery.LOCAL) {
+            boolean listed = false;
+            for (RelationshipUi.Edge edge : local)
+                if (edge.relationshipId.equals(governing.relationshipId) && edge.generation.equals(governing.generation)) listed = true;
+            if (!listed) local.add(governing);
+        }
+        for (RelationshipUi.Edge edge : local) {
+            participantName(snapshot, edge.domParticipantRef, RelationshipUi.Role.DOM, "relationship_unlink_dom:" + edge.relationshipId);
+            participantName(snapshot, edge.subParticipantRef, RelationshipUi.Role.SUB, "relationship_unlink_sub:" + edge.relationshipId);
+            long expectedEpoch = model.reviewEpoch();
+            action("Unlink", local.size() == 1 ? "relationship_unlink" : "relationship_unlink:" + edge.relationshipId + ":" + edge.generation, () -> {
+                if (!model.canUnlink(edge)) return;
+                ControllerPinGate.authenticate(activity, () -> model.unlink(edge, expectedEpoch), false);
+            }, model.canUnlink(edge));
+        }
+        if (model.unlinkUnavailable()) text(R.string.relationships_unavailable, "relationship_unlink_status");
+    }
+
+    private void summaryNames(RelationshipRecoveryUi.OperationSummary summary, String suffix) {
+        String kind = summary.kind == RelationshipRecoveryUi.OperationKind.LOCAL_LINK
+                ? activity.getString(R.string.relationships_local_title)
+                : summary.kind == RelationshipRecoveryUi.OperationKind.PEER_INVITE_CREATE
+                ? activity.getString(R.string.remote_create_invite) : "Accept invitation";
+        text(kind, "relationship_operation_kind" + suffix);
+        if (!suffix.isEmpty()) operationExpiry(summary.operation, suffix);
+        if (summary.domParticipantRef != null)
+            text(activity.getString(R.string.relationships_participant, activity.getString(R.string.role_dom),
+                    summary.domLabel == null ? "Unknown" : summary.domLabel), "relationship_dom_profile" + suffix);
+        if (summary.subParticipantRef != null)
+            text(activity.getString(R.string.relationships_participant, activity.getString(R.string.role_sub),
+                    summary.subLabel == null ? "Unknown" : summary.subLabel), "relationship_sub_profile" + suffix);
+    }
+
+    private void operationExpiry(RelationshipUi.Operation operation, String suffix) {
+        String deadline = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(new Date(operation.originalDeadline));
+        text("Expires " + deadline, "relationship_operation_id" + suffix);
     }
 
     private void select(List<RelationshipUi.Participant> values, boolean dom) {
@@ -219,12 +324,14 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
     }
 
     private void participantName(RelationshipUi.Snapshot snapshot, String ref, RelationshipUi.Role role) {
+        participantName(snapshot, ref, role, role == RelationshipUi.Role.DOM ? "relationship_dom_profile" : "relationship_sub_profile");
+    }
+    private void participantName(RelationshipUi.Snapshot snapshot, String ref, RelationshipUi.Role role, String tag) {
         for (RelationshipUi.Participant participant : snapshot.localParticipants) {
             if (participant.role == role && participant.ref.equals(ref)) {
                 text(activity.getString(R.string.relationships_participant,
                         activity.getString(role == RelationshipUi.Role.DOM ? R.string.role_dom : R.string.role_sub),
-                        participant.profile.name), role == RelationshipUi.Role.DOM
-                                ? "relationship_dom_profile" : "relationship_sub_profile");
+                        participant.profile.name), tag);
                 return;
             }
         }
@@ -241,7 +348,11 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         TextView text = PersonUi.text(this, value, false); text.setTag(tag); return text;
     }
     private void action(int label, String tag, Runnable action, boolean enabled) {
-        TextView button = PersonUi.action(this, label, () -> { }, false);
+        action(activity.getString(label), tag, action, enabled);
+    }
+    private void action(String label, String tag, Runnable action, boolean enabled) {
+        TextView button = PersonUi.action(this, android.R.string.ok, () -> { }, false);
+        button.setText(label);
         button.setOnClickListener(view -> {
             if (view.isAttachedToWindow() && view.isShown() && view.isEnabled()
                     && currentContext() != null) action.run();

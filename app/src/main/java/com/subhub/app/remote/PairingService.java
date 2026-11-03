@@ -26,10 +26,20 @@ public final class PairingService {
     public PairingInvite create(long now) throws IOException,GeneralSecurityException {
         requireKeyholder();
         PairingInvite invite=PairingInvite.create(transport.localIdentity(),transport.inviteRoute(),now);
-        secrets.savePending(invite);
-        try { store.saveInvite(invite); }
-        catch(RuntimeException failure) { secrets.removePending(invite.id);throw failure; }
-        return invite;
+        return store.pairingOperation(()->{
+            String prior=secrets.pendingLink(invite.id);
+            if(prior!=null&&!prior.equals(invite.link()))throw new SecurityException("Invitation changed");
+            if(prior==null)secrets.savePending(invite);
+            try { store.saveInvite(invite); }
+            catch(RuntimeException failure) {
+                // The SQL outcome can be committed but not yet sealed. Its secret still belongs to this invite.
+                if(prior==null&&LinkingWitness.acknowledgedRejection(failure)&&!store.hasInvite(invite.id)){
+                    try{secrets.removePendingIfMatches(invite.id,invite.link());}catch(GeneralSecurityException cleanup){failure.addSuppressed(cleanup);}
+                }
+                throw failure;
+            }
+            return invite;
+        });
     }
 
     public void accept(String link,String name,long now) throws GeneralSecurityException {
@@ -38,15 +48,21 @@ public final class PairingService {
     }
     void acceptConfirmed(PairingInvite invite,String name)throws GeneralSecurityException {
         if(invite.domIdentity.equals(transport.localIdentity())) throw new IllegalArgumentException("Cannot pair with this device");
-        synchronized(store){
+        store.pairingOperation(()->{
             if(store.peer(invite.domIdentity,invite.id)!=null)throw new SecurityException("Invitation already used");
             for(RemoteStore.Peer existing:store.peers(false))if(existing.localRole==RemoteProtocol.Role.SUB)throw new SecurityException("A Dom is already assigned or pending");
             String prior=secrets.pendingLink(invite.id);
             if(prior!=null&&!prior.equals(invite.link()))throw new SecurityException("Invitation changed");
             if(prior==null)secrets.savePending(invite);
             try { store.acceptInvite(invite,name); }
-            catch(RuntimeException failure) { if(prior==null)secrets.removePending(invite.id);throw failure; }
-        }
+            catch(RuntimeException failure) {
+                // A committed/uncertain outcome owns its staged secret; never delete another attempt's token.
+                if(prior==null&&LinkingWitness.acknowledgedRejection(failure)&&store.peer(invite.domIdentity,invite.id)==null){
+                    try{secrets.removePendingIfMatches(invite.id,invite.link());}catch(GeneralSecurityException cleanup){failure.addSuppressed(cleanup);}
+                }throw failure;
+            }
+            return null;
+        });
     }
 
     public void approve(String invitation,String candidate,String fingerprint,long now) {
@@ -63,12 +79,12 @@ public final class PairingService {
 
     public void cancel(String invitation) {
         requireKeyholder();
-        store.cancelInvite(invitation);secrets.removePending(invitation);
+        store.pairingOperation(()->{String expected=secrets.pendingLink(invitation);store.cancelInvite(invitation);secrets.removePendingIfMatches(invitation,expected);return null;});
     }
 
     public void revoke(String identity,String generation) {
         requireKeyholder();
-        store.revoke(identity,generation);secrets.removePending(generation);
+        store.pairingOperation(()->{String candidate=secrets.pendingLink(generation);String expected=store.ownsPendingSecret(identity,generation,candidate)?candidate:null;store.revoke(identity,generation);secrets.removePendingIfMatches(generation,expected);return null;});
     }
 
     boolean resume(PeerTransport.Connection connection,RemoteStore.Peer peer) throws IOException,GeneralSecurityException {
@@ -90,7 +106,7 @@ public final class PairingService {
             String fingerprint=PairingInvite.fingerprint(peer.identity,transport.localIdentity(),peer.generation);
             if(!"pair_approved".equals(response.getString("type")) || !peer.generation.equals(response.getString("generation"))
                     || !fingerprint.equals(response.getString("fingerprint"))) throw new SecurityException("Pairing approval mismatch");
-            String authSecret=authenticator.provisionSub(peer,transport.localIdentity());
+            String authSecret=store.authorityAccess(()->authenticator.provisionSub(peer,transport.localIdentity()));
             write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_confirmed")
                     .put("generation",peer.generation).put("fingerprint",fingerprint).put("authSecret",authSecret));
             JSONObject ready=read(connection);
@@ -98,7 +114,8 @@ public final class PairingService {
             if(!"pair_ready".equals(ready.getString("type")) || !peer.generation.equals(ready.getString("generation"))) {
                 throw new SecurityException("Pairing completion mismatch");
             }
-            store.activate(peer.identity,peer.generation);com.subhub.app.security.ControllerPinManager.lockNow();secrets.removePending(peer.generation);
+            store.activate(peer.identity,peer.generation);com.subhub.app.security.ControllerPinManager.lockNow();
+            store.authorityAccess(()->{secrets.removePendingIfMatches(peer.generation,invite.link());return null;});
             try{write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_ready_ack").put("generation",peer.generation));}catch(IOException alreadyCommitted){/* Retrying cannot revoke a completed pairing. */}
             return true;
         } catch(JSONException invalid) { throw new IOException("Invalid pairing message"); }
@@ -129,12 +146,20 @@ public final class PairingService {
             requireAuthVersion(confirmed);
             if(!"pair_confirmed".equals(confirmed.getString("type")) || !id.equals(confirmed.getString("generation"))
                     || !fingerprint.equals(confirmed.getString("fingerprint"))) throw new SecurityException("Pairing confirmation mismatch");
-            try { authenticator.receiveDom(store.peer(candidate,id),transport.localIdentity(),confirmed.getString("authSecret")); }
-            catch(GeneralSecurityException unavailable){throw new IOException("Keyholder provisioning unavailable");}
+            try {
+                String authSecret=confirmed.getString("authSecret");
+                store.authorityAccess(()->{
+                    if(!store.approvedInvite(id,candidate,tokenHash))throw new SecurityException("Original pairing approval unavailable");
+                    authenticator.receiveDom(store.peer(candidate,id),transport.localIdentity(),authSecret);return null;
+                });
+            }catch(RuntimeException unavailable){throw new IOException("Keyholder provisioning unavailable",unavailable);}
             store.activate(candidate,id);
             store.setRoute(candidate,id,request.getString("route"));
             write(connection,new JSONObject().put("version",1).put("authVersion",1).put("type","pair_ready").put("generation",id));
-            secrets.removePending(id);
+            store.authorityAccess(()->{
+                String expected=secrets.pendingLink(id);
+                if(store.ownsPendingSecret(candidate,id,expected))secrets.removePendingIfMatches(id,expected);return null;
+            });
             try{JSONObject receipt=read(connection);requireAuthVersion(receipt);if(!"pair_ready_ack".equals(receipt.optString("type")) || !id.equals(receipt.optString("generation")))throw new SecurityException("Pairing receipt mismatch");}catch(IOException closedAfterReady){/* Ready may have been received before the final connection close. */}
             return true;
         } catch(JSONException | IllegalArgumentException invalid) { throw new IOException("Invalid pairing message"); }

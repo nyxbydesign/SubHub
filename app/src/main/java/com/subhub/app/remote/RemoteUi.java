@@ -13,13 +13,27 @@ public final class RemoteUi implements ConnectionUi {
         ControllerPinManager.initialize(app);
         RemoteFeature feature=RemoteFeature.get(app);RemotePersonRepository repository=new RemotePersonRepository(app,feature);
         com.subhub.app.activity.ActivitySources.install(feature.activity);feature.activity.install();
-        People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);People.installKeyholder(new com.subhub.app.security.KeyholderProvider(){
-            public boolean withLocalAuthority(java.util.function.BooleanSupplier action){return feature.recoveryReady()&&feature.keyholder.withLocalAuthority(action);}
-            public State state(){return feature.recoveryReady()?feature.keyholder.state():State.UNAVAILABLE;}
-            public String assignedDomName(){return feature.keyholder.assignedDomName();}
-            public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){return feature.recoveryReady()?feature.keyholder.verifyCode(code):com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
-        });
-        People.installLocalProjection(repository::localProjection);People.installConnectionUi(new RemoteUi());feature.installLifecycle(app);
+        People.installRemoteRepository(repository);People.installRemoteAuthority(feature::controlsLocal);People.installKeyholder(keyholderProvider(feature));
+        People.installLocalProjection(repository::localProjection);People.installConnectionUi(new RemoteUi());
+        com.subhub.app.relationships.RelationshipUi.install(new FormalRelationshipProvider(app,feature.store));
+        feature.installLifecycle(app);
+    }
+    static com.subhub.app.security.KeyholderProvider keyholderProvider(RemoteFeature feature){
+        return new com.subhub.app.security.KeyholderProvider(){
+            public boolean withLocalAuthority(java.util.function.BooleanSupplier action){
+                try{return feature.recoveryReady()&&feature.store.authorityAccess(()->feature.keyholder.withLocalAuthority(action));}catch(RuntimeException unavailable){return false;}
+            }
+            public State state(){
+                try{return feature.recoveryReady()?feature.store.authorityObservation(feature.keyholder::state):State.UNAVAILABLE;}catch(RuntimeException unavailable){return State.UNAVAILABLE;}
+            }
+            public String assignedDomName(){
+                try{return feature.store.authorityObservation(feature.keyholder::assignedDomName);}catch(RuntimeException unavailable){return "";}
+            }
+            public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){
+                try{return feature.recoveryReady()?feature.store.authorityAccess(()->feature.keyholder.verifyCode(code)):com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
+                catch(RuntimeException unavailable){return com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
+            }
+        };
     }
     @Override public void openPairing(Activity activity){openPairing(activity,ControllerPinManager.isDomModeActive());}
     public void openPairing(Activity activity,boolean asDom){
