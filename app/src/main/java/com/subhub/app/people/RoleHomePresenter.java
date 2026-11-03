@@ -191,9 +191,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             homeAccess = current ? loaded.access : null;
             if (dom) {
                 if (!current) {
-                    resetDomSignatures(); domPeople.removeAllViews();
-                    PersonUi.text(domPeople, activity.getString(R.string.relationships_unavailable), false);
-                    PersonUi.action(domPeople, R.string.role_retry, () -> refresh(true), false); return;
+                    renderDomUnavailable(R.string.relationships_unavailable);
+                    return;
                 }
                 renderDom(loaded.people);
             }
@@ -208,14 +207,29 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                     || dom != domWorkspace()
                     || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
             relationship.setVisibility(View.GONE);
-            if (dom) resetDomSignatures();
-            else renderedRelationship = null;
-            LinearLayout target = dom ? domPeople : subBody;
+            if (dom) {
+                renderDomUnavailable(failure instanceof RelationshipUnavailable
+                        ? R.string.relationships_unavailable : R.string.role_person_unavailable);
+                return;
+            }
+            renderedRelationship = null;
+            LinearLayout target = subBody;
             target.removeAllViews();
             PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
                     ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
             PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
         });
+    }
+
+    private void renderDomUnavailable(int message) {
+        homeAccess = null;
+        resetDomSignatures();
+        // Relationship observations own these slots, not the independent journal and local previews.
+        domFavorite.removeAllViews();
+        domSummary.removeAllViews();
+        domRecent.removeAllViews();
+        PersonUi.text(domFavorite, activity.getString(message), false);
+        PersonUi.action(domFavorite, R.string.role_retry, () -> refresh(true), false);
     }
 
     private boolean domWorkspace() {
