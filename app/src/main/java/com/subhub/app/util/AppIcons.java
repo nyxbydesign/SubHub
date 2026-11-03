@@ -49,6 +49,16 @@ public final class AppIcons {
 
     interface Loader { Bitmap load(Context context, String name, int pixels) throws Exception; }
 
+    /** One ImageView request slot shared with the remote binder. Cancellation never paints. */
+    interface Request extends View.OnAttachStateChangeListener { void cancel(ImageView view); }
+
+    static void replaceRequest(ImageView view, Request request) {
+        Object old = view.getTag(R.id.app_icon_request);
+        if (old instanceof Request) ((Request) old).cancel(view);
+        view.setTag(R.id.app_icon_request, request);
+        view.addOnAttachStateChangeListener(request);
+    }
+
     static final class Engine {
         private static final long RETAIN_MILLIS = 300_000, MISSING_MILLIS = 30_000;
         private final Loader loader;
@@ -73,9 +83,8 @@ public final class AppIcons {
                     && old.key.equals(key) && old.fallback == fallback && old.known == known
                     && (packageName.isEmpty() || old.resolved && (known != null || SystemClock.uptimeMillis() - old.resolvedAt < RETAIN_MILLIS)
                             || pending.containsKey(key) || absent != null && SystemClock.uptimeMillis() - absent < MISSING_MILLIS)) return;
-            if (old != null) { old.cancelled = true; view.removeOnAttachStateChangeListener(old); }
             Binding token = new Binding(this, packageName, key, pixels, fallback, known);
-            view.setTag(R.id.app_icon_request, token); view.addOnAttachStateChangeListener(token);
+            replaceRequest(view, token);
             view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             view.setImageResource(fallback);
             view.setImageTintList(ColorStateList.valueOf(view.getContext().getColor(R.color.accent_text)));
@@ -134,7 +143,7 @@ public final class AppIcons {
         Object value = view.getTag(R.id.app_icon_request); return value instanceof Binding ? (Binding) value : null;
     }
 
-    static final class Binding implements View.OnAttachStateChangeListener {
+    static final class Binding implements Request {
         final Engine engine;
         final String packageName, key;
         final int pixels, fallback;
@@ -149,6 +158,7 @@ public final class AppIcons {
             if (detached && !cancelled) engine.bind((ImageView) view, packageName, fallback, known);
         }
         @Override public void onViewDetachedFromWindow(View view) { detached = true; }
+        @Override public void cancel(ImageView view) { cancelled = true; view.removeOnAttachStateChangeListener(this); }
     }
 
     private static final class Waiting {
