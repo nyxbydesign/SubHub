@@ -28,6 +28,14 @@ public final class ContractHeader {
                 ((TextView) child).setTextSize(14);
         }
         parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
+        PersonSnapshot.PeerContact contact = person.contractDomContact;
+        if (person.contractDomId != null) {
+            if (contact != null && contact.state == PersonSnapshot.Connection.PENDING)
+                PersonUi.text(parent, context.getString(R.string.role_connection_pending), false);
+            else if (contact != null && contact.state == PersonSnapshot.Connection.REVOKED)
+                PersonUi.text(parent, context.getString(R.string.role_connection_revoked), false);
+            ProfileViews.lastOnline(parent, person.contractDomId, contact == null ? 0 : contact.lastOnlineAt);
+        }
         if (person.contractDomId != null && context instanceof android.app.Activity)
             com.subhub.app.journal.JournalPreview.addSharedLink(parent,
                     com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context), person.contractDomId,

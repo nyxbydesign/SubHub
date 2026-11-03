@@ -32,6 +32,7 @@ final class LinkingWitness {
     private final ThreadLocal<Integer> entered=ThreadLocal.withInitial(()->0);
     private FileOutputStream lockStream;
     private OwnedDescriptor lockDescriptor;
+    private android.system.StructStat lockIdentity;
     private FileLock fileLock;
     private boolean failed;
     private static final class AcknowledgedReservation {
@@ -84,15 +85,25 @@ final class LinkingWitness {
         outside(store);gate.lock();
         try{
             if(entered.get()==0){
+                requireUninterruptedLockEntry();
                 if(!directory.isDirectory()&&!directory.mkdir())throw new java.io.IOException("Linking directory unavailable");
+                if(lockStream!=null&&!lockStream.getChannel().isOpen())retireClosedLock();
                 if(lockStream==null){
                     syncDirectory(directory.getParentFile());
                     OwnedDescriptor opened=OwnedDescriptor.open(new File(directory,"operation.lock").getPath(),OsConstants.O_CREAT|OsConstants.O_RDWR|OsConstants.O_NOFOLLOW,0600);
                     boolean published=false;
-                    try{FileOutputStream stream=new FileOutputStream(opened.fd());syncDirectory();lockDescriptor=opened;lockStream=stream;published=true;}
+                    try{
+                        android.system.StructStat identity=Os.fstat(opened.fd());
+                        if(!OsConstants.S_ISREG(identity.st_mode)||lockIdentity!=null
+                                &&(lockIdentity.st_dev!=identity.st_dev||lockIdentity.st_ino!=identity.st_ino))
+                            throw new java.io.IOException("Linking lock identity changed");
+                        FileOutputStream stream=new FileOutputStream(opened.fd());syncDirectory();
+                        lockIdentity=identity;lockDescriptor=opened;lockStream=stream;published=true;
+                    }
                     finally{if(!published)opened.close();}
                 }
                 FileChannel channel=lockStream.getChannel();fileLock=channel.lock();
+                requireUninterruptedLockEntry();
             }
             entered.set(entered.get()+1);
             try{return work.run();}finally{entered.set(entered.get()-1);}
@@ -103,6 +114,21 @@ final class LinkingWitness {
             catch(Exception failure){failed=true;}
             gate.unlock();
         }
+    }
+    private static void requireUninterruptedLockEntry()throws java.io.InterruptedIOException{
+        if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Linking lock entry interrupted");
+    }
+    /** An interrupted FileChannel.lock can close the shared channel before any work ran.
+     * Retire its borrowed stream and owned descriptor under the outer gate; receipt verification
+     * still runs after the same lock inode is reacquired, and sticky persistence failures remain. */
+    private void retireClosedLock()throws Exception{
+        if(!gate.isHeldByCurrentThread()||entered.get()!=0||fileLock!=null||lockDescriptor==null||lockIdentity==null)
+            throw new java.io.IOException("Linking lock ownership unavailable");
+        Exception failure=null;
+        try{lockStream.close();}catch(Exception problem){failure=problem;}
+        try{lockDescriptor.close();}catch(Exception problem){if(failure==null)failure=problem;else failure.addSuppressed(problem);}
+        lockStream=null;lockDescriptor=null;
+        if(failure!=null){failed=true;throw failure;}
     }
     /** The already-shipped JNA runtime calls stable libc ABI functions; these flag constants are
      * public since API21. Ownership stays explicit because Android streams borrow supplied FDs. */

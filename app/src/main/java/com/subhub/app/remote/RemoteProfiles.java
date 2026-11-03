@@ -89,7 +89,24 @@ public final class RemoteProfiles {
     static final class ContractOwner {
         final ProfileData profile;
         final com.subhub.app.people.PersonId id;
-        ContractOwner(ProfileData profile, com.subhub.app.people.PersonId id) { this.profile = profile; this.id = id; }
+        final com.subhub.app.people.PersonSnapshot.PeerContact contact;
+        ContractOwner(ProfileData profile, com.subhub.app.people.PersonId id) { this(profile, id, null); }
+        ContractOwner(ProfileData profile, com.subhub.app.people.PersonId id,
+                com.subhub.app.people.PersonSnapshot.PeerContact contact) {
+            this.profile = profile; this.id = id; this.contact = contact;
+        }
+    }
+
+    private static ContractOwner owner(RemoteStore store, RemoteStore.Peer peer) {
+        com.subhub.app.people.PersonId id = RemotePersonRepository.id(peer);
+        com.subhub.app.people.PersonSnapshot.Connection state = peer.state == RemoteStore.State.REVOKED
+                ? com.subhub.app.people.PersonSnapshot.Connection.REVOKED : peer.state == RemoteStore.State.PENDING
+                ? com.subhub.app.people.PersonSnapshot.Connection.PENDING
+                : PeerPresence.online(false, peer.lastSyncedAt, System.currentTimeMillis())
+                ? com.subhub.app.people.PersonSnapshot.Connection.CONNECTED
+                : com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
+        return new ContractOwner(read(store, peer), id,
+                new com.subhub.app.people.PersonSnapshot.PeerContact(id, state, peer.lastSyncedAt));
     }
 
     static ContractOwner contractOwner(android.content.Context context, RemoteStore store, RemoteContracts contracts) {
@@ -103,13 +120,13 @@ public final class RemoteProfiles {
                 String commandId = main.getString("remote_active_command", "");
                 for (RemoteStore.Peer peer : store.peers(false)) {
                     if (peer.localRole != RemoteProtocol.Role.SUB || peer.state != RemoteStore.State.ACTIVE) continue;
-                    if (retained.isEmpty()) return new ContractOwner(read(store, peer), RemotePersonRepository.id(peer));
+                    if (retained.isEmpty()) return owner(store, peer);
                     if (applied == null || commandId.isEmpty()) return unknown;
                     RemoteStore.Command command = store.command(peer.identity, peer.generation, commandId);
                     if (command != null && command.state == RemoteStore.CommandState.APPLIED
                             && RemoteProtocol.canonical(RemoteConfiguration.active(
                                     new JSONObject(command.body).getJSONObject("configuration")))
-                                    .equals(RemoteProtocol.canonical(applied))) return new ContractOwner(read(store, peer), RemotePersonRepository.id(peer));
+                                    .equals(RemoteProtocol.canonical(applied))) return owner(store, peer);
                 }
             } catch (Exception unavailable) { return unknown; }
             return unknown;

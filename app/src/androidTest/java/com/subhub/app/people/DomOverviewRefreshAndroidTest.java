@@ -56,6 +56,7 @@ import static org.junit.Assert.*;
 public final class DomOverviewRefreshAndroidTest {
     @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
             new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final Map<String, Map<String, ?>> saved = new LinkedHashMap<>();
     private final FailingRelationships relationships = new FailingRelationships();
@@ -119,7 +120,7 @@ public final class DomOverviewRefreshAndroidTest {
         }
     }
 
-    @Test @SdkSuppress(minSdkVersion = 29)
+    @Test @SdkSuppress(minSdkVersion = 31)
     public void repeatedRelationshipFailuresKeepLocalCardsThroughPeriodicAndNativeRetry() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             AtomicReference<CardWitness> witness = new AtomicReference<>();

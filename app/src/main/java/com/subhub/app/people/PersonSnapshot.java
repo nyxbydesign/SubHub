@@ -32,6 +32,7 @@ public final class PersonSnapshot {
     public final ProfileData profile;
     public final ProfileData contractDom;
     public final PersonId contractDomId;
+    public final PeerContact contractDomContact;
     public final java.util.Map<String, Boolean> featureConsent;
     public final boolean consentHardcoreOverride;
 
@@ -73,7 +74,7 @@ public final class PersonSnapshot {
         this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt,
                 capabilities, sections, allowances, currency, protectedSeconds, activityEvents, tributeCents,
                 sessions, serviceActive, sync, sessionIdentity, additionOrder, ProfileData.empty(name),
-                Collections.emptyMap(), false, null, null);
+                Collections.emptyMap(), false, null, null, null);
     }
 
     private PersonSnapshot(PersonId id, String name, String device, String contractName,
@@ -82,7 +83,7 @@ public final class PersonSnapshot {
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
             ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
-            ProfileData contractDom, PersonId contractDomId) {
+            ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
@@ -108,6 +109,9 @@ public final class PersonSnapshot {
         this.profile = java.util.Objects.requireNonNull(profile);
         this.contractDom = contractDom;
         this.contractDomId = contractDomId;
+        if (contractDomContact != null && (contractDom == null || !contractDomContact.id.equals(contractDomId)))
+            throw new IllegalArgumentException("Counterpart contact identity differs");
+        this.contractDomContact = contractDomContact;
         this.featureConsent = Collections.unmodifiableMap(new java.util.LinkedHashMap<>(featureConsent));
         this.consentHardcoreOverride = consentHardcoreOverride;
     }
@@ -120,7 +124,7 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                value, consent, hardcoreOverride, contractDom, contractDomId);
+                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact);
     }
 
     public PersonSnapshot withContractDom(ProfileData value) {
@@ -128,10 +132,33 @@ public final class PersonSnapshot {
     }
 
     public PersonSnapshot withContractDom(ProfileData value, PersonId target) {
+        return withContractDom(value, target, contractDomContact != null && contractDomContact.id.equals(target)
+                ? contractDomContact : null);
+    }
+
+    public PersonSnapshot withContractDom(ProfileData value, PersonId target, PeerContact contact) {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target);
+                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact);
+    }
+
+    /** A completed authenticated exchange for this exact peer generation, never controller authority. */
+    public static final class PeerContact {
+        public final PersonId id;
+        public final Connection state;
+        public final long lastOnlineAt;
+        public PeerContact(PersonId id, Connection state, long lastOnlineAt) {
+            this.id = Objects.requireNonNull(id); this.state = Objects.requireNonNull(state);
+            if (id.isLocal() || state == Connection.LOCAL) throw new IllegalArgumentException("Remote contact required");
+            this.lastOnlineAt = Math.max(0, lastOnlineAt);
+        }
+        @Override public boolean equals(Object other) {
+            if (!(other instanceof PeerContact)) return false;
+            PeerContact value = (PeerContact) other;
+            return id.equals(value.id) && state == value.state && lastOnlineAt == value.lastOnlineAt;
+        }
+        @Override public int hashCode() { return Objects.hash(id, state, lastOnlineAt); }
     }
 
     public boolean can(Capability capability) { return capabilities.contains(capability); }

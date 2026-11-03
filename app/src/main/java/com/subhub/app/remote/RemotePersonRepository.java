@@ -20,8 +20,16 @@ public final class RemotePersonRepository implements PersonRepository {
         List<PersonId> result=new ArrayList<>();for(RemoteStore.Peer peer:store.peers(true))if(peer.localRole==RemoteProtocol.Role.DOM)result.add(id(peer));return result;
     }
     @Override public PersonSnapshot load(PersonId id) throws Exception {
+        return store.authorityObservation(()->loadObserved(id));
+    }
+    private PersonSnapshot loadObserved(PersonId id) throws Exception {
         RemoteStore.Peer peer=peer(id);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new IllegalArgumentException("Not a paired Sub");
-        JSONObject configuration=feature.contracts.current(peer),stats=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.STATS,"summary"),runtime=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");
+        JSONObject baseline=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");
+        JSONObject configuration=null;
+        // Payload shape is independent of the other mirrors. Persistence/authority errors still escape.
+        if(baseline!=null)try{configuration=RemoteConfiguration.active(baseline);}
+        catch(JSONException|IllegalArgumentException invalidPayload){/* Keep independently valid saved observations. */}
+        JSONObject stats=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.STATS,"summary"),runtime=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");
         if(!RemoteTelemetry.validSummary(stats))stats=null;if(!RemoteTelemetry.validRuntime(runtime))runtime=null;
         PersonSnapshot.Freshness contract=freshness(peer,RemoteProtocol.Stream.BASELINE,configuration!=null,30*60_000),statistics=freshness(peer,RemoteProtocol.Stream.STATS,stats!=null,30*60_000),live=freshness(peer,RemoteProtocol.Stream.RUNTIME,runtime!=null,90_000);
         PersonSnapshot.Connection connection=peer.state==RemoteStore.State.REVOKED?PersonSnapshot.Connection.REVOKED:peer.state==RemoteStore.State.PENDING?PersonSnapshot.Connection.PENDING:
@@ -55,7 +63,7 @@ public final class RemotePersonRepository implements PersonRepository {
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
                     local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
                     .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
-                    .withContractDom(contractOwner.profile, contractOwner.id);
+                    .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }
         try {
             JSONObject applied=feature.contracts.localApplied();
@@ -63,13 +71,16 @@ public final class RemotePersonRepository implements PersonRepository {
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
                 return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
                         .withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
-                        .withContractDom(contractOwner.profile, contractOwner.id);
+                        .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;
     }
     private PersonSnapshot.Freshness freshness(RemoteStore.Peer peer,RemoteProtocol.Stream stream,boolean known,long lifetime) {
         if(!known)return PersonSnapshot.Freshness.UNKNOWN;
-        long confirmed=Long.parseLong(store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0")),age=System.currentTimeMillis()-confirmed;
+        String recorded=store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0");
+        long confirmed;
+        try{confirmed=Long.parseLong(recorded);}catch(NumberFormatException invalidObservation){return PersonSnapshot.Freshness.UNKNOWN;}
+        long age=System.currentTimeMillis()-confirmed;
         return peer.state==RemoteStore.State.ACTIVE && confirmed>0 && age>=0 && age<=lifetime?PersonSnapshot.Freshness.CURRENT:PersonSnapshot.Freshness.STALE;
     }
     private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration) throws Exception {
@@ -102,7 +113,9 @@ public final class RemotePersonRepository implements PersonRepository {
         // Dates belong to the source device, which may be in a different time zone.
 
         boolean currentUsage=today!=null && freshness(peer,RemoteProtocol.Stream.APP_USAGE,true,30*60_000)==PersonSnapshot.Freshness.CURRENT;
-        if(currentUsage)try{currentUsage=java.time.LocalDate.now(java.time.ZoneId.of(today.getString("zone"))).toString().equals(today.getString("day")) && today.getInt("schema")==1;}catch(Exception invalid){currentUsage=false;}
+        if(currentUsage)try{currentUsage=java.time.LocalDate.now(java.time.ZoneId.of(today.getString("zone"))).toString().equals(today.getString("day"))
+                && RemoteProtocol.integer(today,"schema")==1 && today.optJSONObject("millis")!=null;}
+        catch(JSONException|IllegalArgumentException|java.time.DateTimeException invalid){currentUsage=false;}
         JSONObject usage=!currentUsage?new JSONObject():today.getJSONObject("millis"),apps=configuration.getJSONObject("apps"),budgets=apps.getJSONObject("allowances");
         List<PersonSnapshot.Allowance> result=new ArrayList<>();Set<String> packages=RemoteConfiguration.selected(configuration);
         if(apps.getBoolean("all"))for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))if(!row.deleted)packages.add(row.key);

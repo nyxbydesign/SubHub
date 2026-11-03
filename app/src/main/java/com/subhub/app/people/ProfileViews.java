@@ -36,7 +36,7 @@ public final class ProfileViews {
         View about = identity.findViewWithTag("person_about");
         if (about != null) about.setTag("person_about:" + person.id.value());
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
-        connectionSummary(hero, person, "person_connection:" + person.id.value());
+        connectionSummary(hero, person, "person_connection:" + person.id.value(), true);
         if (context instanceof android.app.Activity) {
             PersonId target = person.id.isLocal() ? new PersonId("journal_local_sub") : person.id;
             com.subhub.app.journal.JournalPreview.add(hero,
@@ -51,7 +51,7 @@ public final class ProfileViews {
         card.setBackgroundResource(R.drawable.bg_home_composition_person);
         String prefix = "roster:" + person.id.value();
         card.addView(ProfilePreview.roster(context, person.profile, prefix), new LinearLayout.LayoutParams(-1, -2));
-        connectionSummary(card, person, prefix + "_connection");
+        connectionSummary(card, person, prefix + "_connection", false);
         card.setOnClickListener(view -> open.run());
         card.setFocusable(true);
         card.setClickable(true);
@@ -63,10 +63,30 @@ public final class ProfileViews {
         return card;
     }
 
-    private static void connectionSummary(LinearLayout parent, PersonSnapshot person, String tag) {
+    private static void connectionSummary(LinearLayout parent, PersonSnapshot person, String tag, boolean profile) {
         if (person.connection == PersonSnapshot.Connection.LOCAL) return;
-        TextView state = PersonUi.text(parent, PersonUi.connection(parent.getContext(), person), false);
+        TextView state = PersonUi.text(parent, profile && person.connection == PersonSnapshot.Connection.OFFLINE
+                ? parent.getContext().getString(R.string.role_connection_offline)
+                : PersonUi.connection(parent.getContext(), person), false);
         state.setTag(tag); state.setTextSize(12); state.setPadding(0, PersonUi.dp(parent.getContext(), 10), 0, 0);
+        if (profile) {
+            lastOnline(parent, person.id, person.lastSyncedAt);
+            if (person.sync.contract == PersonSnapshot.Freshness.STALE || person.sync.stats == PersonSnapshot.Freshness.STALE
+                    || person.sync.runtime == PersonSnapshot.Freshness.STALE)
+                PersonUi.text(parent, parent.getContext().getString(R.string.peer_cached_data), false)
+                        .setTag("profile_cached_data:" + person.id.value());
+        }
+    }
+
+    public static void lastOnline(LinearLayout parent, PersonId target, long observed) {
+        if (target == null || target.isLocal()) return;
+        Context context = parent.getContext(); long now = System.currentTimeMillis();
+        CharSequence time = observed <= 0 || observed > now ? context.getString(R.string.remote_unknown)
+                : android.text.format.DateUtils.formatDateTime(context, observed,
+                        android.text.format.DateUtils.FORMAT_SHOW_DATE | android.text.format.DateUtils.FORMAT_SHOW_TIME
+                                | android.text.format.DateUtils.FORMAT_SHOW_YEAR);
+        TextView value = PersonUi.text(parent, context.getString(R.string.peer_last_online, time), false);
+        value.setTextSize(12); value.setTag("profile_last_online:" + target.value());
     }
 
     public static View avatar(Context context, ProfileData profile) {
