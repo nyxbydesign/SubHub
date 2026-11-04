@@ -7,10 +7,9 @@ import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
 
 import com.subhub.app.R;
-import com.subhub.app.security.*;
 import com.subhub.app.util.StateToggle;
 
-/** Inline privacy controls, also reused by the direct privacy screen. */
+/** Device-local privacy choices never require or grant controller authority. */
 public final class PrivacyControls {
     private final FragmentActivity activity;
     private final LinearLayout container;
@@ -44,17 +43,9 @@ public final class PrivacyControls {
                         R.id.privacy_discreet_toggle,
                         privacy.isDiscreet(),
                         value -> {
+                            if (!privacy.setDiscreet(value))
+                                notice(activity.getString(R.string.privacy_save_failed));
                             changed.run();
-                            ControllerPinGate.require(
-                                    activity,
-                                    () -> {
-                                        if (!privacy.setDiscreet(value))
-                                            notice(
-                                                    activity.getString(
-                                                            R.string.privacy_save_failed));
-                                        changed.run();
-                                    },
-                                    false);
                         });
         help(R.string.privacy_discreet_help);
         lock =
@@ -64,61 +55,47 @@ public final class PrivacyControls {
                         privacy.isAppLockEnabled(),
                         value -> {
                             changed.run();
-                            ControllerPinGate.require(
-                                    activity,
-                                    () -> {
-                                        if (!value) {
-                                            privacy.setAppLock(false);
-                                            changed.run();
-                                            return;
-                                        }
-                                        if (BiometricManager.from(activity)
-                                                        .canAuthenticate(
-                                                                AppUnlockActivity.AUTHENTICATORS)
-                                                != BiometricManager.BIOMETRIC_SUCCESS) {
-                                            notice(
-                                                    activity.getString(
-                                                            R.string.privacy_no_device_lock));
-                                            return;
-                                        }
-                                        prompt =
-                                                new BiometricPrompt(
-                                                        activity,
-                                                        ContextCompat.getMainExecutor(activity),
-                                                        new BiometricPrompt
-                                                                .AuthenticationCallback() {
-                                                            @Override
-                                                            public void onAuthenticationSucceeded(
-                                                                    BiometricPrompt
-                                                                                    .AuthenticationResult
-                                                                            result) {
-                                                                if (ControllerPinManager
-                                                                        .isDomModeActive()) {
-                                                                    PrivacyLifecycle.unlock();
-                                                                    privacy.setAppLock(true);
-                                                                    changed.run();
-                                                                }
-                                                            }
+                            if (!value) {
+                                if (!privacy.setAppLock(false))
+                                    notice(activity.getString(R.string.privacy_save_failed));
+                                changed.run();
+                                return;
+                            }
+                            if (BiometricManager.from(activity)
+                                            .canAuthenticate(AppUnlockActivity.AUTHENTICATORS)
+                                    != BiometricManager.BIOMETRIC_SUCCESS) {
+                                notice(activity.getString(R.string.privacy_no_device_lock));
+                                return;
+                            }
+                            prompt =
+                                    new BiometricPrompt(
+                                            activity,
+                                            ContextCompat.getMainExecutor(activity),
+                                            new BiometricPrompt.AuthenticationCallback() {
+                                                @Override
+                                                public void onAuthenticationSucceeded(
+                                                        BiometricPrompt.AuthenticationResult result) {
+                                                    if (activity.isFinishing()
+                                                            || activity.isDestroyed()) return;
+                                                    PrivacyLifecycle.unlock();
+                                                    if (!privacy.setAppLock(true))
+                                                        notice(activity.getString(
+                                                                R.string.privacy_save_failed));
+                                                    changed.run();
+                                                }
 
-                                                            @Override
-                                                            public void onAuthenticationError(
-                                                                    int error,
-                                                                    CharSequence message) {
-                                                                notice(message.toString());
-                                                                changed.run();
-                                                            }
-                                                        });
-                                        prompt.authenticate(
-                                                new BiometricPrompt.PromptInfo.Builder()
-                                                        .setTitle(
-                                                                activity.getString(
-                                                                        R.string
-                                                                                .privacy_enable_lock))
-                                                        .setAllowedAuthenticators(
-                                                                AppUnlockActivity.AUTHENTICATORS)
-                                                        .build());
-                                    },
-                                    false);
+                                                @Override
+                                                public void onAuthenticationError(
+                                                        int error, CharSequence message) {
+                                                    notice(message.toString());
+                                                    changed.run();
+                                                }
+                                            });
+                            prompt.authenticate(
+                                    new BiometricPrompt.PromptInfo.Builder()
+                                            .setTitle(activity.getString(R.string.privacy_enable_lock))
+                                            .setAllowedAuthenticators(AppUnlockActivity.AUTHENTICATORS)
+                                            .build());
                         });
         help(R.string.privacy_lock_help);
         refresh();
@@ -140,8 +117,6 @@ public final class PrivacyControls {
     }
 
     private void refresh() {
-        ControllerPinGate.markLocked(discreet);
-        ControllerPinGate.markLocked(lock);
         PrivacyManager privacy = new PrivacyManager(activity);
         updating = true;
         try {

@@ -16,7 +16,86 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class PrivacyAndroidTest {
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    @Test public void subCanChangeLocalPrivacyFromSettingsAndDirectPage() throws Exception {
+        try (LocalPrivacyFixture fixture = new LocalPrivacyFixture()) {
+            assertSubPrivacyTaps(com.subhub.app.settings.GlobalSettingsActivity.class);
+            assertSubPrivacyTaps(PrivacyActivity.class);
+        }
+    }
+    @Test public void subCannotEnableAppLockWithoutAvailableDeviceAuthentication() throws Exception {
+        org.junit.Assume.assumeTrue(androidx.biometric.BiometricManager.from(context)
+                .canAuthenticate(AppUnlockActivity.AUTHENTICATORS)
+                != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS);
+        try (LocalPrivacyFixture fixture = new LocalPrivacyFixture();
+                ActivityScenario<PrivacyActivity> page = ActivityScenario.launch(PrivacyActivity.class)) {
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_lock_toggle))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+            page.onActivity(a -> {
+                assertFalse(new PrivacyManager(a).isAppLockEnabled());
+                assertFalse(((android.widget.CompoundButton) a.findViewById(R.id.privacy_lock_toggle)).isChecked());
+                assertFalse(ControllerPinManager.isDomModeActive());
+                assertFalse(a.isFinishing());
+            });
+        }
+    }
+    private <T extends Activity> void assertSubPrivacyTaps(Class<T> screen) {
+        PrivacyManager privacy = new PrivacyManager(context);
+        // The app is already unlocked, as it must be before its privacy settings are reachable.
+        assertTrue(privacy.setAppLock(true)); PrivacyLifecycle.unlock();
+        try (ActivityScenario<T> page = ActivityScenario.launch(screen)) {
+            page.onActivity(a -> {
+                assertFalse(a.isFinishing()); assertFalse(ControllerPinManager.isDomModeActive());
+                assertEquals(1f, a.findViewById(R.id.privacy_discreet_toggle).getAlpha(), 0f);
+                assertEquals(1f, a.findViewById(R.id.privacy_lock_toggle).getAlpha(), 0f);
+            });
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_lock_toggle))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+            assertFalse(privacy.isAppLockEnabled()); assertFalse(ControllerPinManager.isDomModeActive());
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+            assertTrue(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
+            page.recreate();
+            page.onActivity(a -> assertTrue(((android.widget.CompoundButton) a.findViewById(R.id.privacy_discreet_toggle)).isChecked()));
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.privacy_discreet_toggle))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), androidx.test.espresso.action.ViewActions.click());
+            assertFalse(privacy.isDiscreet()); assertFalse(ControllerPinManager.isDomModeActive());
+        }
+    }
+    private final class LocalPrivacyFixture implements AutoCloseable {
+        private final java.util.Map<String,?> privacyBefore = new java.util.HashMap<>(context.getSharedPreferences("subhub_privacy",0).getAll());
+        private final java.util.Map<String,?> settingsBefore = new java.util.HashMap<>(new com.subhub.app.settings.SettingsRepository(context).preferences().getAll());
+        private final boolean originalDom = ControllerPinManager.isDomModeActive();
+        private final ComponentName normal = new ComponentName(context,"com.subhub.app.DefaultLauncher"), neutral = new ComponentName(context,"com.subhub.app.DiscreetLauncher");
+        private final int normalBefore = context.getPackageManager().getComponentEnabledSetting(normal), neutralBefore = context.getPackageManager().getComponentEnabledSetting(neutral);
+        private final Object lifecycle;
+        private final java.lang.reflect.Field unlocked;
+        private final boolean unlockedBefore;
+        LocalPrivacyFixture() throws Exception {
+            java.lang.reflect.Field instance = PrivacyLifecycle.class.getDeclaredField("instance"); instance.setAccessible(true); lifecycle = instance.get(null); assertNotNull(lifecycle);
+            unlocked = PrivacyLifecycle.class.getDeclaredField("unlocked"); unlocked.setAccessible(true); unlockedBefore = unlocked.getBoolean(lifecycle);
+            assertTrue(new com.subhub.app.settings.SettingsRepository(context).preferences().edit()
+                    .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,com.subhub.app.security.DeviceRolePreferences.Mode.SUB_ONLY.name()).commit());
+            ControllerPinManager.enterSubMode();
+            PrivacyManager privacy = new PrivacyManager(context);
+            assertTrue(privacy.setAppLock(false)); assertTrue(privacy.setDiscreet(false)); PrivacyLifecycle.unlock();
+        }
+        @Override public void close() throws Exception {
+            PrivacyManager privacy = new PrivacyManager(context);
+            assertTrue(privacy.setAppLock(false));
+            assertTrue(privacy.setDiscreet(Boolean.TRUE.equals(privacyBefore.get("discreet"))));
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(context.getSharedPreferences("subhub_privacy",0),privacyBefore);
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(new com.subhub.app.settings.SettingsRepository(context).preferences(),settingsBefore);
+            context.getPackageManager().setComponentEnabledSetting(normal,normalBefore,PackageManager.DONT_KILL_APP);
+            context.getPackageManager().setComponentEnabledSetting(neutral,neutralBefore,PackageManager.DONT_KILL_APP);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                try { unlocked.setBoolean(lifecycle,unlockedBefore); } catch (IllegalAccessException unavailable) { throw new AssertionError(unavailable); }
+                PrivacyLifecycle.refresh();
+            });
+            if(originalDom)ControllerPinManager.enterDomMode();else ControllerPinManager.enterSubMode();
+        }
+    }
     @Test public void discreetAliasAndNotificationPersistWithoutChangingActions() {
         PrivacyManager privacy = new PrivacyManager(context);
         PendingIntent action = PendingIntent.getActivity(context, 9961, new Intent(context, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
