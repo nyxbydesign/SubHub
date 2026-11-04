@@ -143,6 +143,20 @@ public final class JournalStore extends SQLiteOpenHelper {
     }
 
     public synchronized long received(String relationship) { return cursor(scope(relationship), "received"); }
+
+    /** Reproject only this recipient's existing titled audience after a capability upgrade. */
+    public synchronized void republishTitles(boolean dom, String relationship) throws JSONException {
+        scope(relationship);
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try (Cursor c = db.rawQuery("SELECT e.body FROM entries e JOIN audiences a ON e.id=a.id WHERE e.role=? AND a.scope=?",
+                new String[]{role(dom), relationship})) {
+            while (c.moveToNext()) {
+                JournalEntry entry = JournalEntry.parse(new JSONObject(c.getString(0)));
+                if (!entry.title.isEmpty()) enqueue(db, relationship, entry.id, entry);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
     private long cursor(String relationship, String key) {
         try (Cursor c = getReadableDatabase().query("cursors", new String[]{key}, "scope=?",
                 new String[]{relationship}, null, null, null)) { return c.moveToFirst() ? c.getLong(0) : 0; }

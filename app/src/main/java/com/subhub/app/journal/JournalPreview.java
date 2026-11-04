@@ -139,9 +139,7 @@ public final class JournalPreview extends LinearLayout {
                     metadata.setCompoundDrawablesRelative(icon, null, null, null); metadata.setCompoundDrawablePadding(PersonUi.dp(getContext(), 4));
                 }
                 metadata.setVisibility(VISIBLE);
-                summary.setText(!current.text.isEmpty() ? current.text : current.audio != null
-                        ? getContext().getString(R.string.journal_audio)
-                        : getResources().getQuantityString(R.plurals.journal_attachment_count, current.attachments.size(), current.attachments.size()));
+                summary.setText(current.displayTitle());
             } catch (Exception unavailable) { unavailable(); }
         }, failure -> unavailable());
     }

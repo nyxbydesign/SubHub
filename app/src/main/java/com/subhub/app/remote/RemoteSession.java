@@ -17,6 +17,8 @@ public final class RemoteSession {
             throw new UnsupportedOperationException("App icons unavailable");
         }
         default int journalVersion() { return 0; }
+        default int journalTitlesVersion() { return 0; }
+        default void journalTitlesUpgraded(RemoteStore.Peer peer) throws Exception { }
         default void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int sessionControlVersion() { return 0; }
         default void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
@@ -70,6 +72,7 @@ public final class RemoteSession {
         if (hooks.profileVersion() == 1 && hooks.profileDetailsVersion() == 1) hello.put("profileDetailsVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileRoleVersion() == 1) hello.put("profileRoleVersion", 1);
         if (hooks.journalVersion() == 1) hello.put("journalVersion", 1);
+        if (hooks.journalVersion() == 1 && hooks.journalTitlesVersion() == 1) hello.put("journalTitlesVersion", 1);
         if (hooks.tasksVersion() == 1) {
             hello.put("tasksVersion", 1);
             if (hooks.taskCancelVersion() == 1) hello.put("taskCancelVersion", 1);
@@ -85,6 +88,8 @@ public final class RemoteSession {
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");
         boolean journal = journalVersion(response) == 1 && hooks.journalVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
+        store.putMetadata(peer.identity, peer.generation, "journal_titles_version",
+                journal && journalTitlesVersion(response) == 1 && hooks.journalTitlesVersion() == 1 ? "1" : "0");
         store.putMetadata(peer.identity,peer.generation,"tasks_version",tasksVersion(response)==1 && hooks.tasksVersion()==1 ? "1" : "0");
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
                 tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
@@ -126,6 +131,9 @@ public final class RemoteSession {
         boolean journal = journalVersion(hello) == 1 && hooks.journalVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
         if (journal) ready.put("journalVersion", 1);
+        boolean titles = journal && journalTitlesVersion(hello) == 1 && hooks.journalTitlesVersion() == 1;
+        store.putMetadata(peer.identity, peer.generation, "journal_titles_version", titles ? "1" : "0");
+        if (titles) ready.put("journalTitlesVersion", 1);
         if (profile) ready.put("profileVersion", 1);
         if (details) ready.put("profileDetailsVersion", 1);
         if (roleIdentity) ready.put("profileRoleVersion", 1);
@@ -179,6 +187,13 @@ public final class RemoteSession {
         if (!frame.has("journalVersion")) return 0;
         long version = RemoteProtocol.integer(frame, "journalVersion");
         if (version <= 0) throw new JSONException("Invalid Journal capability");
+        return version;
+    }
+
+    private static long journalTitlesVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("journalTitlesVersion")) return 0;
+        long version = RemoteProtocol.integer(frame, "journalTitlesVersion");
+        if (version <= 0) throw new JSONException("Invalid Journal title capability");
         return version;
     }
 
@@ -236,7 +251,7 @@ public final class RemoteSession {
             push(connection,peer,deadline,activity);
             pull(connection,peer,deadline,activity);
             if (tasks) hooks.tasks(connection,peer,deadline);
-            if (journal) hooks.journal(connection,peer,deadline);
+            if (journal) journal(connection,peer,deadline);
             if (controls) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             send(connection,message("done",peer),deadline);requireType(read(connection,deadline),"done_ack",peer);
@@ -246,12 +261,31 @@ public final class RemoteSession {
             hooks.prepare(peer);
             push(connection,peer,deadline,activity);
             if (tasks) hooks.tasks(connection,peer,deadline);
-            if (journal) hooks.journal(connection,peer,deadline);
+            if (journal) journal(connection,peer,deadline);
             if (controls) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             requireType(read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());
+    }
+
+    private void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+        requirePeer(connection, peer);
+        store.authorityAccess(() -> {
+          synchronized (store) {
+            RemoteStore.Peer current = store.peer(peer.identity, peer.generation);
+            if (current == null || current.state != RemoteStore.State.ACTIVE || current.localRole != peer.localRole)
+                throw new SecurityException("Pairing revoked");
+            String projection = store.metadata(peer.identity, peer.generation, "journal_titles_version", "0");
+            if (!projection.equals(store.metadata(peer.identity, peer.generation, "journal_titles_projection", "0"))) {
+                if ("1".equals(projection)) hooks.journalTitlesUpgraded(peer);
+                // Queue first: an interruption before this marker safely coalesces the same audience again.
+                store.putMetadata(peer.identity, peer.generation, "journal_titles_projection", projection);
+            }
+          }
+          return null;
+        });
+        hooks.journal(connection, peer, deadline);
     }
 
     private void push(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity) throws Exception {

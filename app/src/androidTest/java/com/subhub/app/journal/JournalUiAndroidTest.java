@@ -88,18 +88,39 @@ public final class JournalUiAndroidTest {
             tap("journal_new");
             scenario.onActivity(a -> {
                 assertFalse(a.getCurrentFocus() instanceof EditText);
+                assertEquals(JournalEntry.defaultTitle(model(a).created), ((EditText) tagged(a, "journal_title_input")).getText().toString());
                 EditText input = (EditText) tagged(a, "journal_text"); input.setText("x".repeat(4001));
                 assertEquals(4000, input.length());
+                EditText title = (EditText) tagged(a, "journal_title_input"); title.setText("t".repeat(121));
+                assertEquals(120, title.length());
+                assertTrue(title.getTop() < input.getTop());
             });
             scenario.recreate();
             scenario.onActivity(a -> { assertFalse(a.getCurrentFocus() instanceof EditText);
-                assertEquals(4000, ((EditText) tagged(a, "journal_text")).length()); });
+                assertEquals(4000, ((EditText) tagged(a, "journal_text")).length());
+                assertEquals(120, ((EditText) tagged(a, "journal_title_input")).length()); });
+            onView(tag("journal_title_input")).perform(revealAboveNavigation(), click(), replaceText("My private reflection"), closeSoftKeyboard());
             onView(tag("journal_text")).perform(revealAboveNavigation(), click(), replaceText("Private journal fixture"), closeSoftKeyboard());
             String id = modelId(scenario); remember(false, id); tap("journal_save");
             await(scenario, a -> tagged(a, "journal_detail") != null);
             assertEquals("Private journal fixture", runtime.entry(false, PersonId.LOCAL, id).text);
+            assertEquals("My private reflection", runtime.entry(false, PersonId.LOCAL, id).title);
             assertTrue(runtime.entries.audience(false, id).isEmpty());
             tap("journal_edit");
+            onView(tag("journal_title_input")).perform(revealAboveNavigation(), replaceText("Revised reflection"), closeSoftKeyboard());
+            scenario.recreate();
+            scenario.onActivity(a -> assertEquals("Revised reflection", ((EditText) tagged(a, "journal_title_input")).getText().toString()));
+            tap("journal_save"); await(scenario, a -> tagged(a, "journal_detail") != null);
+            assertEquals("Revised reflection", runtime.entry(false, PersonId.LOCAL, id).title);
+            assertEquals("Private journal fixture", runtime.entry(false, PersonId.LOCAL, id).text);
+            tap("journal_edit");
+            onView(tag("journal_title_input")).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
+            tap("journal_save"); await(scenario, a -> tagged(a, "journal_detail") != null);
+            JournalEntry cleared = runtime.entry(false, PersonId.LOCAL, id);
+            assertEquals("", cleared.title);
+            scenario.onActivity(a -> assertEquals(JournalEntry.defaultTitle(cleared.created), ((TextView) tagged(a, "journal_entry_title")).getText().toString()));
+            tap("journal_edit");
+            scenario.onActivity(a -> assertEquals(JournalEntry.defaultTitle(cleared.created), ((EditText) tagged(a, "journal_title_input")).getText().toString()));
             onView(tag("journal_text")).perform(revealAboveNavigation(), replaceText("Cancelled edit"), closeSoftKeyboard());
             tap("journal_cancel"); await(scenario, a -> tagged(a, "journal_detail") != null);
             assertEquals("Private journal fixture", runtime.entry(false, PersonId.LOCAL, id).text);
@@ -126,6 +147,24 @@ public final class JournalUiAndroidTest {
             tap("journal_save"); await(scenario, a -> tagged(a, "journal_detail") != null);
             JournalEntry entry = runtime.entry(false, PersonId.LOCAL, id); assertEquals(5, entry.attachments.size());
             for (JournalAttachment file : entry.attachments) assertEquals(64, runtime.mediaFile(false, PersonId.LOCAL, id, file.hash).length());
+        }
+    }
+
+    @Test public void profileAndOverviewPreviewsShowOnlyTitleAndUseCreationTimeFallback() throws Exception {
+        String id = seed(false, "Body must never become a preview", null, List.of(), false);
+        JournalEntry original = runtime.entry(false, PersonId.LOCAL, id);
+        runtime.save(false, new JournalEntry(id, original.created, original.updated,
+                "A chosen title", original.text, null, List.of()), false, false);
+        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            await(scenario, a -> tagged(a, "profile_journal_preview") != null
+                    && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals("A chosen title"));
+            scenario.onActivity(a -> JournalPreview.addOverview(
+                    (android.widget.LinearLayout) tagged(a, "profile_journal_preview").getParent(), false, () -> { }));
+            await(scenario, a -> tagged(a, "overview_journal_preview") != null
+                    && ((TextView) tagged(a, "overview_journal_preview")).getText().toString().equals("A chosen title"));
+            runtime.save(false, original, false, false);
+            await(scenario, a -> ((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals(original.displayTitle())
+                    && ((TextView) tagged(a, "overview_journal_preview")).getText().toString().equals(original.displayTitle()));
         }
     }
 
@@ -305,12 +344,14 @@ public final class JournalUiAndroidTest {
         String about = "I value clear communication and a steady routine. I keep time for reflection and shared plans. ".repeat(3).trim();
         assertTrue(ProfileStore.save(context, false, "Alexandra Morgan", about, "", "Non-binary", 32));
         String privateId = seed(false, "Private preview for its own Sub workspace", null, List.of(), false);
+        String subDefaultTitle = runtime.entry(false, PersonId.LOCAL, privateId).displayTitle();
         ControllerPinManager.enterDomMode();
         assertTrue(ProfileStore.save(context, true, "Rowan Avery", "Clear plans, patient support, and honest reflection.", "", "Woman", 34));
-        seed(true, "Private preview for its own Dom workspace", null, List.of(), false);
+        String domPrivateId = seed(true, "Private preview for its own Dom workspace", null, List.of(), false);
+        String domDefaultTitle = runtime.entry(true, PersonId.LOCAL, domPrivateId).displayTitle();
         ControllerPinManager.enterSubMode();
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
-            await(scenario, a -> tagged(a, "profile_journal_preview") != null && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().contains("Private preview"));
+            await(scenario, a -> tagged(a, "profile_journal_preview") != null && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals(subDefaultTitle));
             scenario.onActivity(a -> {
                 assertTrue(tagged(a, "profile_preview:sub") instanceof com.subhub.app.people.ProfilePreview);
                 assertTrue(((TextView) tagged(a, "self_profile_details")).getText().toString().contains("Non-binary"));
@@ -335,7 +376,7 @@ public final class JournalUiAndroidTest {
         }
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
-            await(scenario, a -> tagged(a, "profile_journal_preview") != null && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().contains("Private preview"));
+            await(scenario, a -> tagged(a, "profile_journal_preview") != null && ((TextView) tagged(a, "profile_journal_preview")).getText().toString().equals(domDefaultTitle));
             scenario.onActivity(a -> assertTrue(tagged(a, "profile_preview:dom") instanceof com.subhub.app.people.ProfilePreview));
             capture(scenario, "polished-profile-dom");
         }

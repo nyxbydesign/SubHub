@@ -45,6 +45,7 @@ public class JournalPeerAndroidTest {
     private String dn, sn, dj, sj, generation;
     private ExecutorService serving;
     private final AtomicInteger calls = new AtomicInteger();
+    private final AtomicInteger completions = new AtomicInteger();
     @Before public void setup() throws Exception {
         String suffix = UUID.randomUUID().toString();
         dn = "journal-dom-peer-" + suffix; sn = "journal-sub-peer-" + suffix;
@@ -86,6 +87,9 @@ public class JournalPeerAndroidTest {
         assets.finish(hash); return new JournalAttachment(hash, "Synthetic.bin", "application/octet-stream", length);
     }
     private RemoteSession.Hooks hooks(JournalRuntime runtime, boolean supported) throws Exception {
+        return hooks(runtime, supported, true, false);
+    }
+    private RemoteSession.Hooks hooks(JournalRuntime runtime, boolean supported, boolean titles, boolean strictLegacy) throws Exception {
         RemoteAssets empty = new RemoteAssets(new File(root, runtime == dr ? "empty-dom" : "empty-sub"));
         return new RemoteSession.Hooks() {
             public int profileVersion() { return 1; }
@@ -95,18 +99,28 @@ public class JournalPeerAndroidTest {
                         peer.localRole == RemoteProtocol.Role.DOM ? "Fixture Dom" : "Fixture Sub", "", "", "Self-entered", 32), peer.localRole, details);
             }
             public int journalVersion() { return supported ? 1 : 0; }
+            public int journalTitlesVersion() { return titles ? 1 : 0; }
+            public void journalTitlesUpgraded(RemoteStore.Peer peer) throws Exception {
+                runtime.requireActive(peer);
+                runtime.entries.republishTitles(peer.localRole == RemoteProtocol.Role.DOM, JournalRuntime.scope(peer));
+            }
             public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
-                calls.incrementAndGet(); JournalPeer.exchange(runtime, connection, peer, deadline);
+                calls.incrementAndGet();
+                if (strictLegacy) legacySubJournal(connection, peer);
+                else JournalPeer.exchange(runtime, connection, peer, deadline);
             }
             public void prepare(RemoteStore.Peer peer) { }
             public void received(RemoteStore.Peer peer, RemoteProtocol.Stream stream) { }
             public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) { return List.of(); }
             public RemoteAssets assets(RemoteStore.Peer peer) { return empty; }
-            public void complete(RemoteStore.Peer peer) { }
+            public void complete(RemoteStore.Peer peer) { completions.incrementAndGet(); }
         };
     }
     private void session(boolean supported) throws Exception {
-        RemoteSession.Hooks dh = hooks(dr, true), sh = hooks(sr, supported);
+        session(supported, true, false);
+    }
+    private void session(boolean supported, boolean titles, boolean strictLegacy) throws Exception {
+        RemoteSession.Hooks dh = hooks(dr, true), sh = hooks(sr, supported, titles, strictLegacy);
         Future<?> receiver = serving.submit(() -> {
             try (PeerTransport.Connection connection = st.accept(10_000)) {
                 JSONObject hello = RemoteProtocol.read(connection.input());
@@ -118,6 +132,65 @@ public class JournalPeerAndroidTest {
             new RemoteSession(dom, dt, dh).outgoing(connection, dp, System.nanoTime() + TimeUnit.SECONDS.toNanos(30));
         }
         receiver.get(35, TimeUnit.SECONDS);
+    }
+
+    private JSONObject legacyFrame(String type, RemoteStore.Peer peer) throws Exception {
+        return new JSONObject().put("version", RemoteProtocol.VERSION).put("type", type)
+                .put("generation", peer.generation).put("role", peer.localRole.name());
+    }
+    /** Pre-title receiver validates the exact old entry fields before committing or acknowledging. */
+    private void legacySubJournal(PeerTransport.Connection connection, RemoteStore.Peer peer) throws Exception {
+        String scope = JournalRuntime.scope(peer);
+        JSONObject status = RemoteProtocol.read(connection.input()); assertEquals("journal_status", status.getString("type"));
+        RemoteProtocol.write(connection.output(), legacyFrame("journal_status", peer).put("received", sr.entries.received(scope)));
+        JSONObject changes = RemoteProtocol.read(connection.input()); assertEquals("journal_changes", changes.getString("type"));
+        org.json.JSONArray rows = changes.getJSONArray("changes");
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject change = rows.getJSONObject(i).getJSONObject("change");
+            if (!change.getBoolean("deleted")) JournalEntry.keys(change.getJSONObject("entry"),
+                    Set.of("schema", "id", "created", "updated", "text", "audio", "attachments"));
+        }
+        long received = sr.entries.receive(scope, rows);
+        RemoteProtocol.write(connection.output(), legacyFrame("journal_receipt", peer).put("received", received).put("assets", new org.json.JSONArray()));
+        assertEquals("journal_assets_end", RemoteProtocol.read(connection.input()).getString("type"));
+        org.json.JSONArray outgoing = sr.entries.outgoing(scope, RemoteProtocol.integer(status, "received"));
+        RemoteProtocol.write(connection.output(), legacyFrame("journal_changes", peer).put("changes", outgoing));
+        JSONObject receipt = RemoteProtocol.read(connection.input()); assertEquals("journal_receipt", receipt.getString("type"));
+        assertEquals(0, receipt.getJSONArray("assets").length());
+        RemoteProtocol.write(connection.output(), legacyFrame("journal_assets_end", peer));
+    }
+
+    @Test public void titledEntriesReachStrictLegacyThenUpgradeOnceWithoutSharingPrivateEntriesOrResettingCursors() throws Exception {
+        JournalEntry original = entry("Body survives legacy delivery", null);
+        JournalEntry titled = new JournalEntry(original.id, original.created, original.updated, "A shared title", original.text, null, List.of());
+        JournalEntry privateEntry = new JournalEntry(UUID.randomUUID().toString().replace("-", ""), 100, 101, "Private title", "Private body", null, List.of());
+        JournalEntry withdrawn = new JournalEntry(UUID.randomUUID().toString().replace("-", ""), 100, 101, "Withdrawn title", "Withdrawn body", null, List.of());
+        dr.entries.save(true, titled, Set.of(JournalRuntime.scope(dp)));
+        dr.entries.save(true, privateEntry, Set.of());
+        dr.entries.save(true, withdrawn, Set.of(JournalRuntime.scope(dp)));
+        session(true, false, true);
+        assertEquals(2, completions.get());
+        JournalEntry received = sr.entries.entry(false, JournalRuntime.scope(sp), titled.id);
+        assertEquals("", received.title); assertEquals(titled.text, received.text);
+        assertEquals(titled.title, dr.entries.entry(true, null, titled.id).title);
+        long legacyCursor = sr.entries.received(JournalRuntime.scope(sp)); assertTrue(legacyCursor > 0);
+        dr.entries.save(true, withdrawn, Set.of());
+        JournalEntry fromSub = new JournalEntry(UUID.randomUUID().toString().replace("-", ""), 100, 101,
+                "Sub reflection", "Sub body", null, List.of());
+        sr.entries.save(false, fromSub, Set.of(JournalRuntime.scope(sp)));
+        session(true, true, false);
+        received = sr.entries.entry(false, JournalRuntime.scope(sp), titled.id);
+        assertEquals(titled.title, received.title); assertEquals(titled.text, received.text);
+        assertEquals(titled.updated, received.updated); assertEquals(titled.created, received.created);
+        assertEquals(fromSub.title, dr.entries.entry(true, JournalRuntime.scope(dp), fromSub.id).title);
+        long upgraded = sr.entries.received(JournalRuntime.scope(sp)); assertTrue(upgraded > legacyCursor);
+        session(true, true, false);
+        assertEquals(upgraded, sr.entries.received(JournalRuntime.scope(sp)));
+        assertEquals(6, completions.get());
+        assertNull(sr.entries.entry(false, JournalRuntime.scope(sp), privateEntry.id));
+        assertNull(sr.entries.entry(false, JournalRuntime.scope(sp), withdrawn.id));
+        assertEquals(Set.of(JournalRuntime.scope(dp)), dr.entries.audience(true, titled.id));
+        assertEquals("1", dom.metadata(dp.identity, generation, "journal_titles_version", ""));
     }
     @Test public void realIrohNegotiationSkipsLegacyAndCarriesOnlyExplicitlySharedEntriesBidirectionally() throws Exception {
         JournalEntry privateEntry = entry("Private Dom entry", null), published = entry("Shared Dom entry", null), fromSub = entry("Shared Sub entry", null);

@@ -25,6 +25,32 @@ public class JournalStoreAndroidTest {
     @After public void cleanup() { store.close(); context.deleteDatabase(database); }
     private JournalEntry entry(String text) { return new JournalEntry("0123456789abcdef0123456789abcdef", 100, 101, text, null, List.of()); }
 
+    @Test public void legacyBlobUsesCreationTimeAndTitleEditsPersistAndSynchronizeWithoutNewAudience() throws Exception {
+        JournalEntry original = entry("Preserved legacy body");
+        store.save(false, original, Set.of());
+        // Seed the exact pre-title JSON record, then reopen the actual database.
+        JSONObject legacy = original.json(); legacy.remove("title");
+        android.content.ContentValues row = new android.content.ContentValues(); row.put("body", legacy.toString());
+        store.getWritableDatabase().update("entries", row, "id=?", new String[]{original.id});
+        store.close(); store = new JournalStore(context, database);
+        JournalEntry loaded = store.entry(false, null, original.id);
+        assertEquals("", loaded.title); assertEquals(original.text, loaded.text);
+        assertEquals(JournalEntry.defaultTitle(original.created), loaded.displayTitle());
+        JournalEntry titled = new JournalEntry(loaded.id, loaded.created, 102, "My reflection", loaded.text, null, List.of());
+        store.save(false, titled, Set.of());
+        assertTrue(store.audience(false, titled.id).isEmpty()); assertEquals(0, store.outgoing(a, 0).length());
+        store.close(); store = new JournalStore(context, database);
+        assertEquals(titled.title, store.entry(false, null, titled.id).title);
+        store.save(false, titled, Set.of(a, "local-dom"));
+        assertEquals(titled.title, store.localShared(true, 0).get(0).title);
+        long cursor = store.receive(b, store.outgoing(a, 0));
+        JournalEntry received = store.entry(true, b, titled.id);
+        assertEquals(titled.title, received.title); assertEquals(original.text, received.text);
+        assertEquals(original.created, received.created);
+        store.save(false, titled, Set.of()); store.receive(b, store.outgoing(a, cursor));
+        assertNull(store.entry(true, b, titled.id)); assertTrue(store.localShared(true, 0).isEmpty());
+    }
+
     @Test public void privateEntryHasNoOutgoingRecordAndRolesCannotReadOrOverwriteOneAnother() throws Exception {
         JournalEntry entry = entry("Private text"); store.save(true, entry, Set.of());
         assertEquals(0, store.outgoing(a, 0).length());

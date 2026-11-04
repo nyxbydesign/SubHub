@@ -23,6 +23,7 @@ public final class JournalPeer {
     private final PeerTransport.Connection connection;
     private final long deadline;
     private final String scope;
+    private boolean titles;
 
     private JournalPeer(JournalRuntime runtime, PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) {
         this.runtime = runtime; this.connection = connection; this.peer = peer; this.deadline = deadline;
@@ -36,6 +37,10 @@ public final class JournalPeer {
 
     private void exchange() throws Exception {
         boolean dom = peer.localRole == RemoteProtocol.Role.DOM;
+        synchronized (runtime.authority) {
+            check();
+            titles = "1".equals(runtime.authority.metadata(peer.identity, peer.generation, "journal_titles_version", "0"));
+        }
         JSONObject status = frame("journal_status").put("received", runtime.entries.received(scope));
         JSONObject remote;
         if (dom) { send(status); remote = read("journal_status"); }
@@ -49,7 +54,7 @@ public final class JournalPeer {
         JSONArray changes;
         synchronized (runtime.authority) {
             check();
-            changes = runtime.entries.outgoing(scope, after);
+            changes = projectedChanges(runtime.entries.outgoing(scope, after), titles);
             send(frame("journal_changes").put("changes", changes));
         }
         JSONObject receipt = read("journal_receipt");
@@ -80,6 +85,15 @@ public final class JournalPeer {
             }
         }
         send(frame("journal_assets_end"));
+    }
+
+    static JSONArray projectedChanges(JSONArray rows, boolean titles) throws Exception {
+        JSONArray copy = new JSONArray(rows.toString());
+        if (!titles) for (int i = 0; i < copy.length(); i++) {
+            JSONObject change = copy.getJSONObject(i).getJSONObject("change");
+            if (!change.getBoolean("deleted")) change.getJSONObject("entry").remove("title");
+        }
+        return copy;
     }
 
     private void pull() throws Exception {

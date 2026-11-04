@@ -41,6 +41,7 @@ import com.subhub.app.journal.JournalEntry;
 import com.subhub.app.journal.JournalRuntime;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.R;
+import com.subhub.app.relationships.RelationshipUi;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.security.KeyholderPresentationAndroidTest;
@@ -58,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -138,7 +140,7 @@ public final class OverviewReferenceAndroidTest {
         });
         domShared = entry(true, "A shared plan for the day.", true, 3000);
         domPrivate = entry(true, "A good day to slow down.", false, 1000);
-        subPrivate = entry(false, "A little progress today.", false, 1000);
+        subPrivate = entry(false, "Today's progress", "A little progress today.", false, 1000);
         ControllerPinManager.enterDomMode();
         assertTrue(new FavoriteSubStore(context).toggle(people.get().get(0)));
     }
@@ -266,9 +268,12 @@ public final class OverviewReferenceAndroidTest {
     public void subOverviewUsesAuthorizedDomActualTimerOwnJournalAndConfiguredAppUsage() throws Exception {
         assertTrue(CommitmentManager.start(context, 5_040_000L, 5_040_000L, false));
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
+        try (AutoCloseable relationship = localDomFixture();
+                ActivityScenario<MainActivity> scenario = ActivityScenario.launch(home())) {
             MainActivity activity = resumed(MainActivity.class);
-            await(() -> hasText(activity.findViewById(R.id.home_sub_summary), "A little progress today."));
+            await(() -> hasText(activity.findViewById(R.id.home_sub_summary), "Today's progress"));
+            await(() -> tagged(activity, "home_contract_dom_name") != null);
+            onMain(() -> assertFalse(hasText(tagged(activity, "home_journal:sub"), "A little progress today.")));
             onMain(() -> activity.findViewById(R.id.home_service_widget).setTag("overview_session_card"));
             capture(activity, "overview-sub-top", null);
             capture(activity, "overview-sub-session", "overview_session_card");
@@ -284,6 +289,23 @@ public final class OverviewReferenceAndroidTest {
                 assertTrue(hasText(body, "12 / 30 min")); assertTrue(hasText(body, "8 / 20 min"));
                 assertEquals("Nova", ((TextView) tagged(a, "home_contract_dom_name")).getText().toString());
                 assertTrue(((TextView) tagged(a, "home_contract_dom_details")).getText().toString().contains("34"));
+                ViewGroup identity = (ViewGroup) tagged(a, "home_assigned_dom_connection");
+                ViewGroup domCard = (ViewGroup) identity.getParent();
+                ViewGroup domHeading = (ViewGroup) domCard.getChildAt(0);
+                View domTitle = domHeading.getChildAt(0), openContract = domHeading.getChildAt(1);
+                ViewGroup sessionCard = a.findViewById(R.id.home_service_widget);
+                View sessionTitle = ((ViewGroup) sessionCard.getChildAt(0)).getChildAt(0);
+                int[] domTop = new int[2], domCardTop = new int[2], sessionTop = new int[2], sessionCardTop = new int[2];
+                domTitle.getLocationInWindow(domTop); domCard.getLocationInWindow(domCardTop);
+                sessionTitle.getLocationInWindow(sessionTop); sessionCard.getLocationInWindow(sessionCardTop);
+                assertEquals("Your Dom and Session titles have the same card inset",
+                        sessionTop[1] - sessionCardTop[1], domTop[1] - domCardTop[1]);
+                int[] actionTop = new int[2]; openContract.getLocationInWindow(actionTop);
+                assertEquals("Your Dom and Open Contract share a text baseline",
+                        domTop[1] + ((TextView) domTitle).getBaseline(),
+                        actionTop[1] + openContract.getBaseline());
+                assertTrue(openContract.isClickable());
+                assertTrue(openContract.getHeight() >= PersonUi.dp(a, 48));
                 assertCanvasFits((ServiceCountdownView) a.findViewById(R.id.service_countdown));
                 try {
                     TextView state = (TextView) tagged(a, "overview_session_state");
@@ -556,6 +578,24 @@ public final class OverviewReferenceAndroidTest {
         }
     }
 
+    private AutoCloseable localDomFixture() {
+        RelationshipUi.Provider original = RelationshipUi.provider();
+        RelationshipUi.Snapshot snapshot = new RelationshipUi.Snapshot(true, "overview-local-fixture",
+                List.of(new RelationshipUi.Participant("overview-dom", RelationshipUi.Role.DOM, ProfileStore.load(context, true)),
+                        new RelationshipUi.Participant("overview-sub", RelationshipUi.Role.SUB, ProfileStore.load(context, false))),
+                Collections.emptyList(), new RelationshipUi.Edge("overview-relationship", "overview-generation",
+                        "overview-dom", "overview-sub", RelationshipUi.Delivery.LOCAL, "ACTIVE", 1, PersonId.LOCAL,
+                        RelationshipUi.Availability.AVAILABLE, PersonSnapshot.Freshness.CURRENT), Collections.emptyList());
+        RelationshipUi.install(new RelationshipUi.Provider() {
+            public CompletableFuture<RelationshipUi.Snapshot> snapshot() { return CompletableFuture.completedFuture(snapshot); }
+            public CompletableFuture<RelationshipUi.LocalReview> prepareLocal(String key, String dom, String sub, String revision) { throw new AssertionError("Overview fixture must not change relationships"); }
+            public CompletableFuture<RelationshipUi.Operation> confirmLocal(String id, String digest) { throw new AssertionError("Overview fixture must not change relationships"); }
+            public CompletableFuture<RelationshipUi.Operation> resume(String id) { throw new AssertionError("Overview fixture must not change relationships"); }
+            public CompletableFuture<RelationshipUi.Operation> cancel(String id) { throw new AssertionError("Overview fixture must not change relationships"); }
+        });
+        return () -> RelationshipUi.install(original);
+    }
+
     private PersonSnapshot project(PersonSnapshot local) {
         PersonSnapshot result = copy(local, syncOverride.get() == null ? local.sync : syncOverride.get(), usage.get());
         ProfileData profile = ownerOverride.get() == null ? local.contractDom : ownerOverride.get();
@@ -612,10 +652,13 @@ public final class OverviewReferenceAndroidTest {
         return values.subList(0, Math.min(limit, values.size()));
     }
     private String entry(boolean dom, String text, boolean share, long ago) throws Exception {
+        return entry(dom, "", text, share, ago);
+    }
+    private String entry(boolean dom, String title, String text, boolean share, long ago) throws Exception {
         if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
         String id = UUID.randomUUID().toString().replace("-", ""); journalFixtures.put(id, dom); writeLedger();
         long now = System.currentTimeMillis() - ago;
-        journal.save(dom, new JournalEntry(id, now, now, text, null, List.of()), share, share); return id;
+        journal.save(dom, new JournalEntry(id, now, now, title, text, null, List.of()), share, share); return id;
     }
     private File ledger() { return new File(context.getCacheDir(), "overview-reference-journal-fixtures.json"); }
     private void writeLedger() throws Exception { Files.write(ledger().toPath(), new org.json.JSONObject(journalFixtures).toString().getBytes(StandardCharsets.UTF_8)); }

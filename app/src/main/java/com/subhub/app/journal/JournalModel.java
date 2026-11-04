@@ -21,7 +21,7 @@ public final class JournalModel extends ViewModel {
     boolean initialized, dom, editing, initialShared, share;
     volatile boolean busy;
     volatile int error;
-    String draft = UUID.randomUUID().toString(), selected = "", id = "", text = "";
+    String draft = UUID.randomUUID().toString(), selected = "", id = "", title = "", text = "";
     long created;
     int offset;
     PersonId target;
@@ -46,6 +46,7 @@ public final class JournalModel extends ViewModel {
         if (state == null) return;
         editing = state.getBoolean("journal_editing"); selected = state.getString("journal_selected", "");
         id = state.getString("journal_id", ""); text = state.getString("journal_text", "");
+        title = state.getString("journal_entry_title", "");
         draft = state.getString("journal_draft", draft); created = state.getLong("journal_created");
         offset = state.getInt("journal_offset"); share = state.getBoolean("journal_share");
         initialShared = state.getBoolean("journal_initial_shared");
@@ -58,6 +59,7 @@ public final class JournalModel extends ViewModel {
     synchronized void save(Bundle state) throws Exception {
         state.putBoolean("journal_editing", editing); state.putString("journal_selected", selected);
         state.putString("journal_id", id); state.putString("journal_text", text); state.putString("journal_draft", draft);
+        state.putString("journal_entry_title", title);
         state.putLong("journal_created", created); state.putInt("journal_offset", offset);
         state.putBoolean("journal_share", share); state.putBoolean("journal_initial_shared", initialShared);
         JSONArray items = new JSONArray(); for (JournalAttachment file : attachments) items.put(file.json());

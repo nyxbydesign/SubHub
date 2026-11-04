@@ -280,8 +280,8 @@ public final class JournalActivity extends PreferencePage {
                     && Boolean.TRUE.equals(value.missingCurrentAudience.get(entry.id)))
                 JournalUi.text(card, getString(model.dom ? R.string.journal_current_subs_missing
                         : R.string.journal_current_dom_missing), 12, false).setTag("journal_current_audience:" + entry.id);
-            if (!entry.text.isEmpty()) {
-                TextView preview = JournalUi.text(card, entry.text, 16, true); preview.setMaxLines(3);
+            {
+                TextView preview = JournalUi.text(card, entryTitle(entry), 16, true); preview.setMaxLines(3);
                 preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
             }
             List<String> media = new ArrayList<>();
@@ -294,7 +294,7 @@ public final class JournalActivity extends PreferencePage {
             card.setClickable(true); card.setFocusable(true); card.setMinimumHeight(dp(48));
             android.util.TypedValue ripple = new android.util.TypedValue(); getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
             card.setForeground(getDrawable(ripple.resourceId));
-            card.setContentDescription(date(entry.created) + (entry.text.isEmpty() ? "" : ", " + entry.text));
+            card.setContentDescription(date(entry.created) + ", " + entryTitle(entry));
             card.setOnClickListener(view -> { model.selected = entry.id; rendered = ""; top(); refresh(); });
         }
         if (model.offset > 0) JournalUi.action(content, R.string.journal_previous, 0, () -> {
@@ -312,6 +312,7 @@ public final class JournalActivity extends PreferencePage {
         JournalUi.text(card, date(entry.created), 12, false);
         boolean shared = !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id));
         JournalUi.state(card, shared).setTag("journal_detail_visibility");
+        JournalUi.text(card, entryTitle(entry), 20, true).setTag("journal_entry_title");
         if (!entry.text.isEmpty()) {
             TextView writing = JournalUi.text(card, entry.text, 16, true); writing.setTag("journal_text_body"); writing.setTextIsSelectable(true);
         }
@@ -360,6 +361,7 @@ public final class JournalActivity extends PreferencePage {
         message = 0;
         model.draft = UUID.randomUUID().toString(); model.id = entry == null ? UUID.randomUUID().toString().replace("-", "") : entry.id;
         model.created = entry == null ? System.currentTimeMillis() : entry.created;
+        model.title = entry == null ? JournalEntry.defaultTitle(model.created) : entry.displayTitle();
         model.text = entry == null ? "" : entry.text; model.audio = entry == null ? null : entry.audio;
         synchronized (model) { model.attachments.clear(); if (entry != null) model.attachments.addAll(entry.attachments); }
         model.runtime.retainDraft(model.dom, model.draft, model.allMedia());
@@ -372,6 +374,17 @@ public final class JournalActivity extends PreferencePage {
         closePlayers(); content.removeAllViews(); recordingLocked.clear(); showMessageIn(content);
         if (model.busy) JournalUi.progress(content).setTag("journal_busy");
         LinearLayout form = JournalUi.surface(content); form.setTag("journal_editor");
+        TextView titleLabel = JournalUi.text(form, getString(R.string.journal_entry_title), 15, true);
+        EditText title = input(form, R.string.journal_entry_title, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        title.setTag("journal_title_input"); title.setId(View.generateViewId()); titleLabel.setLabelFor(title.getId());
+        title.setSingleLine(true); title.setSaveEnabled(false);
+        com.subhub.app.util.InputBounds.restore(title, model.title, JournalEntry.MAX_TITLE);
+        title.setEnabled(!model.busy); recordingLocked.add(title);
+        title.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int n, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int n) { model.title = s.toString(); }
+            public void afterTextChanged(Editable value) { }
+        });
         TextView label = JournalUi.heading(form, getString(R.string.journal_entry), R.drawable.ic_journal);
         editor = input(form, R.string.journal_text_hint, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         editor.setTag("journal_text"); editor.setId(View.generateViewId()); label.setLabelFor(editor.getId());
@@ -431,12 +444,12 @@ public final class JournalActivity extends PreferencePage {
         if (model.busy || recorder != null || !authorized()) return;
         final JournalEntry entry;
         try { entry = new JournalEntry(model.id, model.created, Math.max(model.created, System.currentTimeMillis()),
-                JournalEntry.cleanText(model.text), model.audio, model.files()); }
+                JournalEntry.cleanTitle(model.title), JournalEntry.cleanText(model.text), model.audio, model.files()); }
         catch (IllegalArgumentException invalid) { showMessage(R.string.journal_empty_error); return; }
         JournalModel draft = model; boolean share = draft.share, newlyShared = !draft.initialShared;
         String token = draft.draft;
         draft.work(() -> { draft.runtime.save(draft.dom, entry, share, newlyShared); draft.runtime.releaseDraft(draft.dom, token); return entry.id; }, id -> {
-            draft.editing = false; draft.selected = id; draft.audio = null; draft.attachments.clear(); draft.text = "";
+            draft.editing = false; draft.selected = id; draft.audio = null; draft.attachments.clear(); draft.title = ""; draft.text = "";
         }, R.string.journal_failed);
     }
 
@@ -447,7 +460,7 @@ public final class JournalActivity extends PreferencePage {
         if (model.editing) {
             JournalModel draft = model; String token = draft.draft;
             draft.work(() -> { draft.runtime.releaseDraft(draft.dom, token); return true; }, ignored -> {
-                draft.editing = false; draft.audio = null; draft.attachments.clear(); draft.text = "";
+                draft.editing = false; draft.audio = null; draft.attachments.clear(); draft.title = ""; draft.text = "";
             }, R.string.journal_failed);
         } else if (!model.selected.isEmpty()) { model.selected = ""; rendered = ""; top(); refresh(); }
         else finish();
@@ -584,5 +597,8 @@ public final class JournalActivity extends PreferencePage {
     }
     private void closePlayers() { for (JournalAudioPlayer player : players) player.close(); players.clear(); }
     private void top() { if (page != null && page.getParent() instanceof ScrollView) ((ScrollView) page.getParent()).scrollTo(0, 0); }
+    private String entryTitle(JournalEntry entry) {
+        return entry.displayTitle();
+    }
     private static String date(long time) { return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(time)); }
 }

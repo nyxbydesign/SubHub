@@ -705,6 +705,15 @@ public final class RemoteFeature {
                 new RemoteSessionControlPeer(context, store, active.localIdentity(), coordinator::receiverState).exchange(connection, peer, deadline);
             }
             @Override public int journalVersion() { return 1; }
+            @Override public int journalTitlesVersion() { return 1; }
+            @Override public void journalTitlesUpgraded(RemoteStore.Peer peer) throws Exception {
+                com.subhub.app.journal.JournalRuntime runtime = com.subhub.app.journal.JournalRuntime.get(context);
+                synchronized (store) {
+                    runtime.requireActive(peer);
+                    runtime.entries.republishTitles(peer.localRole == RemoteProtocol.Role.DOM,
+                            com.subhub.app.journal.JournalRuntime.scope(peer));
+                }
+            }
             @Override public void journal(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);
                 com.subhub.app.journal.JournalPeer.exchange(com.subhub.app.journal.JournalRuntime.get(context), connection, peer, deadline);
