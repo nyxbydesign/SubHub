@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+import java.util.zip.Deflater;
 
 /** Bounded application frames carried inside an authenticated encrypted peer connection. */
 public final class RemoteProtocol {
@@ -192,14 +193,20 @@ public final class RemoteProtocol {
     }
 
     public static void write(OutputStream output, JSONObject message) throws IOException {
+        write(output, message, 512, Deflater.BEST_SPEED);
+    }
+
+    // Package scope lets the bounded wire benchmark compare policies on identical frames.
+    static void write(OutputStream output, JSONObject message, int threshold, int level) throws IOException {
         byte[] plain = canonical(message).getBytes(StandardCharsets.UTF_8);
         if (plain.length > MAX_FRAME_BYTES) throw new IOException("Frame too large");
         byte[] payload = plain;
         boolean compressed = false;
-        if (plain.length >= 4096) {
+        if (plain.length >= threshold) {
             ByteArrayOutputStream zipped = new ByteArrayOutputStream();
-            try (GZIPOutputStream gzip = new GZIPOutputStream(zipped)) { gzip.write(plain); }
-            if (zipped.size() < plain.length) { payload = zipped.toByteArray(); compressed = true; }
+            try (GZIPOutputStream gzip = new TunedGzip(zipped, level)) { gzip.write(plain); }
+            // Avoid spending a compression flag and CPU for negligible savings.
+            if (zipped.size() <= plain.length - 32) { payload = zipped.toByteArray(); compressed = true; }
         }
         DataOutputStream frame = new DataOutputStream(output);
         frame.writeInt(MAGIC);
@@ -207,6 +214,13 @@ public final class RemoteProtocol {
         frame.writeInt(payload.length);
         frame.write(payload);
         frame.flush();
+    }
+
+    private static final class TunedGzip extends GZIPOutputStream {
+        TunedGzip(OutputStream output, int level) throws IOException {
+            super(output);
+            def.setLevel(level);
+        }
     }
 
     public static JSONObject read(InputStream input) throws IOException {

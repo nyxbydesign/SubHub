@@ -50,6 +50,43 @@ public class RemoteProtocolTest {
         assertEquals(0, input.available());
     }
 
+    @Test public void smallRepetitiveStateUsesCompression() throws Exception {
+        ByteArrayOutputStream output=new ByteArrayOutputStream();
+        String repeated=String.join("",Collections.nCopies(700,"x"));
+        RemoteProtocol.write(output,new JSONObject().put("version",1).put("text",repeated));
+        assertEquals(1,output.toByteArray()[4]);
+        assertEquals(repeated,RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray())).getString("text"));
+        output.reset();RemoteProtocol.write(output,new JSONObject().put("version",1).put("type","ack"));
+        assertEquals(0,output.toByteArray()[4]);
+    }
+
+    @Test public void compressionPolicyBenchmarkUsesBoundedIdenticalJsonFixtures() throws Exception {
+        String[] names={"idle","runtime","contract","media"};
+        JSONObject[] frames={new JSONObject().put("version",1).put("type","state_ack").put("phase",0),
+                new JSONObject().put("version",1).put("type","runtime").put("state",String.join("",Collections.nCopies(25,"running=false;remaining=120;"))),
+                new JSONObject().put("version",1).put("type","contract").put("settings",String.join("",Collections.nCopies(100,"feature=enabled;allowance=1800;"))),
+                new JSONObject().put("version",1).put("type","asset_chunk").put("data",java.util.Base64.getEncoder().encodeToString(randomBytes(64*1024)))};
+        for(int threshold:new int[]{512,1024,4096})for(int level:new int[]{java.util.zip.Deflater.BEST_SPEED,java.util.zip.Deflater.DEFAULT_COMPRESSION}) {
+            for(int i=0;i<frames.length;i++) {
+                ByteArrayOutputStream output=new ByteArrayOutputStream();
+                // Timings are bounded diagnostic samples, never pass/fail thresholds.
+                for(int warm=0;warm<4;warm++){output.reset();RemoteProtocol.write(output,frames[i],threshold,level);}
+                long started=System.nanoTime();
+                for(int round=0;round<16;round++){output.reset();RemoteProtocol.write(output,frames[i],threshold,level);}
+                long nanos=(System.nanoTime()-started)/16;
+                assertTrue(output.size()<=RemoteProtocol.MAX_FRAME_BYTES+9);
+                assertEquals(RemoteProtocol.canonical(frames[i]),RemoteProtocol.canonical(RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray()))));
+                System.out.println("WIRE_COMPRESSION "+new JSONObject().put("fixture",names[i]).put("threshold",threshold).put("level",level)
+                        .put("plainBytes",RemoteProtocol.canonical(frames[i]).getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                        .put("wireBytes",output.size()).put("encodeNanos",nanos).toString());
+            }
+        }
+    }
+
+    private static byte[] randomBytes(int size) {
+        byte[] bytes=new byte[size];new java.util.Random(1701).nextBytes(bytes);return bytes;
+    }
+
     @Test public void refusesCompressionBombBeforeJsonParsing() throws Exception {
         ByteArrayOutputStream zipped = new ByteArrayOutputStream();
         try (GZIPOutputStream gzip = new GZIPOutputStream(zipped)) { gzip.write(new byte[RemoteProtocol.MAX_FRAME_BYTES + 1]); }
@@ -64,6 +101,16 @@ public class RemoteProtocolTest {
         DataOutputStream frame = new DataOutputStream(output);
         frame.writeInt(0x53554831); frame.writeByte(0); frame.writeInt(Integer.MAX_VALUE);
         assertThrows(IOException.class, () -> RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray())));
+    }
+
+    @Test public void refusesUnknownFlagsAndMalformedUtf8() throws Exception {
+        for (int flags : new int[]{0, 2}) {
+            ByteArrayOutputStream output=new ByteArrayOutputStream();
+            DataOutputStream frame=new DataOutputStream(output);
+            frame.writeInt(0x53554831);frame.writeByte(flags);frame.writeInt(2);
+            frame.write(new byte[]{(byte)0xc3,0x28});
+            assertThrows(IOException.class,()->RemoteProtocol.read(new ByteArrayInputStream(output.toByteArray())));
+        }
     }
 
     @Test public void rejectsFractionalAndStringSequenceNumbers() throws Exception {

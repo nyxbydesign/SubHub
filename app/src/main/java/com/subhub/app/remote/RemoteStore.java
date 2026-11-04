@@ -1284,8 +1284,9 @@ public final class RemoteStore extends SQLiteOpenHelper {
             String encoded = deleted ? "{}" : RemoteProtocol.canonical(body);
             String[] itemArgs = {identity,generation,stream.name(),key};
             try (Cursor c = db.rawQuery("SELECT seq,body,deleted,observed FROM local_objects WHERE peer=? AND generation=? AND stream=? AND item=?", itemArgs)) {
-                if (c.moveToFirst() && encoded.equals(StoredPayloads.read(c,1)) && deleted == (c.getInt(2) != 0)
-                        && (stream != RemoteProtocol.Stream.RUNTIME || observedAt == c.getLong(3))) {
+                if (c.moveToFirst() && deleted == (c.getInt(2) != 0)
+                        && RemoteSyncContent.same(stream,key,encoded,StoredPayloads.read(c,1))
+                        && (stream != RemoteProtocol.Stream.RUNTIME || "current".equals(key) || observedAt == c.getLong(3))) {
                     db.setTransactionSuccessful(); return c.getLong(0);
                 }
             }
@@ -1399,9 +1400,34 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     public synchronized void synced(String identity, String generation, long now) {
-        active(getWritableDatabase(),identity,generation);
-        getWritableDatabase().execSQL("UPDATE peers SET last_sync=? WHERE peer=? AND generation=?",new Object[]{now,identity,generation});
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            active(db,identity,generation);
+            db.execSQL("UPDATE peers SET last_sync=? WHERE peer=? AND generation=?",new Object[]{now,identity,generation});
+            putMetadata(identity,generation,"last_contact",Long.toString(now));
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
     }
+
+    /** Last authenticated contact is separate from completion of every optional sync phase. */
+    public synchronized long lastContactAt(Peer selected) {
+        return lastContactAt(selected,System.currentTimeMillis());
+    }
+    synchronized long lastContactAt(Peer selected,long now) {
+        Peer current=peer(selected.identity,selected.generation);if(current==null)return 0;
+        long contact=validContact(current.lastSyncedAt,now);
+        String observed=metadata(current.identity,current.generation,"last_contact",null);
+        if(observed!=null)return Math.max(contact,validContact(observed,now));
+        // Older builds recorded local checkpoint receipt times before the full session could fail.
+        for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values())
+            if(stream.writer==current.remoteRole())contact=Math.max(contact,validContact(
+                    metadata(current.identity,current.generation,"confirmed_"+stream.name(),"0"),now));
+        return contact;
+    }
+    private static long validContact(String value,long now) {
+        try{return validContact(Long.parseLong(value),now);}catch(NumberFormatException invalid){return 0;}
+    }
+    private static long validContact(long value,long now) {return value>0&&value<=now?value:0;}
 
     public synchronized JSONObject outgoingHeads(String identity,String generation) throws JSONException {
         return outgoingHeads(identity,generation,false);
@@ -1431,7 +1457,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
     synchronized void confirmHeads(String identity,String generation,JSONObject heads,boolean activity) throws JSONException {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
-            Peer peer=active(db,identity,generation);int expected=0;
+            Peer peer=active(db,identity,generation);int expected=0;long observed=System.currentTimeMillis();
             for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
                 if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
                 if(stream.writer!=peer.remoteRole())continue;expected++;
@@ -1441,9 +1467,10 @@ public final class RemoteStore extends SQLiteOpenHelper {
                     if(c.moveToFirst())received=c.getLong(0);
                 }
                 if(head<received || head<0)throw new SecurityException("Regressing source checkpoint");
-                if(head==received)putMetadata(identity,generation,"confirmed_"+stream.name(),Long.toString(System.currentTimeMillis()));
+                if(head==received)putMetadata(identity,generation,"confirmed_"+stream.name(),Long.toString(observed));
             }
             if(heads.length()!=expected)throw new JSONException("Unsupported source streams");
+            putMetadata(identity,generation,"last_contact",Long.toString(observed));
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
     }

@@ -25,16 +25,17 @@ public final class RemoteConnectionActivity extends RemotePage {
         clock.removeCallbacks(poll);if(codeDialog!=null)codeDialog.dismiss();super.onPause();}
     private void render(){
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
-        boolean online=PeerPresence.online(feature.isConnected(peer),peer.lastSyncedAt,System.currentTimeMillis());
+        long contact=feature.store.lastContactAt(peer);
+        boolean online=PeerPresence.online(feature.isConnected(peer),contact,System.currentTimeMillis());
         String status=getString(peer.state==RemoteStore.State.REVOKED?R.string.role_connection_revoked:peer.state==RemoteStore.State.PENDING?R.string.role_connection_pending:online?R.string.role_connection_connected:R.string.role_connection_offline);
         if(codeDialog!=null&&(peer.state!=RemoteStore.State.ACTIVE||peer.localRole!=RemoteProtocol.Role.DOM||codeRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()))codeDialog.dismiss();
         StringBuilder observations=new StringBuilder();
         for(RemoteProtocol.Stream stream:observedStreams(peer))observations.append(':').append(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));
-        String signature=observations+":"+peer.state+":"+status+":"+peer.lastSyncedAt+":"+com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()+":"+com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+        String signature=observations+":"+peer.state+":"+status+":"+contact+":"+com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()+":"+com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
         if(signature.equals(rendered))return;rendered=signature;body.removeAllViews();
         android.widget.LinearLayout card=PersonUi.card(body);text(card,peer.name,true);
         text(card,com.subhub.app.people.ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
-        String lastSeen=getString(R.string.role_last_online,peer.lastSyncedAt<=0 || peer.lastSyncedAt>System.currentTimeMillis()?getString(R.string.remote_unknown):com.subhub.app.people.ProfileViews.formatLastSeen(peer.lastSyncedAt));
+        String lastSeen=getString(R.string.role_last_online,contact<=0 || contact>System.currentTimeMillis()?getString(R.string.remote_unknown):com.subhub.app.people.ProfileViews.formatLastSeen(contact));
         text(card,status+" · "+lastSeen,false);
         if(peer.localRole==RemoteProtocol.Role.DOM){
             String model=getString(R.string.remote_unknown);

@@ -141,6 +141,51 @@ public class RemoteConfigurationAndroidTest {
         deliver(configuration());assertThrows(IllegalStateException.class,()->dom.queueConfiguration(SUB,generation,1,0,configuration()));
         assertThrows(IllegalStateException.class,()->dom.queueConfiguration(SUB,generation,0,0,configuration()));
     }
+    @Test public void validatedCheckpointRecordsContactWithoutCompletingSyncAndRejectsInvalidOrRevokedHeads() throws Exception {
+        long completed=System.currentTimeMillis()-12*60*60_000L;
+        sub.synced(DOM,generation,completed);
+        long started=System.currentTimeMillis();JSONObject heads=dom.outgoingHeads(SUB,generation);
+        sub.confirmHeads(DOM,generation,heads);
+        assertEquals(completed,sub.peer(DOM,generation).lastSyncedAt);
+        assertTrue(sub.lastContactAt(sub.peer(DOM,generation))>=started);
+        String observed=sub.metadata(DOM,generation,"last_contact","");
+        sub.putMetadata(DOM,generation,"confirmed_CONFIGURATION","1");
+        assertThrows(JSONException.class,()->sub.confirmHeads(DOM,generation,new JSONObject(heads.toString()).put("UNKNOWN",0)));
+        assertEquals(observed,sub.metadata(DOM,generation,"last_contact",""));
+        assertEquals("1",sub.metadata(DOM,generation,"confirmed_CONFIGURATION",""));
+        String other=UUID.randomUUID().toString();
+        assertThrows(SecurityException.class,()->sub.confirmHeads(DOM,other,heads));
+        assertEquals("missing",sub.metadata(DOM,other,"last_contact","missing"));
+        sub.revoke(DOM,generation);
+        assertThrows(SecurityException.class,()->sub.confirmHeads(DOM,generation,heads));
+        assertEquals(observed,sub.metadata(DOM,generation,"last_contact",""));
+        assertEquals(completed,sub.peer(DOM,generation).lastSyncedAt);
+    }
+
+    @Test public void legacyContactUsesOnlyLocalRoleCorrectPastCheckpointsUntilExplicitObservationExists() throws Exception {
+        long now=System.currentTimeMillis(),completed=now-12*60*60_000L,contact=now-180_000;
+        sub.synced(DOM,generation,completed);
+        sub.getWritableDatabase().delete("remote_metadata","peer=? AND generation=? AND name=?",new String[]{DOM,generation,"last_contact"});
+        sub.putMetadata(DOM,generation,"confirmed_CONFIGURATION",Long.toString(contact));
+        sub.putMetadata(DOM,generation,"confirmed_STATS",Long.toString(now-1));
+        RemoteStore.Peer peer=sub.peer(DOM,generation);
+        assertEquals(contact,sub.lastContactAt(peer,now));
+        assertFalse(PeerPresence.online(false,contact,now));
+        for(String invalid:new String[]{"invalid","0","-1",Long.toString(now+1)}){
+            sub.putMetadata(DOM,generation,"confirmed_CONFIGURATION",invalid);
+            assertEquals(completed,sub.lastContactAt(peer,now));
+        }
+        sub.putMetadata(DOM,generation,"confirmed_CONFIGURATION",Long.toString(contact));
+        for(String invalid:new String[]{"invalid","0","-1",Long.toString(now+1)}){
+            sub.putMetadata(DOM,generation,"last_contact",invalid);
+            assertEquals(completed,sub.lastContactAt(peer,now));
+        }
+        sub.putMetadata(DOM,generation,"last_contact",Long.toString(contact));
+        sub.putMetadata(DOM,generation,"confirmed_CONFIGURATION",Long.toString(now-1));
+        assertEquals(contact,sub.lastContactAt(peer,now));
+        assertEquals(completed,sub.peer(DOM,generation).lastSyncedAt);
+    }
+
     @Test public void unchangedHeadsRefreshOnlyCaughtUpStreams() throws Exception {
         sub.publish(DOM,generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",1),false,1);
         dom.confirmHeads(SUB,generation,sub.outgoingHeads(DOM,generation));assertEquals("missing",dom.metadata(SUB,generation,"confirmed_STATS","missing"));

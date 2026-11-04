@@ -9,10 +9,11 @@ public final class RemoteSyncWorker extends Worker {
     @NonNull @Override public Result doWork() {
         android.content.SharedPreferences receipt=getApplicationContext().getSharedPreferences("subhub_peer_worker",0);
         receipt.edit().putLong("last_started",System.currentTimeMillis()).putString("last_work_id",getId().toString()).commit();
-        try{boolean complete=RemoteFeature.get(getApplicationContext()).backgroundWindow();
+        try{boolean complete=RemoteFeature.get(getApplicationContext()).backgroundWindow(55_000,this::isStopped);
             receipt.edit().putLong("last_finished",System.currentTimeMillis()).putBoolean("last_complete",complete).commit();
-            return complete?Result.success():Result.retry();}
-        catch(InterruptedException stopped){Thread.currentThread().interrupt();return Result.retry();}
-        catch(Exception unavailable){return Result.retry();}
+            return complete?Result.success():retryResult();}
+        catch(InterruptedException stopped){Thread.currentThread().interrupt();return retryResult();}
+        catch(Exception unavailable){return retryResult();}
     }
+    private Result retryResult(){return getRunAttemptCount()<3&&!isStopped()?Result.retry():Result.failure();}
 }

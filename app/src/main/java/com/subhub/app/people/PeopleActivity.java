@@ -140,7 +140,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         for (int index = 0; index < loaded.people.size(); index++) {
             PersonSnapshot person = loaded.people.get(index);
             boolean favorite = favorites.isFavorite(person);
-            long contact = person.lastSyncedAt;
+            long contact = person.lastContactAt;
             String time = contact <= 0 || contact > System.currentTimeMillis() ? getString(R.string.remote_unknown)
                     : ProfileViews.formatLastSeen(contact);
             List<Object> signature = java.util.Arrays.asList(person.profile, person.connection,

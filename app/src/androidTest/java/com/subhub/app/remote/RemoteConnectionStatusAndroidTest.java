@@ -42,6 +42,29 @@ public final class RemoteConnectionStatusAndroidTest {
             ControllerPinManager.enterSubMode();if(originalProvider!=null)People.installKeyholder(originalProvider);if(originalDom)ControllerPinManager.enterDomMode();
         }
     }
+    @Test public void legacySubConnectionShowsNewerContractContactWithoutClaimingCompletedSync() throws Exception {
+        String identity=repeat('a'),generation=UUID.randomUUID().toString();
+        android.database.sqlite.SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();try{
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'SUB','ACTIVE')",new Object[]{identity,generation,"Synthetic Dom"});
+            FormalRelationshipStore.mapPeer(db,identity,generation,true);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        Field busy=RemoteFeature.class.getDeclaredField("busy");busy.setAccessible(true);((Set<String>)busy.get(feature)).add(identity+":"+generation);
+        long completed=System.currentTimeMillis()-12*60*60_000L,contact=System.currentTimeMillis()-180_000;
+        store.synced(identity,generation,completed);
+        db.delete("remote_metadata","peer=? AND generation=? AND name=?",new String[]{identity,generation,"last_contact"});
+        store.putMetadata(identity,generation,"confirmed_CONFIGURATION",Long.toString(contact));
+        RemoteStore.Peer peer=store.peer(identity,generation);
+        try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
+            await(()->row(page,RemoteProtocol.Stream.CONFIGURATION)!=null);
+            page.onActivity(a->{
+                assertNotNull(find(a.body,a.getString(R.string.role_connection_offline)+" · "+a.getString(R.string.role_last_online,ProfileViews.formatLastSeen(contact))));
+                assertTrue(text(a.body.findViewWithTag("connection_stream_CONFIGURATION")).contains(java.text.DateFormat.getDateTimeInstance().format(new Date(contact))));
+            });
+            assertEquals(completed,store.peer(identity,generation).lastSyncedAt);
+            assertEquals(contact,store.lastContactAt(peer));
+        }
+    }
     @Test public void subViewingDomShowsConfigurationOnlyAndUpdatesWithoutAButtonOrNewContact() throws Exception {check(RemoteProtocol.Role.SUB);}
     @Test public void domViewingSubShowsCurrentBaselineStatsAndRuntime() throws Exception {check(RemoteProtocol.Role.DOM);}
     @SuppressWarnings("unchecked") private void check(RemoteProtocol.Role role) throws Exception {
@@ -77,6 +100,7 @@ public final class RemoteConnectionStatusAndroidTest {
             String expected=java.text.DateFormat.getDateTimeInstance().format(new Date(observed));
             await(()->{View view=row(page,role==RemoteProtocol.Role.SUB?RemoteProtocol.Stream.CONFIGURATION:RemoteProtocol.Stream.BASELINE);return view!=null&&text(view).contains(expected);});
             assertEquals(contact,store.peer(identity,generation).lastSyncedAt);
+            assertEquals(contact,store.lastContactAt(peer));
             await(()->{java.util.concurrent.atomic.AtomicBoolean ready=new java.util.concurrent.atomic.AtomicBoolean();page.onActivity(a->ready.set(a.body.getChildCount()==1&&a.body.getChildAt(0).getWidth()>0&&a.body.getChildAt(0).getHeight()>0));return ready.get();});
             page.onActivity(a->capture(a.body.getChildAt(0),role.name()));
         }

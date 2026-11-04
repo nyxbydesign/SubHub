@@ -66,12 +66,24 @@ public final class RemoteFeatureSchedulingAndroidTest {
         final CountDownLatch revokedEntered=new CountDownLatch(1),activeEntered=new CountDownLatch(1);
         final AtomicInteger revokedCalls=new AtomicInteger(),activeCalls=new AtomicInteger();
         final BlockingQueue<Connection> arrivals=new ArrayBlockingQueue<>(1);
-        volatile boolean closed;
+        volatile boolean closed,replyRevocations,failImmediately;
         public String localIdentity(){return identity(200);}
         public String inviteRoute(){return "";}
         public Connection connect(String peer,String route,long timeout)throws IOException{
             assertFalse(Thread.holdsLock(store));assertFalse(Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK));assertFalse(Thread.holdsLock(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK));
             if(peer.equals(identity(87))||peer.equals(identity(88))||peer.equals(identity(89))){activeCalls.incrementAndGet();activeEntered.countDown();}else{revokedCalls.incrementAndGet();revokedEntered.countDown();}
+            if(failImmediately)throw new IOException("Controlled unavailable transport");
+            if(replyRevocations){
+                ByteArrayOutputStream frame=new ByteArrayOutputStream();
+                try{RemoteProtocol.write(frame,new JSONObject().put("version",1).put("type","revoke_ack").put("generation",generation(0)));}
+                catch(org.json.JSONException invalid){throw new IOException(invalid);}
+                return new Connection(){
+                    final InputStream input=new ByteArrayInputStream(frame.toByteArray());final OutputStream output=new ByteArrayOutputStream();
+                    public String authenticatedPeerIdentity(){return peer;}
+                    public InputStream input(){return input;}public OutputStream output(){return output;}
+                    public void setReadTimeoutMillis(long timeout){}public boolean isDirect(){return true;}public void close(){}
+                };
+            }
             blockIgnoringInterrupts();throw new IOException("Controlled unavailable transport");
         }
         public Connection accept(long timeout)throws IOException{
@@ -116,6 +128,113 @@ public final class RemoteFeatureSchedulingAndroidTest {
         assertEquals("Cancelled running operation retains its lease",2,leases.get());
         release.countDown();until(()->busy.isEmpty());until(()->leases.get()==1);
         assertEquals(1,((Semaphore)field("revocations")).availablePermits());
+    }
+    @Test public void backgroundResponderRetainsWindowAndRespectsFutureDueTimes()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        ExecutorService worker=Executors.newSingleThreadExecutor();
+        try{
+            Future<Boolean> result=worker.submit(()->feature.backgroundWindow(500));
+            until(()->((AtomicInteger)unchecked("backgroundWindows")).get()==1);
+            assertFalse("No outgoing work must not close the responder early",result.isDone());
+            assertEquals(2,leases.get());
+            assertTrue(result.get(5,TimeUnit.SECONDS));
+            assertEquals(0,transport.activeCalls.get());assertEquals(0,transport.revokedCalls.get());
+            assertEquals(0,((AtomicInteger)field("backgroundWindows")).get());assertEquals(1,leases.get());
+        }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    @Test public void completedOutgoingDeliveryStillLeavesTheBackgroundResponderAvailable()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        due.remove(identity(0)+":"+generation(0));transport.replyRevocations=true;
+        ExecutorService worker=Executors.newSingleThreadExecutor();
+        try{
+            Future<Boolean> result=worker.submit(()->feature.backgroundWindow(1500));
+            until(()->"true".equals(store.metadata(identity(0),generation(0),"revocation_delivered","")));
+            assertFalse("A finished outgoing exchange must leave time for a later inbound peer",result.isDone());
+            assertEquals(1,((AtomicInteger)field("backgroundWindows")).get());
+            assertTrue(result.get(5,TimeUnit.SECONDS));assertEquals(1,transport.revokedCalls.get());
+        }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    @Test public void stoppedBackgroundWindowReleasesOwnershipWithoutWaitingForDeadline()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        AtomicBoolean stopped=new AtomicBoolean();ExecutorService worker=Executors.newSingleThreadExecutor();
+        try{
+            Future<Boolean> result=worker.submit(()->feature.backgroundWindow(55_000,stopped::get));
+            until(()->((AtomicInteger)unchecked("backgroundWindows")).get()==1);stopped.set(true);
+            try{result.get(5,TimeUnit.SECONDS);fail("Stopped work should abort");}
+            catch(ExecutionException expected){assertTrue(expected.getCause() instanceof InterruptedException);}
+            assertEquals(0,((AtomicInteger)field("backgroundWindows")).get());assertEquals(1,leases.get());
+        }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    @Test public void failedBackgroundPeerRetriesOnlyAfterItsBackoff()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        due.remove(identity(87)+":"+generation(87));transport.failImmediately=true;
+        assertFalse(feature.backgroundWindow(4200));
+        assertEquals("One initial failure and one bounded due retry",2,transport.activeCalls.get());
+        assertEquals(0,transport.revokedCalls.get());
+    }
+    @Test public void preexistingBusyOwnerCanSatisfyWindowWithAnExactCompletedSync()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        String key=identity(87)+":"+generation(87);due.remove(key);
+        Set<String> busy=(Set<String>)field("busy");busy.add(key);ExecutorService worker=Executors.newSingleThreadExecutor();
+        AtomicReference<Thread> backgroundThread=new AtomicReference<>();
+        try{
+            Future<Boolean> result=worker.submit(()->{backgroundThread.set(Thread.currentThread());return feature.backgroundWindow(1500);});
+            until(()->((AtomicInteger)unchecked("backgroundWindows")).get()==1);
+            until(()->backgroundThread.get()!=null&&backgroundThread.get().getState()==Thread.State.TIMED_WAITING);
+            // Simulate the exact durable receipt emitted by a pre-existing foreground/inbound session.
+            store.synced(identity(87),generation(87),System.currentTimeMillis());busy.remove(key);
+            assertTrue(result.get(5,TimeUnit.SECONDS));assertEquals(0,transport.activeCalls.get());
+        }finally{busy.remove(key);worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    @Test public void preexistingBusyOwnerDoesNotHideMutationOrMissingCompletion()throws Exception{
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+        String key=identity(87)+":"+generation(87);due.remove(key);
+        Set<String> busy=(Set<String>)field("busy");busy.add(key);ExecutorService worker=Executors.newSingleThreadExecutor();
+        AtomicReference<Thread> backgroundThread=new AtomicReference<>();
+        try{
+            Future<Boolean> result=worker.submit(()->{backgroundThread.set(Thread.currentThread());return feature.backgroundWindow(1500);});
+            until(()->((AtomicInteger)unchecked("backgroundWindows")).get()==1);
+            until(()->backgroundThread.get()!=null&&backgroundThread.get().getState()==Thread.State.TIMED_WAITING);
+            synchronized(field("attemptClockLock")){
+                invoke("invalidateAttempts",new Class<?>[0]);
+                for(RemoteStore.Peer peer:store.peers(true))if(!(peer.identity+":"+peer.generation).equals(key))due.put(peer.identity+":"+peer.generation,SystemClock.elapsedRealtime()+60_000);
+                store.synced(identity(87),generation(87),System.currentTimeMillis());
+            }
+            // The older in-flight snapshot cannot prove that the newly dirty data was included.
+            assertFalse(result.get(5,TimeUnit.SECONDS));assertEquals(0,transport.activeCalls.get());
+        }finally{busy.remove(key);worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    @Test public void dirtyMutationWhileBusyRemainsDueWhenTheOldExchangeExits()throws Exception{
+        RemoteStore.Peer peer=store.peer(identity(87),generation(87));String key=peer.identity+":"+peer.generation;
+        Set<String> busy=(Set<String>)field("busy");busy.add(key);
+        Future<?> attempt=(Future<?>)invoke("schedulePeer",new Class<?>[]{RemoteStore.Peer.class,long.class},peer,System.nanoTime()+TimeUnit.SECONDS.toNanos(10));
+        assertNotNull(attempt);assertTrue(transport.activeEntered.await(5,TimeUnit.SECONDS));
+        invoke("invalidateAttempts",new Class<?>[0]);release.countDown();attempt.get(5,TimeUnit.SECONDS);until(()->busy.isEmpty());
+        assertFalse("The pre-mutation exchange cannot consume the dirty wake",((Map<?,?>)field("nextAttempt")).containsKey(key));
+    }
+    @Test public void completionCannotClobberMutationAndFailuresBackOffToABoundedDelay()throws Exception{
+        String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        long old=(Long)invoke("attemptGeneration",new Class<?>[0]);
+        invoke("invalidateAttempts",new Class<?>[0]);
+        invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,old,true,false);
+        assertFalse("An old successful snapshot cannot delay new local data",due.containsKey(key));
+        long generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+        long prior=0;
+        for(int failure=0;failure<8;failure++){
+            long before=SystemClock.elapsedRealtime();
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+            long delay=due.get(key)-before;
+            assertTrue(delay>=Math.min(60_000,2_000L<<Math.min(5,failure)));assertTrue(delay<62_000);
+            if(failure<4)assertTrue(delay>prior);prior=delay;
+        }
+        invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
+        assertFalse(((Map<?,?>)field("consecutiveFailures")).containsKey(key));
     }
     @After public void cleanup()throws Exception{
         release.countDown();

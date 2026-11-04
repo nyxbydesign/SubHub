@@ -19,6 +19,8 @@ public final class PersonSnapshot {
     public final Connection connection;
     public final Freshness freshness;
     public final long lastSyncedAt;
+    /** Verified peer contact, which does not imply that every sync phase completed. */
+    public final long lastContactAt;
     public final Set<Capability> capabilities;
     public final List<Section> sections;
     public final List<Allowance> allowances;
@@ -84,6 +86,19 @@ public final class PersonSnapshot {
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
             ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
             ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact) {
+        this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt, capabilities,
+                sections, allowances, currency, protectedSeconds, activityEvents, tributeCents, sessions,
+                serviceActive, sync, sessionIdentity, additionOrder, profile, featureConsent,
+                consentHardcoreOverride, contractDom, contractDomId, contractDomContact, lastSyncedAt);
+    }
+
+    private PersonSnapshot(PersonId id, String name, String device, String contractName,
+            String serviceLabel, Connection connection, Freshness freshness, long lastSyncedAt,
+            Set<Capability> capabilities, List<Section> sections, List<Allowance> allowances,
+            String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
+            boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
+            ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
+            ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact, long lastContactAt) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
@@ -95,6 +110,7 @@ public final class PersonSnapshot {
         this.connection = java.util.Objects.requireNonNull(connection);
         this.freshness = java.util.Objects.requireNonNull(freshness);
         this.lastSyncedAt = lastSyncedAt;
+        this.lastContactAt = Math.max(0, lastContactAt);
         this.capabilities = Collections.unmodifiableSet(capabilities.isEmpty()
                 ? EnumSet.noneOf(Capability.class) : EnumSet.copyOf(capabilities));
         this.sections = Collections.unmodifiableList(new ArrayList<>(sections));
@@ -124,7 +140,7 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact);
+                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact, lastContactAt);
     }
 
     public PersonSnapshot withContractDom(ProfileData value) {
@@ -140,10 +156,17 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact);
+                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact, lastContactAt);
     }
 
-    /** A completed authenticated exchange for this exact peer generation, never controller authority. */
+    public PersonSnapshot withLastContactAt(long contact) {
+        return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
+                lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
+                activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
+                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact, contact);
+    }
+
+    /** A verified authenticated contact for this exact peer generation, never controller authority. */
     public static final class PeerContact {
         public final PersonId id;
         public final Connection state;

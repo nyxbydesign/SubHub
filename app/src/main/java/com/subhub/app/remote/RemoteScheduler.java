@@ -16,9 +16,15 @@ public final class RemoteScheduler {
                 .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build();
         manager.enqueueUniquePeriodicWork(PERIODIC,ExistingPeriodicWorkPolicy.KEEP,request);
     }
+    static OneTimeWorkRequest immediateRequest() {
+        OneTimeWorkRequest.Builder request=new OneTimeWorkRequest.Builder(RemoteSyncWorker.class).setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS);
+        // Android 12 schedules expedited jobs without WorkManager's pre-12 foreground-service fallback.
+        if(android.os.Build.VERSION.SDK_INT>=31)request.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST);
+        return request.build();
+    }
     public static void kick(Context context) {
-        OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(RemoteSyncWorker.class).setConstraints(constraints())
-                .setInitialDelay(2,TimeUnit.SECONDS).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build();
+        OneTimeWorkRequest request=immediateRequest();
         WorkManager.getInstance(context).enqueueUniqueWork(IMMEDIATE,ExistingWorkPolicy.KEEP,request);
     }
 }

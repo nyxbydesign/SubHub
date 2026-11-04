@@ -41,7 +41,7 @@ public final class ProfileViews {
         Context context = parent.getContext();
         LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
-        inlineLastOnline(identity, "person", person.id, person.lastSyncedAt);
+        inlineLastOnline(identity, "person", person.id, person.lastContactAt);
         View about = identity.findViewWithTag("person_about");
         if (about != null) about.setTag("person_about:" + person.id.value());
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
@@ -60,7 +60,7 @@ public final class ProfileViews {
         card.setBackgroundResource(R.drawable.bg_home_composition_person);
         String prefix = "roster:" + person.id.value();
         ProfilePreview preview = ProfilePreview.roster(context, person.profile, prefix);
-        inlineLastOnline(preview, prefix, person.id, person.lastSyncedAt);
+        inlineLastOnline(preview, prefix, person.id, person.lastContactAt);
         card.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(card, person, prefix + "_connection", false);
         card.setOnClickListener(view -> open.run());

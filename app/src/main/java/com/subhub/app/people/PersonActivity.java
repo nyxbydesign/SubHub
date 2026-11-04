@@ -132,10 +132,12 @@ public final class PersonActivity extends RolePage {
     }
 
     private static java.util.List<Object> signature(PersonSnapshot person) {
+        String contact = person.lastContactAt <= 0 || person.lastContactAt > System.currentTimeMillis() ? ""
+                : ProfileViews.formatLastSeen(person.lastContactAt);
         java.util.List<Object> result = new java.util.ArrayList<>(java.util.Arrays.asList(
                 person.id, person.name, person.profile, person.featureConsent, person.consentHardcoreOverride,
                 person.device, person.contractName, person.serviceLabel,
-                person.connection, person.freshness, person.lastSyncedAt, person.capabilities,
+                person.connection, person.freshness, person.lastSyncedAt, contact, person.capabilities,
                 person.currency, person.protectedSeconds, person.activityEvents, person.tributeCents,
                 person.sessions, person.serviceActive, person.sessionIdentity,
                 person.sync.contract, person.sync.stats, person.sync.runtime,

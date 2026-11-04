@@ -41,6 +41,8 @@ public class RemoteSessionAndroidTest {
     private PeerTransport dt,st;
     private FixtureHooks dh,sh;
     private ExecutorService server;
+    private WireTrace wireTrace;
+    private Object phaseOverride;
 
     @Before public void setup() throws Exception {
         domName="session-dom-"+UUID.randomUUID();subName="session-sub-"+UUID.randomUUID();
@@ -76,6 +78,79 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
         assertTrue(dom.peer(st.localIdentity(),generation).lastSyncedAt>0);
         assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
+    }
+
+    @Test public void controlsFollowAppliedCoreBeforeHistoricalAndAssetBacklogForEitherInitiator() throws Exception {
+        dh.controls=sh.controls=true;
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",new JSONObject().put("revision",1),false,1);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.RUNTIME,"current",new JSONObject().put("running",true),false,1);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS,"history",new JSONObject().put("count",42),false,1);
+        dh.beforeControls=()->{
+            assertTrue(dh.events.contains("received_RUNTIME"));
+            assertTrue(dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.RUNTIME,"current").optBoolean("running"));
+            assertNull(dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.STATS,"history"));
+        };
+        sh.beforeControls=()->{assertTrue(sh.events.contains("received_CONFIGURATION"));assertEquals(1,sub.mirrored(dt.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired").optInt("revision"));};
+        exchange(true,false);
+        assertEquals(1,dh.controlCalls);assertEquals(1,sh.controlCalls);
+        assertFalse(dh.events.contains("assets"));
+        assertFalse(sh.events.contains("assets"));
+        assertEquals(42,dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.STATS,"history").getInt("count"));
+        dh.beforeControls=()->{};dh.events.clear();sh.events.clear();
+        exchange(false,false);
+        assertEquals(2,dh.controlCalls);assertEquals(2,sh.controlCalls);
+        assertFalse(dh.events.contains("assets"));
+        assertFalse(sh.events.contains("assets"));
+    }
+
+    @Test public void boundedSessionWireBenchmarkReportsVirtualRttWithoutSleeping() throws Exception { wireBenchmark(true); }
+    @Test public void legacySessionWireBenchmarkReportsVirtualRttWithoutSleeping() throws Exception { wireBenchmark(false); }
+
+    private void wireBenchmark(boolean priority) throws Exception {
+        dh.controls=sh.controls=true;
+        for(String scenario:new String[]{"idle","runtime","contract_media"}) {
+            if(!scenario.equals("idle"))sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.RUNTIME,"live",new JSONObject().put("running",true).put("remaining",1800),false,1);
+            if(scenario.equals("contract_media")) {
+                byte[] bytes=new byte[4*RemoteAssets.CHUNK_BYTES];new Random(2026).nextBytes(bytes);
+                String hash=RemoteProtocol.sha256(bytes);dh.assets.reserve(hash,bytes.length);
+                for(int offset=0;offset<bytes.length;offset+=RemoteAssets.CHUNK_BYTES)
+                    dh.assets.append(hash,offset,java.util.Arrays.copyOfRange(bytes,offset,offset+RemoteAssets.CHUNK_BYTES));
+                dh.assets.finish(hash);
+                sh.beforeControls=()->assertTrue(sh.assets.isComplete(hash));
+                dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"fixture",new JSONObject().put("hash",hash).put("length",bytes.length),false,1);
+                sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",new JSONObject().put("revision",1),false,1);
+                for(int i=0;i<130;i++)sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.DAILY,"day"+i,new JSONObject().put("duration",100+i),false,1);
+            }
+            wireTrace=new WireTrace();dh.trace=sh.trace=wireTrace;
+            exchange(true,false,true,priority);
+            assertTrue(wireTrace.controlsAt>0);assertTrue(wireTrace.bytes>0);
+            if(scenario.equals("idle"))assertEquals(priority?11:15,wireTrace.frames);
+            assertTrue(wireTrace.frames<200);assertTrue(wireTrace.bytes<1024*1024);
+            for(int rtt:new int[]{50,150,300})System.out.println("WIRE_SESSION "+wireTrace.report(scenario,rtt,priority));
+        }
+    }
+
+    @Test public void legacyPhasePlanRetainsDuplexOrdering() throws Exception {
+        dh.controls=sh.controls=true;
+        exchange(true,false,true,false);
+        assertTrue(dh.events.indexOf("assets")<dh.events.indexOf("controls"));
+        assertTrue(sh.events.indexOf("assets")<sh.events.indexOf("controls"));
+        dh.events.clear();sh.events.clear();exchange(false,false,true,false);
+        assertTrue(dh.events.indexOf("assets")<dh.events.indexOf("controls"));
+        assertTrue(sh.events.indexOf("assets")<sh.events.indexOf("controls"));
+    }
+
+    @Test public void malformedPhasePlanCannotEnterApplicationExchange() throws Exception {
+        dh.controls=sh.controls=true;
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",new JSONObject().put("revision",1),false,1);
+        for(Object value:new Object[]{0,"1",true}) {
+            phaseOverride=value;
+            assertThrows(IOException.class,()->exchange(true,false));
+            assertEquals(0,dh.controlCalls);assertEquals(0,sh.controlCalls);
+            assertNull(sub.mirrored(dt.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired"));
+        }
+        phaseOverride=null;
+        assertFalse(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
     }
 
     @Test public void appIconsBothNewNegotiateForEitherConnectionInitiator() throws Exception {
@@ -138,6 +213,24 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
     }
 
+    @Test public void contractCheckpointStillRecordsContactWhenLaterCompletionFails() throws Exception {
+        String identity=dt.localIdentity();long completed=System.currentTimeMillis()-12*60*60_000L;
+        sub.synced(identity,generation,completed);
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"active",new JSONObject().put("revision",1),false,1);
+        sh.failComplete=true;long started=System.currentTimeMillis();
+        assertThrows(IOException.class,()->exchange(false,false));
+        RemoteStore.Peer peer=sub.peer(identity,generation);long contact=sub.lastContactAt(peer);
+        assertEquals(completed,peer.lastSyncedAt);assertTrue(contact>=started);
+        assertTrue(Long.parseLong(sub.metadata(identity,generation,"confirmed_CONFIGURATION","0"))>=started);
+        assertEquals(1,sub.mirrored(identity,generation,RemoteProtocol.Stream.CONFIGURATION,"active").getInt("revision"));
+        assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
+        assertTrue(PeerPresence.online(false,contact,contact+90_000));
+        assertFalse(PeerPresence.online(false,contact,contact+90_001));
+        sh.failComplete=false;exchange(false,false);
+        assertTrue(sub.peer(identity,generation).lastSyncedAt>=started);
+        assertEquals(1,sub.mirror(identity,generation,RemoteProtocol.Stream.CONFIGURATION).size());
+    }
+
     @Test public void floatingContractNumbersKeepTheirAcknowledgementDigest() throws Exception {
         JSONObject document=new JSONObject().put("whole",1.0f).put("negativeZero",-0.0).put("fraction",0.2f).put("large",Long.MAX_VALUE);
         sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",document,false,1);
@@ -158,6 +251,7 @@ public class RemoteSessionAndroidTest {
     }
 
     @Test public void assetResumeContinuesAfterMetadataWasAlreadyAcknowledged() throws Exception {
+        dh.controls=sh.controls=true;
         File source=new File(root,"source.bin");Random random=new Random(17);
         long length=5L*1024*1024;
         try(OutputStream output=new FileOutputStream(source)) {
@@ -165,6 +259,7 @@ public class RemoteSessionAndroidTest {
             for(long left=length;left>0;left-=buffer.length) {random.nextBytes(buffer);output.write(buffer);}
         }
         String hash=RemoteAssets.digest(source);dh.assets.reserve(hash,length);
+        sh.beforeControls=()->assertTrue(sh.assets.isComplete(hash));
         try(InputStream input=new FileInputStream(source)) {
             byte[] buffer=new byte[RemoteAssets.CHUNK_BYTES];int count;long offset=0;
             while((count=input.read(buffer))!=-1) {offset=dh.assets.append(hash,offset,java.util.Arrays.copyOf(buffer,count));}
@@ -173,10 +268,13 @@ public class RemoteSessionAndroidTest {
         dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"fixture",new JSONObject().put("hash",hash).put("length",length),false,1000);
         exchange(true,false);
         assertFalse(sh.assets.isComplete(hash));
+        // Eighty chunks exceed the sixty-four chunk pass: neither side may enter controls yet.
+        assertEquals(0,dh.controlCalls);assertEquals(0,sh.controlCalls);
         assertEquals(4L*1024*1024,sh.assets.offset(hash));
         assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
         exchange(true,false);
         assertTrue(sh.assets.isComplete(hash));assertEquals(hash,RemoteAssets.digest(sh.assets.finish(hash)));
+        assertEquals(1,dh.controlCalls);assertEquals(1,sh.controlCalls);
     }
 
     @Test public void offlineRevocationIsDeliveredBeforeAnyApplicationData() throws Exception {
@@ -350,21 +448,28 @@ public class RemoteSessionAndroidTest {
     }
     private void exchange(boolean domInitiates,boolean dropAck) throws Exception { exchange(domInitiates,dropAck,true); }
     private void exchange(boolean domInitiates,boolean dropAck,boolean activity) throws Exception {
+        exchange(domInitiates,dropAck,activity,true);
+    }
+    private void exchange(boolean domInitiates,boolean dropAck,boolean activity,boolean priority) throws Exception {
+        dh.probed=sh.probed=false;dh.priority=sh.priority=priority;
         PeerTransport source=domInitiates?dt:st,target=domInitiates?st:dt;
         RemoteStore sourceStore=domInitiates?dom:sub,targetStore=domInitiates?sub:dom;
         FixtureHooks sourceHooks=domInitiates?dh:sh,targetHooks=domInitiates?sh:dh;
         RemoteSession outgoing=new RemoteSession(sourceStore,source,sourceHooks),incoming=new RemoteSession(targetStore,target,targetHooks);
         Future<Void> serving=server.submit(() -> {
             try(PeerTransport.Connection connection=target.accept(10_000)) {
-                PeerTransport.Connection observed=dropAck?new DropAck(connection):connection;
+                PeerTransport.Connection measured=wireTrace==null?connection:new WireFrames(connection,wireTrace);
+                PeerTransport.Connection observed=dropAck?new DropAck(measured):measured;
                 JSONObject hello=RemoteProtocol.read(observed.input());if(!activity)hello.remove("activityVersion");
+                if(!priority)hello.remove("phasePlanVersion");
+                if(phaseOverride!=null)hello.put("phasePlanVersion",phaseOverride);
                 incoming.incoming(observed,hello,System.nanoTime()+60_000_000_000L);
             }
             return null;
         });
         try(PeerTransport.Connection connection=source.connect(target.localIdentity(),target.inviteRoute(),10_000)) {
             try {
-                outgoing.outgoing(connection,sourceStore.peer(target.localIdentity(),generation),System.nanoTime()+60_000_000_000L);
+                outgoing.outgoing(wireTrace==null?connection:new WireFrames(connection,wireTrace),sourceStore.peer(target.localIdentity(),generation),System.nanoTime()+60_000_000_000L);
                 serving.get(60,TimeUnit.SECONDS);
             } catch(IOException failure) {
                 if(dropAck) {
@@ -377,7 +482,18 @@ public class RemoteSessionAndroidTest {
     private static byte[] seed(){byte[] value=new byte[32];new SecureRandom().nextBytes(value);return value;}
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
+        interface CheckedAction { void run() throws Exception; }
         final RemoteStore store;final RemoteAssets assets;int prepares;
+        final java.util.List<String> events=new java.util.ArrayList<>();
+        boolean controls,probed,priority;int controlCalls;CheckedAction beforeControls=()->{};WireTrace trace;
+        public int sessionControlVersion(){return controls?1:0;}
+        public void sessionControl(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline)throws Exception{
+            events.add("controls");controlCalls++;beforeControls.run();
+            JSONObject frame=new JSONObject().put("version",1).put("type","fixture_controls").put("generation",peer.generation);
+            if(peer.localRole==RemoteProtocol.Role.DOM){RemoteProtocol.write(connection.output(),frame);assertEquals("fixture_controls",RemoteProtocol.read(connection.input()).getString("type"));}
+            else {assertEquals("fixture_controls",RemoteProtocol.read(connection.input()).getString("type"));RemoteProtocol.write(connection.output(),frame);}
+            if(trace!=null)trace.controlsComplete();
+        }
         int iconVersion,iconCalls;
         int iconChunks,iconsAck;long iconResumeOffset=-1;
         com.subhub.app.remote.icons.AppIconExchange realIcons;Runnable beforeIcons=()->{};
@@ -412,16 +528,50 @@ public class RemoteSessionAndroidTest {
             return value;
         }
         public void prepare(RemoteStore.Peer peer){prepares++;}
-        public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){}
+        public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){events.add("received_"+stream.name());}
         public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception {
+            events.add(priority&&!probed?"asset_probe":"assets");probed=true;
             JSONObject manifest=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"fixture");
             if(manifest==null)return Collections.emptyList();
             String hash=manifest.getString("hash");long length=manifest.getLong("length");assets.reserve(hash,length);
             return assets.isComplete(hash)?Collections.emptyList():Collections.singletonList(new RemoteSession.AssetNeed(hash,length,assets.offset(hash)));
         }
         public RemoteAssets assets(RemoteStore.Peer peer){return assets;}
-        public void complete(RemoteStore.Peer peer){}
+        boolean failComplete;
+        public void complete(RemoteStore.Peer peer)throws IOException{if(failComplete)throw new IOException("Fixture completion failed");}
     }
+    /** Counts actual serialized session frames; virtual delay excludes CPU, bandwidth and route behavior. */
+    private static final class WireTrace {
+        long bytes,frames,acks,controlsAt;
+        synchronized void sent(byte[] encoded)throws IOException {
+            JSONObject frame=RemoteProtocol.read(new ByteArrayInputStream(encoded));
+            bytes+=encoded.length;frames++;
+            String type=frame.optString("type");if(type.equals("ack")||type.endsWith("_ack"))acks++;
+        }
+        synchronized void controlsComplete(){if(controlsAt==0)controlsAt=frames;}
+        synchronized JSONObject report(String scenario,int rtt,boolean priority)throws Exception {
+            return new JSONObject().put("scenario",scenario).put("phasePlanVersion",priority?1:0).put("rttMs",rtt).put("wireBytes",bytes).put("frames",frames).put("acks",acks)
+                    .put("framesThroughControls",controlsAt).put("serialFrameDelayThroughControlsMs",controlsAt*rtt/2)
+                    .put("serialFrameDelayTotalMs",frames*rtt/2).put("model","virtual one-way half RTT per serialized frame; no real route claim");
+        }
+    }
+    private static final class WireFrames implements PeerTransport.Connection {
+        final PeerTransport.Connection delegate;final OutputStream output;
+        WireFrames(PeerTransport.Connection delegate,WireTrace trace){this.delegate=delegate;
+            output=new OutputStream(){final ByteArrayOutputStream pending=new ByteArrayOutputStream();
+                public void write(int value){pending.write(value);}
+                public void write(byte[] value,int offset,int length){pending.write(value,offset,length);}
+                public void flush()throws IOException{
+                    byte[] encoded=pending.toByteArray();pending.reset();trace.sent(encoded);delegate.output().write(encoded);delegate.output().flush();
+                }
+            };
+        }
+        public String authenticatedPeerIdentity(){return delegate.authenticatedPeerIdentity();}
+        public InputStream input()throws IOException{return delegate.input();}public OutputStream output(){return output;}
+        public void setReadTimeoutMillis(long timeout){delegate.setReadTimeoutMillis(timeout);}
+        public boolean isDirect(){return delegate.isDirect();}public void close()throws IOException{delegate.close();}
+    }
+
     private static final class FixtureIconAuthority implements com.subhub.app.remote.icons.AppIconExchange.Authority {
         private final RemoteStore store;private final String name;
         FixtureIconAuthority(RemoteStore store,String name){this.store=store;this.name=name;}

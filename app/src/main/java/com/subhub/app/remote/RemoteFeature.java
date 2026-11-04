@@ -28,6 +28,11 @@ public final class RemoteFeature {
     private final PairingLifecycleClock.Source pairingClock;
     private final RemoteConfigurationWriter writer;
     private final RemoteTelemetry telemetry;
+    interface BackgroundScheduling {
+        void synchronize(Context context,boolean needed);
+        void kick(Context context);
+    }
+    private final BackgroundScheduling backgroundScheduling;
     private final Object sessionControlLock = new Object();
     private RemoteSessionControlCoordinator sessionControlCoordinator;
     private String sessionControlIdentity = "";
@@ -43,6 +48,9 @@ public final class RemoteFeature {
     private final Semaphore revocations=new Semaphore(1);
     private final Set<String> busy=ConcurrentHashMap.newKeySet();
     private final Map<String,Long> nextAttempt=new ConcurrentHashMap<>();
+    private final Map<String,Integer> consecutiveFailures=new ConcurrentHashMap<>();
+    private final Object attemptClockLock=new Object();
+    private long dirtyGeneration;
     private final Map<PeerTransport.Connection,String> connections=new ConcurrentHashMap<>();
     private final Map<PeerTransport.Connection,Long> connectionDeadlines=new ConcurrentHashMap<>();
     private final AtomicInteger leases=new AtomicInteger();
@@ -75,6 +83,14 @@ public final class RemoteFeature {
         this(context,store,secrets,PairingLifecycleClock.source(context.getApplicationContext()));
     }
     RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets,PairingLifecycleClock.Source pairingClock) {
+        this(context,store,secrets,pairingClock,new BackgroundScheduling(){
+            public void synchronize(Context selected,boolean needed){RemoteScheduler.synchronize(selected,needed);}
+            public void kick(Context selected){RemoteScheduler.kick(selected);}
+        });
+    }
+    RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets,PairingLifecycleClock.Source pairingClock,
+            BackgroundScheduling backgroundScheduling) {
+        this.backgroundScheduling=Objects.requireNonNull(backgroundScheduling);
         this.context=context.getApplicationContext();this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
         this.pairingClock=java.util.Objects.requireNonNull(pairingClock);
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
@@ -119,7 +135,7 @@ public final class RemoteFeature {
         };
         app.registerActivityLifecycleCallbacks(lifecycleCallbacks);
         timer.scheduleWithFixedDelay(()->{try{if(foreground)tick();}catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}},2,2,TimeUnit.SECONDS);
-        RemoteScheduler.synchronize(context,needsBackground());
+        backgroundScheduling.synchronize(context,needsBackground());
         try { connectivityWake=new RemoteConnectivityWake(app,this::requestAutomaticSync); }
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
     }
@@ -128,8 +144,8 @@ public final class RemoteFeature {
         if(stopped||!automaticSyncPending.compareAndSet(false,true))return;
         try{timer.execute(()->{
             automaticSyncPending.set(false);if(stopped)return;
-            try{nextAttempt.clear();if(!needsBackground())return;
-                if(foreground)tick();else RemoteScheduler.kick(context);
+            try{invalidateAttempts();if(!needsBackground())return;
+                if(foreground)tick();else backgroundScheduling.kick(context);
             }catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}
         });}catch(RejectedExecutionException closed){automaticSyncPending.set(false);}
     }
@@ -494,7 +510,20 @@ public final class RemoteFeature {
         for(Map.Entry<PeerTransport.Connection,String> entry:connections.entrySet())if(key(peer).equals(entry.getValue()))timer.execute(()->close(entry.getKey()));
         changed();
     }
-    public void changed(){nextAttempt.clear();RemoteScheduler.synchronize(context,needsBackground());if(needsBackground())RemoteScheduler.kick(context);kick();}
+    private void invalidateAttempts(){synchronized(attemptClockLock){dirtyGeneration++;nextAttempt.clear();consecutiveFailures.clear();}}
+    private long attemptGeneration(){synchronized(attemptClockLock){return dirtyGeneration;}}
+    private void finishAttempt(String key,long generation,boolean success,boolean pending){
+        synchronized(attemptClockLock){
+            // A mutation during this exchange still needs a follow-up, even when its old snapshot completed.
+            if(generation!=dirtyGeneration){nextAttempt.remove(key);return;}
+            int failures=success?0:Math.min(6,consecutiveFailures.getOrDefault(key,0)+1);
+            if(success)consecutiveFailures.remove(key);else consecutiveFailures.put(key,failures);
+            long delay=success&&!pending?30_000:success?2_000:Math.min(60_000,2_000L<<(failures-1));
+            if(!success)delay+=ThreadLocalRandom.current().nextInt(1000);
+            nextAttempt.put(key,SystemClock.elapsedRealtime()+delay);
+        }
+    }
+    public void changed(){invalidateAttempts();backgroundScheduling.synchronize(context,needsBackground());if(needsBackground())backgroundScheduling.kick(context);kick();}
     public void kick(){try{timer.execute(()->{try{if(foreground)tick();}catch(RuntimeException ignored){android.util.Log.w("PeerSync","Sync attempt deferred");}});}catch(RejectedExecutionException ignored){}}
     public boolean isConnected(RemoteStore.Peer peer){return connections.containsValue(key(peer));}
     private static String key(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
@@ -571,7 +600,8 @@ public final class RemoteFeature {
     private Future<Boolean> schedulePeer(RemoteStore.Peer peer,long deadline,String pairingOwner) {
         String key=key(peer);boolean revoked=peer.state==RemoteStore.State.REVOKED;
         if(revoked&&!revocations.tryAcquire()){busy.remove(key);return null;}
-        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner),()->{
+        long generation=attemptGeneration();
+        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner,generation),()->{
             if(revoked)revocations.release();busy.remove(key);
             for(Future<?> finished:pairingTasks.keySet())if(finished.isDone()){pairingTasks.remove(finished);pairingTaskDeadlines.remove(finished);}suspendIfIdle();
         });
@@ -617,7 +647,7 @@ public final class RemoteFeature {
         catch(RejectedExecutionException stopped){close(connection);}
     }
     private void untrack(PeerTransport.Connection connection){connections.remove(connection);connectionDeadlines.remove(connection);pairingConnections.remove(connection);}
-    private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner) {
+    private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner,long generation) {
         String key=key(peer);boolean success=false;
         try {
             RemoteStore.Peer requested=peer;
@@ -625,7 +655,9 @@ public final class RemoteFeature {
             remaining(deadline);PeerTransport active=transport();PeerTransport.Connection connection;
             try{connection=active.connect(peer.identity,peer.route,Math.min(8_000,remaining(deadline)));}
             catch(IOException oldRoute){if(peer.route.isEmpty())throw oldRoute;connection=active.connect(peer.identity,"",Math.min(8_000,remaining(deadline)));}
+            if(Thread.currentThread().isInterrupted()){close(connection);throw new InterruptedException("Sync work stopped");}
             track(connection,key,deadline);
+            if(Thread.currentThread().isInterrupted()){untrack(connection);close(connection);throw new InterruptedException("Sync work stopped");}
             if(peer.state==RemoteStore.State.PENDING&&pairingOwner!=null)pairingConnections.put(connection,pairingOwner);
             try(PeerTransport.Connection selected=connection) {
                 if(peer.state==RemoteStore.State.PENDING)success=pairing(active).resume(selected,peer);
@@ -637,7 +669,7 @@ public final class RemoteFeature {
             logSessionFailure(peer.state==RemoteStore.State.ACTIVE?"outgoing-active":peer.state==RemoteStore.State.REVOKED?"outgoing-revoked":"outgoing-pending",unavailable);
             store.putMetadata(peer.identity,peer.generation,"connection_error","Unable to sync");
         }
-        finally{nextAttempt.put(key,SystemClock.elapsedRealtime()+(success && peer.state!=RemoteStore.State.PENDING?30_000:2_000+ThreadLocalRandom.current().nextInt(4000)));}
+        finally{finishAttempt(key,generation,success,peer.state==RemoteStore.State.PENDING);}
         return success;
     }
     private void accept(PeerTransport active) {
@@ -666,7 +698,7 @@ public final class RemoteFeature {
                 String owner=pairingKey(generation,generation,true);PairingOperationLease lease=pairingLeases.get(owner);
                 if(!foreground&&backgroundWindows.get()==0&&lease!=null&&!lease.isClosed())pairingConnections.put(selected,owner);
                 connections.put(selected,identity+":"+generation);
-                pairing(active).handle(selected,first,System.currentTimeMillis());RemoteScheduler.synchronize(context,needsBackground());return;
+                pairing(active).handle(selected,first,System.currentTimeMillis());backgroundScheduling.synchronize(context,needsBackground());return;
             }
             String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.authorityAccess(()->store.peer(selected.authenticatedPeerIdentity(),generation));
             if(peer==null)throw new SecurityException("Unknown peer");
@@ -676,7 +708,7 @@ public final class RemoteFeature {
             else session(active).incoming(selected,first,deadline);
             store.putMetadata(peer.identity,peer.generation,"connection_error","");
         }catch(Exception unavailable){logSessionFailure("incoming",unavailable);}
-        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);RemoteScheduler.synchronize(context,needsBackground());suspendIfIdle();}
+        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);backgroundScheduling.synchronize(context,needsBackground());suspendIfIdle();}
     }
     private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
         if (Thread.holdsLock(store) || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
@@ -792,32 +824,80 @@ public final class RemoteFeature {
     private static void requireKeyholderFrame(JSONObject frame,String type,RemoteStore.Peer peer)throws Exception {
         RemoteProtocol.requireVersion(frame);if(!type.equals(frame.getString("type"))||!peer.generation.equals(frame.getString("generation"))||RemoteProtocol.integer(frame,"authVersion")!=1)throw new SecurityException("Keyholder identity mismatch");
     }
-    public boolean backgroundWindow() throws Exception {return backgroundWindow(55_000);}
-    boolean backgroundWindow(long durationMillis) throws Exception {
-        if(!needsBackground())return true;leases.incrementAndGet();backgroundWindows.incrementAndGet();long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(durationMillis);boolean success=true;
+    public boolean backgroundWindow() throws Exception {return backgroundWindow(55_000,()->false);}
+    boolean backgroundWindow(long durationMillis) throws Exception {return backgroundWindow(durationMillis,()->false);}
+    boolean backgroundWindow(long durationMillis,java.util.function.BooleanSupplier cancelled) throws Exception {
+        if(stopped||cancelled.getAsBoolean()||!needsBackground())return true;
+        if(durationMillis<=0||durationMillis>55_000)throw new IllegalArgumentException("Invalid sync window");
+        leases.incrementAndGet();backgroundWindows.incrementAndGet();
+        long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(durationMillis);
         Map<Future<Boolean>,String> attempts=new LinkedHashMap<>();
+        Map<String,Boolean> results=new HashMap<>();
+        Map<String,Long> completedGeneration=new HashMap<>();
+        Map<String,long[]> observedSync=new HashMap<>();
         try {
             transport();
-            for(RemoteStore.Peer peer:outgoingPeers()) {
-                if(peer.state==RemoteStore.State.PENDING && peer.localRole==RemoteProtocol.Role.DOM)continue;
-                if(peer.state==RemoteStore.State.REVOKED && "true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))continue;
-                String key=key(peer);if(!busy.add(key))continue;
-                Future<Boolean> attempt=schedulePeer(peer,deadline);if(attempt==null)success=false;else attempts.put(attempt,key);
+            // Retain the listener for the whole bounded window: another phone may wake after our outgoing IO ends.
+            long nextRefresh=0,observedGeneration=-1;
+            while(!stopped&&!cancelled.getAsBoolean()&&System.nanoTime()<deadline) {
+                for(Iterator<Map.Entry<Future<Boolean>,String>> iterator=attempts.entrySet().iterator();iterator.hasNext();) {
+                    Map.Entry<Future<Boolean>,String> entry=iterator.next();
+                    if(!entry.getKey().isDone())continue;
+                    boolean complete=false;
+                    try{complete=entry.getKey().get();}catch(ExecutionException|CancellationException unavailable){/* Bounded retry below. */}
+                    results.put(entry.getValue(),complete);iterator.remove();
+                }
+                long now=SystemClock.elapsedRealtime(),generation=attemptGeneration();
+                // Poll cancellation cheaply; only refresh SQLite once per second or after a local mutation.
+                if(now>=nextRefresh||generation!=observedGeneration){
+                    if(!needsBackground())break;
+                    nextRefresh=now+1000;observedGeneration=generation;
+                    for(RemoteStore.Peer peer:outgoingPeers()) {
+                        if(peer.state==RemoteStore.State.PENDING&&peer.localRole==RemoteProtocol.Role.DOM)continue;
+                        if(peer.state==RemoteStore.State.REVOKED&&"true".equals(store.metadata(peer.identity,peer.generation,"revocation_delivered","")))continue;
+                        String key=key(peer);
+                        long[] observed=observedSync.get(key);
+                        if(observed==null){observed=new long[]{peer.lastSyncedAt,generation};observedSync.put(key,observed);}
+                        // An already-running foreground/inbound owner can satisfy this window. A completed
+                        // receipt must advance this exact peer/generation, with no intervening local mutation.
+                        if(!busy.contains(key)&&peer.lastSyncedAt>observed[0]&&observed[1]==generation){
+                            results.put(key,true);completedGeneration.put(key,generation);
+                        }
+                        // A successful snapshot needs no repeated payload in this window unless local data changed.
+                        if(Boolean.TRUE.equals(results.get(key))&&Objects.equals(completedGeneration.get(key),generation))continue;
+                        if(now<nextAttempt.getOrDefault(key,0L))continue;
+                        if(!busy.add(key)){results.putIfAbsent(key,false);continue;}
+                        Future<Boolean> attempt=schedulePeer(peer,deadline);
+                        if(attempt!=null){attempts.put(attempt,key);completedGeneration.put(key,generation);}else results.put(key,false);
+                    }
+                }
+                Thread.sleep(Math.min(100,Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
             }
-            if(attempts.isEmpty()) {
-                while(System.nanoTime()<deadline && (!busy.isEmpty() || liveInvitation() || store.peers(false).stream().anyMatch(peer->peer.state==RemoteStore.State.PENDING)))Thread.sleep(Math.min(50,Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
-                success=busy.isEmpty() && !liveInvitation() && store.peers(false).stream().noneMatch(peer->peer.state==RemoteStore.State.PENDING);
+            if(stopped||cancelled.getAsBoolean())throw new InterruptedException("Sync work stopped");
+            for(Map.Entry<Future<Boolean>,String> entry:attempts.entrySet()) {
+                if(!entry.getKey().isDone())return false;
+                try{results.put(entry.getValue(),entry.getKey().get());}
+                catch(ExecutionException|CancellationException unavailable){results.put(entry.getValue(),false);}
             }
-            for(Future<Boolean> attempt:attempts.keySet()) {
-                try{success=attempt.get(remaining(deadline),TimeUnit.MILLISECONDS)&&success;}
-                catch(TimeoutException timeout){attempt.cancel(true);success=false;}
+            long finalGeneration=attemptGeneration();
+            // Reconcile an external owner that completed after the last periodic inventory refresh.
+            for(RemoteStore.Peer peer:store.peers(true)){
+                String key=key(peer);long[] observed=observedSync.get(key);
+                if(observed!=null&&!busy.contains(key)&&peer.lastSyncedAt>observed[0]&&observed[1]==finalGeneration){
+                    results.put(key,true);completedGeneration.put(key,finalGeneration);
+                }
             }
-            return success;
+            return !results.containsValue(false)&&results.keySet().stream().allMatch(key->Objects.equals(completedGeneration.get(key),finalGeneration))&&!liveInvitation()
+                    &&store.peers(false).stream().noneMatch(peer->peer.state==RemoteStore.State.PENDING);
         } finally {
-            for(Map.Entry<Future<Boolean>,String> attempt:attempts.entrySet()) {
-                if(!attempt.getKey().isDone())attempt.getKey().cancel(true);
-
-            }
+            Set<String> cancelledKeys=new HashSet<>();
+            for(Map.Entry<Future<Boolean>,String> entry:attempts.entrySet())if(!entry.getKey().isDone())cancelledKeys.add(entry.getValue());
+            // Capture exact handles before cancellation releases admission; never close a successor's connection.
+            List<PeerTransport.Connection> cancelledConnections=new ArrayList<>();
+            for(Map.Entry<PeerTransport.Connection,String> entry:connections.entrySet())
+                if(cancelledKeys.contains(entry.getValue())&&!pairingConnections.containsKey(entry.getKey()))cancelledConnections.add(entry.getKey());
+            for(Future<Boolean> attempt:attempts.keySet())if(!attempt.isDone())attempt.cancel(true);
+            for(PeerTransport.Connection connection:cancelledConnections)close(connection);
             if(!foreground && leases.get()==1 && !hasPairingLease())for(PeerTransport.Connection connection:connections.keySet())if(!pairingConnections.containsKey(connection))close(connection);
             backgroundWindows.decrementAndGet();leases.decrementAndGet();suspendIfIdle();
         }

@@ -139,10 +139,10 @@ public final class PersonUi {
             case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
             case OFFLINE:
-                if (person.lastSyncedAt <= 0 || person.lastSyncedAt > System.currentTimeMillis())
+                if (person.lastContactAt <= 0 || person.lastContactAt > System.currentTimeMillis())
                     return context.getString(R.string.role_offline_last_online_unknown);
                 return context.getString(R.string.role_offline_last_online,
-                        ProfileViews.formatLastSeen(person.lastSyncedAt));
+                        ProfileViews.formatLastSeen(person.lastContactAt));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);
             default: return context.getString(R.string.role_connection_unpaired);

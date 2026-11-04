@@ -5,6 +5,19 @@ import java.util.Base64;
 import org.junit.Test;
 
 public class ProfileDataTest {
+    @Test public void peerContactSurvivesProfileAndCounterpartCopiesWithoutCompletingSync() {
+        PersonSnapshot original = new PersonSnapshot(new PersonId("peer"), "Sub", "Device", "Contract", "Inactive",
+                PersonSnapshot.Connection.OFFLINE, PersonSnapshot.Freshness.STALE, 100,
+                java.util.Collections.emptySet(), java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "EUR", 0, 0, 0, 0, false);
+        assertEquals(100, original.lastContactAt);
+        PersonSnapshot value = original.withLastContactAt(200).withProfile(ProfileData.empty("Renamed"),
+                java.util.Collections.emptyMap()).withContractDom(ProfileData.empty("Dom"), new PersonId("owner"));
+        assertEquals(100, value.lastSyncedAt); assertEquals(200, value.lastContactAt);
+        assertEquals(100, original.lastContactAt);
+        assertEquals(0, value.withLastContactAt(-1).lastContactAt);
+    }
+
     @Test public void optionalDetailsStayEmptyForLegacyProfilesAndAgeIsOnlySelfEntered() {
         ProfileData legacy = new ProfileData("Person", "About", "");
         assertEquals("", legacy.gender); assertEquals(0, legacy.age);
