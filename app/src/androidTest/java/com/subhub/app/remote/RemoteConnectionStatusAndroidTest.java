@@ -51,21 +51,50 @@ public final class RemoteConnectionStatusAndroidTest {
         }finally{db.endTransaction();}
         Field busy=RemoteFeature.class.getDeclaredField("busy");busy.setAccessible(true);((Set<String>)busy.get(feature)).add(identity+":"+generation);
         Field retry=RemoteFeature.class.getDeclaredField("nextAttempt");retry.setAccessible(true);Map<String,Long> retryMap=(Map<String,Long>)retry.get(feature);retryMap.put(identity+":"+generation,Long.MAX_VALUE);
-        RemoteStore.Peer peer=store.peer(identity,generation);long contact=System.currentTimeMillis()-120_000;store.synced(identity,generation,contact);
+        RemoteStore.Peer peer=store.peer(identity,generation);long contact=System.currentTimeMillis()-120_000;store.synced(identity,generation,contact);store.putMetadata(identity,generation,"connection_error","Unable to sync");
         try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
             await(()->retryMap.isEmpty());
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.remote_sync_details)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
             await(()->row(page,role==RemoteProtocol.Role.SUB?RemoteProtocol.Stream.CONFIGURATION:RemoteProtocol.Stream.BASELINE)!=null);
-            page.onActivity(a->{assertNull(find(a.body,a.getString(R.string.remote_sync_now)));assertEquals(role==RemoteProtocol.Role.DOM,a.body.findViewWithTag("connection_device_model")!=null);for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()){boolean expected=role==RemoteProtocol.Role.SUB?stream==RemoteProtocol.Stream.CONFIGURATION:stream==RemoteProtocol.Stream.BASELINE||stream==RemoteProtocol.Stream.STATS||stream==RemoteProtocol.Stream.RUNTIME;assertEquals(stream.name(),expected,a.body.findViewWithTag("connection_stream_"+stream.name())!=null);}});
+            page.onActivity(a->{
+                assertEquals(1,a.body.getChildCount());
+                assertNull(find(a.body,a.getString(R.string.remote_sync_now)));
+                assertNull(find(a.body,a.getString(R.string.remote_sync_details)));
+                assertNull(find(a.body,a.getString(R.string.remote_failure)));
+                assertNull(find(a.body,identity));
+                String discriminator=ProfileViews.targetDiscriminator(a,RemotePersonRepository.id(peer),"");
+                assertEquals(1,count(a.body,discriminator));
+                String status=a.getString(R.string.role_connection_offline)+" · "+a.getString(R.string.role_last_online,ProfileViews.formatLastSeen(contact));
+                assertNotNull(find(a.body,status));
+                assertEquals(role==RemoteProtocol.Role.DOM,a.body.findViewWithTag("connection_device_model")!=null);
+                assertNotNull(find(a.body,a.getString(R.string.remote_unpair)));
+                assertEquals(role==RemoteProtocol.Role.DOM,find(a.body,a.getString(R.string.remote_keyholder_code))!=null);
+                for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()){
+                    boolean expected=role==RemoteProtocol.Role.SUB?stream==RemoteProtocol.Stream.CONFIGURATION:stream==RemoteProtocol.Stream.BASELINE||stream==RemoteProtocol.Stream.STATS||stream==RemoteProtocol.Stream.RUNTIME;
+                    assertEquals(stream.name(),expected,a.body.findViewWithTag("connection_stream_"+stream.name())!=null);
+                }
+            });
             long observed=System.currentTimeMillis()-30_000;for(RemoteProtocol.Stream stream:RemoteConnectionActivity.observedStreams(peer))store.putMetadata(identity,generation,"confirmed_"+stream.name(),Long.toString(observed));
             String expected=java.text.DateFormat.getDateTimeInstance().format(new Date(observed));
             await(()->{View view=row(page,role==RemoteProtocol.Role.SUB?RemoteProtocol.Stream.CONFIGURATION:RemoteProtocol.Stream.BASELINE);return view!=null&&text(view).contains(expected);});
             assertEquals(contact,store.peer(identity,generation).lastSyncedAt);
+            await(()->{java.util.concurrent.atomic.AtomicBoolean ready=new java.util.concurrent.atomic.AtomicBoolean();page.onActivity(a->ready.set(a.body.getChildCount()==1&&a.body.getChildAt(0).getWidth()>0&&a.body.getChildAt(0).getHeight()>0));return ready.get();});
+            page.onActivity(a->capture(a.body.getChildAt(0),role.name()));
         }
     }
     private View row(ActivityScenario<RemoteConnectionActivity> page,RemoteProtocol.Stream stream){java.util.concurrent.atomic.AtomicReference<View> value=new java.util.concurrent.atomic.AtomicReference<>();page.onActivity(a->value.set(a.body.findViewWithTag("connection_stream_"+stream.name())));return value.get();}
     private static String text(View view){if(view instanceof TextView)return ((TextView)view).getText().toString();StringBuilder s=new StringBuilder();if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)s.append(text(((ViewGroup)view).getChildAt(i)));return s.toString();}
     private static View find(View root,String wanted){if(root instanceof TextView&&wanted.contentEquals(((TextView)root).getText()))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View found=find(((ViewGroup)root).getChildAt(i),wanted);if(found!=null)return found;}return null;}
+    private void capture(View card,String role) {
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(card.getWidth(),card.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            card.draw(new android.graphics.Canvas(bitmap));
+            java.io.File directory=new java.io.File(context.getFilesDir(),"ui-v3/connection-single-card");
+            assertTrue(directory.isDirectory()||directory.mkdirs());
+            try(java.io.FileOutputStream file=new java.io.FileOutputStream(new java.io.File(directory,role+".png"))){assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,file));}
+        } catch(java.io.IOException unavailable){throw new AssertionError("Could not retain Connection card render",unavailable);}
+        finally {bitmap.recycle();}
+    }
+    private static int count(View root,String wanted){int total=root instanceof TextView&&wanted.contentEquals(((TextView)root).getText())?1:0;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)total+=count(((ViewGroup)root).getChildAt(i),wanted);return total;}
     private static String repeat(char value){return new String(new char[64]).replace('\0',value);}
     private static void await(java.util.concurrent.Callable<Boolean> condition)throws Exception{long end=android.os.SystemClock.elapsedRealtime()+10_000;while(android.os.SystemClock.elapsedRealtime()<end){if(condition.call())return;Thread.sleep(30);}fail("Native connection observation did not settle");}
 }
