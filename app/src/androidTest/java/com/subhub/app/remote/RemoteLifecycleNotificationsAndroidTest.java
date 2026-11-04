@@ -70,15 +70,49 @@ public final class RemoteLifecycleNotificationsAndroidTest {
         RemoteAppliedNotifications.session(context, dom, dom.peer(SUB, generation), new RemoteSessionRuntime.Record(
                 RemoteSessionRuntime.Direction.OUTGOING, request, result, new RemoteSessionClock.Bounds(1, 1, 1, 2)));
     }
-    @After public void clean() throws Exception {
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        String currentPact = main().getString("commitment_session_identity", "");
-        if (SessionExpiryAlarms.validIdentity(currentPact)) SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, currentPact, "", 0);
-        if (prepared != null) SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, prepared.pactIdentity, "", 0);
-        if (nativeSession != null) nativeSession.close();
-        if (dom != null) dom.close(); if (sub != null) sub.close();
-        target.deleteDatabase(prefix + "dom.db"); target.deleteDatabase(prefix + "sub.db");
-        for (String name : preferences) target.deleteSharedPreferences(name);
+    @After public void clean() throws Throwable {
+        Throwable failure = null;
+        try {
+            failure = cleanupStep(failure, () -> InstrumentationRegistry.getInstrumentation().waitForIdleSync());
+            Set<String> retired = new java.util.LinkedHashSet<>();
+            failure = cleanupStep(failure, () -> {
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    if (context != null) {
+                        String currentPact = main().getString("commitment_session_identity", "");
+                        if (SessionExpiryAlarms.validIdentity(currentPact)) retired.add(currentPact);
+                    }
+                    if (prepared != null && SessionExpiryAlarms.validIdentity(prepared.pactIdentity)) retired.add(prepared.pactIdentity);
+                }
+            });
+            for (String identity : retired) {
+                failure = cleanupStep(failure, () -> {
+                    synchronized (RuntimeSessionIdentity.LOCK) {
+                        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0);
+                    }
+                    SessionExpiryAlarms.whenIdle().get(5, java.util.concurrent.TimeUnit.SECONDS);
+                });
+            }
+        } finally {
+            failure = cleanupStep(failure, () -> { if (nativeSession != null) nativeSession.close(); });
+            failure = cleanupStep(failure, () -> { if (dom != null) dom.close(); });
+            failure = cleanupStep(failure, () -> { if (sub != null) sub.close(); });
+            if (target != null && prefix != null) {
+                failure = cleanupStep(failure, () -> target.deleteDatabase(prefix + "dom.db"));
+                failure = cleanupStep(failure, () -> target.deleteDatabase(prefix + "sub.db"));
+                for (String name : new HashSet<>(preferences))
+                    failure = cleanupStep(failure, () -> target.deleteSharedPreferences(name));
+            }
+        }
+        if (failure != null) throw failure;
+    }
+    private interface CleanupStep { void run() throws Exception; }
+    private static Throwable cleanupStep(Throwable first, CleanupStep step) {
+        try { step.run(); }
+        catch (Throwable failure) {
+            if (first == null) return failure;
+            if (first != failure) first.addSuppressed(failure);
+        }
+        return first;
     }
     private JSONObject expire() throws Exception {
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
