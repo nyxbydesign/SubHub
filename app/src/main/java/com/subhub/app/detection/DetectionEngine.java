@@ -60,6 +60,8 @@ public final class DetectionEngine implements AutoCloseable {
     private final DetectionPostProcessor postProcessor = new DetectionPostProcessor();
     private final InferencePerformanceHints performanceHints;
     private final boolean latencyPriority;
+    private volatile boolean sessionPowerSave;
+    private volatile int sessionThreads;
     private final boolean nnapiFp16Relaxation;
     private final ExecutorService preprocessExecutor;
     private final CpuExecutionBudget executionBudget;
@@ -139,6 +141,8 @@ public final class DetectionEngine implements AutoCloseable {
     }
 
     public synchronized void initialize() throws IOException, OrtException {
+        sessionPowerSave = powerSaveEnabled();
+        sessionThreads = config.getInferenceThreads();
         if (executionBudget != null) throw new IllegalStateException("Bounded test requires explicit CPU initialization");
         closeSession();
         List<String> candidates = Collections.singletonList(config.getModelFilename());
@@ -189,6 +193,8 @@ public final class DetectionEngine implements AutoCloseable {
      */
     public synchronized void initializeWithoutBenchmark(String fallbackProvider)
             throws IOException, OrtException {
+        sessionPowerSave = powerSaveEnabled();
+        sessionThreads = config.getInferenceThreads();
         if (executionBudget != null) throw new IllegalStateException("Bounded test forbids provider fallback");
         closeSession();
         String model = config.getModelFilename();
@@ -239,6 +245,8 @@ public final class DetectionEngine implements AutoCloseable {
 
     /** Device benchmark hook: creates one requested EP without provider-selection side effects. */
     public synchronized void initializeForProvider(String provider) throws IOException, OrtException {
+        sessionPowerSave = powerSaveEnabled();
+        sessionThreads = config.getInferenceThreads();
         if (executionBudget != null) {
             if (budgetRetired) throw new IllegalStateException("Bounded detector is retired");
             executionBudget.requireProvider(provider);
@@ -619,8 +627,9 @@ public final class DetectionEngine implements AutoCloseable {
         options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
         options.setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL);
         options.setInterOpNumThreads(1);
-        // The real-time lane deliberately keeps its CPU workers hot between 334 ms captures; the
-        // optional quality lane sleeps so it cannot consume the latency budget while idle.
+        // Only High may trade idle CPU for latency; Battery Saver always sleeps between runs.
+        boolean spin = PipelineIdlePolicy.allowSpinning(latencyPriority, config.getInferenceThreads(), sessionPowerSave)
+                && (executionBudget == null || executionBudget.allowSpinning);
         options.addConfigEntry("session.inter_op.allow_spinning", "0");
         int threads = Math.max(1, Math.min(config.getInferenceThreads(),
                 Runtime.getRuntime().availableProcessors()));
@@ -629,7 +638,7 @@ public final class DetectionEngine implements AutoCloseable {
         }
         if ("NNAPI".equals(provider)) {
             options.addConfigEntry("session.intra_op.allow_spinning",
-                    latencyPriority ? "1" : "0");
+                    spin ? "1" : "0");
             options.setIntraOpNumThreads(threads);
             // NNAPI's reference CPU device is often slower than ORT's optimized CPU kernels.
             // Unsupported accelerator nodes still fall back to ORT without changing precision.
@@ -645,10 +654,24 @@ public final class DetectionEngine implements AutoCloseable {
                     "intra_op_num_threads", Integer.toString(threads)));
         } else {
             options.addConfigEntry("session.intra_op.allow_spinning",
-                    latencyPriority && (executionBudget == null || executionBudget.allowSpinning) ? "1" : "0");
+                    spin ? "1" : "0");
             options.setIntraOpNumThreads(threads);
             options.addCPU(true);
         }
+    }
+
+    private boolean powerSaveEnabled() {
+        android.os.PowerManager manager = context.getSystemService(android.os.PowerManager.class);
+        return manager != null && manager.isPowerSaveMode();
+    }
+
+    public boolean powerPolicyMatches(boolean powerSave) {
+        return sessionPowerSave == powerSave && sessionThreads == config.getInferenceThreads();
+    }
+
+    /** The owner calls this on its serial lane, never concurrently with native inference. */
+    public synchronized void refreshPowerPolicy() throws IOException, OrtException {
+        if (session != null && !powerPolicyMatches(powerSaveEnabled())) initializeForProvider(activeProvider);
     }
 
     private long benchmark(OrtSession candidate) throws OrtException {

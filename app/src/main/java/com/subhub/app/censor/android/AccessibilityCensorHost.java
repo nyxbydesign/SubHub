@@ -110,6 +110,10 @@ public final class AccessibilityCensorHost implements AutoCloseable {
     private boolean qualityInitializing; // Main-looper admission; its task owns no captured pixels.
     private Configuration qualityInitializationFailed;
     private ProtectionScope protectionScope = ProtectionScope.UNSPECIFIED;
+    private final com.subhub.app.detection.PipelineIdlePolicy idlePolicy = new com.subhub.app.detection.PipelineIdlePolicy();
+    private Runnable idleRetirement;
+    private volatile long idleGeneration;
+    private boolean idleHigh;
 
     public AccessibilityCensorHost(AccessibilityService service, SceneEngine.Policy scenePolicy,
             AccessibilityCapturer.TargetResolver targets, Observer observer) {
@@ -203,12 +207,14 @@ public final class AccessibilityCensorHost implements AutoCloseable {
         requireTextSource(detector, text);
         this.protectionScope = Objects.requireNonNull(protectionScope);
         Configuration selected = new Configuration(token, detector, qualityEnabled, text, semanticText, exactText);
+        idleHigh = detector.getInferenceThreads() >= 4;
         Configuration previous = configuration; long previousEpoch = engine.currentEpoch();
         configuration = selected;
         retireNativeReader(previous, previousEpoch);
         controls();
         if (closed || configuration != selected) return;
         active = true;
+        scheduleIdleRetirement();
         initializeFast(selected);
         if (closed || !active || configuration != selected) return;
         engine.start(token, protectionScope, windowId);
@@ -240,6 +246,7 @@ public final class AccessibilityCensorHost implements AutoCloseable {
         Configuration selected = new Configuration(token, detector, qualityEnabled, text, semanticText, exactText);
         Configuration previous = configuration; long previousEpoch = engine.currentEpoch();
         protectionScope = Objects.requireNonNull(scope);
+        idleHigh = detector.getInferenceThreads() >= 4;
         configuration = selected;
         // Queue readiness before this transition can schedule a new capture/pixel job. The
         // serial lane still waits for any executing old inference before touching its context.
@@ -267,11 +274,40 @@ public final class AccessibilityCensorHost implements AutoCloseable {
         onMain(); if (closed) return;
         Configuration previous = configuration; long previousEpoch = engine.currentEpoch();
         active = false; engine.stop(); retireNativeReader(previous, previousEpoch);
+        scheduleIdleRetirement();
+    }
+    public void powerPolicyChanged() {
+        onMain(); if (closed) return;
+        scheduleIdleRetirement();
+        if (active && configuration != null) { initializeFast(configuration); initializeQuality(configuration); }
+    }
+    public void idleSettingsChanged(DetectorConfig detector) {
+        onMain(); if (closed) return;
+        idleHigh = detector.getInferenceThreads() >= 4;
+        if (!active) scheduleIdleRetirement();
+    }
+    private boolean powerSaveEnabled() {
+        android.os.PowerManager manager = context.getSystemService(android.os.PowerManager.class);
+        return manager != null && manager.isPowerSaveMode();
+    }
+    private void scheduleIdleRetirement() {
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        long generation = ++idleGeneration;
+        long delay = idlePolicy.delayMillis(active, idleHigh,
+                powerSaveEnabled(), SystemClock.uptimeMillis());
+        if (delay < 0 || closed) return;
+        idleRetirement = () -> {
+            if (closed || active || idleGeneration != generation) return;
+            fast.retireIdle(generation); quality.retireIdle(generation);
+        };
+        main.postDelayed(idleRetirement, delay);
     }
     @Override public void close() {
         onMain(); if (closed) return;
         Configuration previous = configuration; long previousEpoch = engine.currentEpoch();
         closed = true; active = false; engine.close(); retireNativeReader(previous, previousEpoch);
+        idleGeneration++;
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
     }
 
     public long epoch() { return engine.currentEpoch(); }
@@ -413,7 +449,7 @@ public final class AccessibilityCensorHost implements AutoCloseable {
                         controls();
                         if (active && !closed && configuration == value && fast.sessionMatches(value.detector)) {
                             observer.providerReady(SceneEngine.Lane.FAST, fast.provider, initializationMillis);
-                        }
+                        } else if (active && !closed && configuration == value) initializeFast(value);
                     }
                 });
             });
@@ -453,7 +489,8 @@ public final class AccessibilityCensorHost implements AutoCloseable {
                     observer.modelUnavailable(SceneEngine.Lane.QUALITY);
                 } else {
                     controls();
-                    observer.providerReady(SceneEngine.Lane.QUALITY, quality.provider, initializationMillis);
+                    if (quality.sessionMatches(value.detector)) observer.providerReady(SceneEngine.Lane.QUALITY, quality.provider, initializationMillis);
+                    else if (active) initializeQuality(value);
                 }
             });
         });
@@ -472,7 +509,7 @@ public final class AccessibilityCensorHost implements AutoCloseable {
     private final class Slot implements CensorEngine.Worker<PixelFrame> {
         final SceneEngine.Lane lane;
         final ExecutorService executor;
-        private VisualDetectorWorker worker; // This serial executor owns access and disposal.
+        private volatile VisualDetectorWorker worker; // This serial executor owns access and disposal.
         private Configuration advertisedConfiguration; // A reused session needs current-scope admission too.
         private volatile DetectorConfig sessionConfig;
         private volatile String provider = "";
@@ -486,7 +523,8 @@ public final class AccessibilityCensorHost implements AutoCloseable {
             DetectorConfig selected = lane == SceneEngine.Lane.FAST
                     ? VisualInferencePolicy.fast(candidate) : VisualInferencePolicy.quality(candidate);
             DetectorConfig current = sessionConfig;
-            return current != null && selected.getModelFilename().equals(current.getModelFilename())
+            VisualDetectorWorker currentWorker = worker;
+            return current != null && currentWorker != null && currentWorker.powerPolicyMatches(powerSaveEnabled()) && selected.getModelFilename().equals(current.getModelFilename())
                     && selected.getInferenceResolution() == current.getInferenceResolution()
                     && selected.getInferenceThreads() == current.getInferenceThreads();
         }
@@ -507,6 +545,10 @@ public final class AccessibilityCensorHost implements AutoCloseable {
                 long began = SystemClock.uptimeMillis();
                 initializationAttempted = !sessionMatches(value.detector);
                 boolean initialized = prepare(value);
+                if (!sessionMatches(value.detector)) {
+                    post(AccessibilityCensorHost.this::powerPolicyChanged);
+                    completion.cancelled(); return;
+                }
                 long initializationMillis = initialized ? Math.max(0, SystemClock.uptimeMillis() - began) : 0;
                 if (initialized || advertisedConfiguration != value) {
                     String selectedProvider = provider;
@@ -554,6 +596,15 @@ public final class AccessibilityCensorHost implements AutoCloseable {
             sessionConfig = lane == SceneEngine.Lane.FAST
                     ? VisualInferencePolicy.fast(value.detector) : VisualInferencePolicy.quality(value.detector);
             return true;
+        }
+
+        void retireIdle(long generation) {
+            executor.execute(() -> {
+                if (closed || active || idleGeneration != generation) return;
+                try { if (worker != null) worker.close(); }
+                catch (RuntimeException | Error failure) { disposalFailed.set(true); post(engine::nativeResourceFailure); }
+                finally { worker = null; provider = ""; sessionConfig = null; advertisedConfiguration = null; }
+            });
         }
 
         void dispose(Runnable finished) {

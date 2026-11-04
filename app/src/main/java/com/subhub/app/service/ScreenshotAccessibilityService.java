@@ -258,6 +258,22 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private long lastWorldCacheQueryDocument = Long.MIN_VALUE;
     private String lastWorldCacheQuerySurface = "";
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final com.subhub.app.detection.PipelineIdlePolicy idlePolicy = new com.subhub.app.detection.PipelineIdlePolicy();
+    private Runnable idleRetirement;
+    private volatile long idleGeneration;
+    private boolean powerReceiverRegistered;
+    private final android.content.BroadcastReceiver powerReceiver = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+            if (!android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED.equals(intent.getAction()) || !running) return;
+            if (productQualificationRoute && Build.VERSION.SDK_INT >= 34) {
+                if (productSession != null) productSession.powerPolicyChanged();
+            } else {
+                scheduleIdleRetirement();
+                refreshDetectorPowerPolicy(inferenceWorker, true);
+                refreshDetectorPowerPolicy(qualityInferenceWorker, false);
+            }
+        }
+    };
     private boolean productQualificationRoute;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener listener =
             (preferences, key) -> {
@@ -437,6 +453,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             return;
         }
         settings = new SettingsRepository(this);
+        androidx.core.content.ContextCompat.registerReceiver(this, powerReceiver,
+                new android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+        powerReceiverRegistered = true;
         stats = new StatsRepository(this);
         timers = new AppTimerManager(this);
         penance = new PenanceManager(this);
@@ -499,6 +519,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 }, (pending, error) -> main.post(() -> recoverScrollLookupGap(pending, "lookup-failure")));
         worker.execute(this::initializePipeline);
         main.post(this::reevaluateRecognition);
+        main.post(this::scheduleIdleRetirement);
         main.post(this::reevaluateSubliminals);
         labCensorSubscription = CensorLabCensorSession.observe(() -> main.post(() -> {
             if (!running || labCensorSubscription == null) return;
@@ -616,6 +637,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (!running || !initializing.compareAndSet(false, true)) return;
         try {
             DetectorConfig config = settings.loadDetectorConfig();
+            if (!recognitionActive && (config.getInferenceThreads() < 4 || powerSaveEnabled())) return;
             DetectorConfig fastConfig = fastDetectorConfig(config);
             long startupSession = activeStartupSession;
             detectorConfig = config;
@@ -643,6 +665,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             } else {
                 fastDetector.setConfig(fastConfig);
             }
+            fastDetector.refreshPowerPolicy();
             qualityConcurrencyGovernor.reset();
             Log.i(TAG, "STARTUP session=" + startupSession
                     + " phase=fast-init-end durationMs="
@@ -5092,6 +5115,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         textRefreshRequested.set(true);
         if (detector != null) detector.setConfig(qualityDetectorConfig(config));
         if (fastDetector != null) fastDetector.setConfig(fastDetectorConfig(config));
+        refreshDetectorPowerPolicy(inferenceWorker, true);
+        refreshDetectorPowerPolicy(qualityInferenceWorker, false);
         if (usesAtomicScenePipeline(config) && detector == null
                 && firstOverlayReported.get()) {
             scheduleQualityDetectorInitialization(config);
@@ -5102,6 +5127,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (subliminalOverlay != null) subliminalOverlay.updateSettings();
             reevaluateRecognition();
             reevaluateSubliminals();
+            scheduleIdleRetirement();
         });
     }
 
@@ -6116,6 +6142,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             // Publish active only after every synchronous authority surface exists. A failed
             // overlay/window setup must remain retryable on the next foreground window event.
             recognitionActive = true;
+            scheduleIdleRetirement();
             Log.i(TAG, "Recognition activated for foreground package " + foregroundPackage);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 worker.execute(this::initializePipeline);
@@ -6167,6 +6194,48 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         tapTracker.clear();
         resetTextSnapshots();
         resetScrollCompensation();
+        scheduleIdleRetirement();
+    }
+
+    private boolean powerSaveEnabled() {
+        android.os.PowerManager manager = getSystemService(android.os.PowerManager.class);
+        return manager != null && manager.isPowerSaveMode();
+    }
+
+    private void refreshDetectorPowerPolicy(ScheduledExecutorService executor, boolean fast) {
+        if (!recognitionActive || executor == null || executor.isShutdown()) return;
+        executor.execute(() -> {
+            DetectionEngine selected = fast ? fastDetector : detector;
+            try { if (selected != null) selected.refreshPowerPolicy(); }
+            catch (Exception failure) {
+                Log.e(TAG, "Could not apply detector power policy", failure);
+                main.post(this::deactivateRecognition);
+            }
+        });
+    }
+
+    private void scheduleIdleRetirement() {
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        long generation = ++idleGeneration;
+        if (!running || productQualificationRoute || settings == null) return;
+        long delay = idlePolicy.delayMillis(recognitionActive, settings.loadDetectorConfig().getInferenceThreads() >= 4,
+                powerSaveEnabled(), SystemClock.uptimeMillis());
+        if (delay < 0) return;
+        idleRetirement = () -> {
+            if (!running || recognitionActive || idleGeneration != generation || worker == null || worker.isShutdown()) return;
+            worker.execute(() -> {
+                if (!running || recognitionActive || idleGeneration != generation) return;
+                DetectionEngine oldFast = fastDetector;
+                fastDetector = null;
+                if (oldFast != null) inferenceWorker.execute(oldFast::close);
+                qualityInferenceWorker.execute(() -> {
+                    if (!running || recognitionActive || idleGeneration != generation) return;
+                    DetectionEngine oldQuality = detector; detector = null;
+                    if (oldQuality != null) oldQuality.close();
+                });
+            });
+        };
+        main.postDelayed(idleRetirement, delay);
     }
 
     private void resetScrollCompensation() {
@@ -6808,6 +6877,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        idleGeneration++;
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        if (powerReceiverRegistered) { unregisterReceiver(powerReceiver); powerReceiverRegistered = false; }
         if (labCensorSubscription != null) {
             labCensorSubscription.close();
             labCensorSubscription = null;

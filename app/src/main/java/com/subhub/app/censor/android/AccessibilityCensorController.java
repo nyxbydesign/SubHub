@@ -249,6 +249,9 @@ public final class AccessibilityCensorController implements AutoCloseable {
     }
 
     /** One existing host survives window/settings changes and stop/start. Tokens must change. */
+    public void powerPolicyChanged() { onMain(); if (!closed) host.powerPolicyChanged(); }
+    public void idleSettingsChanged(DetectorConfig detector) { onMain(); if (!closed) host.idleSettingsChanged(detector); }
+
     public void start(Configuration selected) {
         onMain(); if (closed) throw new IllegalStateException("Closed controller"); Objects.requireNonNull(selected);
         if (Build.VERSION.SDK_INT < 34) throw new IllegalStateException("Window capture qualification requires API34");

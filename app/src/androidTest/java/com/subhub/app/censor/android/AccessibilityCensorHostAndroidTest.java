@@ -47,6 +47,39 @@ public final class AccessibilityCensorHostAndroidTest {
     /** Only the three explicitly synthetic resource-failure fixtures; cleared by process exit, never a fake drain. */
     private static final List<Harness> EXPECTED_QUARANTINES = new CopyOnWriteArrayList<>();
 
+    @Test public void inactiveMediumRetirementWaitsForExecutingInferenceAndThenCloses() throws Exception {
+        try (Harness h = new Harness()) {
+            h.blockInference = true;
+            h.start(10, config(3, .3f)); Bitmap source = h.next().deliver();
+            assertTrue(h.inferenceEntered.await(5, TimeUnit.SECONDS));
+            Model original = h.models.get(0);
+            main(h.host::stop); main(() -> { });
+            assertEquals(0, original.closes.get()); assertFalse(source.isRecycled());
+            h.inferenceRelease.countDown();
+            long deadline = SystemClock.uptimeMillis() + 5000;
+            while (original.closes.get() == 0 && SystemClock.uptimeMillis() < deadline) Thread.sleep(10);
+            assertEquals(1, original.closes.get()); assertFalse(original.closedOnMain.get());
+            awaitRecycled(source);
+            h.failUndelivered(); h.requests.clear();
+            h.start(11, config(3, .3f)); h.next().deliver(); h.awaitView(11);
+            assertEquals(2, h.fastInitializations.get());
+        }
+    }
+
+    @Test public void highTrackedReturnCancelsIdleRetirementAndReusesCurrentModel() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        assertFalse("Normal-power High retention precondition", context.getSystemService(android.os.PowerManager.class).isPowerSaveMode());
+        try (Harness h = new Harness()) {
+            h.start(10, config(4, .3f)); h.next().deliver(); h.awaitView(10);
+            Model original = h.models.get(0);
+            main(h.host::stop); h.failUndelivered(); h.requests.clear(); main(() -> { });
+            assertEquals(0, original.closes.get());
+            h.start(11, config(4, .3f)); h.next().deliver(); h.awaitView(11);
+            assertEquals(1, h.fastInitializations.get()); assertSame(original, h.models.get(0));
+            assertEquals(0, original.closes.get());
+        }
+    }
+
     @Test public void fastReadinessCompletesBeforeTheFirstCaptureCallbackWithoutUsingPixels() throws Exception {
         try (Harness h = new Harness()) {
             h.start(10, config(2, .3f)); Call first = h.next();

@@ -242,6 +242,7 @@ public final class CensorProductSession implements AutoCloseable {
         }
     }
     public void demandCapture() { onMain(); if (active && !closed) controller.requestCapture(); }
+    public void powerPolicyChanged() { onMain(); if (!closed) controller.powerPolicyChanged(); }
     public void stop() {
         onMain(); if (closed) return;
         reconciliation.invalidate();
@@ -305,7 +306,7 @@ public final class CensorProductSession implements AutoCloseable {
         if (!reconciliation.isCurrent(generation) || closed || failed) return;
         if (!value.lab.isCurrent() || value.session != StatsRepository.currentSessionStamp()
                 || !value.settings.same(new ProductCensorSettings(preferences))) { request(); return; }
-        if (!value.eligible) { preferredPackage = ""; stop(); return; }
+        if (!value.eligible) { preferredPackage = ""; controller.idleSettingsChanged(value.detector); stop(); return; }
         if (value.inference.equals(unavailableInference)) { stop(); return; }
         unavailableInference = null;
         preferredPackage = value.window.packageName;

@@ -29,6 +29,7 @@ public final class VisualDetectorWorker implements CensorEngine.Worker<PixelFram
     }
     public interface Model extends AutoCloseable {
         String provider();
+        default boolean powerPolicyMatches(boolean powerSave) { return true; }
         /** Called only on the same serial lane, never during an executing inference. */
         default void configure(DetectorConfig config) { }
         ModelOutput infer(Bitmap bitmap, int sourceWidth, int sourceHeight, int inputWidth, int inputHeight,
@@ -67,6 +68,7 @@ public final class VisualDetectorWorker implements CensorEngine.Worker<PixelFram
     }
 
     public String provider() { return model.provider(); }
+    public boolean powerPolicyMatches(boolean powerSave) { return model.powerPolicyMatches(powerSave); }
 
     /** Reuse native sessions for postprocessing/coverage changes; session keys are host-owned. */
     public void configure(DetectorConfig configured) {
@@ -222,6 +224,7 @@ public final class VisualDetectorWorker implements CensorEngine.Worker<PixelFram
         private final DetectionEngine detector;
         NativeModel(DetectionEngine detector) { this.detector = detector; }
         @Override public String provider() { return detector.getActiveProvider(); }
+        @Override public boolean powerPolicyMatches(boolean powerSave) { return detector.powerPolicyMatches(powerSave); }
         @Override public void configure(DetectorConfig config) { detector.setConfig(config); }
         @Override public ModelOutput infer(Bitmap bitmap, int sourceWidth, int sourceHeight, int inputWidth, int inputHeight,
                 BooleanSupplier cancelled, Consumer<DetectionEngine.RunCancellation> binding) throws Exception {
