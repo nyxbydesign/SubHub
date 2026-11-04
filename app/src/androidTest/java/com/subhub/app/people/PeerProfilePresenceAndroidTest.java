@@ -109,10 +109,10 @@ public final class PeerProfilePresenceAndroidTest {
                     retainTextBounds(column,new File(evidence,locale.getLanguage()+".json"));
                     String observed=lastOnline(context,old);
                     String label=locale.equals(Locale.GERMAN)?"Zuletzt gesehen":"Last seen";
-                    assertEquals(label+": 03.02.2001 23:07:09",observed);
-                    assertEquals(label+": 03.02.2001 23:07:09",
+                    assertEquals(label+": 03.02.2001 23:07",observed);
+                    assertEquals(label+": 03.02.2001 23:07",
                             ((TextView)column.findViewWithTag("profile_last_online:connection")).getText().toString());
-                    assertEquals("Offline · "+label+" 03.02.2001 23:07:09",PersonUi.connection(context,
+                    assertEquals("Offline · "+label+" 03.02.2001 23:07",PersonUi.connection(context,
                             snapshot(sub,PersonSnapshot.Connection.OFFLINE,old,PersonSnapshot.Freshness.STALE)));
                     String offlineUnknown="Offline · "+label+(locale.equals(Locale.GERMAN)?" unbekannt":" unknown");
                     assertEquals(offlineUnknown,context.getString(R.string.role_offline_last_online_unknown));
@@ -222,8 +222,13 @@ public final class PeerProfilePresenceAndroidTest {
     }
 
     private static String lastOnline(Context context,long observed) {
+        java.util.Calendar contact = java.util.Calendar.getInstance(java.util.TimeZone.getDefault(), Locale.ROOT);
+        contact.setTimeInMillis(observed);
+        int currentYear = java.util.Calendar.getInstance(java.util.TimeZone.getDefault(), Locale.ROOT)
+                .get(java.util.Calendar.YEAR);
+        String pattern = contact.get(java.util.Calendar.YEAR) == currentYear ? "dd.MM HH:mm" : "dd.MM.yyyy HH:mm";
         return context.getString(R.string.peer_last_online,
-                new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss",Locale.ROOT).format(new java.util.Date(observed)));
+                new java.text.SimpleDateFormat(pattern,Locale.ROOT).format(new java.util.Date(observed)));
     }
 
     /** Draws the current native View tree, never the physical display or global window compositor. */

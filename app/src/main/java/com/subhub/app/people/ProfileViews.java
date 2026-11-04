@@ -15,8 +15,10 @@ import java.util.Locale;
 
 /** Person identity and device selection stay visible throughout profile navigation. */
 public final class ProfileViews {
+    private static final DateTimeFormatter LAST_SEEN_CURRENT_YEAR_FORMAT =
+            DateTimeFormatter.ofPattern("dd.MM HH:mm", Locale.ROOT);
     private static final DateTimeFormatter LAST_SEEN_FORMAT =
-            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.ROOT);
+            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.ROOT);
     private ProfileViews() {}
 
     public static String targetDiscriminator(Context context, PersonSnapshot person) {
@@ -115,7 +117,14 @@ public final class ProfileViews {
     }
 
     public static String formatLastSeen(long observed) {
-        return LAST_SEEN_FORMAT.format(Instant.ofEpochMilli(observed).atZone(ZoneId.systemDefault()));
+        return formatLastSeen(observed, System.currentTimeMillis(), ZoneId.systemDefault());
+    }
+
+    /** Calendar years follow the same device time zone as the displayed contact time. */
+    static String formatLastSeen(long observed, long now, ZoneId zone) {
+        java.time.ZonedDateTime contact = Instant.ofEpochMilli(observed).atZone(zone);
+        int currentYear = Instant.ofEpochMilli(now).atZone(zone).getYear();
+        return (contact.getYear() == currentYear ? LAST_SEEN_CURRENT_YEAR_FORMAT : LAST_SEEN_FORMAT).format(contact);
     }
 
     public static View avatar(Context context, ProfileData profile) {
