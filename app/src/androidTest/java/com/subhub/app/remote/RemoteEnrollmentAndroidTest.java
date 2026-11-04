@@ -23,6 +23,8 @@ public class RemoteEnrollmentAndroidTest {
     @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private Context context;private RemoteFeature feature,previous;private PeerTransport other;
     private KeyholderProvider provider;private java.lang.reflect.Field singleton;private String database;
+    private PairingLifecycleClock.Source fixtureClock;
+    private final java.util.concurrent.atomic.AtomicBoolean clockUnavailable=new java.util.concurrent.atomic.AtomicBoolean();
     private SharedPreferences main,legacy;private Map<String,?> mainBefore,legacyBefore;
     @Before public void setup()throws Exception {
         context=InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -33,7 +35,13 @@ public class RemoteEnrollmentAndroidTest {
         mainBefore=new HashMap<>(main.getAll());legacyBefore=new HashMap<>(legacy.getAll());
         main.edit().remove("controller_pin_salt").remove("controller_pin_hash").remove("controller_keyholder_optional").commit();legacy.edit().clear().commit();
         provider=People.keyholder();People.installKeyholder(new KeyholderProvider(){public State state(){return State.NONE;}public String assignedDomName(){return "";}public ControllerAuthenticator.Result verifyCode(String code){return ControllerAuthenticator.Result.UNAVAILABLE;}});
-        ControllerPinManager.enterSubMode();database="enrollment-"+UUID.randomUUID();feature=new RemoteFeature(context,new RemoteStore(context,database+".db"));
+        ControllerPinManager.enterSubMode();database="enrollment-"+UUID.randomUUID();
+        PairingLifecycleClock.Source systemClock=PairingLifecycleClock.source(context);
+        fixtureClock=new PairingLifecycleClock.Source(){
+            public FormalRelationshipClock.Sample observe(){if(clockUnavailable.get())throw new IllegalStateException("Synthetic clock read failure");FormalRelationshipClock.Sample now=systemClock.observe();return new FormalRelationshipClock.Sample(now.wall,now.elapsed+1_000_000,now.boot);}
+            public FormalRelationshipClock.Sample transition(FormalRelationshipClock.Sample observed){return new FormalRelationshipClock.Sample(System.currentTimeMillis(),android.os.SystemClock.elapsedRealtime()+1_000_000,observed.boot);}
+        };
+        feature=new RemoteFeature(context,new RemoteStore(context,database+".db"),new RemoteSecrets(context),fixtureClock);
         byte[] identity=new RemoteSecrets(context).identitySeed();PeerTransport endpoint;
         try{endpoint=IrohPeerTransport.open(context,identity,new String[0],10_000);}finally{Arrays.fill(identity,(byte)0);}other=IrohPeerTransport.open(context,random(),new String[0],10_000);
         java.lang.reflect.Field transport=RemoteFeature.class.getDeclaredField("endpoint");transport.setAccessible(true);transport.set(feature,endpoint);
@@ -80,27 +88,147 @@ public class RemoteEnrollmentAndroidTest {
     @Test public void directCreationSurvivesRotationWhilePendingWithoutCreatingAnotherInvitation() throws Exception {
         directEntry(com.subhub.app.people.PeopleActivity.class, true);
     }
+    @Test public void addSubReplacesRetainedExpiredInvitationWithoutNestedCreateAction() throws Exception {
+        retainedEntry("expired");
+    }
+    @Test public void addSubRestoresLiveInvitationWithoutChangingCodeOrDeadline() throws Exception {
+        retainedEntry("live");
+    }
+    @Test public void legacyInvitationRequiresExplicitCancellationBeforeTappedCreation() throws Exception {
+        retainedEntry("legacy");
+    }
+    @Test public void uncertainInvitationRequiresExplicitCancellationBeforeTappedCreation() throws Exception {
+        retainedEntry("uncertain");
+    }
+    @Test public void missingInvitationSecretOffersCancellationBeforeTappedCreation() throws Exception {
+        retainedEntry("missing");
+    }
+    private void retainedEntry(String state) throws Exception {
+        main.edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
+        assertTrue(ControllerPinManager.setPin(context,"2468"));assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
+        com.subhub.app.people.ConnectionUi prior=People.connectionUi();People.installConnectionUi(new RemoteUi());
+        FormalRelationshipClock.Sample now=fixtureClock.observe();long age="expired".equals(state)?PairingInvite.LIFETIME_MILLIS+1000:1000;
+        FormalRelationshipClock.Sample original=new FormalRelationshipClock.Sample(now.wall-age,now.elapsed-age,now.boot+("uncertain".equals(state)?1:0));
+        java.lang.reflect.Field transport=RemoteFeature.class.getDeclaredField("endpoint");transport.setAccessible(true);PeerTransport endpoint=(PeerTransport)transport.get(feature);
+        PairingInvite retained=PairingInvite.create(endpoint.localIdentity(),endpoint.inviteRoute(),original.wall);
+        PairingLifecycleClock.Source seedClock=new PairingLifecycleClock.Source(){public FormalRelationshipClock.Sample observe(){return original;}public FormalRelationshipClock.Sample transition(FormalRelationshipClock.Sample observed){return original;}};
+        feature.submit(()->{
+            if("legacy".equals(state))feature.store.saveInvite(retained);else feature.store.saveTimedInvite(retained,original,seedClock);
+            if(!"missing".equals(state))new RemoteSecrets(context).savePending(retained);
+            if("legacy".equals(state)){feature.store.bindInvite(retained.id,other.localIdentity(),retained.tokenHash(),original.wall);feature.store.describeCandidate(retained.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());}
+            else if("missing".equals(state)||"uncertain".equals(state)){feature.store.bindTimedInvite(retained.id,other.localIdentity(),retained.tokenHash(),original,seedClock);feature.store.describeCandidate(retained.id,other.localIdentity(),"Synthetic Sub",other.inviteRoute());}
+            return null;
+        }).get(15,TimeUnit.SECONDS);
+        try(ActivityScenario<?> origin=ActivityScenario.launch(new Intent(context,com.subhub.app.people.PeopleActivity.class))){
+            await(()->resumed(com.subhub.app.people.PeopleActivity.class)!=null);
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.role_add_sub))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+            await(()->resumed(PairingActivity.class)!=null);
+            boolean recovery=!("live".equals(state)||"expired".equals(state));
+            if(recovery){
+                await(()->hasText(resumed(PairingActivity.class),R.string.pairing_recovery));
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+                    PairingActivity page=resumedOnMain();assertNull(inviteUnchecked(page));
+                    assertNull(find(page.body,context.getString(R.string.remote_create_invite)));
+                    assertNull(find(page.body,context.getString(R.string.pairing_background)));
+                    assertNull(find(page.body,context.getString(R.string.remote_approve)));
+                });
+                assertEquals(retained.id,feature.currentPairingOperation(true).get(15,TimeUnit.SECONDS).id);
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.Matchers.is("pairing_lifecycle_cancel")))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+                await(()->hasText(resumed(PairingActivity.class),R.string.remote_create_invite));
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.remote_create_invite))
+                        .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+            }
+            await(()->resumed(PairingActivity.class)!=null&&inviteUnchecked(resumed(PairingActivity.class))!=null);
+            PairingActivity page=resumed(PairingActivity.class);PairingInvite visible=inviteUnchecked(page);
+            if("live".equals(state)){assertEquals(retained.code(),visible.code());assertEquals(retained.expiresAt,visible.expiresAt);}
+            else assertNotEquals(retained.id,visible.id);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+                assertNull(find(page.body,context.getString(R.string.remote_create_invite)));
+                assertNull(find(page.body,context.getString(R.string.pairing_background)));
+                assertNotNull(find(page.body,context.getString(R.string.remote_copy_invite)));
+                assertNotNull(find(page.body,context.getString(R.string.remote_share_invite)));
+            });
+            assertEquals(1,feature.store.invitations(System.currentTimeMillis()).size());assertTrue(feature.store.peers(false).isEmpty());
+            await(()->hasQr(page.body));
+            if("live".equals(state))capture(page,"add-sub-live.png");
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.remote_copy_invite))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+                ClipboardManager clipboard=(ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE);
+                assertEquals(visible.code(),clipboard.getPrimaryClip().getItemAt(0).getText().toString());clipboard.setPrimaryClip(ClipData.newPlainText("",""));
+            });
+            if("expired".equals(state))assertEquals(PairingLifecycleLedger.Stage.EXPIRED,feature.store.pairingOperation(retained.id,retained.id,PairingLifecycleClock.Direction.CREATE).stage);
+            feature.cancel(visible.id);
+        } finally {
+            feature.cancel(retained.id);People.installConnectionUi(prior);
+        }
+    }
+    @Test public void initialDiscoveryFailureOffersWorkingRetryWithoutMintingInvitation() throws Exception {
+        main.edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
+        assertTrue(ControllerPinManager.setPin(context,"2468"));assertTrue(ControllerPinManager.verify(context,"2468"));ControllerPinManager.enterDomMode();
+        com.subhub.app.people.ConnectionUi prior=People.connectionUi();People.installConnectionUi(new RemoteUi());clockUnavailable.set(true);
+        try(ActivityScenario<?> origin=ActivityScenario.launch(new Intent(context,com.subhub.app.people.PeopleActivity.class))){
+            await(()->resumed(com.subhub.app.people.PeopleActivity.class)!=null);
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.role_add_sub))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+            await(()->hasText(resumed(PairingActivity.class),R.string.role_retry));
+            assertTrue(feature.store.invitations(System.currentTimeMillis()).isEmpty());clockUnavailable.set(false);
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.role_retry))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),androidx.test.espresso.action.ViewActions.click());
+            await(()->resumed(PairingActivity.class)!=null&&inviteUnchecked(resumed(PairingActivity.class))!=null);
+            assertTrue(hasText(resumed(PairingActivity.class),R.string.remote_copy_invite));
+            feature.cancel(inviteUnchecked(resumed(PairingActivity.class)).id);
+        } finally{clockUnavailable.set(false);People.installConnectionUi(prior);}
+    }
+    private static boolean hasQr(View view){
+        java.util.concurrent.atomic.AtomicBoolean found=new java.util.concurrent.atomic.AtomicBoolean();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(()->found.set(findQr(view)));return found.get();
+    }
+    private static boolean findQr(View view){
+        if(view instanceof ImageView&&((ImageView)view).getDrawable()!=null)return true;
+        if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)if(findQr(((ViewGroup)view).getChildAt(i)))return true;
+        return false;
+    }
+    private static void capture(PairingActivity activity,String name){
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+            View view=activity.getWindow().getDecorView();android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(view.getWidth(),view.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+            view.draw(new android.graphics.Canvas(bitmap));java.io.File file=new java.io.File(activity.getExternalFilesDir(null),name);
+            try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output));}
+            catch(java.io.IOException failure){throw new AssertionError(failure);}finally{bitmap.recycle();}
+        });
+    }
+    private static PairingActivity resumedOnMain(){
+        for(android.app.Activity page:androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED))if(page instanceof PairingActivity)return (PairingActivity)page;
+        throw new AssertionError("Pairing page is not resumed");
+    }
+    private boolean hasText(PairingActivity activity,int resource){
+        if(activity==null)return false;java.util.concurrent.atomic.AtomicBoolean found=new java.util.concurrent.atomic.AtomicBoolean();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(()->found.set(find(activity.body,context.getString(resource))!=null));return found.get();
+    }
     private void directEntry(Class<? extends android.app.Activity> origin, boolean rotatePending) throws Exception {
         assertTrue(feature.store.peers(false).isEmpty()); assertTrue(feature.store.invitations(System.currentTimeMillis()).isEmpty());
         main.edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.DOM_ONLY.name()).commit();
         assertTrue(ControllerPinManager.setPin(context, "2468")); assertTrue(ControllerPinManager.verify(context, "2468")); ControllerPinManager.enterDomMode();
         com.subhub.app.people.ConnectionUi prior = People.connectionUi(); People.installConnectionUi(new RemoteUi());
-        CountDownLatch entered = new CountDownLatch(4), release = new CountDownLatch(1);
-        List<CompletableFuture<?>> blockers = new java.util.ArrayList<>(); String created = null;
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean gateExpired=new java.util.concurrent.atomic.AtomicBoolean();
+        java.lang.reflect.Field operationField=RemoteFeature.class.getDeclaredField("operations");operationField.setAccessible(true);
+        ThreadPoolExecutor originalOperations=(ThreadPoolExecutor)operationField.get(feature);
+        ThreadPoolExecutor gatedOperations=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),r->new Thread(r,"owned-creation-gate"),new ThreadPoolExecutor.AbortPolicy()){
+            @Override public void execute(Runnable command){
+                boolean creation=false;
+                for(StackTraceElement frame:Thread.currentThread().getStackTrace())if(frame.getClassName().equals(RemoteFeature.class.getName())&&frame.getMethodName().equals("createInvite")){creation=true;break;}
+                if(!creation){super.execute(command);return;}
+                // Gate the accepted task before its authority/SQLite lock, so recreation can read safely.
+                super.execute(()->{entered.countDown();try{if(!release.await(90,TimeUnit.SECONDS))gateExpired.set(true);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();gateExpired.set(true);}command.run();});
+            }
+        };
+        if(rotatePending)operationField.set(feature,gatedOperations);else gatedOperations.shutdown();
+        String created = null;
         androidx.test.espresso.intent.Intents.init();
         try {
-            if (rotatePending) {
-                java.lang.reflect.Field pool = RemoteFeature.class.getDeclaredField("sessions"); pool.setAccessible(true);
-                assertEquals("Fixture gate must cover every session worker", 4,
-                        ((java.util.concurrent.ThreadPoolExecutor) pool.get(feature)).getCorePoolSize());
-                // Gate every session worker so the accepted creation stays queued through rotation.
-                for (int worker = 0; worker < 4; worker++) blockers.add(feature.submit(() -> {
-                    entered.countDown();
-                    if (!release.await(90, TimeUnit.SECONDS)) throw new IllegalStateException("Fixture creation gate expired");
-                    return null;
-                }));
-                assertTrue(entered.await(5, TimeUnit.SECONDS));
-            }
             try (ActivityScenario<?> page = ActivityScenario.launch(new Intent(context, origin))) {
                 await(() -> resumed(origin) != null);
                 androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(R.string.role_add_sub))
@@ -109,16 +237,17 @@ public class RemoteEnrollmentAndroidTest {
                 assertEquals(context.getPackageName(), initial.getCallingActivity().getPackageName());
                 assertEquals(origin.getName(), initial.getCallingActivity().getClassName());
                 if (rotatePending) {
+                    assertTrue("Accepted creation must reach its task gate",entered.await(5,TimeUnit.SECONDS));
                     await(() -> creation(initial) != null); CompletableFuture<PairingInvite> accepted = creation(initial);
                     InstrumentationRegistry.getInstrumentation().runOnMainSync(initial::recreate);
                     await(() -> resumed(PairingActivity.class) != null && resumed(PairingActivity.class) != initial);
                     assertSame(accepted, creation(resumed(PairingActivity.class)));
                     assertFalse("Creation must remain pending behind the fixture gate", accepted.isDone());
                     assertEquals(1, release.getCount());
-                    for (CompletableFuture<?> blocker : blockers) assertFalse("Fixture gate ended early", blocker.isDone());
+                    assertFalse("Fixture gate timed out",gateExpired.get());
                     assertTrue(feature.store.invitations(System.currentTimeMillis()).isEmpty());
                     release.countDown();
-                    for (CompletableFuture<?> blocker : blockers) blocker.get(15, TimeUnit.SECONDS);
+                    accepted.get(15,TimeUnit.SECONDS);
                 }
                 await(() -> resumed(PairingActivity.class) != null && inviteUnchecked(resumed(PairingActivity.class)) != null);
                 PairingActivity ready = resumed(PairingActivity.class); PairingInvite invitation = inviteUnchecked(ready); created = invitation.id;
@@ -142,6 +271,7 @@ public class RemoteEnrollmentAndroidTest {
             // The isolated fixture began without invitations; reconcile accepted creation even after a failed observer.
             for (RemoteStore.Invitation owned : feature.store.invitations(System.currentTimeMillis())) feature.cancel(owned.id);
             feature.submit(() -> null).get(15, TimeUnit.SECONDS);
+            if(rotatePending){operationField.set(feature,originalOperations);gatedOperations.shutdown();assertTrue(gatedOperations.awaitTermination(15,TimeUnit.SECONDS));}
             androidx.test.espresso.intent.Intents.release(); People.installConnectionUi(prior);
         }
     }

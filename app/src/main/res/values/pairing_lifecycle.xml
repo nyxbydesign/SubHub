@@ -6,8 +6,8 @@
     <string name="pairing_starting">Starting pairing…</string>
     <string name="pairing_running">Pairing work is running. Connection still requires approval on both devices.</string>
     <string name="pairing_notification_running">Pairing work is running</string>
-    <string name="pairing_stopped">Background pairing is stopped. Resume while this page is open.</string>
-    <string name="pairing_unavailable">Background pairing is unavailable. Open the pairing page to retry.</string>
+    <string name="pairing_stopped">Pairing is paused. Resume while this page is open.</string>
+    <string name="pairing_unavailable">Pairing is unavailable. Retry while this page is open.</string>
     <string name="pairing_recovery">This request cannot safely resume. Cancel it before creating a new invitation.</string>
     <string name="pairing_remaining">Time remaining: %1$s</string>
     <string name="pairing_preserved">Leaving this page does not cancel the request or extend its time limit.</string>
