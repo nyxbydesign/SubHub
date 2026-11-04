@@ -264,6 +264,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private boolean powerReceiverRegistered;
     private final android.content.BroadcastReceiver powerReceiver = new android.content.BroadcastReceiver() {
         @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+            if (android.content.Intent.ACTION_SCREEN_OFF.equals(intent.getAction())
+                    || android.content.Intent.ACTION_SCREEN_ON.equals(intent.getAction())
+                    || android.content.Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
+                usageSession.reset();
+                usageForegroundPackage = "";
+                return;
+            }
             if (!android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED.equals(intent.getAction()) || !running) return;
             if (productQualificationRoute && Build.VERSION.SDK_INT >= 34) {
                 if (productSession != null) productSession.powerPolicyChanged();
@@ -394,7 +401,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private final CensorTapTracker tapTracker = CensorTapTracker.shared();
     private long lastMatchedTapUptimeMillis;
     private long lastMatchedTapEventUptimeMillis;
-    private long foregroundSinceMillis;
+    private final ForegroundUsageSession usageSession = new ForegroundUsageSession();
+    private final ForegroundLimitHandoff usageLimitHandoff = new ForegroundLimitHandoff();
+    private String usageForegroundPackage = "";
     private String lastBlockedPackage = "";
     private long lastBlockedAtMillis;
     private HardcoreSettingsGuard hardcoreSettingsGuard;
@@ -425,8 +434,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (!running) return;
             try {
                 long now = System.currentTimeMillis();
-                boolean foregroundChanged = !productQualificationRoute && syncForegroundFromActiveRoot(now);
-                if (!foregroundChanged) accountForegroundUsage(now);
+                if (!productQualificationRoute) syncForegroundFromActiveRoot(now);
+                accountForegroundUsage(now);
                 boolean limited = enforceForegroundLimit(now);
                 if (!productQualificationRoute || !limited) reevaluateRecognition();
                 reevaluateSubliminals();
@@ -453,8 +462,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             return;
         }
         settings = new SettingsRepository(this);
-        androidx.core.content.ContextCompat.registerReceiver(this, powerReceiver,
-                new android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+        android.content.IntentFilter powerFilter = new android.content.IntentFilter(
+                android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+        powerFilter.addAction(android.content.Intent.ACTION_SCREEN_OFF);
+        powerFilter.addAction(android.content.Intent.ACTION_SCREEN_ON);
+        powerFilter.addAction(android.content.Intent.ACTION_USER_PRESENT);
+        androidx.core.content.ContextCompat.registerReceiver(this, powerReceiver, powerFilter,
                 androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
         powerReceiverRegistered = true;
         stats = new StatsRepository(this);
@@ -524,7 +537,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         labCensorSubscription = CensorLabCensorSession.observe(() -> main.post(() -> {
             if (!running || labCensorSubscription == null) return;
             // Detach usage at the session boundary; Lab must not count as normal Limits time.
-            foregroundSinceMillis = System.currentTimeMillis();
+            usageSession.reset();
+            usageForegroundPackage = "";
             captureEpoch.invalidate();
             invalidateWorldCache("lab-boundary");
             resetTextSnapshots();
@@ -608,7 +622,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         });
         labCensorSubscription = CensorLabCensorSession.observe(() -> main.post(() -> {
             if (!running || productSession == null) return;
-            foregroundSinceMillis = System.currentTimeMillis();
+            usageSession.reset();
+            usageForegroundPackage = "";
             dwellTracker.clear(); tapTracker.clear();
             productSession.ownershipChanged();
             syncProductParticipation(); reevaluateSubliminals();
@@ -5424,6 +5439,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     private void handleAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            // Event packages can describe notification overlays or stale windows. Only a live
+            // focused-window snapshot may change the independently owned usage session.
+            accountForegroundUsage(System.currentTimeMillis());
+        }
         if (productQualificationRoute) { handleProductAccessibilityEvent(event); return; }
         int eventType = event.getEventType();
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START
@@ -5716,7 +5737,6 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         String activityPreviousPackage = foregroundPackage;
         foregroundPackage = packageName;
         com.subhub.app.appmode.ForegroundAppState.update(packageName);
-        foregroundSinceMillis = now;
         if (!productQualificationRoute) resetTextSnapshots();
         AppModeManager mode = new AppModeManager(this);
         boolean selectedActivityApp = mode.getIncludedPackages().contains(packageName);
@@ -5833,33 +5853,72 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private void accountForegroundUsage(long nowMillis) {
-        if (!foregroundLimitHandoff.accountingAllowed()) { foregroundSinceMillis = 0L; return; }
-        long started = foregroundSinceMillis;
-        foregroundSinceMillis = nowMillis;
-        if (timers == null || started <= 0L || nowMillis <= started
-                || !appTimerRuntimeActive(nowMillis)) return;
+        usageForegroundPackage = "";
+        if (timers == null || !appTimerRuntimeActive(nowMillis)
+                || !timers.loadSettings().anyEnabled()) {
+            usageSession.reset();
+            return;
+        }
         AppModeManager mode = new AppModeManager(this);
-        timers.recordUsage(foregroundPackage, nowMillis - started,
-                mode.timerScopeForForeground(foregroundPackage), nowMillis);
+        String observed;
+        try {
+            observed = resolveUsageForegroundPackage(mode.inputMethodPackage());
+        } catch (RuntimeException unavailable) {
+            // A failed observation cannot extend a previously visible app's lifetime.
+            usageSession.reset();
+            throw unavailable;
+        }
+        usageForegroundPackage = observed;
+        // Missing/locked windows are unknown, not proof that a requested Home completed.
+        if (!observed.isEmpty()) usageLimitHandoff.observed(observed);
+        Set<String> selected = mode.timerScopeForForeground(observed);
+        if (observed.isEmpty() || !selected.contains(observed)
+                || !usageLimitHandoff.accountingAllowed()) {
+            usageSession.reset();
+            return;
+        }
+        long elapsed = usageSession.observe(observed, SystemClock.elapsedRealtime());
+        if (elapsed > 0L) timers.recordUsage(observed, elapsed, selected, nowMillis);
     }
 
-    /** Returns true when the current foreground app was dismissed for a spent budget. */
+    private String resolveUsageForegroundPackage(String inputMethodPackage) {
+        android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+        android.app.KeyguardManager keyguard = getSystemService(android.app.KeyguardManager.class);
+        boolean interactive = power != null && power.isInteractive();
+        boolean locked = keyguard == null || keyguard.isKeyguardLocked();
+        return ForegroundUsageWindowReader.read(interactive && !locked ? getWindows() : null,
+                inputMethodPackage, interactive, locked);
+    }
+
+    /** Returns true while a confirmed app's spent budget suspends participation. */
     private boolean enforceForegroundLimit(long nowMillis) {
-        if (timers == null || foregroundPackage.isEmpty()
-                || !appTimerRuntimeActive(nowMillis)) {
+        if (timers == null || !appTimerRuntimeActive(nowMillis)
+                || !timers.loadSettings().anyEnabled()) {
+            usageLimitHandoff.budgetReached(false);
             foregroundLimitHandoff.budgetReached(false);
             lastBlockedPackage = "";
             lastBlockedAtMillis = 0L;
             return false;
         }
+        if (usageForegroundPackage.isEmpty()) {
+            if (!usageLimitHandoff.accountingAllowed()) return true;
+            foregroundLimitHandoff.budgetReached(false);
+            return false;
+        }
         AppModeManager mode = new AppModeManager(this);
-        Set<String> selected = mode.timerScopeForForeground(foregroundPackage);
+        String blockedPackage = usageForegroundPackage;
+        Set<String> selected = mode.timerScopeForForeground(blockedPackage);
         AppTimerManager.LimitStatus status = timers.limitStatus(
-                foregroundPackage, selected, nowMillis);
-        if (status == AppTimerManager.LimitStatus.NONE) { foregroundLimitHandoff.budgetReached(false); return false; }
+                blockedPackage, selected, nowMillis);
+        usageLimitHandoff.budgetReached(status != AppTimerManager.LimitStatus.NONE);
+        if (status == AppTimerManager.LimitStatus.NONE
+                || (usageLimitHandoff.accountingAllowed() && !usageSession.qualified(blockedPackage))) {
+            foregroundLimitHandoff.budgetReached(false);
+            return false;
+        }
 
-        String blockedPackage = foregroundPackage;
-        foregroundLimitHandoff.budgetReached(true);
+        foregroundLimitHandoff.budgetReached(blockedPackage.equals(foregroundPackage));
+        if (!usageLimitHandoff.accountingAllowed()) return true;
         deactivateRecognition();
         reevaluateSubliminals();
         PopupStormManager.get().syncServiceParticipation(this, false);
@@ -5882,7 +5941,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (performGlobalAction(GLOBAL_ACTION_HOME)) {
             // A Home request is not an observed app exit; stale roots must not create another entry.
             foregroundLimitHandoff.homeRequested();
-            foregroundSinceMillis = 0L;
+            usageLimitHandoff.homeRequested();
+            usageSession.reset();
         }
         return true;
     }
