@@ -106,6 +106,68 @@ public class RemoteSessionAndroidTest {
     @Test public void boundedSessionWireBenchmarkReportsVirtualRttWithoutSleeping() throws Exception { wireBenchmark(true); }
     @Test public void legacySessionWireBenchmarkReportsVirtualRttWithoutSleeping() throws Exception { wireBenchmark(false); }
 
+    @Test public void featureSectionReferencesWorkInBothDirectionsForEitherInitiatorAndIdleSendsNone() throws Exception {
+        dh.controls=sh.controls=true;
+        JSONObject before=sectionConfiguration();seedSectionBasis(before);
+        int revision=0;
+        for(boolean initiator:new boolean[]{true,false}) {
+            JSONObject next=new JSONObject(before.toString());
+            next.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits").put("app_timer_per_app_enabled",initiator);
+            JSONObject command=new JSONObject().put("id","section-command-"+(++revision)).put("base",revision-1).put("revision",revision).put("configuration",next);
+            dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",command,false,revision+1000);
+            sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",next,false,revision+1000);
+            wireTrace=new WireTrace();dh.trace=sh.trace=wireTrace;
+            exchange(initiator,false);
+            assertEquals(2,wireTrace.sectionBatches);assertEquals(0,wireTrace.sectionFallbacks);
+            assertEquals(RemoteProtocol.canonical(command),RemoteProtocol.canonical(sub.mirrored(dt.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired")));
+            assertEquals(RemoteProtocol.canonical(next),RemoteProtocol.canonical(dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active")));
+            assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
+            assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE).changes.isEmpty());
+            System.out.println("WIRE_SECTION_SESSION initiatorDom="+initiator+" wireBytes="+wireTrace.bytes+" sectionBatches="+wireTrace.sectionBatches+" fallbackRoundTrips=0");
+            wireTrace=new WireTrace();dh.trace=sh.trace=wireTrace;exchange(initiator,false);
+            assertEquals(0,wireTrace.sectionBatches);assertEquals(0,wireTrace.sectionFallbacks);assertEquals(0,wireTrace.dataBatches);
+            before=next;
+        }
+    }
+
+    @Test public void staleSectionBasisFallsBackOnceBeforeCompleteAcknowledgement() throws Exception {
+        dh.controls=sh.controls=true;
+        JSONObject before=sectionConfiguration();seedSectionBasis(before);
+        JSONObject desired=new JSONObject(before.toString());
+        desired.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits").put("app_timer_per_app_enabled",true);
+        JSONObject changedBasis=new JSONObject(before.toString());
+        changedBasis.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").put("fixture_changed",true);
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",changedBasis,false,2000);
+        JSONObject command=new JSONObject().put("id","stale-section-command").put("base",0).put("revision",1).put("configuration",desired);
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",command,false,2000);
+        wireTrace=new WireTrace();dh.trace=sh.trace=wireTrace;exchange(true,false);
+        assertEquals(1,wireTrace.sectionFallbacks);
+        assertEquals(RemoteProtocol.canonical(command),RemoteProtocol.canonical(sub.mirrored(dt.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired")));
+        assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
+        System.out.println("WIRE_SECTION_FALLBACK wireBytes="+wireTrace.bytes+" fallbackRequests="+wireTrace.sectionFallbacks);
+    }
+
+    private void seedSectionBasis(JSONObject doc)throws Exception {
+        sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE,"active",doc,false,1000);
+        RemoteProtocol.Batch baseline=sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.BASELINE);
+        sub.acknowledge(dt.localIdentity(),dom.receive(st.localIdentity(),baseline));
+        JSONObject command=new JSONObject().put("id","initial-sections").put("base",0).put("revision",0).put("configuration",doc);
+        dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",command,false,1000);
+        RemoteProtocol.Batch desired=dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION);
+        dom.acknowledge(st.localIdentity(),sub.receive(dt.localIdentity(),desired));
+    }
+
+    private JSONObject sectionConfiguration()throws Exception {
+        JSONObject sections=new JSONObject();
+        for(String section:com.subhub.app.configuration.ConfigurationSchema.SECTIONS)
+            sections.put(section,com.subhub.app.configuration.ConfigurationSettingCatalog.defaults(section));
+        JSONObject metadata=RemoteConfiguration.currentMetadata("00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000002","Synthetic section transfer",1,1);
+        return RemoteConfiguration.fromSections(metadata,sections,new org.json.JSONArray(),
+                new JSONObject().put("all",false).put("packages",new org.json.JSONArray()).put("allowances",new JSONObject()),
+                new JSONObject().put("duration",-1).put("minimum",3600000).put("maximum",86400000).put("hidden",false));
+    }
+
     private void wireBenchmark(boolean priority) throws Exception {
         dh.controls=sh.controls=true;
         for(String scenario:new String[]{"idle","runtime","contract_media"}) {
@@ -542,11 +604,14 @@ public class RemoteSessionAndroidTest {
     }
     /** Counts actual serialized session frames; virtual delay excludes CPU, bandwidth and route behavior. */
     private static final class WireTrace {
-        long bytes,frames,acks,controlsAt;
+        long bytes,frames,acks,controlsAt,sectionBatches,sectionFallbacks,dataBatches;
         synchronized void sent(byte[] encoded)throws IOException {
             JSONObject frame=RemoteProtocol.read(new ByteArrayInputStream(encoded));
             bytes+=encoded.length;frames++;
             String type=frame.optString("type");if(type.equals("ack")||type.endsWith("_ack"))acks++;
+            if(type.equals("section_batch"))sectionBatches++;
+            if(type.equals("section_full"))sectionFallbacks++;
+            if(type.equals("batch")||type.equals("section_batch"))dataBatches++;
         }
         synchronized void controlsComplete(){if(controlsAt==0)controlsAt=frames;}
         synchronized JSONObject report(String scenario,int rtt,boolean priority)throws Exception {

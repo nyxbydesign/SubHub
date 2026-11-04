@@ -348,8 +348,18 @@ public final class RemoteSession {
                 checkActive(peer);
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
-                send(connection,batch.json(),deadline);
-                store.acknowledge(peer.identity,RemoteProtocol.Ack.parse(read(connection,deadline)));
+                boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
+                RemoteSectionTransfer.EncodedOffer encoded=sectionCandidate?RemoteSectionTransfer.encodeOffer(batch,sectionBasis(peer,true)):null;
+                JSONObject offered=encoded==null?batch.json():encoded.frame;
+                if(encoded==null)send(connection,offered,deadline);else sendEncoded(connection,encoded.encoded,deadline);
+                JSONObject receipt=read(connection,deadline);
+                if("section_full".equals(receipt.optString("type"))) {
+                    if(!"section_batch".equals(offered.optString("type")))throw new IOException("Unexpected section fallback");
+                    RemoteSectionTransfer.requireFullRequest(receipt,batch);
+                    checkActive(peer);sendEncoded(connection,encoded.fullEncoded,deadline);
+                    receipt=read(connection,deadline);
+                }
+                store.acknowledge(peer.identity,RemoteProtocol.Ack.parse(receipt));
                 store.markSent(peer.identity,batch);
                 batches++;
             }
@@ -378,6 +388,24 @@ public final class RemoteSession {
             if(!store.nextBatch(peer.identity,peer.generation,stream).changes.isEmpty())return true;
         }
         return false;
+    }
+
+    private JSONObject sectionBasis(RemoteStore.Peer peer,boolean sending) throws JSONException {
+        // The opposite direction already retains this document under the same peer generation.
+        if(sending) {
+            if(peer.localRole==RemoteProtocol.Role.DOM)
+                return store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");
+            JSONObject desired=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"desired");
+            return desired==null?null:desired.optJSONObject("configuration");
+        }
+        RemoteProtocol.Stream stream=peer.localRole==RemoteProtocol.Role.DOM?RemoteProtocol.Stream.CONFIGURATION:RemoteProtocol.Stream.BASELINE;
+        String key=stream==RemoteProtocol.Stream.CONFIGURATION?"desired":"active";
+        for(RemoteProtocol.Change row:store.published(peer.identity,peer.generation,stream))
+            if(key.equals(row.key)&&!row.deleted) {
+                JSONObject body=new JSONObject(row.body);
+                return stream==RemoteProtocol.Stream.CONFIGURATION?body.optJSONObject("configuration"):body;
+            }
+        return null;
     }
 
     private boolean pushAssets(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean readiness) throws Exception {
@@ -439,7 +467,16 @@ public final class RemoteSession {
                 store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"),activity);break;
             }
             if(++count>limit) throw new IOException("Too many sync batches");
-            RemoteProtocol.Batch batch=RemoteProtocol.Batch.parse(frame);
+            RemoteProtocol.Batch batch;
+            if("section_batch".equals(frame.optString("type"))) {
+                if(phase!=0)throw new IOException("Section transfer was not negotiated");
+                try{batch=RemoteSectionTransfer.restore(frame,peer.generation,peer.remoteRole(),sectionBasis(peer,false));}
+                catch(RemoteSectionTransfer.MissingBasis absent) {
+                    send(connection,RemoteSectionTransfer.fullRequest(frame),deadline);
+                    checkActive(peer);
+                    batch=RemoteSectionTransfer.fullResponse(read(connection,deadline),frame);
+                }
+            } else batch=RemoteProtocol.Batch.parse(frame);
             if(phase>=0 && core(batch.stream)!=(phase==0))throw new IOException("Unexpected stream phase");
             if(batch.stream==RemoteProtocol.Stream.EVENTS&&!activity)throw new SecurityException("Activity capability was not negotiated");
             RemoteProtocol.Ack ack=store.receive(peer.identity,batch);
@@ -520,6 +557,10 @@ public final class RemoteSession {
     private static void send(PeerTransport.Connection connection,JSONObject frame,long deadline) throws IOException {
         connection.setReadTimeoutMillis(Math.min(10_000,remainingMillis(deadline)));
         RemoteProtocol.write(connection.output(),frame);
+    }
+    private static void sendEncoded(PeerTransport.Connection connection,byte[] frame,long deadline) throws IOException {
+        connection.setReadTimeoutMillis(Math.min(10_000,remainingMillis(deadline)));
+        java.io.OutputStream output=connection.output();output.write(frame);output.flush();
     }
     private static JSONObject read(PeerTransport.Connection connection,long deadline) throws IOException {
         connection.setReadTimeoutMillis(Math.min(10_000,remainingMillis(deadline)));
