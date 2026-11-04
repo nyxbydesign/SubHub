@@ -94,8 +94,8 @@ public final class RemoteUi implements ConnectionUi {
     @Override public boolean bindSessionControls(Activity activity,android.widget.LinearLayout parent,PersonSnapshot person) {
         if (person.id.isLocal()) return false;
         RemoteDurationControls duration = new RemoteDurationControls(activity,parent,person);
-        duration.bind();
         new RemoteSessionControls(activity,parent,person,duration::hasUnappliedDraft).bind();
+        duration.bind();
         return true;
     }
     @Override public boolean canEditSection(PersonId id, String section) {

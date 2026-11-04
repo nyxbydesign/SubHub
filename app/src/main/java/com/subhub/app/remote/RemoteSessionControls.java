@@ -56,6 +56,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     private final String key;
     private RemoteSessionRuntime.Snapshot snapshot;
     private TextView start, stop, status, reason, duration;
+    private com.subhub.app.commitment.ServiceCountdownView time;
     private boolean reviewing;
     private long observationEpoch;
     private final Runnable poll = new Runnable() {
@@ -96,17 +97,19 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
 
     void bind() {
         parent.addView(controls);
-        duration = PersonUi.text(controls, "", false); duration.setTag("remote_session_applied_duration");
-        LinearLayout actions = new LinearLayout(activity);
-        actions.setOrientation(LinearLayout.HORIZONTAL); controls.addView(actions);
-        start = PersonUi.action(actions, R.string.remote_session_start_action,
-                () -> request(RemoteSessionCommands.Action.START), true);
+        android.view.LayoutInflater.from(activity).inflate(R.layout.view_remote_session_control, controls, true);
+        time = controls.findViewById(R.id.remote_session_clock);
+        time.setTag("remote_session_clock"); time.setVisibility(View.GONE);
+        android.view.ViewGroup.LayoutParams clockSize = time.getLayoutParams();
+        clockSize.height = PersonUi.dp(activity, Math.round(160 * Math.max(1f,
+                activity.getResources().getConfiguration().fontScale))); time.setLayoutParams(clockSize);
+        duration = controls.findViewById(R.id.remote_session_duration_caption);
+        duration.setTag("remote_session_applied_duration");
+        start = controls.findViewById(R.id.remote_session_start_button);
         start.setTag("remote_session_start");
-        stop = PersonUi.action(actions, R.string.remote_session_stop, this::stop, false);
-        stop.setTag("remote_session_stop");
-        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, -2, 1);
-        left.setMarginEnd(Math.round(8 * activity.getResources().getDisplayMetrics().density));
-        start.setLayoutParams(left); stop.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        start.setOnClickListener(v -> request(RemoteSessionCommands.Action.START));
+        stop = controls.findViewById(R.id.remote_session_stop_button);
+        stop.setTag("remote_session_stop"); stop.setOnClickListener(v -> stop());
         status = PersonUi.text(controls, activity.getString(R.string.role_loading), false);
         status.setTag("remote_session_status");
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
@@ -154,6 +157,14 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         duration.setText(snapshot.service == null ? "" : activity.getString(R.string.remote_session_applied_duration,
                 durationLabel(snapshot.service)));
         duration.setVisibility(snapshot.service == null ? View.GONE : View.VISIBLE);
+        // This is the applied configuration, never an invented live peer countdown.
+        // Random duration remains a range until the peer reports a concrete session duration.
+        if (snapshot.service == null || snapshot.service.duration == -2) time.setVisibility(View.GONE);
+        else {
+            if (snapshot.service.duration == -1) time.setPermanent(false, false);
+            else time.setCountdown(snapshot.service.duration, snapshot.service.duration, false, false);
+            time.setContentDescription(duration.getText()); time.setVisibility(View.VISIBLE);
+        }
         RemoteSessionCommands.Result result = snapshot.latestResult;
         String queued = operation.saved.get("operation");
         status.setText(operation.pending != null && !operation.pending.isDone()
@@ -230,6 +241,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     private void unavailable() {
         observationEpoch++; reviewing = false; work.cancel(key + ":review");
         snapshot = null; start.setEnabled(false); stop.setEnabled(false); duration.setVisibility(View.GONE);
+        time.stop(); time.setVisibility(View.GONE);
         status.setText(R.string.remote_unknown); status.setVisibility(View.VISIBLE);
         reason.setText(R.string.remote_session_changed); reason.setVisibility(View.VISIBLE);
     }
@@ -260,7 +272,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
 
     @Override public void onStart(LifecycleOwner owner) { clock.removeCallbacks(poll); clock.post(poll); }
     @Override public void onStop(LifecycleOwner owner) {
-        observationEpoch++; clock.removeCallbacks(poll); work.cancel(key + ":snapshot"); work.cancel(key + ":review"); reviewing = false;
+        observationEpoch++; clock.removeCallbacks(poll); if (time != null) time.stop(); work.cancel(key + ":snapshot"); work.cancel(key + ":review"); reviewing = false;
     }
     @Override public void onDestroy(LifecycleOwner owner) { onStop(owner); lifecycle.removeObserver(this); }
 }

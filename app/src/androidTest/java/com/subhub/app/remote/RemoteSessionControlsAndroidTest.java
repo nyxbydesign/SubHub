@@ -3,7 +3,6 @@ package com.subhub.app.remote;
 import static org.junit.Assert.*;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
-import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
 import static org.hamcrest.Matchers.is;
 import android.content.Context;
@@ -167,7 +166,7 @@ public class RemoteSessionControlsAndroidTest {
         try (ActivityScenario<PersonActivity> page = open()) {
             bindSharedDuration(page, gateway);
             await(() -> enabled(page, "remote_session_start"));
-            onView(withTagValue(is("remote_duration_choice"))).perform(scrollTo(), click());
+            onView(withTagValue(is("remote_duration_choice"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             androidx.test.espresso.Espresso.onData(org.hamcrest.Matchers.anything()).atPosition(2).perform(click());
             tap("remote_session_refresh");
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
@@ -211,15 +210,24 @@ public class RemoteSessionControlsAndroidTest {
                 if (font != null) assertEquals(Float.parseFloat(font), a.getResources().getConfiguration().fontScale, .01f);
                 if (width != null) assertEquals(Integer.parseInt(width), a.getResources().getConfiguration().screenWidthDp);
                 assertTrue(tag(a, "remote_session_applied_duration").isShown());
+                View timer = tag(a, "remote_session_clock");
+                assertTrue("Use the established session time widget", timer instanceof com.subhub.app.commitment.ServiceCountdownView);
+                assertTrue(timer.isShown());
+                assertEquals(tag(a, "remote_session_applied_duration") instanceof TextView
+                        ? ((TextView) tag(a, "remote_session_applied_duration")).getText() : "", timer.getContentDescription());
+                assertTrue(tag(a, "remote_session_start") instanceof androidx.appcompat.widget.AppCompatButton);
+                assertTrue(tag(a, "remote_session_stop") instanceof androidx.appcompat.widget.AppCompatButton);
+                assertEquals(1, count(a.findViewById(android.R.id.content), "remote_session_timer_actions"));
             });
-            ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(), "remote-session-actions", "remote_session_controls");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(), "remote-session-actions", "remote_session_timer_actions");
             AtomicReference<TextView> duration = new AtomicReference<>(); AtomicReference<View> scroll = new AtomicReference<>();
             page.onActivity(a -> {
                 duration.set((TextView) tag(a, "remote_session_applied_duration"));
                 scroll.set(com.subhub.app.UiRefreshWitness.scroll(duration.get()));
-                View controls = tag(a, "remote_session_controls"); int[] origin = new int[2]; controls.getLocationOnScreen(origin);
+                assertTimerGlyphFits((com.subhub.app.commitment.ServiceCountdownView) tag(a, "remote_session_clock"));
+                View controls = tag(a, "remote_session_timer_actions"); int[] origin = new int[2]; controls.getLocationOnScreen(origin);
                 android.graphics.Rect target = new android.graphics.Rect(origin[0], origin[1], origin[0] + controls.getWidth(), origin[1] + controls.getHeight());
-                assertTrue("Complete session action row must clear its scroll viewport", com.subhub.app.TextFrameWitness.screenClip(scroll.get()).contains(target));
+                assertTrue("Complete time and Start/Stop panel must clear its scroll viewport", com.subhub.app.TextFrameWitness.screenClip(scroll.get()).contains(target));
                 View navigation = a.findViewById(R.id.bottom_navigation);
                 if (navigation != null && navigation.isShown()) {
                     int[] nav = new int[2]; navigation.getLocationOnScreen(nav);
@@ -233,6 +241,23 @@ public class RemoteSessionControlsAndroidTest {
             java.nio.file.Files.deleteIfExists(new java.io.File(context.getFilesDir(),
                     "ui-v3/" + run + "/remote-session-actions-" + suffix + ".png").toPath());
         }
+    }
+
+    private static void assertTimerGlyphFits(com.subhub.app.commitment.ServiceCountdownView timer) {
+        assertTrue(timer.getWidth() > 0 && timer.getHeight() > 0);
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(timer.getWidth(), timer.getHeight(), android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            timer.draw(new android.graphics.Canvas(bitmap));
+            java.lang.reflect.Field paintField = timer.getClass().getDeclaredField("text");
+            java.lang.reflect.Field areaField = timer.getClass().getDeclaredField("center");
+            java.lang.reflect.Field labelField = timer.getClass().getDeclaredField("label");
+            paintField.setAccessible(true); areaField.setAccessible(true); labelField.setAccessible(true);
+            android.graphics.Paint paint = (android.graphics.Paint) paintField.get(timer);
+            android.graphics.RectF area = (android.graphics.RectF) areaField.get(timer);
+            assertTrue("Native Canvas timer text must fit its allotted region",
+                    paint.measureText((String) labelField.get(timer)) <= area.width() + 1f);
+        } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        finally { bitmap.recycle(); }
     }
 
     private final class Gateway implements RemoteSessionControls.Gateway {
@@ -300,7 +325,7 @@ public class RemoteSessionControlsAndroidTest {
             View view = tag(a, value); found.set(view instanceof TextView && ((TextView) view).getText().toString().equals(text));
         }); return found.get();
     }
-    private static void tap(String tag) { onView(withTagValue(is(tag))).perform(scrollTo(), click()); }
+    private static void tap(String tag) { onView(withTagValue(is(tag))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click()); }
     private static int count(View view, String tag) {
         int value = tag.equals(view.getTag()) ? 1 : 0;
         if (view instanceof android.view.ViewGroup) for (int i = 0; i < ((android.view.ViewGroup) view).getChildCount(); i++)

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:tag="remote_session_timer_actions">
+    <com.subhub.app.commitment.ServiceCountdownView
+        android:id="@+id/remote_session_clock" android:layout_width="match_parent"
+        android:layout_height="160dp" android:layout_marginTop="8dp" />
+    <TextView android:id="@+id/remote_session_duration_caption"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center" android:textColor="@color/text_secondary"
+        android:textSize="@dimen/ui_text_body" android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/remote_session_start_button" style="@style/Widget.SubHub.ServiceButton"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp" android:minHeight="48dp"
+            android:background="@drawable/bg_role_primary" android:backgroundTint="@null" android:elevation="0dp"
+            android:textColor="@color/primary_action_text" android:text="@string/remote_session_start_action" />
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/remote_session_stop_button" style="@style/Widget.SubHub.ServiceButton"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:minHeight="48dp" android:background="@drawable/bg_card" android:backgroundTint="@null" android:elevation="0dp"
+            android:textColor="@color/accent_text" android:text="@string/remote_session_stop" />
+    </LinearLayout>
+</LinearLayout>
