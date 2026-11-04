@@ -25,6 +25,8 @@
     <string name="journal_shared">Shared</string>
     <string name="journal_share_dom">Share with Dom</string>
     <string name="journal_share_subs">Share with Subs</string>
+    <string name="journal_current_dom_missing">Not shared with your current Dom.</string>
+    <string name="journal_current_subs_missing">Not shared with all current Subs.</string>
     <string name="journal_make_private">Make private</string>
     <string name="journal_audio">Voice note</string>
     <string name="journal_record">Record</string>

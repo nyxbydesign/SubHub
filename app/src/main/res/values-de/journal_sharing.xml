@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="journal_current_dom_missing">Nicht mit deinem aktuellen Dom geteilt.</string>
+    <string name="journal_current_subs_missing">Nicht mit allen aktuellen Subs geteilt.</string>
+</resources>

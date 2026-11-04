@@ -163,6 +163,7 @@ public final class JournalActivity extends PreferencePage {
     private static final class Snapshot {
         final List<JournalEntry> entries;
         final Map<String, Boolean> shared = new LinkedHashMap<>();
+        final Map<String, Boolean> missingCurrentAudience = new LinkedHashMap<>();
         final Map<String, Boolean> ready = new LinkedHashMap<>();
         final String selected;
         String author = "", compatibility = "";
@@ -191,11 +192,14 @@ public final class JournalActivity extends PreferencePage {
             }
             for (JournalEntry entry : entries) {
                 value.signature += entry.json().toString();
-                if (target.isLocal()) value.shared.put(entry.id, runtime.shared(dom, entry.id));
+                if (target.isLocal()) {
+                    value.shared.put(entry.id, runtime.shared(dom, entry.id));
+                    value.missingCurrentAudience.put(entry.id, runtime.needsCurrentSharing(dom, entry.id));
+                }
                 if (!selected.isEmpty()) for (JournalAttachment file : entry.media())
                     value.ready.put(file.hash, runtime.mediaReady(dom, target, entry.id, file));
             }
-            value.signature += value.shared.toString() + value.ready + offset + value.author + value.compatibility;
+            value.signature += value.shared.toString() + value.missingCurrentAudience + value.ready + offset + value.author + value.compatibility;
             return value;
         }, value -> {
             if (model.editing || model.busy || !value.selected.equals(model.selected)) return;
@@ -272,6 +276,10 @@ public final class JournalActivity extends PreferencePage {
             JournalUi.text(card, date(entry.created), 12, false);
             JournalUi.state(card, !model.target.isLocal() || Boolean.TRUE.equals(value.shared.get(entry.id)))
                     .setTag("journal_visibility:" + entry.id);
+            if (model.target.isLocal() && Boolean.TRUE.equals(value.shared.get(entry.id))
+                    && Boolean.TRUE.equals(value.missingCurrentAudience.get(entry.id)))
+                JournalUi.text(card, getString(model.dom ? R.string.journal_current_subs_missing
+                        : R.string.journal_current_dom_missing), 12, false).setTag("journal_current_audience:" + entry.id);
             if (!entry.text.isEmpty()) {
                 TextView preview = JournalUi.text(card, entry.text, 16, true); preview.setMaxLines(3);
                 preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -321,6 +329,16 @@ public final class JournalActivity extends PreferencePage {
         if (!model.target.isLocal()) {
             TextView readOnly = JournalUi.text(content, getString(R.string.journal_read_only), 12, false);
             readOnly.setTag("journal_read_only"); return;
+        }
+        if (shared && Boolean.TRUE.equals(value.missingCurrentAudience.get(entry.id))) {
+            JournalUi.text(content, getString(model.dom ? R.string.journal_current_subs_missing
+                    : R.string.journal_current_dom_missing), 12, false).setTag("journal_current_audience");
+            JournalUi.action(content, model.dom ? R.string.journal_share_subs : R.string.journal_share_dom,
+                    R.drawable.ic_journal_share, () -> {
+                JournalModel draft = model;
+                draft.work(() -> { draft.runtime.save(draft.dom, entry, true, true); return true; },
+                        ignored -> { }, R.string.journal_no_audience);
+            }, true).setTag("journal_share_current");
         }
         LinearLayout[] actions = JournalUi.pair(content);
         JournalUi.action(actions[0], shared ? R.string.journal_make_private : model.dom ? R.string.journal_share_subs : R.string.journal_share_dom,

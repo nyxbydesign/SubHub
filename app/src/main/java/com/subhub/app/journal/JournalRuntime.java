@@ -123,6 +123,19 @@ public final class JournalRuntime {
         synchronized (authority) { requireScreen(dom); return !entries.audience(dom, id).isEmpty(); }
     }
 
+    /** A previous/local audience does not imply permission for a newly paired remote recipient. */
+    public boolean needsCurrentSharing(boolean dom, String id) throws Exception {
+        synchronized (authority) {
+            requireScreen(dom);
+            Set<String> selected = entries.audience(dom, id);
+            for (RemoteStore.Peer peer : authority.peers(false))
+                if (peer.state == RemoteStore.State.ACTIVE
+                        && peer.localRole == (dom ? RemoteProtocol.Role.DOM : RemoteProtocol.Role.SUB)
+                        && !selected.contains(scope(peer))) return true;
+            return false;
+        }
+    }
+
     public void save(boolean dom, JournalEntry entry, boolean share, boolean newlyShared) throws Exception {
         boolean networkChanged;
         synchronized (authority) {
