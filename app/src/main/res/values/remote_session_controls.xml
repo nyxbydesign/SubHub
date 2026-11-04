@@ -20,7 +20,7 @@
     <string name="hardcore_review_body">Hardcore guards protected uninstall and data-clear actions. Your Dom can release these restrictions.</string>
     <string name="hardcore_review_consent">Review consent</string>
     <string name="hardcore_accept_consent">Accept</string>
-    <string name="hardcore_remote_start_consent">%1$s may start service remotely using your applied service duration while Hardcore is on. This consent applies to this Dom and connection. Your linked Dom may stop the exact current session even when Hardcore is off.</string>
+    <string name="hardcore_remote_start_consent">%1$s may choose the session duration and start service remotely while Hardcore is on. This consent applies to this Dom and connection. Your linked Dom may stop the current session even when Hardcore is off.</string>
     <string name="hardcore_unpaired_start_consent">A future linked Dom needs a new local consent review before they can start service remotely.</string>
     <string name="hardcore_review_unavailable">Consent review unavailable. Try again after the connection recovers.</string>
     <string name="hardcore_review_saving">Saving consent…</string>
