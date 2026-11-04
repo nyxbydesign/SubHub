@@ -15,6 +15,13 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
     private com.subhub.app.util.AsyncUiScope data;
     private boolean resumed;
     private int rosterPosition;
+    private boolean restoreRosterPosition = true;
+    private LinearLayout roster;
+    private TextView favoriteGuidance;
+    private LinearLayout activityCard;
+    private com.subhub.app.relationships.RelationshipPanel relationships;
+    private boolean snapshotUnavailable;
+    private final java.util.Map<PersonId, RenderedPerson> renderedPeople = new java.util.LinkedHashMap<>();
     private final android.os.Handler authority = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable checkAuthority = new Runnable() {
         @Override public void run() {
@@ -42,29 +49,9 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
 
     protected void refresh() {
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
-        if (rosterScroll.getScrollY() > 0) rosterPosition = rosterScroll.getScrollY();
-        body.removeAllViews();
-        PersonUi.action(body, R.string.role_add_sub, () -> {
-            if (!mayManagePeople()) return;
-            ConnectionUi ui = People.connectionUi();
-            if (ui != null) ui.openPairing(this, true);
-            else android.widget.Toast.makeText(this, R.string.role_pairing_unavailable,
-                    android.widget.Toast.LENGTH_SHORT).show();
-        }, true).setId(R.id.people_add_sub);
-        com.subhub.app.relationships.RelationshipPanel relationships =
-                new com.subhub.app.relationships.RelationshipPanel(this, "people",
-                        () -> resumed && mayManagePeople(), () -> true, this::refresh);
-        body.addView(relationships, new LinearLayout.LayoutParams(-1, -2));
-        TextView favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
-        LinearLayout roster = PersonUi.column(this);
-        body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(roster, getString(R.string.role_loading), false);
-        if (com.subhub.app.activity.ActivitySources.repository().supports(null)) {
-            LinearLayout activityCard = PersonUi.column(this);
-            activityCard.setTag("people_activity_card");
-            body.addView(activityCard, new LinearLayout.LayoutParams(-1, -2));
-            com.subhub.app.activity.ActivityPreview.addSubs(activityCard, data, "people-activity-preview");
-        }
+        ensureContent();
+        refreshActivityPreview();
+        if (snapshotUnavailable) { snapshotUnavailable = false; relationships.refresh(); }
         PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
@@ -79,44 +66,123 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
                     application, repository, access, locale));
         }, loaded -> {
             if (!mayManagePeople() || !resumed) return;
-            roster.removeAllViews();
             if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
-                favoriteGuidance.setVisibility(android.view.View.GONE);
-                relationships.snapshotUnavailable(); return;
+                showRosterUnavailable();
+                snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
             }
-            favoriteGuidance.setVisibility(loaded.people.isEmpty() ? android.view.View.GONE : android.view.View.VISIBLE);
-            if (!loaded.access.legacy && loaded.people.isEmpty())
-                PersonUi.text(roster, getString(R.string.relationships_no_subs), false);
-            for (PersonSnapshot person : loaded.people) {
-                LinearLayout card = ProfileViews.person(roster, person, () -> {
-                    if (mayManagePeople() && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider))
-                        PersonRoutes.open(this, person.id);
-                });
-                if (!FavoriteSubStore.eligible(person)) continue;
-                boolean favorite = favorites.isFavorite(person);
+            renderPeople(loaded);
+            if (restoreRosterPosition) {
+                restoreRosterPosition = false;
+                if (rosterPosition > 0) {
+                    int restored = rosterPosition;
+                    rosterScroll.post(() -> { if (resumed) rosterScroll.scrollTo(0, restored); });
+                }
+            }
+        }, failure -> {
+            if (!resumed || !mayManagePeople()) return;
+            showRosterUnavailable();
+        });
+    }
+
+    private void ensureContent() {
+        if (roster != null) return;
+        PersonUi.action(body, R.string.role_add_sub, () -> {
+            if (!mayManagePeople()) return;
+            ConnectionUi ui = People.connectionUi();
+            if (ui != null) ui.openPairing(this, true);
+            else android.widget.Toast.makeText(this, R.string.role_pairing_unavailable,
+                    android.widget.Toast.LENGTH_SHORT).show();
+        }, true).setId(R.id.people_add_sub);
+        relationships =
+                new com.subhub.app.relationships.RelationshipPanel(this, "people",
+                        () -> resumed && mayManagePeople(), () -> true, this::refresh);
+        body.addView(relationships, new LinearLayout.LayoutParams(-1, -2));
+        favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
+        roster = PersonUi.column(this);
+        body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
+        PersonUi.text(roster, getString(R.string.role_loading), false);
+    }
+
+    private void refreshActivityPreview() {
+        boolean supported = com.subhub.app.activity.ActivitySources.repository().supports(null);
+        if (!supported && activityCard != null) { body.removeView(activityCard); activityCard = null; }
+        if (supported && activityCard == null) {
+            activityCard = PersonUi.column(this); activityCard.setTag("people_activity_card");
+            body.addView(activityCard, new LinearLayout.LayoutParams(-1, -2));
+            com.subhub.app.activity.ActivityPreview.addSubs(activityCard, data, "people-activity-preview");
+        }
+    }
+
+    private void showRosterUnavailable() {
+        renderedPeople.clear(); roster.removeAllViews();
+        favoriteGuidance.setVisibility(android.view.View.GONE);
+        PersonUi.text(roster, getString(R.string.role_person_unavailable), false);
+        PersonUi.action(roster, R.string.role_retry, this::refresh, false);
+    }
+
+    /** Reconcile only changed profiles; a sync must not detach the page or interrupt its scroll gesture. */
+    private void renderPeople(Roster loaded) {
+        java.util.Set<PersonId> present = new java.util.HashSet<>();
+        for (PersonSnapshot person : loaded.people) present.add(person.id);
+        java.util.Iterator<java.util.Map.Entry<PersonId, RenderedPerson>> old = renderedPeople.entrySet().iterator();
+        while (old.hasNext()) {
+            java.util.Map.Entry<PersonId, RenderedPerson> entry = old.next();
+            if (!present.contains(entry.getKey())) { roster.removeView(entry.getValue().view); old.remove(); }
+        }
+        // Initial loading and empty/error notices are separate from retained person cards.
+        java.util.Set<android.view.View> cards = new java.util.HashSet<>();
+        for (RenderedPerson value : renderedPeople.values()) cards.add(value.view);
+        for (int index = roster.getChildCount() - 1; index >= 0; index--)
+            if (!cards.contains(roster.getChildAt(index))) roster.removeViewAt(index);
+        favoriteGuidance.setVisibility(loaded.people.isEmpty() ? android.view.View.GONE : android.view.View.VISIBLE);
+        if (!loaded.access.legacy && loaded.people.isEmpty())
+            PersonUi.text(roster, getString(R.string.relationships_no_subs), false);
+        for (int index = 0; index < loaded.people.size(); index++) {
+            PersonSnapshot person = loaded.people.get(index);
+            boolean favorite = favorites.isFavorite(person);
+            long contact = person.lastSyncedAt;
+            String time = contact <= 0 || contact > System.currentTimeMillis() ? getString(R.string.remote_unknown)
+                    : ProfileViews.formatLastSeen(contact);
+            List<Object> signature = java.util.Arrays.asList(person.profile, person.connection,
+                    PersonUi.connection(this, person), time, favorite);
+            RenderedPerson previous = renderedPeople.get(person.id);
+            LinearLayout card;
+            if (previous != null && previous.signature.equals(signature)) card = previous.view;
+            else {
+                LinearLayout staging = PersonUi.column(this);
+                card = ProfileViews.person(staging, person, () -> { }); staging.removeView(card);
+                if (previous != null) roster.removeView(previous.view);
                 if (favorite) {
                     card.setBackgroundResource(R.drawable.bg_home_favorite);
                     TextView mark = PersonUi.text(card, getString(R.string.home_favorite_marked), false);
                     mark.setTextColor(getColor(R.color.accent_text));
                     mark.setTag("people_favorite:" + person.id.value());
                 }
-                String action = getString(favorite ? R.string.home_favorite_remove : R.string.home_favorite_set);
-                card.setOnLongClickListener(view -> { changeFavorite(person); return true; });
-                androidx.appcompat.widget.TooltipCompat.setTooltipText(card, action);
-                androidx.core.view.ViewCompat.setStateDescription(card,
-                        favorite ? getString(R.string.home_favorite_marked) : null);
-                androidx.core.view.ViewCompat.replaceAccessibilityAction(card,
-                        androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
-                        action, (view, args) -> { changeFavorite(person); return true; });
+                renderedPeople.put(person.id, new RenderedPerson(card, signature));
             }
-            rosterScroll.post(() -> rosterScroll.scrollTo(0, rosterPosition));
-        }, failure -> {
-            if (!resumed || !mayManagePeople()) return;
-            roster.removeAllViews();
-            favoriteGuidance.setVisibility(android.view.View.GONE);
-            PersonUi.text(roster, getString(R.string.role_person_unavailable), false);
-            PersonUi.action(roster, R.string.role_retry, this::refresh, false);
-        });
+            if (roster.getChildAt(index) != card) {
+                if (card.getParent() == roster) roster.removeView(card);
+                roster.addView(card, index);
+            }
+            card.setOnClickListener(view -> {
+                if (mayManagePeople() && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider))
+                    PersonRoutes.open(this, person.id);
+            });
+            if (!FavoriteSubStore.eligible(person)) continue;
+            String action = getString(favorite ? R.string.home_favorite_remove : R.string.home_favorite_set);
+            card.setOnLongClickListener(view -> { changeFavorite(person); return true; });
+            androidx.appcompat.widget.TooltipCompat.setTooltipText(card, action);
+            androidx.core.view.ViewCompat.setStateDescription(card,
+                    favorite ? getString(R.string.home_favorite_marked) : null);
+            androidx.core.view.ViewCompat.replaceAccessibilityAction(card,
+                    androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
+                    action, (view, args) -> { changeFavorite(person); return true; });
+        }
+    }
+
+    private static final class RenderedPerson {
+        final LinearLayout view; final List<Object> signature;
+        RenderedPerson(LinearLayout view, List<Object> signature) { this.view = view; this.signature = signature; }
     }
 
     private void changeFavorite(PersonSnapshot person) {

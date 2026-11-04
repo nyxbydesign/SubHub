@@ -22,6 +22,9 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.R;
+import com.subhub.app.relationships.RelationshipUi;
+import com.subhub.app.relationships.RelationshipPanel;
+import java.util.concurrent.CompletableFuture;
 import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.security.ControllerPinManager;
@@ -52,10 +55,32 @@ public final class SubsRosterPreviewAndroidTest {
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private Map<String, ?> favoritesBefore, profilesBefore;
+    private RelationshipUi.Provider originalRelationships;
+    private java.util.function.Supplier<List<PersonSnapshot>> fixturePeople = Collections::emptyList;
+    private Map<String, ?> relationshipPreferences;
+    private Object journalLock, originalJournalState;
+    private Map<Object, Object> journalStates;
+    private String journalKey;
+    private boolean journalStateExisted;
     private static final int AVATAR_COLOR = Color.rgb(67, 135, 208);
 
-    @Before public void prepare() {
+    @Before @SuppressWarnings("unchecked") public void prepare() throws Exception {
         assertFalse(LocalSessionControls.isActive(context));
+        originalRelationships = RelationshipUi.provider();
+        relationshipPreferences = new LinkedHashMap<>(context.getSharedPreferences("subhub_relationship_presentation", 0).getAll());
+        java.lang.reflect.Field lock = RelationshipPanel.class.getDeclaredField("JOURNAL_LOCK"); lock.setAccessible(true);
+        java.lang.reflect.Field states = RelationshipPanel.class.getDeclaredField("JOURNAL_STATES"); states.setAccessible(true);
+        journalLock = lock.get(null); journalStates = (Map<Object, Object>) states.get(null);
+        journalKey = context.getApplicationInfo().dataDir + "/subhub_relationship_presentation";
+        synchronized (journalLock) { journalStateExisted = journalStates.containsKey(journalKey); originalJournalState = journalStates.remove(journalKey); }
+        assertTrue(context.getSharedPreferences("subhub_relationship_presentation", 0).edit().clear().commit());
+        RelationshipUi.install(new RelationshipUi.Provider() {
+            public CompletableFuture<RelationshipUi.Snapshot> snapshot() { return CompletableFuture.completedFuture(rosterSnapshot()); }
+            public CompletableFuture<RelationshipUi.LocalReview> prepareLocal(String key, String dom, String sub, String revision) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> confirmLocal(String id, String digest) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> resume(String id) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> cancel(String id) { return forbiddenRelationshipMutation(); }
+        });
         favoritesBefore = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
         profilesBefore = new LinkedHashMap<>(context.getSharedPreferences(ProfileNames.STORE, 0).getAll());
         assertTrue(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).edit().clear().commit());
@@ -66,8 +91,33 @@ public final class SubsRosterPreviewAndroidTest {
     }
 
     @After public void restore() {
-        SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), favoritesBefore);
-        SharedPreferenceTestRestore.restore(context.getSharedPreferences(ProfileNames.STORE, 0), profilesBefore);
+        try {
+            if (originalRelationships != null) RelationshipUi.install(originalRelationships);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), favoritesBefore);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(ProfileNames.STORE, 0), profilesBefore);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences("subhub_relationship_presentation", 0), relationshipPreferences);
+        } finally {
+            if (journalLock != null) synchronized (journalLock) {
+                if (journalStateExisted) journalStates.put(journalKey, originalJournalState); else journalStates.remove(journalKey);
+            }
+        }
+    }
+
+    private RelationshipUi.Snapshot rosterSnapshot() {
+        java.util.ArrayList<RelationshipUi.Edge> edges = new java.util.ArrayList<>(); int index = 0;
+        for (PersonSnapshot person : fixturePeople.get()) {
+            if (person.connection == PersonSnapshot.Connection.REVOKED) continue;
+            edges.add(new RelationshipUi.Edge("roster-edge-" + index, person.id.value().substring(72), "fixture-dom", "fixture-sub-" + index,
+                    RelationshipUi.Delivery.PEER, "ACTIVE", ++index, person.id, RelationshipUi.Availability.AVAILABLE, person.freshness));
+        }
+        return new RelationshipUi.Snapshot(true, "roster-fixture-revision",
+                List.of(new RelationshipUi.Participant("fixture-dom", RelationshipUi.Role.DOM, ProfileData.empty("Fixture Dom"))),
+                edges, null, Collections.emptyList());
+    }
+
+    private static <T> CompletableFuture<T> forbiddenRelationshipMutation() {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        result.completeExceptionally(new AssertionError("Roster fixture must not mutate relationship authority")); return result;
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
@@ -171,9 +221,10 @@ public final class SubsRosterPreviewAndroidTest {
             scenario.onActivity(a -> {
                 ViewGroup card = tagged(a, "person:" + id.value());
                 assertNull(card.findViewWithTag(prefix(id) + "_about"));
-                assertEquals(a.getString(R.string.role_sub), ((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString());
+                assertEquals(a.getString(R.string.peer_last_online, a.getString(R.string.remote_unknown)),
+                        ((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString());
                 assertDetailsBelowName(card, prefix(id)); assertNoFiller(card);
-                assertEquals(a.getString(R.string.role_offline_last_online_unknown),
+                assertEquals(a.getString(R.string.role_connection_offline),
                         ((TextView) card.findViewWithTag(prefix(id) + "_connection")).getText().toString());
                 assertNotEquals(View.VISIBLE, ((ViewGroup) card.findViewWithTag(prefix(id) + "_avatar")).getChildAt(1).getVisibility());
             });
@@ -206,13 +257,8 @@ public final class SubsRosterPreviewAndroidTest {
                     .getLifecycleStageOf(host.get()) == androidx.test.runner.lifecycle.Stage.RESUMED);
             current.set(person(id, ProfileData.empty("Sam Taylor"), PersonSnapshot.Connection.REVOKED));
             scenario.recreate(); scenario.onActivity(host::set);
-            await(() -> tagged(host.get(), "person:" + id.value()) != null);
-            scenario.onActivity(a -> {
-                assertFalse(tagged(a, "person:" + id.value()).isLongClickable());
-                assertEquals(a.getString(R.string.role_connection_revoked),
-                        ((TextView) tagged(a, prefix(id) + "_connection")).getText().toString());
-            });
-            onView(tag(prefix(id) + "_connection")).perform(revealAboveNavigation());
+            awaitRosterIdle(host.get());
+            scenario.onActivity(a -> assertNull(tagged(a, "person:" + id.value())));
             capture(host.get(), "subs-roster-revoked").recycle();
             View roster = host.get().findViewById(R.id.people_roster_scroll);
             ControllerPinManager.enterSubMode(); await(() -> !roster.isShown());
@@ -233,7 +279,7 @@ public final class SubsRosterPreviewAndroidTest {
                 scenario.onActivity(a -> {
                     assertDetailsBelowName(a.findViewById(android.R.id.content), "self_profile");
                     String details = ((TextView) tagged(a, "self_profile_details")).getText().toString();
-                    assertTrue(details.startsWith(role + " · ")); assertTrue(details.contains(dom ? "34" : "32"));
+                    assertTrue(details.startsWith(context.getString(R.string.profile_role_switch) + " · ")); assertTrue(details.contains(dom ? "34" : "32"));
                     assertTrue(details.contains(dom ? "Woman" : "Non-binary"));
                     assertNoFiller(tagged(a, "self_profile"));
                 });
@@ -242,8 +288,91 @@ public final class SubsRosterPreviewAndroidTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void asyncRosterRefreshKeepsScrollAndUnchangedViewsWhileOnlyChangedProfileRebinds() throws Exception {
+        java.util.ArrayList<PersonSnapshot> initial = new java.util.ArrayList<>();
+        for (int index = 0; index < 12; index++) {
+            PersonId id = new PersonId("remote_" + "c".repeat(64) + "_scroll" + index);
+            initial.add(person(id, ProfileData.empty("Synthetic Sub " + index), PersonSnapshot.Connection.CONNECTED));
+        }
+        AtomicReference<List<PersonSnapshot>> current = new AtomicReference<>(initial);
+        fixturePeople = current::get;
+        AtomicBoolean blockNext = new AtomicBoolean();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { java.util.ArrayList<PersonId> ids = new java.util.ArrayList<>(); for (PersonSnapshot value : current.get()) ids.add(value.id); return ids; }
+            public PersonSnapshot load(PersonId id) {
+                if (blockNext.compareAndSet(true, false)) {
+                    entered.countDown();
+                    try { if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Owned deferred roster fixture expired"); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
+                }
+                for (PersonSnapshot value : current.get()) if (value.id.equals(id)) return value;
+                throw new IllegalArgumentException("Unknown fixture person");
+            }
+        });
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "person:" + initial.get(11).id.value()) != null);
+            android.widget.ScrollView viewport = host.get().findViewById(R.id.people_roster_scroll);
+            View body = host.get().findViewById(R.id.role_page_body), add = host.get().findViewById(R.id.people_add_sub);
+            View panel = tagged(host.get(), "relationship_panel"), unchanged = tagged(host.get(), "person:" + initial.get(5).id.value());
+            View changed = tagged(host.get(), "person:" + initial.get(0).id.value());
+            swipeRoster(host.get(), viewport); await(() -> viewport.getScrollY() > 0); awaitScrollSettled(viewport);
+            java.util.ArrayList<PersonSnapshot> updated = new java.util.ArrayList<>(initial);
+            updated.set(0, person(initial.get(0).id, ProfileData.empty("Updated Sub 0"), PersonSnapshot.Connection.CONNECTED));
+            current.set(updated); blockNext.set(true); scenario.onActivity(PeopleActivity::refresh);
+            assertTrue("Roster read did not reach deferred fixture", entered.await(8, TimeUnit.SECONDS));
+            scenario.onActivity(activity -> {
+                assertSame(body, activity.findViewById(R.id.role_page_body)); assertSame(add, activity.findViewById(R.id.people_add_sub));
+                assertSame(panel, tagged(activity, "relationship_panel")); assertSame(unchanged, tagged(activity, "person:" + initial.get(5).id.value()));
+            });
+            swipeRoster(host.get(), viewport); awaitScrollSettled(viewport); int afterGesture = viewport.getScrollY();
+            assertTrue(afterGesture > 0); release.countDown();
+            await(() -> tagged(host.get(), "person:" + initial.get(0).id.value()) != changed);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                assertSame(viewport, activity.findViewById(R.id.people_roster_scroll)); assertEquals(afterGesture, viewport.getScrollY());
+                assertSame(body, activity.findViewById(R.id.role_page_body)); assertSame(add, activity.findViewById(R.id.people_add_sub));
+                assertSame(panel, tagged(activity, "relationship_panel")); assertSame(unchanged, tagged(activity, "person:" + initial.get(5).id.value()));
+                assertEquals("Updated Sub 0", ((TextView) tagged(activity, prefix(initial.get(0).id) + "_name")).getText().toString());
+            });
+            // Repeated unchanged source notifications must not detach the preserved card or rewind scrolling.
+            View rebound = tagged(host.get(), "person:" + initial.get(0).id.value());
+            for (int update = 0; update < 3; update++) {
+                scenario.onActivity(PeopleActivity::refresh); awaitRosterIdle(host.get());
+                scenario.onActivity(activity -> { assertSame(rebound, tagged(activity, "person:" + initial.get(0).id.value())); assertEquals(afterGesture, viewport.getScrollY()); });
+            }
+        } finally { release.countDown(); }
+    }
+
+    private static void swipeRoster(Activity host, android.widget.ScrollView viewport) throws Exception {
+        AtomicReference<Rect> bounds = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Rect area = new Rect(), navigation = new Rect(); assertTrue(viewport.getGlobalVisibleRect(area));
+            View nav = host.findViewById(R.id.bottom_navigation);
+            if (nav != null && nav.getGlobalVisibleRect(navigation)) area.bottom = Math.min(area.bottom, navigation.top - PersonUi.dp(host, 12));
+            assertTrue(area.height() > PersonUi.dp(host, 120)); bounds.set(area);
+        });
+        Rect area = bounds.get();
+        assertTrue(androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).swipe(
+                area.centerX(), area.top + area.height() * 3 / 4, area.centerX(), area.top + area.height() / 4, 30));
+    }
+
+    private static void awaitScrollSettled(android.widget.ScrollView viewport) throws Exception {
+        java.util.concurrent.atomic.AtomicInteger previous = new java.util.concurrent.atomic.AtomicInteger(-1), stable = new java.util.concurrent.atomic.AtomicInteger();
+        await(() -> { int now = viewport.getScrollY(); if (previous.getAndSet(now) == now) return stable.incrementAndGet() >= 5; stable.set(0); return false; });
+    }
+
+    private static void awaitRosterIdle(PeopleActivity host) throws Exception {
+        java.lang.reflect.Field field = PeopleActivity.class.getDeclaredField("data"); field.setAccessible(true);
+        com.subhub.app.util.AsyncUiScope scope = (com.subhub.app.util.AsyncUiScope) field.get(host);
+        await(() -> !scope.isPending("people"));
+    }
+
     private static String prefix(PersonId id) { return "roster:" + id.value(); }
     private void install(AtomicReference<PersonSnapshot> value) {
+        fixturePeople = () -> List.of(value.get());
         People.installRemoteRepository(new PersonRepository() {
             public List<PersonId> people() { return List.of(value.get().id); }
             public PersonSnapshot load(PersonId id) { assertEquals(value.get().id, id); return value.get(); }
