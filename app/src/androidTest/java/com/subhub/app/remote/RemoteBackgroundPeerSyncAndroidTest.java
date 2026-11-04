@@ -81,6 +81,10 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
         }
     }
 
+    @Test public void observedNetworkAvailabilityAutomaticallySchedulesAuthenticatedNonemptyWorker() throws Exception {
+        try (Fixture fixture = new Fixture()) { fixture.prepare(); fixture.runScheduledExchange(true); }
+    }
+
     private static final class Fixture implements AutoCloseable {
         static final long PROOF_MILLIS = 75_000, CLEANUP_GRACE_MILLIS = 120_000;
         final Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -122,6 +126,7 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
         final String localAlias = "subhub.test." + prefix + "local";
         final String remoteAlias = "subhub.test." + prefix + "remote";
         RemoteFeature previous, feature;
+        RemoteConnectivityWake networkWake;
         RemoteStore local, remote;
         RemoteSecrets remoteSecrets;
         PeerTransport peer;
@@ -130,16 +135,19 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
         Future<WireProof> serving;
         Map<String, ?> priorReceipt;
         String localIdentity, peerIdentity, originalPeriodic;
+        String priorImmediateDrain="[]";
         RemoteProtocol.Batch localBatch, remoteBatch;
         boolean installed, scheduled, observing, originalDom, namespaceCreated;
         long originalAuthRevision, safetyObservedWall, safetyObservedElapsed, protectedUntilWall;
 
         void prepare() throws Exception {
             manager = WorkManager.getInstance(target);
-            preflight(true);
             previous = RemoteFeature.get(target);
             originalDom = ControllerPinManager.isDomModeActive();
             originalAuthRevision = ControllerPinManager.domWorkspaceRevision();
+            assertBackground();
+            drainPriorImmediate();
+            preflight(true);
             assertFalse((Boolean) field("foreground").get(previous));
             assertEquals(0, ((AtomicInteger) field("leases").get(previous)).get());
             assertTrue(((Set<?>) field("busy").get(previous)).isEmpty());
@@ -203,11 +211,13 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
             serving = server.submit(this::serve);
         }
 
-        void runScheduledExchange() throws Exception {
+        void runScheduledExchange() throws Exception { runScheduledExchange(false); }
+        void runScheduledExchange(boolean automaticNetwork) throws Exception {
             assertConsumer();
             long priorStart = receipt.getLong("last_started", 0);
             scheduled = true;
-            RemoteScheduler.kick(target);
+            if(automaticNetwork)networkWake=new RemoteConnectivityWake(target,feature::requestAutomaticSync);
+            else RemoteScheduler.kick(target);
             long deadline = SystemClock.elapsedRealtime() + PROOF_MILLIS;
             WorkInfo work = null;
             JobInfo job = null;
@@ -298,7 +308,8 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
             // A matching OS start can observe an already running GreedyScheduler worker. Keep this
             // corroboration distinct from the actual worker receipt and authenticated exchange.
             JSONObject evidence = new JSONObject().put("work", work.getId().toString()).put("uniqueWork", RemoteScheduler.IMMEDIATE)
-                    .put("producer", "RemoteScheduler.kick").put("actualScheduledWorker", RemoteSyncWorker.class.getName())
+                    .put("producer", automaticNetwork?"RemoteConnectivityWake.onAvailable":"RemoteScheduler.kick")
+                    .put("priorImmediateDrain",new org.json.JSONArray(priorImmediateDrain)).put("actualScheduledWorker", RemoteSyncWorker.class.getName())
                     .put("osJobCorroboration", true).put("exclusiveOsWorkerLaunchProven", false)
                     .put("inProcessGreedyContributionPossible", true)
                     .put("limitation", "OS registration/start corroborates the same work ID; GreedyScheduler may launch the worker. No process-death, Doze or cadence guarantee.")
@@ -398,6 +409,49 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
             return value;
         }
 
+        /** Let earlier automatic work finish with its original consumer, never cancel or replace its ownership. */
+        void drainPriorImmediate() throws Exception {
+            final long drainMillis=65_000;
+            List<WorkInfo> initial=manager.getWorkInfosForUniqueWork(RemoteScheduler.IMMEDIATE).get(5,TimeUnit.SECONDS);
+            boolean unfinished=false;Set<UUID> known=new HashSet<>();
+            for(WorkInfo info:initial){known.add(info.getId());unfinished|=!info.getState().isFinished();}
+            if(!unfinished)return;
+            List<WorkInfo> periodic=manager.getWorkInfosForUniqueWork(RemoteScheduler.PERIODIC).get(5,TimeUnit.SECONDS);
+            String preservedPeriodic=periodicSnapshot(periodic);
+            long protectedHorizon=Math.addExact(System.currentTimeMillis(),drainMillis+PROOF_MILLIS+CLEANUP_GRACE_MILLIS);
+            for(WorkInfo info:periodic)if(!info.getState().isFinished())
+                assertTrue("Periodic work is too near for a safe prior-job drain",info.getState()==WorkInfo.State.ENQUEUED&&info.getNextScheduleTimeMillis()>protectedHorizon);
+            Map<UUID,String> requested=new java.util.LinkedHashMap<>();org.json.JSONArray evidence=new org.json.JSONArray();
+            long deadline=SystemClock.elapsedRealtime()+drainMillis;boolean complete=false;
+            while(SystemClock.elapsedRealtime()<deadline){
+                assertSame("Do not replace the existing worker's consumer while it drains",previous,RemoteFeature.get(target));
+                assertBackground();
+                List<WorkInfo> current=manager.getWorkInfosForUniqueWork(RemoteScheduler.IMMEDIATE).get(5,TimeUnit.SECONDS);boolean terminal=true;
+                for(WorkInfo info:current){
+                    assertTrue("Concurrent immediate producer changed ownership",known.contains(info.getId()));
+                    if(info.getState().isFinished())continue;terminal=false;
+                    assertTrue("Unknown previous immediate worker",info.getTags().contains(RemoteSyncWorker.class.getName()));
+                    assertEquals(NetworkType.CONNECTED,info.getConstraints().getRequiredNetworkType());
+                    if(info.getState()==WorkInfo.State.ENQUEUED&&info.getNextScheduleTimeMillis()<=System.currentTimeMillis()&&!requested.containsKey(info.getId())){
+                        for(JobInfo job:scheduler().getAllPendingJobs())if(info.getId().toString().equals(job.getExtras().getString("EXTRA_WORK_SPEC_ID"))){
+                            assertNotNull("Previous job lost its network constraint",job.getRequiredNetwork());
+                            String result=shell("cmd jobscheduler run -s"+(Build.VERSION.SDK_INT>=34?" -n androidx.work.systemjobscheduler":"")+" "+target.getPackageName()+" "+job.getId());
+                            requested.put(info.getId(),result);break;
+                        }
+                    }
+                }
+                if(terminal&&((AtomicInteger)field("leases").get(previous)).get()==0&&((Set<?>)field("busy").get(previous)).isEmpty()&&((Map<?,?>)field("connections").get(previous)).isEmpty()){
+                    for(WorkInfo info:current)if(known.contains(info.getId()))evidence.put(new JSONObject().put("id",info.getId().toString()).put("state",info.getState().name()).put("normalEligibleRun",requested.get(info.getId())));
+                    complete=true;break;
+                }
+                Thread.sleep(50);
+            }
+            assertEquals("Draining prior work changed periodic state or scheduling",preservedPeriodic,periodicSnapshot(manager.getWorkInfosForUniqueWork(RemoteScheduler.PERIODIC).get(5,TimeUnit.SECONDS)));
+            assertEquals(originalDom,ControllerPinManager.isDomModeActive());assertEquals(originalAuthRevision,ControllerPinManager.domWorkspaceRevision());
+            priorImmediateDrain=evidence.toString();
+            assertTrue("Prior automatic work did not finish within the safe drain deadline; no work was cancelled or replaced: "+requested,complete);
+        }
+
         void preflight(boolean capture) throws Exception {
             List<WorkInfo> periodic = manager.getWorkInfosForUniqueWork(RemoteScheduler.PERIODIC).get(5, TimeUnit.SECONDS);
             List<WorkInfo> immediate = manager.getWorkInfosForUniqueWork(RemoteScheduler.IMMEDIATE).get(5, TimeUnit.SECONDS);
@@ -473,6 +527,7 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
 
         @Override public void close() throws Exception {
             List<Throwable> failures = new ArrayList<>();
+            clean(failures, () -> { if(networkWake!=null){networkWake.close();networkWake=null;} });
             clean(failures, () -> {
                 selected.countDown();
                 if (!scheduled) return;

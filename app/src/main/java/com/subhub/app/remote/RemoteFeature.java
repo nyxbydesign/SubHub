@@ -62,6 +62,11 @@ public final class RemoteFeature {
     private final java.util.concurrent.atomic.AtomicBoolean pairingPoll=new java.util.concurrent.atomic.AtomicBoolean();
     private volatile boolean pairingTimerInstalled;
     private boolean installed;
+    private volatile boolean stopped;
+    private Application lifecycleApplication;
+    private Application.ActivityLifecycleCallbacks lifecycleCallbacks;
+    private RemoteConnectivityWake connectivityWake;
+    private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean librariesRetired;
 
     RemoteFeature(Context context) {this(context,new RemoteStore(context));}
@@ -101,18 +106,32 @@ public final class RemoteFeature {
     public boolean controlsLocal(){try{return !recoveryReady()||store.authorityObservation(store::isRemotelyControlled);}catch(RuntimeException unavailable){return true;}}
 
     public synchronized void installLifecycle(Application app) {
-        if(installed)return;installed=true;
+        if(installed||stopped)return;installed=true;
         timer.execute(()->{try{appIcons.refresh();}catch(Exception unavailable){/* Reconstruct from a later verified sync. */}});
-        app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+        lifecycleApplication=app;
+        lifecycleCallbacks=new Application.ActivityLifecycleCallbacks() {
             private int started;
-            @Override public void onActivityStarted(Activity activity){if(++started==1){foreground=true;RemoteFeature.this.activity.dispatchNotifications();kick();}}
-            @Override public void onActivityStopped(Activity activity){if(--started==0){foreground=false;timer.execute(RemoteFeature.this::suspendIfIdle);}}
+            @Override public void onActivityStarted(Activity activity){synchronized(RemoteFeature.this){if(stopped)return;if(++started==1){foreground=true;RemoteFeature.this.activity.dispatchNotifications();requestAutomaticSync();}}}
+            @Override public void onActivityStopped(Activity activity){synchronized(RemoteFeature.this){if(stopped)return;if(--started==0){foreground=false;requestAutomaticSync();timer.execute(RemoteFeature.this::suspendIfIdle);}}}
             @Override public void onActivityCreated(Activity a,Bundle b){} @Override public void onActivityDestroyed(Activity a){}
             @Override public void onActivityResumed(Activity a){} @Override public void onActivityPaused(Activity a){}
             @Override public void onActivitySaveInstanceState(Activity a,Bundle b){}
-        });
+        };
+        app.registerActivityLifecycleCallbacks(lifecycleCallbacks);
         timer.scheduleWithFixedDelay(()->{try{if(foreground)tick();}catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}},2,2,TimeUnit.SECONDS);
         RemoteScheduler.synchronize(context,needsBackground());
+        try { connectivityWake=new RemoteConnectivityWake(app,this::requestAutomaticSync); }
+        catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
+    }
+    /** Coalesce lifecycle/network returns and preserve WorkManager's existing unique-work ownership. */
+    void requestAutomaticSync() {
+        if(stopped||!automaticSyncPending.compareAndSet(false,true))return;
+        try{timer.execute(()->{
+            automaticSyncPending.set(false);if(stopped)return;
+            try{nextAttempt.clear();if(!needsBackground())return;
+                if(foreground)tick();else RemoteScheduler.kick(context);
+            }catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}
+        });}catch(RejectedExecutionException closed){automaticSyncPending.set(false);}
     }
     /** Admission survives future cancellation until the actual resource-using callable exits. */
     private static class AdmittedTask<T> extends FutureTask<T> {
@@ -803,7 +822,11 @@ public final class RemoteFeature {
         if(foreground || hasPairingLease() || leases.get()>0 || !busy.isEmpty())return;
         synchronized(endpointLock){if(foreground || hasPairingLease() || leases.get()>0 || !busy.isEmpty())return;PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
     }
-    void shutdownForTest() throws Exception {
+    synchronized void shutdownForTest() throws Exception {
+        stopped=true;
+        if(connectivityWake!=null){connectivityWake.close();connectivityWake=null;}
+        if(lifecycleApplication!=null&&lifecycleCallbacks!=null)lifecycleApplication.unregisterActivityLifecycleCallbacks(lifecycleCallbacks);
+        lifecycleApplication=null;lifecycleCallbacks=null;
         pairingDeadlineTimer.shutdownNow();
         appIcons.close();
         for(PairingOperationLease lease:pairingLeases.values())lease.close();
