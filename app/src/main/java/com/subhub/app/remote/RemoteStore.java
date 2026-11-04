@@ -916,14 +916,82 @@ public final class RemoteStore extends SQLiteOpenHelper {
             throw new SecurityException("Device pairing capability unavailable");
     }
 
+    private static final int MAX_INVITATION_RECOVERY = 128;
+    private static List<String> creationGenerations(SQLiteDatabase db){
+        List<String> generations=new ArrayList<>();
+        try(Cursor rows=db.rawQuery("SELECT generation FROM pairing_lifecycle WHERE direction='CREATE' AND state IN('PENDING','APPROVED')"
+                +" UNION SELECT id FROM invites WHERE consumed=0"
+                +" UNION SELECT generation FROM peers WHERE local_role='DOM' AND state='PENDING' ORDER BY 1 LIMIT "+(MAX_INVITATION_RECOVERY+1),null)){
+            while(rows.moveToNext())generations.add(RemoteProtocol.identifier(rows.getString(0)));
+        }
+        if(generations.size()>MAX_INVITATION_RECOVERY)throw new IllegalStateException("Invitation recovery capacity reached");
+        return generations;
+    }
+    List<String> creationGenerations(){return authorityObservation(()->{synchronized(this){return creationGenerations(getReadableDatabase());}});}
+    private static boolean activeGeneration(SQLiteDatabase db,String generation){
+        try(Cursor row=db.rawQuery("SELECT 1 FROM peers WHERE generation=? AND state='ACTIVE' LIMIT 1",new String[]{generation})){return row.moveToFirst();}
+    }
+    boolean activeInvitationGeneration(String generation){return authorityObservation(()->{synchronized(this){return activeGeneration(getReadableDatabase(),generation);}});}
+    boolean shareableInvitation(PairingLifecycleLedger.Operation operation,PairingInvite invite){return authorityObservation(()->{synchronized(this){
+        if((operation.stage!=PairingLifecycleLedger.Stage.PENDING&&operation.stage!=PairingLifecycleLedger.Stage.APPROVED)
+                ||!operation.id.equals(invite.id)||operation.bounds.publicWall!=invite.expiresAt||!operation.tokenHash.equals(invite.tokenHash()))return false;
+        Peer candidate=operation.peer==null?null:peer(getReadableDatabase(),operation.peer,operation.generation);
+        if(candidate!=null&&(candidate.localRole!=RemoteProtocol.Role.DOM||candidate.state!=State.PENDING)
+                ||operation.stage==PairingLifecycleLedger.Stage.APPROVED&&candidate==null)return false;
+        try(Cursor row=getReadableDatabase().rawQuery("SELECT token_hash,expires,candidate,approved,consumed FROM invites WHERE id=?",new String[]{operation.id})){
+            return row.moveToFirst()&&row.getInt(4)==(operation.stage==PairingLifecycleLedger.Stage.APPROVED?1:0)&&row.getString(0).equals(invite.tokenHash())&&row.getLong(1)==invite.expiresAt
+                    &&java.util.Objects.equals(row.isNull(2)?null:row.getString(2),operation.peer)
+                    &&(row.getInt(3)==1)==(operation.stage==PairingLifecycleLedger.Stage.APPROVED);
+        }
+    }});}
+    /** Explicit Add Sub attenuates stale pending generations in one authorized, bounded transaction. */
+    List<String> retirePendingInvitations(List<String> observed,String keep,FormalRelationshipClock.Sample sampled,PairingLifecycleClock.Source clock,java.util.function.Consumer<List<String>> committedRetirements){
+        requireCallbackBoundary();
+        List<Peer> cancelled=new ArrayList<>();
+        List<String> retired=newCommandTransition("pairing-reconcile",LocalRelationshipAuthority.digest(String.join(":",observed)+"|"+keep),
+                RemoteProtocol.Role.DOM,LocalRelationshipAuthority.NewCommand.KEYHOLDER,db->{
+            List<String> current=creationGenerations(db);
+            for(String generation:current)if(!observed.contains(generation))throw new SecurityException("Invitation inventory changed");
+            for(String generation:observed)if(!current.contains(generation)&&!activeGeneration(db,generation))throw new SecurityException("Invitation inventory changed");
+            FormalRelationshipClock.Sample now=clock.transition(sampled);now.requireValid();
+            List<String> result=new ArrayList<>();
+            for(String generation:observed){
+                // Activation wins even if it happened after the caller's original observation.
+                if(generation.equals(keep)||activeGeneration(db,generation))continue;
+                PairingLifecycleLedger.Operation operation=PairingLifecycleLedger.find(db,generation,generation,PairingLifecycleClock.Direction.CREATE);
+                if(operation!=null)PairingLifecycleLedger.cancel(db,operation,now);
+                try(Cursor rows=db.rawQuery("SELECT peer,generation,name,local_role,state,last_sync,route FROM peers WHERE generation=? AND local_role='DOM' AND state='PENDING' LIMIT "+(MAX_INVITATION_RECOVERY+1),new String[]{generation})){
+                    while(rows.moveToNext()){
+                        if(cancelled.size()>=MAX_INVITATION_RECOVERY)throw new IllegalStateException("Pending participant capacity reached");
+                        cancelled.add(readPeer(rows));
+                    }
+                }
+                db.execSQL("UPDATE invites SET consumed=1,approved=0 WHERE id=?",new Object[]{generation});
+                result.add(generation);
+            }
+            // Read exact peer states again at the actual retirement boundary; never unlink an ACTIVE peer.
+            for(Peer selected:cancelled){Peer exact=peer(db,selected.identity,selected.generation);
+                if(exact==null||exact.localRole!=RemoteProtocol.Role.DOM||exact.state!=State.PENDING)throw new SecurityException("Pending participant changed");
+                revokeRows(db,exact.identity,exact.generation);
+            }
+            return result;
+        });
+        // Publish the committed set before any fallible notification or protected-storage cleanup.
+        committedRetirements.accept(retired);
+        java.util.function.BiConsumer<String,String> listener;synchronized(this){listener=revoked;}
+        for(Peer peer:cancelled)listener.accept(peer.identity,peer.generation);
+        return retired;
+    }
     String legacyPendingGeneration(PairingLifecycleClock.Direction direction){
         return authorityObservation(()->{synchronized(this){
             SQLiteDatabase db=getReadableDatabase();String role=direction==PairingLifecycleClock.Direction.CREATE?"DOM":"SUB";
             try(Cursor row=db.rawQuery("SELECT p.generation FROM peers p WHERE p.local_role=? AND p.state='PENDING'"
-                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=p.generation AND l.direction=?) ORDER BY p.generation LIMIT 1",
+                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=p.generation AND l.direction=?)"
+                    +" AND NOT EXISTS(SELECT 1 FROM peers a WHERE a.generation=p.generation AND a.state='ACTIVE') ORDER BY p.generation LIMIT 1",
                     new String[]{role,direction.name()})){if(row.moveToFirst())return row.getString(0);}
             if(direction==PairingLifecycleClock.Direction.CREATE)try(Cursor row=db.rawQuery("SELECT i.id FROM invites i WHERE i.consumed=0"
-                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=i.id AND l.direction='CREATE') ORDER BY i.expires DESC,i.id LIMIT 1",null)){
+                    +" AND NOT EXISTS(SELECT 1 FROM pairing_lifecycle l WHERE l.generation=i.id AND l.direction='CREATE')"
+                    +" AND NOT EXISTS(SELECT 1 FROM peers p WHERE p.generation=i.id AND p.state IN('ACTIVE','REVOKED')) ORDER BY i.expires DESC,i.id LIMIT 1",null)){
                 if(row.moveToFirst())return row.getString(0);
             }
             return null;

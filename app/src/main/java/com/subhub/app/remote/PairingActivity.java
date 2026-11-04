@@ -25,12 +25,12 @@ public final class PairingActivity extends RemotePage {
     private LinearLayout lifecyclePanel;
     private RemoteFeature.PairingOperation operation;
     private String operationId,operationGeneration;
-    private boolean resumed,operationBusy,preparingStart,statusUnavailable,discoveringCreation;
+    private boolean resumed,operationBusy,preparingStart,statusUnavailable;
     private long visibleRevision;
     private long selectionRevision;
-    private long creationStartRevision=-1;
     private String startingObservationKey;
     private long startingObservedAt;
+    private long automaticStartRevision=-1;
     private final Runnable poll=new Runnable(){public void run(){if(!resumed)return;renderCandidates();refreshOperation();clock.postDelayed(this,2000);}};
     @Override protected boolean requiresDom(){
         if(PairingForegroundService.OPEN.equals(getIntent().getAction()))
@@ -45,7 +45,8 @@ public final class PairingActivity extends RemotePage {
         if(asDom) {
             creation=new androidx.lifecycle.ViewModelProvider(this).get(InvitationCreation.class);
             if(state!=null)creation.directAttempted|=state.getBoolean("pairingDirectAttempted",false)||state.containsKey("invitationId");
-            if(directInvitation()&&!creation.directAttempted)text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+            if(directInvitation()&&creation.request==null)creation.directAttempted=false;
+            if(directInvitation())text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
             else PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
         }
         else {
@@ -71,7 +72,7 @@ public final class PairingActivity extends RemotePage {
         } else if(state!=null) {
             operationId=state.getString("pairingOperationId");operationGeneration=state.getString("pairingOperationGeneration");
         }
-        if(asDom && creation.request==null && state!=null && state.containsKey("invitationId")) {
+        if(asDom && !directInvitation() && creation.request==null && state!=null && state.containsKey("invitationId")) {
             String id=state.getString("invitationId"); restoringInvitation=true;
             work(()->feature.restoreInvitation(id),restored->{
                 restoringInvitation=false;
@@ -93,56 +94,40 @@ public final class PairingActivity extends RemotePage {
     public static final class InvitationCreation extends androidx.lifecycle.ViewModel {
         java.util.concurrent.CompletableFuture<PairingInvite> request;
         boolean directAttempted;
+        long authorityRevision=-1;
         public InvitationCreation() { }
     }
     private void createInvitation() {
         final long interactionRevision=visibleRevision;
         authorize(()->{
-            if(!visible()||interactionRevision!=visibleRevision||!requiresDom()||discoveringCreation
+            if(!visible()||interactionRevision!=visibleRevision||!requiresDom()
                     ||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked())return;
             if(creation.request!=null){observeCreation();return;}
-            discoveringCreation=true;creation.directAttempted=true;
-            final long revision=interactionRevision;
-            feature.currentPairingOperation(true).whenComplete((current,error)->runOnUiThread(()->{
-                discoveringCreation=false;
-                if(!visible()||revision!=visibleRevision){showCreationAction();return;}
-                if(error!=null){invitationFailure(R.string.pairing_status_unavailable);return;}
-                if(current!=null&&(current.live||!current.clockCertain||current.active)){
-                    acceptOperation(current);
-                    showRetainedOperation();
-                    restoreOperationInvitation(current);
-                    return;
-                }
-                // The backend reuses live invitations and retires only authoritatively expired clocks.
-                // Do not let an expired UI snapshot prevent that guarded replacement.
-                if(creation.request==null){
-                    selectionRevision++;operation=null;operationId=null;operationGeneration=null;invitationUnavailable=false;
-                    body.removeAllViews();
-                    text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
-                    candidates=PersonUi.column(this);body.addView(candidates);attachLifecyclePanel();
-                    creationStartRevision=interactionRevision;
-                    creation.request=feature.createInvite();
-                }
-                observeCreation();
-            }));
+            creation.directAttempted=true;creation.authorityRevision=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+            selectionRevision++;operation=null;operationId=null;operationGeneration=null;invitationUnavailable=false;
+            showInvitationLoading();creation.request=feature.ensureInvitation();observeCreation();
         });
+    }
+    private void showInvitationLoading(){
+        body.removeAllViews();text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+        candidates=PersonUi.column(this);body.addView(candidates);attachLifecyclePanel();
     }
     private void observeCreation() {
         InvitationCreation captured=creation;
         java.util.concurrent.CompletableFuture<PairingInvite> request=captured.request;
         if(request==null||observedCreation==request)return;
         observedCreation=request;
-        final long interactionRevision=creationStartRevision;
         java.lang.ref.WeakReference<PairingActivity> weak=new java.lang.ref.WeakReference<>(this);
         request.whenComplete((value,error)->{
             PairingActivity page=weak.get();if(page==null)return;
             page.runOnUiThread(()->{
                 if(page.isDestroyed()||page.isFinishing()||page.creation!=captured||captured.request!=request)return;
-                if(!page.requiresDom()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
+                if(captured.authorityRevision>=0&&captured.authorityRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()
+                        ||!page.requiresDom()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                         ||!com.subhub.app.security.DeviceRolePreferences.supportsDom(page)){page.finish();return;}
                 if(error!=null||value==null){page.invitationFailure(error==null?R.string.remote_expired:R.string.remote_failure);return;}
                 page.invitation=value;page.renderInvite();page.refreshOperation();
-                page.startNewOperation(value.id,true,interactionRevision);
+                page.startNewOperation(value.id,true,page.visibleRevision);
             });
         });
     }
@@ -155,16 +140,18 @@ public final class PairingActivity extends RemotePage {
     @Override protected void onResume(){
         super.onResume();if(isFinishing())return;
         resumed=true;visibleRevision++;
-        if(requiresDom()&&invitation==null&&!restoringInvitation) {
-            if(creation.request!=null)observeCreation();
-            else if(directInvitation()&&!creation.directAttempted){
-                long revision=visibleRevision;
-                // LifecycleRegistry reaches RESUMED after onResume returns.
-                clock.post(()->{if(visible()&&revision==visibleRevision)createInvitation();});
+        if(requiresDom()&&directInvitation()){
+            // A visible return is one new authorized ensure, not a timer that renews hidden requests.
+            // Keep an accepted, unfinished request across recreation; never duplicate its mint.
+            if(creation.request==null||creation.request.isDone()){
+                creation.request=null;observedCreation=null;creation.directAttempted=false;invitation=null;
+                selectionRevision++;operation=null;operationId=null;operationGeneration=null;invitationUnavailable=false;
+                showInvitationLoading();
             }
-        }
-        clock.removeCallbacks(poll);clock.post(poll);
-        clock.post(this::showCreationAction);
+            if(creation.request!=null)observeCreation();
+            else {long revision=visibleRevision;clock.post(()->{if(visible()&&revision==visibleRevision)createInvitation();});}
+        } else if(requiresDom()&&invitation==null&&!restoringInvitation&&creation.request!=null)observeCreation();
+        clock.removeCallbacks(poll);clock.post(poll);clock.post(this::showCreationAction);
     }
     @Override protected void onPause(){resumed=false;visibleRevision++;clock.removeCallbacks(poll);super.onPause();}
     @Override protected void onDestroy(){clock.removeCallbacksAndMessages(null);super.onDestroy();}
@@ -172,15 +159,10 @@ public final class PairingActivity extends RemotePage {
             &&getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED);}
     private boolean asDom(){return requiresDom();}
     private void showCreationAction(){
-        if(!visible()||creation==null||creation.request!=null||discoveringCreation
+        if(directInvitation()||!visible()||creation==null||creation.request!=null
                 ||!creation.directAttempted||body.findViewWithTag("pairing_invitation_loading")==null)return;
         body.removeAllViews();PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
         candidates=PersonUi.column(this);body.addView(candidates);attachLifecyclePanel();
-    }
-    private void showRetainedOperation(){
-        body.removeAllViews();
-        candidates=PersonUi.column(this);body.addView(candidates);
-        attachLifecyclePanel();renderCandidates();
     }
     private void attachLifecyclePanel(){
         lifecyclePanel=PersonUi.column(this);body.addView(lifecyclePanel);renderOperation();
@@ -192,7 +174,7 @@ public final class PairingActivity extends RemotePage {
         renderOperation();
     }
     private void refreshOperation(){
-        if(!visible()||operationBusy||discoveringCreation)return;
+        if(!visible()||operationBusy||directInvitation()&&invitation==null)return;
         operationBusy=true;
         final long selected=selectionRevision;
         final String requestedId=operationId,requestedGeneration=operationGeneration;
@@ -221,6 +203,7 @@ public final class PairingActivity extends RemotePage {
     private void renderOperation(){
         if(lifecyclePanel==null)return;
         lifecyclePanel.removeAllViews();
+        if(directInvitation()&&invitation==null)return;
         RemoteFeature.PairingOperation shown=operation;
         if(shown==null){
             if(statusUnavailable)text(lifecyclePanel,getString(R.string.pairing_status_unavailable),false);
@@ -245,8 +228,9 @@ public final class PairingActivity extends RemotePage {
             // Display only the authoritative sampled remainder, never extend or infer a local deadline.
             text(lifecyclePanel,getString(R.string.pairing_remaining,android.text.format.DateUtils.formatElapsedTime(Math.max(0,shown.remainingMillis)/1000)),false);
             if(!preparingStart&&(statusUnavailable||unacknowledged
-                    ||service!=RemoteFeature.PairingServiceState.RUNNING&&!starting))
-                button(lifecyclePanel,R.string.pairing_resume,()->resumeOperation(shown)).setTag("pairing_lifecycle_resume");
+                    ||service!=RemoteFeature.PairingServiceState.RUNNING&&!starting)
+                    &&(!directInvitation()||automaticStartRevision==visibleRevision))
+                button(lifecyclePanel,directInvitation()?R.string.role_retry:R.string.pairing_resume,()->resumeOperation(shown)).setTag("pairing_lifecycle_resume");
         }
         if(!shown.active)button(lifecyclePanel,android.R.string.cancel,()->cancelOperation(shown)).setTag("pairing_lifecycle_cancel");
         if(shown.live&&!shown.active&&!invitationUnavailable)text(lifecyclePanel,getString(R.string.pairing_preserved),false);
@@ -272,11 +256,14 @@ public final class PairingActivity extends RemotePage {
             if(!visible()||interactionRevision!=visibleRevision)return;
             if(error!=null){statusUnavailable=true;renderOperation();return;}
             if(current==null||!generation.equals(current.generation)||current.asDom!=asDom)return;
-            acceptOperation(current);prepareAndStart(current,interactionRevision);
+            acceptOperation(current);
+            RemoteFeature.PairingServiceState service=feature.pairingServiceState(current.id,current.generation,current.asDom);
+            if(service!=RemoteFeature.PairingServiceState.RUNNING&&service!=RemoteFeature.PairingServiceState.STARTING)prepareAndStart(current,interactionRevision);
         }));
     }
     private void prepareAndStart(RemoteFeature.PairingOperation selected,long revision){
             if(!visible()||revision!=visibleRevision||preparingStart)return;
+            if(directInvitation())automaticStartRevision=visibleRevision;
             preparingStart=true;renderOperation();
             feature.preparePairingStart(selected.id,selected.generation,selected.asDom).whenComplete((start,error)->runOnUiThread(()->{
                 preparingStart=false;
@@ -304,6 +291,10 @@ public final class PairingActivity extends RemotePage {
                     selectionRevision++;
                     invitation=null;invitationUnavailable=false;operation=null;operationId=null;operationGeneration=null;
                     if(creation!=null){creation.request=null;observedCreation=null;}
+                    if(selected.asDom&&directInvitation()){
+                        startActivity(new Intent(this,com.subhub.app.people.PeopleActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                        finish();return;
+                    }
                     if(selected.asDom){
                         body.removeAllViews();PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
                         candidates=PersonUi.column(this);body.addView(candidates);attachLifecyclePanel();
@@ -325,11 +316,12 @@ public final class PairingActivity extends RemotePage {
         },bitmap->{if(invitation!=shown){bitmap.recycle();return;}ImageView qr=new ImageView(this);qr.setImageBitmap(bitmap);qr.setContentDescription(getString(R.string.remote_pairing));
             body.addView(qr,0,new LinearLayout.LayoutParams(-1,PersonUi.dp(this,280)));});
         button(body,R.string.remote_copy_invite,()->authorize(()->{
-            ClipData clip=ClipData.newPlainText(getString(R.string.remote_pairing),invitation.code());
+            if(!visible()||invitation!=shown)return;
+            ClipData clip=ClipData.newPlainText(getString(R.string.remote_pairing),shown.code());
             if(Build.VERSION.SDK_INT>=33){PersistableBundle flags=new PersistableBundle();flags.putBoolean("android.content.extra.IS_SENSITIVE",true);clip.getDescription().setExtras(flags);}
             ((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(clip);
         }));
-        button(body,R.string.remote_share_invite,()->authorize(()->startActivity(Intent.createChooser(sharePayload(invitation),getString(R.string.remote_share_invite)))));
+        button(body,R.string.remote_share_invite,()->authorize(()->{if(visible()&&invitation==shown)startActivity(Intent.createChooser(sharePayload(shown),getString(R.string.remote_share_invite)));}));
         // Cancellation is operation-scoped and durable before the service releases its lease.
         candidates=PersonUi.column(this);body.addView(candidates);renderCandidates();
         attachLifecyclePanel();
@@ -377,7 +369,7 @@ public final class PairingActivity extends RemotePage {
                 ?operation.generation:null;
     }
     private void renderCandidates() {
-        if(candidates==null)return;
+        if(candidates==null||directInvitation()&&invitation==null)return;
         boolean asDom=requiresDom();
         for(RemoteStore.Peer current:feature.store.peers(false))if(current.state==RemoteStore.State.ACTIVE&&
                 (asDom?current.generation.equals(selectedGeneration())&&current.localRole==RemoteProtocol.Role.DOM:current.localRole==RemoteProtocol.Role.SUB)) {

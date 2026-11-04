@@ -7,7 +7,7 @@ Choose Dom only, Sub only, or Both for each device. Dom only provides the manage
 ## Pair
 
 1. On the Dom phone, set up local control with a PIN under Settings → Keyholder and enter Dom mode.
-2. Open People, add a Sub, and create an invitation. Share or copy its pairing code, or show its QR code. Anyone holding an unused invitation can request pairing, so share it privately.
+2. Open People and choose Add Sub. Its QR code opens directly; share or copy the pairing code from that page. The app keeps a usable invitation or automatically replaces an unusable pending attempt. Anyone holding an unused invitation can request pairing, so share it privately.
 3. On the Sub phone, choose Pair with Dom in setup or Settings → Keyholder. Paste the pairing code. Existing invitation links also work, including links opened by a QR reader; SubHub does not require a camera permission. The Sub does not need to create a local PIN first. If it already has local credentials, authenticate before assigning a Dom.
 4. Review the device fingerprint and shared controls on both phones, then approve the pairing explicitly. Compare fingerprints with the other person before accepting an unexpected request.
 
@@ -27,11 +27,13 @@ An invitation expires and is limited to one relationship. Pairing by itself pres
 
 An invitation has an original public lifetime of ten minutes. Reopening the page, rotating the phone, or resuming background work does not restart that clock. A request already approved within its original bounds has a separate bounded completion period. The page shows the backend's sampled remaining time; an established relationship is not revoked when an invitation expires.
 
-Creating an invitation or accepting the existing fingerprint review can start background pairing work while the page is still visible. A result that arrives after leaving or rotating the page cannot start that service. Returning to a pending operation reuses it; it does not create a replacement invitation. Choose Resume pairing to restart stopped work while the page is open. Merely opening the page or a notification does not restart background work. Back and leaving the page do not cancel the request.
+Add Sub checks outgoing pending attempts under the current Dom authentication. A usable code keeps its original identity, token, approval, and deadline. Expired codes, missing codes, and older pending attempts without verifiable clocks are retired automatically before a fresh invitation is created. Multiple stale attempts are handled together within a bounded operation. Active relationships and their retained data are preserved. Storage or authorization failures are reported instead of silently resetting data.
 
-Starting, running, and unavailable describe background pairing work, not proof that the other phone is connected or has approved. If the original clock cannot be verified, the request cannot resume. Cancel the pending request and use a fresh invitation. This also applies to older pending requests without retained clock information; existing active relationships remain intact.
+Creating an invitation or accepting the existing fingerprint review can start pairing work while the page is visible. Returning to the Dom QR page checks the request again and automatically resumes eligible work. Rotation retains an accepted creation that is still in progress. A result arriving while the page is hidden cannot start the service. Back and leaving the page do not cancel the request or renew its original lifetime.
 
-Cancel on the pairing page uses the existing Dom or enrollment authentication. Each ongoing pairing notification has a Cancel action for its own pending operation. A stale action cannot cancel a replacement or revoke an active relationship. A Both device can keep an outgoing invitation and an incoming request independently; cancelling one does not stop the other's background work.
+Starting, running, and unavailable describe pairing work, not proof that the other phone is connected or has approved. Both devices must still approve the pinned identities. An expired approval is never revived by reopening the page.
+
+Cancel on the Dom QR page durably retires its pending request and returns to the Subs menu, including when Add Sub was opened from Tasks. The next Add Sub opens a fresh QR code. Each ongoing pairing notification has a Cancel action for its own pending operation. A stale action cannot cancel a replacement or revoke an active relationship. A Both device can keep an outgoing invitation and an incoming request independently; cancelling one does not stop the other's background work.
 
 Pairing notifications use generic text and a low-importance channel. If notification permission or the channel is blocked, Android can still allow the foreground service and show work in its active apps list, but notification drawer controls may be unavailable. The page shows that limitation, retains Cancel and status, and links to pairing notification settings. Pairing does not request a notification grant or a battery exemption.
 
@@ -57,7 +59,7 @@ Profiles show recent events for the selected person. This device's history stays
 
 Changes remain in a local outbox while the peer is unavailable. Sync sends bounded batches and resumes from acknowledged updates; interrupted transfers and duplicate deliveries can be retried safely. Pending changes need the original installation's data to survive.
 
-Keep both apps open for the fingerprint reviews and large transfers. Pending pairing can continue through its user-started foreground service within the original operation's bounds. Android may stop the service; it does not automatically restart after process loss or reboot. Open the pairing page and explicitly resume eligible pending work. This is best effort and does not guarantee progress during Doze, under battery restrictions, or while either phone is offline.
+Keep both apps open for the fingerprint reviews and large transfers. Pending pairing can continue through its user-started foreground service within the original operation's bounds. Android may stop the service; it does not automatically restart after process loss or reboot. Open Add Sub again to check the outgoing request and automatically resume eligible work or receive a fresh code. This is best effort and does not guarantee progress during Doze, under battery restrictions, or while either phone is offline.
 
 With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. One open app and one backgrounded app is best effort. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
 

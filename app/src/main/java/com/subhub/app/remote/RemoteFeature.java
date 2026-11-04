@@ -344,6 +344,17 @@ public final class RemoteFeature {
         operation.requireToken(invite.tokenHash());
         if(!invite.id.equals(operation.id)||invite.expiresAt!=operation.bounds.publicWall)throw new SecurityException("Original invitation differs");return invite;
     }
+    public CompletableFuture<PairingInvite> ensureInvitation(){long revision=ControllerPinManager.domWorkspaceRevision();return submit(()->{
+        java.util.List<String> retired=new java.util.ArrayList<>();
+        try{
+            requireDomWorkspace();if(revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Dom workspace changed");
+            PairingInvite invite=pairing(transport(),revision).ensureInvitation(retired::addAll);kick();changed();return invite;
+        }catch(Exception unavailable){logSessionFailure("ensure-invitation",unavailable);throw unavailable;}
+        finally{
+            // Only a returned, committed retirement can release an old listener or its exact pending work.
+            for(String generation:retired){PairingOperationLease lease=pairingLeases.get(pairingKey(generation,generation,true));if(lease!=null)lease.close();}
+        }
+    });}
     public CompletableFuture<PairingInvite> createInvite() {return submit(()->{if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");requireDomWorkspace();PairingInvite invite=pairing(transport()).create(System.currentTimeMillis());kick();return invite;});}
     public CompletableFuture<String> localIdentity(){return submit(()->{if(ControllerPinManager.isLocalDomWorkspaceUnlocked())requireDomWorkspace();else requireKeyholder();return transport().localIdentity();});}
     public static final class Enrollment {
@@ -487,9 +498,10 @@ public final class RemoteFeature {
             return null;
         });
     }
-    private PairingService pairing(PeerTransport transport){return new PairingService(store,secrets,transport,keyholder,
+    private PairingService pairing(PeerTransport transport){return pairing(transport,-1);}
+    private PairingService pairing(PeerTransport transport,long revision){return new PairingService(store,secrets,transport,keyholder,
             ()->ControllerPinManager.isSessionUnlocked() && ControllerPinManager.hasCredentials(context),
-            ()->{requireDomWorkspace();return true;},android.os.Build.MODEL,pairingClock);}
+            ()->{requireDomWorkspace();if(revision>=0&&revision!=ControllerPinManager.domWorkspaceRevision())throw new SecurityException("Dom workspace changed");return true;},android.os.Build.MODEL,pairingClock);}
 
     private PeerTransport transport() throws Exception {
         if(!recoveryReady())throw new IOException("Configuration recovery is pending");

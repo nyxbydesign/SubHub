@@ -32,8 +32,47 @@ public final class PairingService {
         this.deviceName=RemoteProtocol.deviceName(deviceName);this.clock=java.util.Objects.requireNonNull(clock);
     }
 
+    PairingInvite ensureInvitation(java.util.function.Consumer<java.util.List<String>> committedRetirements) throws IOException,GeneralSecurityException {
+        requireDomWorkspace();FormalRelationshipClock.Sample observed=observe();
+        return store.pairingOperation(()->{
+            java.util.List<String> inventory=store.creationGenerations();
+            java.util.Map<String,String> saved=new java.util.HashMap<>();PairingInvite retained=null;
+            String identity=transport.localIdentity();
+            for(String generation:inventory){
+                if(store.activeInvitationGeneration(generation))continue;
+                String link=secrets.pendingLink(generation);saved.put(generation,link);
+                PairingLifecycleLedger.Operation operation=store.pairingOperation(generation,generation,PairingLifecycleClock.Direction.CREATE);
+                if(retained!=null||operation==null||operation.verdict(clock.transition(observed))!=PairingLifecycleClock.Verdict.LIVE
+                        ||PairingLifecycleClock.publicVerdict(operation.bounds,clock.transition(observed))!=PairingLifecycleClock.Verdict.LIVE||link==null)continue;
+                PairingInvite invite;
+                try{invite=PairingInvite.restore(link);}catch(IllegalArgumentException invalid){continue;}
+                if(invite.id.equals(generation)&&invite.domIdentity.equals(identity)&&invite.tokenHash().equals(operation.tokenHash)
+                        &&invite.expiresAt==operation.bounds.publicWall&&store.shareableInvitation(operation,invite))retained=invite;
+            }
+            java.util.List<String> retired=store.retirePendingInvitations(inventory,retained==null?null:retained.id,observed,clock,committedRetirements);
+            // Retirement is durable before its staged secrets are removed. ACTIVE generations never enter this list.
+            for(String generation:retired)secrets.removePendingIfMatches(generation,saved.get(generation));
+            requireDomWorkspace();
+            if(retained!=null){
+                PairingLifecycleLedger.Operation current=store.pairingOperation(retained.id,retained.id,PairingLifecycleClock.Direction.CREATE);
+                FormalRelationshipClock.Sample boundary=clock.transition(observed);
+                if(current!=null&&current.verdict(boundary)==PairingLifecycleClock.Verdict.LIVE
+                        &&PairingLifecycleClock.publicVerdict(current.bounds,boundary)==PairingLifecycleClock.Verdict.LIVE
+                        &&store.shareableInvitation(current,retained))return retained;
+                // Cleanup may cross the original deadline. Retire that exact pending attempt once, never renew it.
+                java.util.List<String> latest=store.creationGenerations();
+                for(String generation:latest)if(!store.activeInvitationGeneration(generation)&&!saved.containsKey(generation))saved.put(generation,secrets.pendingLink(generation));
+                java.util.List<String> expired=store.retirePendingInvitations(latest,null,boundary,clock,committedRetirements);
+                for(String generation:expired)secrets.removePendingIfMatches(generation,saved.get(generation));
+            }
+            requireDomWorkspace();return createObserved(clock.transition(observed));
+        });
+    }
     public PairingInvite create(long now) throws IOException,GeneralSecurityException {
-        requireDomWorkspace();FormalRelationshipClock.Sample observed=observe(now);
+        requireDomWorkspace();return createObserved(observe(now));
+    }
+    private PairingInvite createObserved(FormalRelationshipClock.Sample observed) throws IOException,GeneralSecurityException {
+        requireDomWorkspace();observed.requireValid();
         return store.pairingOperation(()->{
             PairingLifecycleLedger.Operation current=store.currentPairingOperation(PairingLifecycleClock.Direction.CREATE);
             if(current!=null){
@@ -50,7 +89,7 @@ public final class PairingService {
             if(store.legacyPendingGeneration(PairingLifecycleClock.Direction.CREATE)!=null)
                 throw new SecurityException("Resolve the retained pairing first");
             PairingInvite invite=PairingInvite.create(transport.localIdentity(),transport.inviteRoute(),observed.wall);
-            PairingLifecycleClock.begin(observed,invite.expiresAt);
+            PairingLifecycleClock.begin(observed,invite.expiresAt);requireDomWorkspace();
             String prior=secrets.pendingLink(invite.id);
             if(prior!=null&&!prior.equals(invite.link()))throw new SecurityException("Invitation changed");
             if(prior==null)secrets.savePending(invite);
