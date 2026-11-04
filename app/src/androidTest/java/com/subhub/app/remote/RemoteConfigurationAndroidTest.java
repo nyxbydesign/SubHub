@@ -208,6 +208,53 @@ public class RemoteConfigurationAndroidTest {
         assertTrue(main().getBoolean("module_censor_enabled",false));assertTrue(main().getBoolean("popup_storm_enabled",false));
         assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(context));
     }
+    /** Persisted Hardcore state must not even be consulted to decide feature participation. */
+    @Test public void hardcoreStateCannotOverrideAnySavedFeatureChoice() throws Exception {
+        Context policy=hardcoreFeaturePolicyContext();
+        List<String> features=new ArrayList<>(com.subhub.app.security.SubFeaturePolicy.FEATURES);features.add("tasks");
+        for(String feature:features)assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,feature,false));
+        Map<String,?> saved=new HashMap<>(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+        for(String feature:features){
+            assertFalse(feature,com.subhub.app.security.SubFeaturePolicy.allowed(policy,feature));
+            assertFalse(feature,com.subhub.app.security.SubFeaturePolicy.chosen(policy,feature));
+        }
+        assertFalse(com.subhub.app.security.SubFeaturePolicy.hardcoreOverride(policy));
+        assertEquals(saved,context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"wallet",true));
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"tasks",true));
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.allowed(policy,"wallet"));
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.allowed(policy,"tasks"));
+        assertFalse(com.subhub.app.security.SubFeaturePolicy.allowed(policy,"censor"));
+        assertTrue(main().getBoolean(com.subhub.app.security.HardcoreModeManager.KEY_REQUESTED,false));
+        assertTrue(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getBoolean("hardcore_locally_consented",false));
+    }
+    @Test public void hardcoreStateCannotBypassQueuedFeatureRefusal() throws Exception {
+        seed();Context policy=hardcoreFeaturePolicyContext();
+        JSONObject doc=configuration();doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").put("censor_intensity",73);
+        RemoteStore.Command queued=deliver(doc);
+        assertTrue(com.subhub.app.security.SubFeaturePolicy.setAllowed(context,"censor",false));
+        Map<String,?> before=new HashMap<>(main().getAll());
+        Map<String,?> choices=new HashMap<>(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+        RemoteConfigurationWriter guarded=new RemoteConfigurationWriter(policy,sub,(name,editor)->editor.commit(),new File(root,"hardcore-writer"));
+        assertTrue(guarded.apply(sub.peer(DOM,generation),queued,assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.REJECTED,sub.command(DOM,generation,queued.id).state);
+        assertEquals(before,main().getAll());assertEquals(choices,context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).getAll());
+        assertTrue(guarded.apply(sub.peer(DOM,generation),sub.stageCommand(DOM,generation,new JSONObject(queued.body)),assets,Set.of()));
+        assertEquals(RemoteStore.CommandState.REJECTED,sub.command(DOM,generation,queued.id).state);
+        assertFalse(main().contains("censor_intensity"));
+    }
+    private Context hardcoreFeaturePolicyContext() {
+        assertTrue(main().edit().putBoolean(com.subhub.app.security.HardcoreModeManager.KEY_REQUESTED,true).commit());
+        assertTrue(context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).edit().putBoolean("hardcore_locally_consented",true).commit());
+        // This controlled policy fixture grants no Device Admin capability and changes no real authority.
+        return new ContextWrapper(context) {
+            @Override public Context getApplicationContext(){return this;}
+            @Override public Object getSystemService(String name){
+                if(Context.DEVICE_POLICY_SERVICE.equals(name))throw new AssertionError("Feature choices must not consult Hardcore admin state");
+                return super.getSystemService(name);
+            }
+        };
+    }
     @Test public void remoteSnapshotsCannotContainLocalConsentOrHardcoreAuthority() throws Exception {
         JSONObject doc=configuration();
         doc.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("hardcore_locally_consented",true);

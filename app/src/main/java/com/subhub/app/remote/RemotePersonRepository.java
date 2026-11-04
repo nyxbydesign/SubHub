@@ -50,8 +50,7 @@ public final class RemotePersonRepository implements PersonRepository {
                 service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
-                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime),
-                        runtime != null && runtime.optBoolean("hardcoreEnabled"));
+                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false);
     }
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");

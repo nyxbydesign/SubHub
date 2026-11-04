@@ -27,14 +27,14 @@
     <string name="onboarding_sub_features_title">Choose allowed features</string>
     <string name="onboarding_sub_features_body">Settings → Allowed features lets you disable Censor, Limits, Tributes, Whispers, and Popup Storm locally.</string>
     <string name="onboarding_sub_feature_control_title">Control what can run</string>
-    <string name="onboarding_sub_feature_control_body">Disabled features cannot run or accept changes from your Dom, including queued updates. Hardcore overrides these choices only after you enable it locally.</string>
+    <string name="onboarding_sub_feature_control_body">Disabled features cannot run or accept changes from your Dom, including queued updates.</string>
 
     <string name="onboarding_sub_hardcore_title">Consider Hardcore Mode</string>
     <string name="onboarding_sub_hardcore_body">For stronger protection against quitting, you can opt in locally in Settings. Hardcore is optional; review its effects and your recovery access first.</string>
     <string name="onboarding_sub_hardcore_controls_title">Protected Android controls</string>
     <string name="onboarding_sub_hardcore_controls_body">Accessibility and Device Admin help guard supported uninstall and data-clear controls in Sub mode. Hardcore does not start protection by itself.</string>
     <string name="onboarding_sub_hardcore_choices_title">Feature choices and release</string>
-    <string name="onboarding_sub_hardcore_choices_body">With your local consent, Hardcore overrides Allowed features. Turning it off in Settings releases the guard and restores your choices. Android also permits Device Admin deactivation.</string>
+    <string name="onboarding_sub_hardcore_choices_body">Hardcore respects your Allowed features. Turning it off in Settings releases the guard. Android also permits Device Admin deactivation.</string>
     <string name="onboarding_sub_hardcore_payments_title">Separate payment consent</string>
     <string name="onboarding_sub_hardcore_payments_body">Saved-wallet auto-pay needs separate consent, a verified linked wallet, and an active service lock. If already enabled, it can send eligible tribute while Hardcore is on, within your caps.</string>
     <string name="onboarding_sub_hardcore_action">Hardcore settings</string>

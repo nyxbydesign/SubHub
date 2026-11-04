@@ -55,7 +55,6 @@
     <string name="tasks_allowed">Allow Tasks on this device</string>
     <string name="tasks_disabled">Tasks are disabled for this profile.</string>
     <string name="tasks_update_devices">Update both paired devices to use Tasks.</string>
-    <string name="tasks_hardcore_override">Tasks remain enabled while the locally approved hardcore override is active.</string>
     <string name="tasks_working">Saving…</string>
     <string name="tasks_unavailable">Tasks are unavailable. Check the selected profile and current role.</string>
     <string name="tasks_changed">The profile, pairing or role changed. Reopen the form to continue.</string>

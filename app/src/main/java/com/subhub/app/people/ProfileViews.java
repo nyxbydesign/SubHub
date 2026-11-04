@@ -138,8 +138,6 @@ public final class ProfileViews {
         if (person.featureConsent.isEmpty() || person.sync.runtime != PersonSnapshot.Freshness.CURRENT)
             PersonUi.text(card, context.getString(person.featureConsent.isEmpty()
                     ? R.string.role_unknown_data : R.string.role_stale_data), false);
-        if (person.consentHardcoreOverride)
-            PersonUi.text(card, context.getString(R.string.profile_hardcore_allowances), false);
         String[] keys = {"censor", "limits", "wallet", "subliminal", "popup"};
         int[] labels = {R.string.sub_censor_title, R.string.sub_limits_title, R.string.sub_wallet_title,
                 R.string.sub_feature_whispers, R.string.popup_title};

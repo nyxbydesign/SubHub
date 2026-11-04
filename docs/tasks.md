@@ -32,7 +32,7 @@ An occurrence has a permanent failure receipt, including when eligibility or spe
 
 ## Local choices and pairing
 
-The Sub can disable Tasks on the Tasks page. This choice remains on that device and stops task actions and attachment transfers. The existing locally consented Hardcore override can keep Tasks enabled. Re-enabling Tasks skips occurrences that expired during the disabled period rather than assessing them retroactively. Unpairing revokes further actions and transfers for that relationship; a new pairing has a separate identity and history.
+The Sub can disable Tasks on the Tasks page. This choice remains on that device and stops task actions and attachment transfers. Hardcore respects this choice. Re-enabling Tasks skips occurrences that expired during the disabled period rather than assessing them retroactively. Unpairing revokes further actions and transfers for that relationship; a new pairing has a separate identity and history.
 
 Tasks and proof media remain on the paired devices. Both peers must support the Tasks capability; an older peer continues its existing sync without receiving task data. Offline actions are retained and acknowledged after reconnect. The Dom receives one private notification for each completion request when Android notification permission is available; task instructions and proof are omitted from notification copy.
 

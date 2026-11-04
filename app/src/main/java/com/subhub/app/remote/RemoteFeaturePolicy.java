@@ -13,7 +13,6 @@ import java.util.List;
 public final class RemoteFeaturePolicy {
     private RemoteFeaturePolicy() { }
     public static void requireAllowed(Context context, JSONObject proposed, JSONObject previous) throws Exception {
-        if (SubFeaturePolicy.hardcoreOverride(context)) return;
         JSONObject sections = proposed.getJSONObject("contract").getJSONObject("sections");
         for (String feature : SubFeaturePolicy.FEATURES) {
             if (SubFeaturePolicy.chosen(context, feature)) continue;

@@ -26,8 +26,6 @@ public final class SubFeatureControls {
         parent.setPadding(0, PersonUi.dp(activity, 10), 0, 0);
         android.widget.TextView heading = PersonUi.text(parent, activity.getString(R.string.sub_features_title), true);
         heading.setPadding(0, 0, 0, PersonUi.dp(activity, 4));
-        if (SubFeaturePolicy.hardcoreOverride(activity))
-            PersonUi.text(parent, activity.getString(R.string.sub_features_hardcore), false);
         com.subhub.app.people.FeatureConsentView grid = new com.subhub.app.people.FeatureConsentView(activity);
         parent.addView(grid, new LinearLayout.LayoutParams(-1, -2));
         for (int index = 0; index < KEYS.length; index++) {
