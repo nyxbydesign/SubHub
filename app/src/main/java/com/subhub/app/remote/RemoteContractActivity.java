@@ -94,7 +94,7 @@ public final class RemoteContractActivity extends RemotePage {
         target();text(body,observed(RemoteProtocol.Stream.BASELINE),false);
         RemoteStore.Command latest=feature.store.latestCommand(peer.identity,peer.generation);
         if(latest!=null)text(body,commandState(latest),false);
-        if(!mayEdit()){text(body,getString(R.string.remote_read_only),false);return;}
+        if(!mayEdit())return;
         try {
             if("apps".equals(section)||"duration".equals(section))text(body,draft.getJSONObject("contract").getString("name"),false);
             else {
