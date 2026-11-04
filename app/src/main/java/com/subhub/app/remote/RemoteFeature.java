@@ -731,10 +731,13 @@ public final class RemoteFeature {
             }
             @Override public int sessionControlVersion() { return RemoteSessionRuntime.applicationEnabled() ? RemoteSessionCommands.VERSION : 0; }
             @Override public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                sessionControl(connection,peer,deadline,true);
+            }
+            @Override public void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean startsReady) throws Exception {
                 requireActive(peer);
                 if (!RemoteSessionRuntime.applicationEnabled()) throw new UnsupportedOperationException("Session control unavailable");
                 RemoteSessionControlCoordinator coordinator = controlCoordinator(active);
-                new RemoteSessionControlPeer(context, store, active.localIdentity(), coordinator::receiverState).exchange(connection, peer, deadline);
+                new RemoteSessionControlPeer(context, store, active.localIdentity(), coordinator::receiverState).exchange(connection, peer, deadline,startsReady);
             }
             @Override public int journalVersion() { return 1; }
             @Override public int journalTitlesVersion() { return 1; }

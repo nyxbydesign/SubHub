@@ -35,9 +35,12 @@ final class RemoteSessionControlPeer {
     }
 
     void exchange(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+        exchange(connection,peer,deadline,true);
+    }
+    void exchange(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean startsReady) throws Exception {
         outsideLocks(); require(connection, peer);
         if (peer.localRole == RemoteProtocol.Role.DOM) dom(connection, peer, deadline);
-        else sub(connection, peer, deadline);
+        else sub(connection, peer, deadline,startsReady);
     }
     private void dom(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
         List<RemoteSessionRuntime.Record> pending;
@@ -89,7 +92,7 @@ final class RemoteSessionControlPeer {
         send(connection, peer, frame("session_control_complete", peer).put("batchDigest", digest)
                 .put("resultDigest", finalFrame.getString("resultDigest")), deadline, 1024);
     }
-    private void sub(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+    private void sub(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean startsReady) throws Exception {
         JSONObject commandFrame = requireFrame(read(connection, peer, deadline, COMMAND_BYTES), "session_control_commands", peer,
                 "batchDigest", "commands", "acks", "reconcile");
         JSONArray commands = commandFrame.getJSONArray("commands");
@@ -142,6 +145,18 @@ final class RemoteSessionControlPeer {
         JSONArray results = new JSONArray();
         for (RemoteSessionCommands.Request request : requests) {
             remaining(deadline); require(connection, peer);
+            if(!startsReady && request.action==RemoteSessionCommands.Action.START && !queryIds.contains(request.id)) {
+                RemoteSessionClock.Sample now=RemoteSessionClock.observe(context);
+                synchronized(store) {
+                    requireCurrent(peer);
+                    RemoteSessionRuntime.Record current=store.checkSessionControlClock(peer.identity,peer.generation,
+                            RemoteSessionRuntime.Direction.INCOMING,request.id,now);
+                    // Preserve the original durable receipt and lifetime; Stop and prepared effects still advance.
+                    if(current.result.state==RemoteSessionCommands.State.ACKNOWLEDGED) {
+                        results.put(current.result.json());continue;
+                    }
+                }
+            }
             results.put((queryIds.contains(request.id)
                     ? nativeController.reconcile(peer.identity, peer.generation, request.id)
                     : nativeController.advance(peer.identity, peer.generation, request.id)).result.json());

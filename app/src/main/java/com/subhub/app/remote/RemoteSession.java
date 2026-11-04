@@ -24,6 +24,9 @@ public final class RemoteSession {
         default void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
             throw new UnsupportedOperationException("Session control unavailable");
         }
+        default void sessionControl(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline, boolean startsReady) throws Exception {
+            if(startsReady)sessionControl(connection,peer,deadline);
+        }
         default int profileVersion() { return 0; }
         default int profileDetailsVersion() { return 0; }
         default int profileRoleVersion() { return 0; }
@@ -271,7 +274,7 @@ public final class RemoteSession {
                 boolean remoteReady=true,localReady=true;
                 if((outgoing&NEEDS_ASSETS)!=0)remoteReady=pushAssets(connection,peer,deadline,true);
                 if((incoming&NEEDS_ASSETS)!=0)localReady=pullAssets(connection,peer,deadline,true);
-                if (controls&&remoteReady&&localReady) { checkActive(peer); hooks.sessionControl(connection,peer,deadline); }
+                if (controls) { checkActive(peer); hooks.sessionControl(connection,peer,deadline,remoteReady&&localReady); }
                 if((outgoing&BULK_PENDING)!=0)pushState(connection,peer,deadline,activity,1);
                 if((incoming&BULK_PENDING)!=0)pullState(connection,peer,deadline,activity,1);
             } else {
@@ -292,7 +295,7 @@ public final class RemoteSession {
                 boolean localReady=true,remoteReady=true;
                 if((incoming&NEEDS_ASSETS)!=0)localReady=pullAssets(connection,peer,deadline,true);
                 if((outgoing&NEEDS_ASSETS)!=0)remoteReady=pushAssets(connection,peer,deadline,true);
-                if (controls&&remoteReady&&localReady) { checkActive(peer); hooks.sessionControl(connection,peer,deadline); }
+                if (controls) { checkActive(peer); hooks.sessionControl(connection,peer,deadline,remoteReady&&localReady); }
                 if((incoming&BULK_PENDING)!=0)pullState(connection,peer,deadline,activity,1);
                 if((outgoing&BULK_PENDING)!=0)pushState(connection,peer,deadline,activity,1);
             } else {

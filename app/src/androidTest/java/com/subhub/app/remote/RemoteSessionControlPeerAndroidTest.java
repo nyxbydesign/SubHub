@@ -45,6 +45,7 @@ public final class RemoteSessionControlPeerAndroidTest {
     private ExecutorService server;
     private SharedPreferences crashFixture;
     private boolean crashRecovery, crashRecovered;
+    private boolean startsReady=true;
     private final List<String> transcript = Collections.synchronizedList(new ArrayList<>());
 
     @Before public void setup() throws Exception {
@@ -149,7 +150,7 @@ public final class RemoteSessionControlPeerAndroidTest {
         Outcome outcome = new Outcome(); long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         Future<?> incoming = server.submit(() -> {
             try (PeerTransport.Connection connection = st.accept(10000)) {
-                try { subWire.exchange(new Observe(connection, serverFilter), sub.peer(dt.localIdentity(), generation), deadline); }
+                try { subWire.exchange(new Observe(connection, serverFilter), sub.peer(dt.localIdentity(), generation), deadline,startsReady); }
                 catch (Exception failure) { outcome.server = failure; }
                 outcome.directServer = connection.isDirect();
             } catch (Exception failure) { outcome.server = failure; }
@@ -191,6 +192,70 @@ public final class RemoteSessionControlPeerAndroidTest {
         public void setReadTimeoutMillis(long value) { unlocked(); wrapped.setReadTimeoutMillis(value); }
         public boolean isDirect() { unlocked(); return wrapped.isDirect(); }
         public void close() throws IOException { wrapped.close(); }
+    }
+
+    @Test public void incompleteStartAssetsDoNotBlockAuthenticatedStop() throws Exception {
+        startsReady=false;
+        new AppModeManager(subContext).setArmed(true);Request request=queueStop();
+        exchange(null,null).success();
+        assertEquals(State.APPLIED,outgoing(request).result.state);
+        assertFalse(outgoing(request).result.proof.active);
+        assertEquals("",stats.activeSessionIdentity());assertEquals(1,stats.getSessionHistory().size());
+    }
+
+    @Test public void incompleteStartAssetsPreserveAcknowledgedReceiptThenApplyOriginalRequest() throws Exception {
+        java.lang.reflect.Field binding=com.subhub.app.service.ScreenshotAccessibilityService.class.getDeclaredField("running");
+        binding.setAccessible(true);boolean original=binding.getBoolean(null);
+        assertFalse("A pre-existing Accessibility binding is not owned by this fixture",original);
+        try {
+            binding.setBoolean(null,true);
+            configureReadyStart();Request request=queueStart();startsReady=false;
+            exchange(null,null).success();
+            RemoteSessionRuntime.Record first=sub.sessionControl(dt.localIdentity(),generation,RemoteSessionRuntime.Direction.INCOMING,request.id);
+            assertEquals(State.ACKNOWLEDGED,first.result.state);assertEquals(State.ACKNOWLEDGED,outgoing(request).result.state);
+            assertNull(nativeSession.marker());assertNull(sub.nativeSessionPreparation(dt.localIdentity(),generation,request.id));
+            assertFalse(new AppModeManager(subContext).isArmed());assertEquals("",stats.activeSessionIdentity());
+            exchange(null,null).success();
+            RemoteSessionRuntime.Record deferred=sub.sessionControl(dt.localIdentity(),generation,RemoteSessionRuntime.Direction.INCOMING,request.id);
+            assertEquals(RemoteProtocol.canonical(first.result.json()),RemoteProtocol.canonical(deferred.result.json()));
+            assertEquals(first.lifetime.receivedWall,deferred.lifetime.receivedWall);
+            assertEquals(first.lifetime.deadlineElapsed,deferred.lifetime.deadlineElapsed);
+            startsReady=true;exchange(null,null).success();
+            assertEquals(State.APPLIED,outgoing(request).result.state);assertTrue(outgoing(request).result.proof.active);
+            assertEquals(request.digest(),outgoing(request).request.digest());assertEquals(request.expiresAt,outgoing(request).request.expiresAt);
+            assertNotNull(nativeSession.marker());assertFalse(stats.activeSessionIdentity().isEmpty());
+        } finally { binding.setBoolean(null,original); }
+    }
+
+    private void configureReadyStart() throws Exception {
+        sub.putMetadata(dt.localIdentity(),generation,"applied_revision","7");
+        subContext.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit()
+                .putBoolean(com.subhub.app.security.HardcoreModeManager.KEY_REQUESTED,true)
+                .putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,com.subhub.app.security.DeviceRolePreferences.Mode.SUB_ONLY.name()).commit();
+        RemoteSessionClock.Sample now=RemoteSessionClock.observe(subContext);
+        subContext.getSharedPreferences(SubFeaturePolicy.STORE,0).edit().putBoolean("hardcore_locally_consented",true)
+                .putString("hardcore_start_accepted_review","synthetic_wire_review")
+                .putString("hardcore_start_proof_v1",RemoteProtocol.canonical(new RemoteSessionRuntime.HardcoreConsent(dt.localIdentity(),st.localIdentity(),generation,now.wall).json())).commit();
+        synchronized(SubFeaturePolicy.LOCK) {
+            sub.getWritableDatabase().beginTransaction();
+            try { sub.acknowledgeHardcoreStartReview(dt.localIdentity(),generation,"synthetic_wire_review");sub.getWritableDatabase().setTransactionSuccessful(); }
+            finally { sub.getWritableDatabase().endTransaction(); }
+        }
+        RemoteSessionReadiness.Source source=new RemoteSessionReadiness.Source() {
+            public RemoteSessionClock.Sample clock(){return RemoteSessionClock.observe(subContext);}
+            public int sdk(){return 35;}public boolean adminActive(){return true;}
+            public boolean accessibilityEnabled(){return true;}public boolean accessibilityBound(){return true;}
+            public com.subhub.app.settings.CaptureMethod captureMethod(){return com.subhub.app.settings.CaptureMethod.APP_MODE;}
+        };
+        subWire=new RemoteSessionControlPeer(subContext,sub,st.localIdentity(),this::state,
+                new RemoteSessionNativeController(subContext,sub,st.localIdentity(),source));
+    }
+    private Request queueStart() throws Exception {
+        RemoteSessionClock.Sample now=RemoteSessionClock.observe(subContext);
+        Request request=Request.start(UUID.randomUUID().toString(),dt.localIdentity(),st.localIdentity(),generation,
+                dom.allocateSessionSequence(st.localIdentity(),generation),7,now.wall,now.wall+120000,
+                RuntimeSessionIdentity.observe(subContext,now).idleFence,new Duration(-1,3600000,86400000,false));
+        dom.rememberSessionControl(st.localIdentity(),generation,RemoteSessionRuntime.Direction.OUTGOING,request,now);return request;
     }
 
     @Test public void directAuthenticatedStopPersistsNativeProofAndSecretFreeState() throws Exception {
@@ -545,11 +610,14 @@ public final class RemoteSessionControlPeerAndroidTest {
     @Test public void missingCapabilityAndForeignAuthenticatedPeerCannotStartExchange() throws Exception {
         Probe probe = new Probe(); RemoteStore.Peer peer = dom.peer(st.localIdentity(), generation);
         dom.putMetadata(peer.identity, generation, "session_control_version", "0");
-        assertThrows(SecurityException.class, () -> domWire.exchange(probe, peer, System.nanoTime() + TimeUnit.SECONDS.toNanos(1)));
+        assertThrows(SecurityException.class, () -> domWire.exchange(probe, peer, System.nanoTime() + TimeUnit.SECONDS.toNanos(1),false));
         assertEquals(1, probe.calls); probe.calls = 0; probe.identity = dt.localIdentity();
         dom.putMetadata(peer.identity, generation, "session_control_version", "1");
-        assertThrows(SecurityException.class, () -> domWire.exchange(probe, peer, System.nanoTime() + TimeUnit.SECONDS.toNanos(1)));
+        assertThrows(SecurityException.class, () -> domWire.exchange(probe, peer, System.nanoTime() + TimeUnit.SECONDS.toNanos(1),false));
         assertEquals(1, probe.calls);
+        probe.calls=0;probe.identity=st.localIdentity();dom.revoke(peer.identity,generation);
+        assertThrows(SecurityException.class,()->domWire.exchange(probe,peer,System.nanoTime()+TimeUnit.SECONDS.toNanos(1),false));
+        assertEquals(1,probe.calls);
     }
     @Test public void noTransportAccessorRunsUnderAuthorityLocks() throws Exception {
         Probe probe = new Probe(); RemoteStore.Peer peer = dom.peer(st.localIdentity(), generation);
