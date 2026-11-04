@@ -491,7 +491,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             } else if (assigned) {
                 LinearLayout linked = OverviewUi.card(relationship);
                 Runnable open = () -> { if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class)); };
-                OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open);
+                OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open, true);
                 // Formal delivery has already selected an identity-bound source; never cross-feed a legacy profile.
                 ProfileData profile = subFormal ? dom.profile
                         : dom != null && dom.profile != null ? dom.profile : person.contractDom;

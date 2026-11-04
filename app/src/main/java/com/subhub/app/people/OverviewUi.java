@@ -44,11 +44,17 @@ public final class OverviewUi {
     }
 
     public static void heading(LinearLayout parent, int title, int actionTitle, Runnable action) {
+        heading(parent, title, actionTitle, action, false);
+    }
+
+    public static void heading(LinearLayout parent, int title, int actionTitle, Runnable action, boolean alignTitleTop) {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context); row.setGravity(Gravity.CENTER_VERTICAL);
         TextView label = text(context, context.getString(title), 16, true);
         ViewCompat.setAccessibilityHeading(label, true);
-        row.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams titleSize = new LinearLayout.LayoutParams(0, -2, 1);
+        if (alignTitleTop) titleSize.gravity = Gravity.TOP;
+        row.addView(label, titleSize);
         if (action != null) {
             TextView link = text(context, context.getString(actionTitle), 12, false);
             link.setTextColor(context.getColor(R.color.accent_text));
@@ -57,10 +63,23 @@ public final class OverviewUi {
             arrow.setTint(context.getColor(R.color.accent_text));
             link.setCompoundDrawablesRelative(null, null, arrow, null);
             link.setCompoundDrawablePadding(dp(context, 4));
-            link.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); link.setMinHeight(dp(context, 48));
-            link.setMinWidth(dp(context, 48));
+            link.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            View actionView = link;
+            if (alignTitleTop) {
+                // Keep text and chevron on their natural line inside the full touch target.
+                LinearLayout target = new LinearLayout(context); target.setOrientation(LinearLayout.VERTICAL);
+                target.setGravity(Gravity.TOP | Gravity.END);
+                target.setMinimumHeight(dp(context, 48)); target.setMinimumWidth(dp(context, 48));
+                target.addView(link, new LinearLayout.LayoutParams(-2, -2));
+                target.setBaselineAlignedChildIndex(0);
+                target.setContentDescription(link.getText());
+                link.setFocusable(false); link.setClickable(false);
+                link.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                actionView = target;
+            } else { link.setMinHeight(dp(context, 48)); link.setMinWidth(dp(context, 48)); }
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-2, -2);
-            size.setMarginStart(dp(context, 10)); row.addView(link, size); click(link, action);
+            if (alignTitleTop) size.gravity = Gravity.TOP;
+            size.setMarginStart(dp(context, 10)); row.addView(actionView, size); click(actionView, action);
         } else row.setMinimumHeight(dp(context, 28));
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }
