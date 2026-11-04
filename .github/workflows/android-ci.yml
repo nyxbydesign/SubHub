@@ -1,8 +1,7 @@
 name: Android CI
 
 on:
-  push:
-    branches: [master, dev]
+  workflow_dispatch:
   pull_request:
     branches: [master, dev]
 
@@ -20,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -31,10 +31,21 @@ jobs:
         env:
           RELEASE_NOTES_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy
+          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace scripts.test_verify_canonical_ci
           python3 scripts/generate_release_notes.py --tag "$RELEASE_NOTES_REF" --check-only
       - name: Test, lint, and build universal APK
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug
+      - name: Record exact-source canonical qualification
+        env:
+          QUALIFIED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/verify_canonical_ci.py record --output build/reports/qualification.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SubHub-canonical-ci
+          path: build/reports/qualification.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 90
       - name: Stage universal APK
         shell: bash
         run: |

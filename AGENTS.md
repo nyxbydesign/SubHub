@@ -89,9 +89,18 @@ its draw identity, expected pixel and observed pixel before asserting.
 After dismissing a native authentication dialog, await the underlying Activity's window focus
 before interacting with it again. Main-thread idleness does not establish dialog-window removal.
 
-Before merging or tagging a release, run:
+Before merging, canonical Android CI must pass for the exact source commit. It runs
+`./gradlew testDebugUnitTest lintDebug assembleDebug` once on the pull-request head;
+a manual workflow run can qualify that same source when necessary. Use focused local
+checks for changed contracts and reuse unchanged passing evidence instead of repeating
+the full suite locally or on an integration-branch push.
 
-`./gradlew testDebugUnitTest lintDebug assembleDebug`
+Public releases require that latest exact-source canonical run and its matching source-tree,
+run-attempt and default-profile receipt. The release job then runs release-variant lint and
+builds/signs the APKs without repeating debug/unit/tooling verification. Keep the tested
+commit intact when promoting it; a different merge commit needs its own qualification.
+Missing, expired, pending or failed qualification blocks publication. Private candidate
+flags change the build configuration, so those builds retain their own full checks.
 
 The universal APK is `app/build/outputs/apk/debug/app-universal-debug.apk`. It includes every ABI supported by the project; per-ABI APKs are emitted alongside it for smaller direct installs.
 
@@ -308,7 +317,7 @@ At a live renderer callback, verify actual Surface-use and drawing-lease counts.
 2. Verify the command above and review the staged diff for secrets or unrelated files.
 3. Push the tested commit to `master`.
 4. Create and push the exact version tag, for example `git tag -a v0.2.0 -m "SubHub 0.2.0"` followed by `git push origin v0.2.0`.
-5. `.github/workflows/release.yml` validates tag/version parity, tests and lints the app, signs all APKs, and stages the GitHub release as a draft while uploading each universal/per-ABI artifact and checksum separately. It must verify the complete asset set before publishing because immutable releases reject later uploads and permanently consume a tag even if deleted.
+5. `.github/workflows/release.yml` validates tag/version parity and exact-source canonical CI, checks the release variant, signs all APKs, and stages the GitHub release as a draft while uploading each universal/per-ABI artifact and checksum separately. It must verify the complete asset set before publishing because immutable releases reject later uploads and permanently consume a tag even if deleted.
 6. `scripts/generate_release_notes.py` categorizes every commit since the previous tag, places those changes in both the GitHub release and updater manifest, and keeps APK-selection guidance in its own release section. The release fails instead of publishing an empty changelog when a commit lacks a supported type prefix.
 
 Release signing is supplied only through the repository Actions secrets named in the workflow. Do not weaken signing or manufacture a different key for a later release; Android updates require the same key.

@@ -112,7 +112,7 @@ class ReleaseCandidatePolicyTest(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / '.github/workflows/release.yml').read_text(encoding='utf-8')
         version = source.split('          if [[ "$DEV_BUILD" == "true" ]]; then\n', 1)[1].split('      - name: Resolve publication identity', 1)[0]
         version = textwrap.dedent('          if [[ "$DEV_BUILD" == "true" ]]; then\n' + version)
-        build = source.split('          build_args=(', 1)[1].split('          ./gradlew', 1)[0]
+        build = source.split('          build_args=(', 1)[1].split('          if [[ "$PUBLISH_RELEASE" == "true" ]]; then', 1)[0]
         build = textwrap.dedent('          build_args=(' + build)
         for dev, publish, replacement, expected_ci in (
                 (True, True, False, True), (False, True, False, True),
