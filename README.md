@@ -78,6 +78,8 @@ Three detection levels—Low, Medium, and High—offer Balanced Coverage, More C
 
 Limits shows today's recorded app usage, a combined daily budget, and separate allowances beside each included app. Use either budget or both; the smaller remaining allowance applies. Usage resets at local midnight, and exhausted apps return to Home. Changing the included list preserves the day's recorded combined usage.
 
+Usage counts only while an included app has a visible, focused application window and the phone is awake and unlocked. A continuous five-second visit qualifies before any time is charged; once it qualifies, those first five seconds count too. Shorter visits are discarded. Losing focus, hiding the app, locking the phone, or a stale observation gap starts a new qualification period rather than charging the gap.
+
 <p align="center">
   <img src="docs/screenshots/ui-map/page-map/02-limits.png" alt="Individual and shared daily app limits" width="42%" />
 </p>
@@ -131,6 +133,8 @@ Sub Contract is read-only. It groups the Dom profile, About and authorized share
 Choose a person to configure their apps, feature settings, artwork, and next-session duration. Start and End act on that selected person where authorized. Stats opens usage summaries and history directly. A Sub can read their applied contract and statistics, start an eligible session, settle Tribute, and use allowed pause or safety controls.
 
 Activity records selected-app opens, triggered Tributes, and reached app limits. Notifications open the authenticated Activity feed. Recorded events queue while the paired device is offline; delivery requires the peers to reconnect. Triggered Tributes describe assessed amounts, not successful payments. App-open and app-limit entries require the live Accessibility service on Android 11 or later. Older Dom devices can pair and receive these entries; Tribute entries depend on the source feature that assesses them.
+
+Settings → Notifications controls optional alerts on this device, separately for each supported role. Dom offers Activity, Task reviews, Contract changes, Session starts and Session stops; Sub offers Contract changes, Session starts and Session stops. These local choices are independent of shared contract settings. Turning off a type cancels its existing alerts without disabling other types or Android's required ongoing service notifications. Android notification permission and channel settings still apply.
 
 Choose Dom only, Sub only, or Both for this installation. Dom-only devices skip local protection setup. Unlocking a controller session is separate from the device's capabilities. A paired Sub receives settings from its assigned Dom; private payment credentials, Android permissions, and local authentication stay on their device.
 

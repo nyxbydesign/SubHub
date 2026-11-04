@@ -45,7 +45,7 @@ Open the person's profile to adjust session duration directly, or its Contract t
 
 Artwork transfers as bounded, verified file content. Existing PINs and manual authenticator secrets, payment credentials, and local file-access grants stay on their originating phone. The separate relationship authenticator credential is shared only with the approved Dom, stored encrypted, and excluded from ordinary synchronization records. Wallet settings can be configured remotely, but pairing does not transfer payment authentication or initiate payments.
 
-Compatible devices expose Start and Stop beside the Sub profile’s applied service duration. Start requires current Sub-approved Hardcore control consent and a ready App Mode service; it uses the already applied configuration and never applies an unsaved draft. Stop targets the specific active session last observed on that Sub and remains available after Hardcore is turned off. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued Stop cannot end a later session. Older peers retain only their supported controls. Remote Pause is unavailable.
+Compatible devices expose Start and Stop beside the Sub profile’s applied service duration. Start requires current Sub-approved Hardcore control consent and a ready App Mode service; it uses the already applied configuration and never applies an unsaved draft. A new Start waits until the required configuration artwork has arrived and been verified. Stop remains available for the specific active session last observed on that Sub, including after Hardcore is turned off; it does not require new artwork. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued Stop cannot end a later session. Older peers retain only their supported controls. Remote Pause is unavailable.
 
 ## Activity
 
@@ -57,11 +57,13 @@ Profiles show recent events for the selected person. This device's history stays
 
 ## Offline and background behavior
 
-Changes remain in a local outbox while the peer is unavailable. Sync sends bounded batches and resumes from acknowledged updates; interrupted transfers and duplicate deliveries can be retried safely. Pending changes need the original installation's data to survive.
+Changes remain in a local outbox while the peer is unavailable. Each stream resumes from its durably acknowledged cursor and queues only changed records. An unchanged runtime sample does not resend the same state just to update its timestamp; authenticated stream-head confirmation supplies freshness. Interrupted transfers can retry content whose receipt was lost without applying it twice. Pending changes need the original installation's data to survive.
+
+Compatible devices can reuse unchanged feature sections from a document retained for the same peer and pairing generation. SHA-256 references replace section content only when the encoded batch is smaller; idle synchronization sends no section manifest. The receiver reconstructs the complete original batch and verifies its digest before acknowledging it. A missing or stale section basis permits one bounded request for that exact full batch, still requiring its original generation, stream, range and digest. Configuration commands retain their identity and revision checks. Artwork is independently content-addressed, so verified files already present are not requested again.
 
 Keep both apps open for the fingerprint reviews and large transfers. Pending pairing can continue through its user-started foreground service within the original operation's bounds. Android may stop the service; it does not automatically restart after process loss or reboot. Open Add Sub again to check the outgoing request and automatically resume eligible work or receive a fresh code. This is best effort and does not guarantee progress during Doze, under battery restrictions, or while either phone is offline.
 
-With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. One open app and one backgrounded app is best effort. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
+With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. Each worker opens a bounded listening and connection window of up to 55 seconds, then releases its temporary endpoint when no other work owns it. One open app and one backgrounded app is best effort; the phones' background windows need not overlap. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
 
 ## Unpair, reinstall, and recovery
 
