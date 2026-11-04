@@ -89,7 +89,7 @@ public final class SubOnboardingFlowTest {
                 "without in-app proof", "acceptance is still required");
     }
 
-    @Test public void optionalHardcoreExplainsOverrideReleaseAndSeparatePaymentConsent() {
+    @Test public void optionalHardcoreRespectsFeatureChoicesAndExplainsReleaseAndSeparatePaymentConsent() {
         OnboardingPage hardcore = scene(Scene.HARDCORE);
         assertEquals(Kind.STORY, hardcore.kind);
         assertEquals(Action.HARDCORE, hardcore.action);
@@ -97,11 +97,11 @@ public final class SubOnboardingFlowTest {
         assertTrue(label, label.contains("settings"));
         assertFalse(label, label.contains("enable") || label.contains("turn on"));
         contains(text(hardcore), "optional", "opt in locally", "accessibility", "device admin",
-                "does not start protection", "local consent", "overrides allowed features",
-                "turning it off", "restores your choices", "deactivation", "separate consent",
+                "does not start protection", "respects your allowed features",
+                "turning it off", "releases the guard", "deactivation", "separate consent",
                 "if already enabled", "active service lock", "within your caps");
         contains(text(page("sub_allowed_features")), "disable", "locally", "queued updates",
-                "only after you enable it locally");
+                "cannot run", "accept changes from your dom");
     }
 
     @Test public void onlyExplicitPairingAndHardcoreActionsLeaveTheWalkthrough() {
