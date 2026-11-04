@@ -117,7 +117,7 @@ public final class TaskRuntime {
                     if (engine.cancelled(effect.action.taskId, effect.action.date)) { store.done(target.scope, effect); continue; }
                     requireActive(target);
                     if ("notification".equals(effect.kind)) {
-                        if (target.peer != null && target.peer.localRole != RemoteProtocol.Role.DOM) { store.done(target.scope, effect); continue; }
+                        if (target.peer == null || target.peer.localRole != RemoteProtocol.Role.DOM) { store.done(target.scope, effect); continue; }
                         if (!notifyDom(target, effect)) continue;
                     } else {
                         if (target.peer != null && target.peer.localRole != RemoteProtocol.Role.SUB) { store.done(target.scope, effect); continue; }
@@ -148,21 +148,34 @@ public final class TaskRuntime {
                 || SubFeaturePolicy.allowed(context, "tasks");
     }
     private boolean notifyDom(TaskRepository.Target target, TaskStore.Effect effect) {
-        if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false;
+        synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
+            return notifyDomLocked(target, effect);
+        }
+    }
+    private boolean notifyDomLocked(TaskRepository.Target target, TaskStore.Effect effect) {
+        if (!com.subhub.app.notifications.NotificationPreferences.enabled(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.TASK_REVIEW)) return true;
+        if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return true;
         NotificationManagerCompat notifications = NotificationManagerCompat.from(context);
-        if (!notifications.areNotificationsEnabled()) return false;
+        if (!notifications.areNotificationsEnabled()) return true;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel("tasks", "Tasks", NotificationManager.IMPORTANCE_DEFAULT));
+        if (manager.getNotificationChannel("tasks").getImportance() == NotificationManager.IMPORTANCE_NONE) return true;
         PersonId person = target.peer == null ? PersonId.LOCAL : RemotePersonRepository.id(target.peer);
         Intent intent = new Intent(context, TasksActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, person.value());
         intent.setData(android.net.Uri.parse("subhub://tasks/" + effect.action.id));
         PendingIntent pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        notifications.notify("tasks:" + target.scope + ":" + effect.id, 1,
-                new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_nav_contract)
-                        .setContentTitle(context.getString(R.string.tasks_completion_notification))
-                        .setContentText(context.getString(R.string.tasks_review_notification))
-                        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).setAutoCancel(true)
-                        .setContentIntent(pending).build());
+        com.subhub.app.notifications.OptionalNotificationDispatch.post(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.TASK_REVIEW,
+                "tasks:" + target.scope + ":" + effect.id, 1,
+                com.subhub.app.notifications.OptionalNotificationPresentation.present(context,
+                        new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_nav_contract)
+                                .setContentTitle(context.getString(R.string.tasks_completion_notification))
+                                .setContentText(context.getString(R.string.tasks_review_notification))
+                                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).setAutoCancel(true)
+                                .setContentIntent(pending).build()));
         return true;
     }
 }

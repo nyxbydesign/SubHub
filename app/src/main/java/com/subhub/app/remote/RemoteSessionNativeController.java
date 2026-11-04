@@ -102,6 +102,8 @@ final class RemoteSessionNativeController {
             if (effects.capture != null) ScreenCaptureService.requestStop(effects.capture);
             if (effects.scope != null) SessionExpiryEffects.post(context, effects.scope, null, false, false);
         }
+        if (result.result.state == State.APPLIED)
+            RemoteAppliedNotifications.nativeSession(context, store, peer, generation, result);
         return result;
     }
 

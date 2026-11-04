@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_category">Notifications</string>
+    <string name="notification_activity">Activity</string>
+    <string name="notification_task_reviews">Task reviews</string>
+    <string name="notification_contract_changes">Contract changes</string>
+    <string name="notification_session_starts">Session starts</string>
+    <string name="notification_session_stops">Session stops</string>
+    <string name="notification_relationship_channel">Contract and session changes</string>
+    <string name="notification_contract_changed">Contract changed</string>
+    <string name="notification_session_started">Session started</string>
+    <string name="notification_session_stopped">Session stopped</string>
+</resources>

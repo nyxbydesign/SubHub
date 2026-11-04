@@ -22,6 +22,9 @@ public final class ActivityNotifications {
     private ActivityNotifications() {}
 
     public static boolean enabled(Context context) {
+        if (!com.subhub.app.notifications.NotificationPreferences.enabled(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY)) return false;
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) return false;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -32,6 +35,11 @@ public final class ActivityNotifications {
 
     /** Called only after the receiver durably accepts and revalidates a new eligible event. */
     public static boolean show(Context context, ActivityEntry entry) {
+        synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
+            return showLocked(context, entry);
+        }
+    }
+    private static boolean showLocked(Context context, ActivityEntry entry) {
         if (!entry.unread || !com.subhub.app.security.DeviceRolePreferences.supportsDom(context) || !enabled(context)) return false;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return false;
@@ -54,13 +62,16 @@ public final class ActivityNotifications {
                 .setAutoCancel(true).setOnlyAlertOnce(true).setGroup(peerPrefix(entry.personId))
                 .setCategory(NotificationCompat.CATEGORY_SOCIAL).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicVersion.build());
-        try { manager.notify(tag(entry), ID, notification.build()); return true; }
-        catch (SecurityException denied) { return false; }
+        return com.subhub.app.notifications.OptionalNotificationDispatch.post(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY, tag(entry), ID,
+                com.subhub.app.notifications.OptionalNotificationPresentation.present(context, notification.build()));
     }
 
     public static void cancel(Context context, ActivityEntry entry) {
-        NotificationManager manager = context.getSystemService(NotificationManager.class);
-        if (manager != null) manager.cancel(tag(entry), ID);
+        com.subhub.app.notifications.OptionalNotificationDispatch.cancelExact(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY, tag(entry), ID);
     }
 
     public static void cancelPeer(Context context, PersonId person) { cancelPrefix(context, peerPrefix(person)); }

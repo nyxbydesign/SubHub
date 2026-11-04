@@ -100,7 +100,10 @@ public final class RemoteConfigurationWriter {
                         if(!committer.commit(entry.getKey(),editor))throw new IOException("Could not save configuration");
                     }
                     store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.APPLIED,doc,"");
-                    journal.delete();return true;
+                    journal.delete();
+                    if (!prior.isEmpty()) RemoteAppliedNotifications.configuration(context, current,
+                            command.revision, prior, doc);
+                    return true;
                 } catch(Exception failure) {
                     // A database commit can succeed before a later observer fails. Recovery checks its receipt.
                     recover();

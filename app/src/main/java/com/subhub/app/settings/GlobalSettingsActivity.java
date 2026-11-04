@@ -42,7 +42,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private DeviceRoleView role;
-    private LinearLayout privacy, permissions, localPermissions;
+    private LinearLayout privacy, permissions, localPermissions, notifications;
     private View permissionsHeading;
     private HardcoreModeManager hardcore;
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
@@ -121,6 +121,10 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         heading(body, R.string.device_settings_privacy, "privacy");
         privacy = PersonUi.card(body);
         com.subhub.app.privacy.PrivacyControls.bind(this, privacy, this::applyState);
+
+        heading(body, R.string.notification_category, "notifications");
+        notifications = PersonUi.card(body);
+        com.subhub.app.notifications.NotificationControls.bind(this, notifications);
 
         heading(body, R.string.device_settings_permissions, "permissions");
         permissionsHeading = body.findViewWithTag("settings:permissions");
@@ -263,6 +267,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
+        com.subhub.app.notifications.NotificationControls.bind(this, notifications);
         refreshConnection();
         boolean local = DeviceRolePreferences.supportsSub(this);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);

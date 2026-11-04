@@ -18,6 +18,7 @@ public final class RemoteTelemetry {
     public RemoteTelemetry(Context context,RemoteStore store){this.context=context.getApplicationContext();this.store=store;}
     public void prepare(RemoteStore.Peer peer) throws Exception {
         if(peer.localRole!=RemoteProtocol.Role.SUB)return;
+        RemoteLifecycleNotifications.publish(context, store, peer);
         StatsRepository repository=new StatsRepository(context);StatsSnapshot stats=repository.load();PenanceManager wallet=new PenanceManager(context);
         JSONObject totals=new JSONObject().put("schema",1).put("currency",wallet.getCurrency())
                 .put("protectedSeconds",stats.getTotalProtectedSeconds()).put("serviceSeconds",stats.getTotalSessionSeconds())

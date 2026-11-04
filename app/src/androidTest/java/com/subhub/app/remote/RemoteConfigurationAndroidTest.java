@@ -388,6 +388,38 @@ public class RemoteConfigurationAndroidTest {
         assertEquals("", RemoteProfiles.contractDom(context, sub, contracts).about);
     }
 
+    @Test public void optionalNotificationChoicesDoNotChangeAppliedWriterReceiptsOrReplay() throws Exception {
+        seed();
+        JSONObject previous = configuration(), changed = new JSONObject(previous.toString());
+        changed.getJSONObject("service").put("hidden", true);
+        sub.putMetadata(DOM, generation, "initial_configuration", previous.toString());
+        assertTrue(com.subhub.app.notifications.NotificationPreferences.set(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.SUB,
+                com.subhub.app.notifications.NotificationPreferences.Event.CONTRACT_CHANGED, false));
+        RemoteStore.Command command = deliver(changed);
+        assertTrue(writer().apply(sub.peer(DOM, generation), command, assets, Set.of()));
+        assertEquals(RemoteStore.CommandState.APPLIED, sub.command(DOM, generation, command.id).state);
+        String key = "SUB:CONTRACT_CHANGED:" + DOM + ":" + generation;
+        SharedPreferences receipts = context.getSharedPreferences("local_notification_receipts", 0);
+        assertEquals(command.revision, receipts.getLong(key, 0));
+        Map<String, ?> consumed = new HashMap<>(receipts.getAll());
+        assertTrue(com.subhub.app.notifications.NotificationPreferences.set(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.SUB,
+                com.subhub.app.notifications.NotificationPreferences.Event.CONTRACT_CHANGED, true));
+        assertTrue(writer().apply(sub.peer(DOM, generation), command, assets, Set.of()));
+        assertEquals(consumed, receipts.getAll());
+        assertEquals(RemoteStore.CommandState.APPLIED, sub.command(DOM, generation, command.id).state);
+    }
+
+    @Test public void incompletePriorNotificationDocumentCannotFailCommittedConfiguration() throws Exception {
+        seed();
+        main().edit().putString("remote_active_configuration", "{}").commit();
+        RemoteStore.Command command = deliver(configuration());
+        assertTrue(writer().apply(sub.peer(DOM, generation), command, assets, Set.of()));
+        assertEquals(RemoteStore.CommandState.APPLIED, sub.command(DOM, generation, command.id).state);
+        assertFalse(new File(root, "writer/journal.json").exists());
+    }
+
     static JSONObject configuration() throws Exception {
         JSONObject sections=new JSONObject();
         for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSettingCatalog.defaults(section));

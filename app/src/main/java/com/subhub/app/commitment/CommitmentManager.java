@@ -192,6 +192,16 @@ public final class CommitmentManager {
         String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
                 .getString("active_session_identity", "");
         SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
+        // Only the due-alarm path creates a local expiry event; manual End has its own receipt.
+        long notificationSequence = values.getLong("notification_pact_expiry_sequence", 0);
+        boolean notifyExpiry = dueOnly && SessionExpiryAlarms.validIdentity(identity)
+                && notificationSequence < Long.MAX_VALUE;
+        boolean remoteExpiry = false;
+        if (notifyExpiry) {
+            edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
+            com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
+            remoteExpiry = com.subhub.app.remote.RemoteLifecycleNotifications.appendExpiry(context, edit, identity, statistics, notificationSequence);
+        }
         appendNativeStop(edit);
         com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
         boolean saved = edit.commit();
@@ -202,6 +212,7 @@ public final class CommitmentManager {
             com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
         SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
         SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+        if (notifyExpiry) com.subhub.app.notifications.PeerNotifications.pactExpired(context, capture, notificationSequence, remoteExpiry);
         return true;
     }
 

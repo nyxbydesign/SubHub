@@ -48,7 +48,7 @@ public class SettingsGroupsAndroidTest {
             scenario.onActivity(a -> {
                 List<String> keys = new ArrayList<>();
                 collect(a.findViewById(android.R.id.content), keys);
-                assertEquals(Arrays.asList("settings:privacy", "settings:permissions", "settings:help"), keys);
+                assertEquals(Arrays.asList("settings:privacy", "settings:notifications", "settings:permissions", "settings:help"), keys);
                 assertTrue(a.findViewById(R.id.settings_connections_security).isShown());
                 assertNull(a.findViewById(R.id.settings_connection));
                 assertNull(a.findViewById(R.id.apps_card));

@@ -56,19 +56,31 @@ public final class RemoteEndCommands {
                     }
                 }
                 state.put("state",status);save(peer,id,state);publish(peer,id,state,now);
+                if ("ENDED".equals(status)) notifyEnded(peer, row.sequence);
                 }catch(JSONException|IllegalArgumentException|SecurityException invalid){store.putMetadata(peer.identity,peer.generation,"end_error","End request rejected");}
             }
         }
     }
     private void receiveResults(RemoteStore.Peer peer)throws Exception {
+        JSONObject expiry = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.RUNTIME, RemoteLifecycleNotifications.KEY);
+        if (expiry != null) RemoteLifecycleNotifications.accept(context, store, peer, expiry);
         for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME)) {
             if(row.deleted || !row.key.startsWith(PREFIX))continue;JSONObject result=new JSONObject(row.body);String id=RemoteProtocol.identifier(result.getString("id"));
             String existing=store.metadata(peer.identity,peer.generation,PREFIX+id,"");if(existing.isEmpty())continue;
             JSONObject state=new JSONObject(existing);String status=result.getString("state");
             if(RemoteProtocol.integer(result,"schema")!=1 || !row.key.equals(PREFIX+id) || !Set.of("RECEIVED","DISPATCHED","ENDED","REJECTED","EXPIRED").contains(status)
                 || !state.getJSONObject("request").getString("sessionIdentity").equals(result.getString("sessionIdentity")))throw new SecurityException("Invalid End result");
+            boolean newlyEnded = !terminal(state.optString("state")) && "ENDED".equals(status);
             if(!terminal(state.optString("state")) || state.optString("state").equals(status)){state.put("state",status);save(peer,id,state);}
+            if (newlyEnded) notifyEnded(peer, row.sequence);
         }
+    }
+    private void notifyEnded(RemoteStore.Peer peer, long sequence) {
+        com.subhub.app.notifications.PeerNotifications.applied(context,
+                peer.localRole == RemoteProtocol.Role.DOM ? com.subhub.app.notifications.NotificationPreferences.Role.DOM
+                        : com.subhub.app.notifications.NotificationPreferences.Role.SUB,
+                com.subhub.app.notifications.NotificationPreferences.Event.SESSION_STOPPED,
+                peer.identity + ":" + peer.generation + ":legacy-end", sequence);
     }
     public JSONObject latest(RemoteStore.Peer peer)throws JSONException {String id=store.metadata(peer.identity,peer.generation,"latest_end","");return id.isEmpty()?null:local(peer,id);}
     private JSONObject local(RemoteStore.Peer peer,String id)throws JSONException{return new JSONObject(store.metadata(peer.identity,peer.generation,PREFIX+id,"{}"));}
