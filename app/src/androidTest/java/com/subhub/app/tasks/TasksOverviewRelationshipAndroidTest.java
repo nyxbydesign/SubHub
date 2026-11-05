@@ -30,7 +30,6 @@ import com.subhub.app.relationships.RelationshipPanel;
 import com.subhub.app.relationships.RelationshipUi;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
-import com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
@@ -56,7 +55,8 @@ import org.junit.rules.RuleChain;
 
 /** Synthetic presentation fixtures create no link, approve no operation and launch no task editor. */
 public final class TasksOverviewRelationshipAndroidTest {
-    @Rule public final RuleChain fixtures = RuleChain.outerRule(new IntegrationFixture())
+    private final com.subhub.app.OwnedUiIntegrationFixture integration = new com.subhub.app.OwnedUiIntegrationFixture();
+    @Rule public final RuleChain fixtures = RuleChain.outerRule(integration)
             .around(new UiAutomationStateRule());
     private static final String JOURNAL = "subhub_relationship_presentation";
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
@@ -111,7 +111,8 @@ public final class TasksOverviewRelationshipAndroidTest {
         instrumentation.waitForIdleSync();
     }
 
-    @After public void restore() {
+    @After public void restore() throws Exception {
+        integration.drainReaders();
         try {
             if (monitor != null) instrumentation.removeMonitor(monitor);
         } finally {
@@ -193,7 +194,8 @@ public final class TasksOverviewRelationshipAndroidTest {
             CompletableFuture<RelationshipUi.Snapshot> failure = new CompletableFuture<>();
             failure.completeExceptionally(new RelationshipUi.Failure(RelationshipUi.Reason.UNAVAILABLE));
             provider.value = failure;
-            tap("tasks_overview_refresh");
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
             awaitText(page, R.string.role_person_unavailable);
             assertTargets(page, Collections.emptyList());
             RelationshipUi.install(RelationshipUi.unavailable());
@@ -330,7 +332,7 @@ public final class TasksOverviewRelationshipAndroidTest {
             tap(button(PersonId.LOCAL));
             await(() -> provider.reads.get() > readsBeforeTap);
             provider.value = CompletableFuture.completedFuture(snapshot(Collections.emptyList()));
-            tap("tasks_overview_refresh");
+            TaskRuntime.get(context).store.changed();
             awaitText(page, R.string.tasks_overview_empty);
             held.complete(snapshot(Collections.singletonList(local)));
             instrumentation.waitForIdleSync();

@@ -39,6 +39,17 @@ public final class TaskPeer {
         boolean remoteAllowed = TaskJson.bool(remote, "allowed");
         if (dom) synchronized (runtime.authorityLock()) {
             runtime.requireActive(target);
+            boolean previousAllowed = "true".equals(runtime.authorityLock().metadata(
+                    target.peer.identity, target.peer.generation, "tasks_allowed", "false"));
+            String previousZone = runtime.authorityLock().metadata(
+                    target.peer.identity, target.peer.generation, "tasks_timezone", "");
+            boolean previousZoneFresh;
+            try {
+                TaskTimezone.require(previousZone, Long.parseLong(runtime.authorityLock().metadata(
+                        target.peer.identity, target.peer.generation, "tasks_timezone_received", "0")),
+                        System.currentTimeMillis());
+                previousZoneFresh = true;
+            } catch (IllegalStateException | NumberFormatException unavailable) { previousZoneFresh = false; }
             runtime.authorityLock().taskConsentReceived(target.peer.identity, target.peer.generation, remoteAllowed);
             String zone = remote.optString("timezone", "");
             long received = 0;
@@ -47,6 +58,8 @@ public final class TaskPeer {
                 TaskTimezone.require(zone, received, received);
             } catch (IllegalStateException invalid) { zone = ""; received = 0; }
             runtime.authorityLock().taskTimezoneReceived(target.peer.identity, target.peer.generation, zone, received);
+            if (previousAllowed != remoteAllowed || !previousZone.equals(zone) || previousZoneFresh != (received > 0))
+                runtime.store.changed();
         }
         boolean enabled = remoteAllowed && localAllowed && runtime.enabled(target);
         if (!enabled) return; // Neither side reads, writes or acknowledges the private journal while disabled.
@@ -104,7 +117,9 @@ public final class TaskPeer {
                     long offset = assets.offset(attachment.hash);
                     // A process may have stopped after the last chunk, before finish().
                     if (offset == attachment.length) {
-                        TaskMedia.requireHeader(assets.finish(attachment.hash), attachment.mime); continue;
+                        TaskMedia.requireHeader(assets.finish(attachment.hash), attachment.mime);
+                        runtime.store.changed();
+                        continue;
                     }
                     needs.put(attachment.hash, attachment);
                     wants.put(new JSONObject().put("hash", attachment.hash).put("length", attachment.length).put("offset", offset));
@@ -128,7 +143,10 @@ public final class TaskPeer {
                     long actual = assets.offset(hash);
                     if (RemoteProtocol.integer(message, "offset") != actual) throw new IOException("Unexpected task media offset");
                     offset = assets.append(hash, actual, bytes);
-                    if (offset == attachment.length) TaskMedia.requireHeader(assets.finish(hash), attachment.mime);
+                    if (offset == attachment.length) {
+                        TaskMedia.requireHeader(assets.finish(hash), attachment.mime);
+                        runtime.store.changed();
+                    }
                 }
             }
             send(frame("tasks_chunk_receipt").put("hash", hash).put("offset", offset));

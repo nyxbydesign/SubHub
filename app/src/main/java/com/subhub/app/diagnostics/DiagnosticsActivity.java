@@ -113,7 +113,6 @@ public final class DiagnosticsActivity extends AppCompatActivity {
         projectionManager = (MediaProjectionManager)
                 getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
-        binding.buttonRefresh.setOnClickListener(view -> render());
         binding.buttonCensorLabStart.setOnClickListener(view -> startLabSession());
         binding.buttonCensorLabStop.setOnClickListener(view -> stopLabSession());
         binding.buttonCensorLabAttach.setOnClickListener(view -> exportAndShare(true));

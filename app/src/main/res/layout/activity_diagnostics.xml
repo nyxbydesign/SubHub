@@ -210,10 +210,5 @@
                 style="@style/Widget.SubHub.DiagnosticsText" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/button_refresh"
-            style="@style/Widget.SubHub.PrimaryButton"
-            android:layout_marginTop="@dimen/ui_gap_group"
-            android:text="@string/diagnostics_refresh" />
     </LinearLayout>
 </ScrollView>

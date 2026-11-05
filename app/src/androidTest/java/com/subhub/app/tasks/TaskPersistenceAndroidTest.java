@@ -38,6 +38,42 @@ public class TaskPersistenceAndroidTest {
         assertTrue(store.append(dom, create(), true, false));
         assertEquals(1, store.receive(sub, store.outgoing(dom, 0), true, false));
     }
+    @Test public void observersPublishCommittedDataAndIgnoreReplayRollbackAndClosedSubscriptions() throws Exception {
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        java.util.concurrent.atomic.AtomicInteger changes = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean committedVisible = new java.util.concurrent.atomic.AtomicBoolean(true);
+        try (TaskStore.Observation observation = store.observe(() -> {
+            try {
+                committedVisible.compareAndSet(true, android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+                        && store.load(dom).definitions().size() == 1);
+                changes.incrementAndGet();
+            } catch (Exception invalid) { committedVisible.set(false); }
+        })) {
+            assertTrue(store.append(dom, create(), true, false));
+            instrumentation.waitForIdleSync();
+            assertEquals(1, changes.get());
+            assertFalse(store.append(dom, create(), true, false));
+            JSONArray valid = store.outgoing(dom, 0);
+            JSONArray invalid = new JSONArray(valid.toString());
+            invalid.put(new JSONObject().put("seq", 3).put("action", create().json()));
+            try { store.receive(sub, invalid, true, false); fail("Sequence gap must roll back"); }
+            catch (SecurityException expected) { }
+            instrumentation.waitForIdleSync();
+            assertEquals(1, changes.get());
+            assertTrue(store.load(sub).definitions().isEmpty());
+            assertEquals(0, store.received(sub));
+            assertEquals(1, store.receive(sub, valid, true, false));
+            instrumentation.waitForIdleSync();
+            assertEquals(2, changes.get());
+            assertEquals(1, store.receive(sub, valid, true, false));
+            instrumentation.waitForIdleSync();
+            assertEquals(2, changes.get());
+            assertTrue(committedVisible.get());
+        }
+        assertTrue(store.append(sub, action("after-close", TaskAction.Kind.SUBMIT, "Synthetic proof", ""), false, false));
+        instrumentation.waitForIdleSync();
+        assertEquals(2, changes.get());
+    }
     @Test public void commitBeforeLostReceiptAndExactReplayDoNotDuplicateCompletionNotification() throws Exception {
         definitionDelivered();
         TaskAction request = action("proof", TaskAction.Kind.SUBMIT, "Finished", "");

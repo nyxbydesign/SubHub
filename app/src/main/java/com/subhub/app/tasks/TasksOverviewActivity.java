@@ -17,6 +17,20 @@ import java.util.List;
 /** The Dom's primary Tasks destination; each card retains its own relationship identity. */
 public final class TasksOverviewActivity extends RolePage {
     private long rosterEpoch;
+    private TaskStore.Observation taskObservation;
+    private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            refresh();
+            clock.postDelayed(this, 30_000);
+        }
+    };
+
+    @Override protected void onResume() {
+        taskObservation = TaskRuntime.get(this).store.observe(this::refresh);
+        super.onResume();
+        clock.postDelayed(tick, 30_000);
+    }
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -102,7 +116,6 @@ public final class TasksOverviewActivity extends RolePage {
                 PersonUi.action(card, R.string.tasks_view_all, () -> open(summary, loaded), false)
                         .setTag("tasks_profile:" + summary.person.id.value());
             }
-            PersonUi.action(body, R.string.tasks_refresh, this::refresh, false).setTag("tasks_overview_refresh");
         }, failure -> { if (allowed()) unavailable(); else body.removeAllViews(); });
     }
 
@@ -172,6 +185,8 @@ public final class TasksOverviewActivity extends RolePage {
     }
 
     @Override protected void onPause() {
+        if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
+        clock.removeCallbacks(tick);
         ++rosterEpoch;
         if (body != null) body.removeAllViews();
         if (data != null) {

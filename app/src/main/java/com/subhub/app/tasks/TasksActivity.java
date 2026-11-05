@@ -56,6 +56,8 @@ public final class TasksActivity extends RolePage {
     private PersonId person;
     private boolean primary;
     private boolean resumed;
+    private TaskStore.Observation taskObservation;
+    private boolean taskDataDirty;
     private final List<TaskAttachmentView> inlineMedia = new ArrayList<>();
     private List<Object> renderedState, renderedLocation;
     private boolean renderedLoading;
@@ -119,6 +121,11 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onResume() {
         resumed = true;
+        taskObservation = TaskRuntime.get(this).store.observe(() -> {
+            if (!resumed || model == null) return;
+            if (model.loading || model.busy) taskDataDirty = true;
+            else refresh();
+        });
         if (model != null) model.changed = this::render;
         super.onResume();
         if (model != null) clock.postDelayed(tick, 30_000);
@@ -126,6 +133,8 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onPause() {
         resumed = false;
+        if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
+        taskDataDirty = false;
         clock.removeCallbacks(tick);
         if (model != null) model.changed = null;
         closeInlineMedia();
@@ -199,6 +208,11 @@ public final class TasksActivity extends RolePage {
 
     private void render() {
         if (!resumed || isFinishing() || !samePerson()) return;
+        if (taskDataDirty && !model.loading && !model.busy) {
+            taskDataDirty = false;
+            refresh();
+            return;
+        }
         Snapshot state = model.snapshot;
         List<Object> location = java.util.Arrays.asList(model.scope, TaskRepository.domSession(person),
                 primary, model.form, model.selected, model.proofAttachments);
@@ -230,14 +244,16 @@ public final class TasksActivity extends RolePage {
         Snapshot state = model.snapshot;
         closeInlineMedia();
         body.removeAllViews();
-        title("create".equals(model.form) ? R.string.tasks_new
-                : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
         boolean nested = !primary || !model.form.isEmpty() || !model.selected.isEmpty();
         TextView back = com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content));
         back.setVisibility(nested ? View.VISIBLE : View.GONE);
         back.setOnClickListener(v -> navigateBack());
         com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content))
                 .setVisibility(nested ? View.GONE : View.VISIBLE);
+        findViewById(R.id.primary_header_settings).setVisibility(nested ? View.GONE : View.VISIBLE);
+        // Fit after all controls are set: the role badge and icon depend on this page's state.
+        title("create".equals(model.form) ? R.string.tasks_new
+                : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
         if (state == null) {
             LinearLayout loading = PersonUi.card(body);
             PersonUi.text(loading, getString(R.string.role_loading), false);
@@ -260,7 +276,6 @@ public final class TasksActivity extends RolePage {
         }
         if (!state.valid) {
             PersonUi.text(PersonUi.card(body), getString(R.string.tasks_unavailable), true);
-            action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
             return;
         }
         PersonUi.text(body, state.name, true).setTag("tasks_target");
@@ -299,7 +314,6 @@ public final class TasksActivity extends RolePage {
                 count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
         if (state.canCreate && state.allowed && state.zone == null) {
             PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);
-            action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
         }
         if (state.canCreate && state.allowed && state.zone != null) action(body, R.string.tasks_create, "tasks_create", () -> {
             model.openForm("create");
@@ -325,7 +339,6 @@ public final class TasksActivity extends RolePage {
                     TaskEngine.Status.DENIED, TaskEngine.Status.TIMED_OUT, TaskEngine.Status.REFUSED,
                     TaskEngine.Status.SKIPPED, TaskEngine.Status.CANCELLED);
         }
-        action(body, R.string.tasks_refresh, "tasks_refresh", this::refresh, false);
     }
 
     private static int count(Snapshot state, TaskEngine.Status status) {
@@ -529,10 +542,6 @@ public final class TasksActivity extends RolePage {
         boolean zoneReady = scheduleZone != null && scheduleZone.equals(model.snapshot.zone);
         PersonUi.text(card, zoneReady ? getString(R.string.tasks_timezone, scheduleZone.getId())
                 : getString(R.string.tasks_timezone_unavailable), false).setTag("tasks_timezone");
-        if (!zoneReady) action(card, R.string.tasks_refresh, "tasks_reload_zone", () -> {
-            if (model.snapshot.zone != null) model.draft.putString("zone", model.snapshot.zone.getId());
-            refresh();
-        }, false);
         EditText duration = field(card, R.string.tasks_duration, "duration", 5, false);
         duration.setInputType(InputType.TYPE_CLASS_NUMBER);
         PersonUi.text(card, getString(R.string.tasks_repeat), true);
@@ -855,6 +864,7 @@ public final class TasksActivity extends RolePage {
                 selected = "";
             }
             scope = next.scope; dom = next.dom; snapshot = next;
+            if ("create".equals(form) && next.zone != null) draft.putString("zone", next.zone.getId());
         }
         private void refresh(TaskRepository repo) {
             // The repository stores only the application context.

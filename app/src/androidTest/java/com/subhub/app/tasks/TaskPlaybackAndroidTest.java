@@ -21,7 +21,7 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class TaskPlaybackAndroidTest {
-    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration = new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final com.subhub.app.OwnedUiIntegrationFixture integration = new com.subhub.app.OwnedUiIntegrationFixture();
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private TaskRuntime runtime;
     private TaskAttachment attachment;
@@ -40,6 +40,7 @@ public class TaskPlaybackAndroidTest {
         ControllerPinManager.initialize(context); assertTrue(ControllerPinManager.setPin(context, "2468")); ControllerPinManager.enterDomMode();
     }
     @After public void cleanup() throws Exception {
+        integration.drainReaders();
         if (!ownsFixture) return;
         for (String table : new String[]{"projections", "journal", "receipts", "cursors", "effects"})
             runtime.store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE scope='local'");
@@ -154,7 +155,7 @@ public class TaskPlaybackAndroidTest {
             awaitInline(page, "task_inline_error");
             RemoteAssets assets = runtime.assets("local"); assets.reserve(attachment.hash, bytes.length);
             assets.append(attachment.hash, 0, bytes); assets.finish(attachment.hash);
-            tapInline("task_inline_retry"); awaitInline(page, "task_inline_image");
+            runtime.store.changed(); awaitInline(page, "task_inline_image");
         }
         try (FileOutputStream stream = new FileOutputStream(file)) { stream.write(new byte[]{0, 1, 2, 3}); }
         try (ActivityScenario<TasksActivity> page = inline()) { awaitInline(page, "task_inline_error"); }
@@ -255,7 +256,7 @@ public class TaskPlaybackAndroidTest {
         try (ActivityScenario<TasksActivity> page = inline()) {
             awaitInline(page, "task_inline_error");
             page.onActivity(activity -> assertNull(activity.findViewById(android.R.id.content).findViewWithTag("task_attachment:" + attachment.hash)));
-            storeMedia(bytes, "image/gif"); tapInline("task_inline_retry"); awaitInline(page, "task_inline_image");
+            storeMedia(bytes, "image/gif"); runtime.store.changed(); awaitInline(page, "task_inline_image");
         }
     }
 

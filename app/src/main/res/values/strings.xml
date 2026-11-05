@@ -246,7 +246,6 @@
     <string name="diagnostics_build">Build &amp; Device</string>
     <string name="diagnostics_overlay">Show performance overlay</string>
     <string name="diagnostics_overlay_desc">Displays detector, speed, censor count, and frame size above the watched app.</string>
-    <string name="diagnostics_refresh">Refresh Now</string>
     <string name="diagnostics_lab_title">Censor Lab Capture</string>
     <string name="diagnostics_lab_desc">Start one synchronized capture, accept Android’s screen-recording prompt, and browse naturally. Stop here when finished; SubHub finalizes the video and sanitized timing trace into one local ZIP automatically. Video is explicit and microphone audio is never recorded.</string>
     <string name="diagnostics_lab_idle">No active session</string>

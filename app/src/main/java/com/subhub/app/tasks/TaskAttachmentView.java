@@ -40,6 +40,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
     private TextView position;
     private long generation;
     private boolean closed, started, ready;
+    private TaskStore.Observation taskObservation;
 
     TaskAttachmentView(AppCompatActivity activity, AsyncUiScope data, TaskRepository repository,
             TaskAttachment attachment, String scope, boolean dom, BooleanSupplier current, Runnable revoked) {
@@ -53,6 +54,9 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        if (!closed) taskObservation = TaskRuntime.get(getContext()).store.observe(() -> {
+            if (!closed && loaded == null && !data.isPending(jobs + "-load")) load();
+        });
         if (!started && !closed) { started = true; load(); }
     }
 
@@ -196,7 +200,6 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
         clearContent();
         if (closed) return;
         status(offline ? R.string.tasks_media_offline : R.string.tasks_media_unavailable, "task_inline_error");
-        PersonUi.action(this, R.string.tasks_refresh, this::load, false).setTag("task_inline_retry");
     }
 
     private void deny() {
@@ -222,6 +225,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
 
     @Override public void close() {
         if (closed) return;
+        if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
         closed = true; ++generation; data.cancelPrefix(jobs); clearContent();
     }
 }

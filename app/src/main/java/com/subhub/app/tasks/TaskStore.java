@@ -12,7 +12,27 @@ import java.util.*;
 public final class TaskStore extends SQLiteOpenHelper {
     public static final int PAGE_SIZE = 24;
     private static final Object LOCK = new Object();
+    private final java.util.concurrent.CopyOnWriteArrayList<Runnable> observers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final java.util.concurrent.atomic.AtomicBoolean notification = new java.util.concurrent.atomic.AtomicBoolean();
     public TaskStore(Context context) { super(context, "subhub_tasks.db", null, 1); }
+
+    interface Observation extends AutoCloseable { @Override void close(); }
+
+    Observation observe(Runnable observer) {
+        observers.add(Objects.requireNonNull(observer));
+        return () -> observers.remove(observer);
+    }
+
+    /** Coalesce committed ledger, peer status and attachment changes into one UI invalidation. */
+    void changed() {
+        if (observers.isEmpty() || !notification.compareAndSet(false, true)) return;
+        main.post(() -> {
+            notification.set(false);
+            for (Runnable observer : observers) observer.run();
+        });
+    }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE projections(scope TEXT PRIMARY KEY,body TEXT NOT NULL)");
         db.execSQL("CREATE TABLE journal(scope TEXT NOT NULL,seq INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(scope,seq))");
@@ -34,6 +54,7 @@ public final class TaskStore extends SQLiteOpenHelper {
     public boolean append(String scope, TaskAction action, boolean actorDom, boolean notifyDom) throws JSONException {
         synchronized (LOCK) {
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+            boolean committed = false;
             try {
                 TaskEngine engine = load(db, scope);
                 if (!engine.apply(action, actorDom)) { db.setTransactionSuccessful(); return false; }
@@ -44,8 +65,11 @@ public final class TaskStore extends SQLiteOpenHelper {
                 ContentValues row = new ContentValues(); row.put("scope", scope); row.put("seq", seq);
                 row.put("body", action.json().toString()); db.insertOrThrow("journal", null, row);
                 save(db, scope, engine); effects(db, scope, action, engine, notifyDom);
-                db.setTransactionSuccessful(); return true;
-            } finally { db.endTransaction(); }
+                db.setTransactionSuccessful(); committed = true; return true;
+            } finally {
+                db.endTransaction();
+                if (committed) changed();
+            }
         }
     }
     /** Strict sequence and retry-content checks apply before acknowledging a peer page. */
@@ -53,8 +77,10 @@ public final class TaskStore extends SQLiteOpenHelper {
         if (rows.length() > PAGE_SIZE) throw new JSONException("Too many task actions");
         synchronized (LOCK) {
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+            boolean committed = false;
             try {
                 long through = cursor(db, scope, "received");
+                long previous = through;
                 TaskEngine engine = load(db, scope);
                 for (int i = 0; i < rows.length(); i++) {
                     JSONObject row = rows.getJSONObject(i);
@@ -74,8 +100,11 @@ public final class TaskStore extends SQLiteOpenHelper {
                 }
                 save(db, scope, engine); ensureCursor(db, scope);
                 db.execSQL("UPDATE cursors SET received=? WHERE scope=?", new Object[]{through, scope});
-                db.setTransactionSuccessful(); return through;
-            } finally { db.endTransaction(); }
+                db.setTransactionSuccessful(); committed = through != previous; return through;
+            } finally {
+                db.endTransaction();
+                if (committed) changed();
+            }
         }
     }
     private static void save(SQLiteDatabase db, String scope, TaskEngine engine) throws JSONException {

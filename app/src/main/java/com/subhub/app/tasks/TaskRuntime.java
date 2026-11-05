@@ -58,6 +58,7 @@ public final class TaskRuntime {
                 new PeriodicWorkRequest.Builder(TaskWorker.class, 15, TimeUnit.MINUTES).build());
     }
     public void changed() {
+        store.changed();
         executor.execute(this::tick);
         if (scopedAuthority == null) RemoteFeature.get(context).changed();
     }

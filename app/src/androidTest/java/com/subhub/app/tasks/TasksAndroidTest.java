@@ -37,11 +37,11 @@ import com.subhub.app.R;
 import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
+import com.subhub.app.people.PersonUi;
 import com.subhub.app.remote.RemoteAssets;
 import com.subhub.app.remote.RemoteFeature;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
-import com.subhub.app.security.KeyholderPresentationAndroidTest;
 import com.subhub.app.security.SubFeaturePolicy;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
@@ -70,8 +70,8 @@ import org.junit.runner.RunWith;
 /** Native controls against the real local ledger on an unpaired, empty Tasks fixture. */
 @RunWith(AndroidJUnit4.class)
 public final class TasksAndroidTest {
-    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
-            new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final com.subhub.app.OwnedUiIntegrationFixture integration =
+            new com.subhub.app.OwnedUiIntegrationFixture();
     @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext();
@@ -128,6 +128,7 @@ public final class TasksAndroidTest {
     }
 
     @After public void restore() throws Exception {
+        integration.drainReaders();
         for (Map.Entry<String, Map<String, ?>> saved : presentationPreferences.entrySet())
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(saved.getKey(), 0), saved.getValue());
         if (ownsFixture) {
@@ -193,6 +194,302 @@ public final class TasksAndroidTest {
             onView(withTagValue(is("tasks_allowed"))).check(doesNotExist());
             assertEquals(1, store.load(scope).definitions().size());
         }
+    }
+
+    @Test public void subOnlyHeaderSurvivesDetailBackAndRecreation() throws Exception {
+        assertTaskHeaderNavigation(DeviceRolePreferences.Mode.SUB_ONLY, false);
+    }
+
+    @Test public void bothSubHeaderSurvivesDetailBackAndRecreation() throws Exception {
+        assertTaskHeaderNavigation(DeviceRolePreferences.Mode.BOTH, false);
+    }
+
+    @Test public void bothDomHeaderSurvivesDetailBackAndRecreation() throws Exception {
+        assertTaskHeaderNavigation(DeviceRolePreferences.Mode.BOTH, true);
+    }
+
+    private void assertTaskHeaderNavigation(DeviceRolePreferences.Mode mode, boolean dom) throws Exception {
+        TaskDefinition task = seed("header navigation", false);
+        assertTrue(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putString(DeviceRolePreferences.KEY_MODE, mode.name()).commit());
+        if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitTag(page, "task_open:" + occurrenceId(task));
+            assertTaskHeader(page, mode, dom, false);
+            TaskDefinition added = seed("arrives while list is open", false);
+            awaitTag(page, "task_open:" + occurrenceId(added));
+            for (int visit = 0; visit < 2; visit++) {
+                openTask(page, task);
+                assertTaskHeader(page, mode, dom, true);
+                page.recreate();
+                awaitTag(page, "task_detail:" + occurrenceId(task));
+                assertTaskHeader(page, mode, dom, true);
+                if (visit == 0) {
+                    assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id,
+                            TaskAction.Kind.SUBMIT, task.firstStart.toLocalDate(), System.currentTimeMillis(),
+                            "Synthetic completion while detail is open", "", List.of(), null), false, false));
+                    awaitTag(page, "task_submission:" + occurrenceId(task));
+                    assertTaskHeader(page, mode, dom, true);
+                }
+                page.moveToState(Lifecycle.State.CREATED);
+                page.moveToState(Lifecycle.State.RESUMED);
+                awaitTag(page, "task_detail:" + occurrenceId(task));
+                assertTaskHeader(page, mode, dom, true);
+                awaitNativeTaskControl(page, R.id.button_back);
+                AtomicReference<String> backTrace = new AtomicReference<>(visit == 0 ? "header Back" : "system Back");
+                AtomicReference<TasksActivity> backHost = new AtomicReference<>();
+                page.onActivity(activity -> {
+                    backHost.set(activity);
+                    backTrace.updateAndGet(previous -> previous + "; before=" + taskNavigationState(activity));
+                });
+                boolean nativeWitness = visit == 0 && Boolean.parseBoolean(InstrumentationRegistry.getArguments()
+                        .getString("header_touch_witness", "false"));
+                try (com.subhub.app.NativeWindowTouchWitness touch = nativeWitness
+                        ? com.subhub.app.NativeWindowTouchWitness.begin(instrumentation, backHost.get(),
+                                R.id.button_back, mode.name()) : null) {
+                    if (visit == 0) tapTaskControl(page, R.id.button_back);
+                    else androidx.test.espresso.Espresso.pressBack();
+                    instrumentation.runOnMainSync(() -> backTrace.updateAndGet(previous -> previous
+                            + "; immediatelyAfter=" + taskNavigationState(backHost.get())));
+                    try { awaitTag(page, "task_open:" + occurrenceId(task)); }
+                    catch (AssertionError | IllegalStateException failure) {
+                        throw new AssertionError(taskNavigationDiagnostic(page, backHost.get(), backTrace.get())
+                                + (touch == null ? "" : "; " + touch.describe()), failure);
+                    }
+                }
+                assertTaskHeader(page, mode, dom, false);
+                page.recreate();
+                awaitTag(page, "task_open:" + occurrenceId(task));
+                assertTaskHeader(page, mode, dom, false);
+            }
+            if (!dom) {
+                TaskDefinition last = null;
+                for (int index = 0; index < 6; index++) last = seed("scroll row " + index, false);
+                awaitTag(page, "task_open:" + occurrenceId(last));
+            }
+            openTask(page, task);
+            assertTaskHeader(page, mode, dom, true);
+            awaitNativeTaskControl(page, R.id.nav_tasks);
+            page.onActivity(activity -> assertTrue(activity.findViewById(R.id.nav_tasks).isSelected()));
+            if (dom) {
+                // Dom's selected section root is the overview, not this local Sub task list.
+                Intents.init();
+                try {
+                    Intents.intending(IntentMatchers.hasComponent(TasksOverviewActivity.class.getName()))
+                            .respondWith(new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null));
+                    tapTaskControl(page, R.id.nav_tasks);
+                    Intents.intended(IntentMatchers.hasComponent(TasksOverviewActivity.class.getName()));
+                    Intent route = Intents.getIntents().stream().filter(intent -> intent.getComponent() != null
+                            && TasksOverviewActivity.class.getName().equals(intent.getComponent().getClassName()))
+                            .findFirst().get();
+                    assertTrue((route.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0);
+                    assertTrue(route.getBooleanExtra(com.subhub.app.util.SubHubNavigation.EXTRA_SECTION_HOME, false));
+                } finally { Intents.release(); }
+            } else {
+                tapTaskControl(page, R.id.nav_tasks);
+                awaitTag(page, "task_open:" + occurrenceId(task));
+                assertTaskHeader(page, mode, false, false);
+                page.onActivity(activity -> assertTrue("Synthetic task list overflows the viewport",
+                        ((android.widget.ScrollView) activity.findViewById(R.id.role_page_content).getParent())
+                                .canScrollVertically(1)));
+                awaitNativeTaskControl(page, R.id.nav_tasks);
+                onView(androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(android.widget.ScrollView.class))
+                        .perform(swipeTaskListAboveNavigation());
+                page.onActivity(activity -> assertTrue("Native swipe moves the task list",
+                        ((android.widget.ScrollView) activity.findViewById(R.id.role_page_content).getParent())
+                                .getScrollY() > 0));
+                awaitNativeTaskControl(page, R.id.nav_tasks);
+                tapTaskControl(page, R.id.nav_tasks);
+                await(() -> {
+                    AtomicBoolean top = new AtomicBoolean();
+                    page.onActivity(activity -> top.set(((android.widget.ScrollView)
+                            activity.findViewById(R.id.role_page_content).getParent()).getScrollY() == 0));
+                    return top.get();
+                });
+                assertTaskHeader(page, mode, false, false);
+            }
+        }
+    }
+
+    private void assertTaskHeader(ActivityScenario<TasksActivity> page,
+            DeviceRolePreferences.Mode mode, boolean dom, boolean detail) {
+        page.onActivity(activity -> {
+            View root = activity.findViewById(R.id.primary_header);
+            View back = root.findViewById(R.id.button_back);
+            View settings = root.findViewById(R.id.primary_header_settings);
+            android.widget.TextView control = root.findViewById(R.id.button_edit_lock);
+            android.widget.TextView badge = root.findViewById(R.id.header_role_badge);
+            assertEquals(detail ? View.VISIBLE : View.GONE, back.getVisibility());
+            assertEquals(detail ? View.GONE : View.VISIBLE,
+                    root.findViewById(R.id.primary_header_icon).getVisibility());
+            assertEquals(detail ? View.GONE : View.VISIBLE, settings.getVisibility());
+            assertEquals(detail ? View.GONE : View.VISIBLE, control.getVisibility());
+            assertEquals(detail ? View.VISIBLE : View.GONE, badge.getVisibility());
+            assertEquals("Exactly one role indicator", 1,
+                    (badge.isShown() ? 1 : 0) + (control.isShown() ? 1 : 0));
+            assertFalse("No manual refresh control", containsText(
+                    activity.findViewById(R.id.role_page_body), "Refresh"));
+            assertEquals(activity.getString(dom ? R.string.role_dom : R.string.role_sub),
+                    badge.getText().toString());
+            assertFalse("Detail role badge is read-only", badge.isClickable());
+            assertFalse("Detail role badge is not a focus target", badge.isFocusable());
+            if (!detail) {
+                assertTrue(control.isClickable());
+                assertTrue(control.isFocusable());
+                int label = mode == DeviceRolePreferences.Mode.BOTH
+                        ? dom ? R.string.role_dom : R.string.role_sub
+                        : dom ? R.string.device_role_lock : R.string.device_role_unlock;
+                assertEquals(activity.getString(label), control.getText().toString());
+            }
+            assertEquals(dom, DeviceRolePreferences.isDomWorkspace(activity));
+        });
+    }
+
+    private void awaitNativeTaskControl(ActivityScenario<TasksActivity> page, int controlId) throws Exception {
+        // Lifecycle and UI idle do not prove that a resumed window's current layout has committed.
+        await(() -> {
+            AtomicBoolean ready = new AtomicBoolean();
+            page.onActivity(activity -> {
+                View back = activity.findViewById(controlId);
+                android.graphics.Rect visible = new android.graphics.Rect();
+                try {
+                    java.lang.reflect.Field modelField = TasksActivity.class.getDeclaredField("model");
+                    modelField.setAccessible(true); Object model = modelField.get(activity);
+                    java.lang.reflect.Field loading = TasksActivity.UiState.class.getDeclaredField("loading");
+                    java.lang.reflect.Field busy = TasksActivity.UiState.class.getDeclaredField("busy");
+                    loading.setAccessible(true); busy.setAccessible(true);
+                    ready.set(!loading.getBoolean(model) && !busy.getBoolean(model) && back.hasWindowFocus()
+                            && back.isAttachedToWindow() && back.isLaidOut() && !back.isLayoutRequested()
+                            && back.getWidth() > 0 && back.getHeight() > 0 && back.getGlobalVisibleRect(visible)
+                            && visible.width() == back.getWidth() && visible.height() == back.getHeight());
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            return ready.get();
+        });
+        instrumentation.waitForIdleSync();
+        java.util.concurrent.CountDownLatch frame = new java.util.concurrent.CountDownLatch(1);
+        page.onActivity(activity -> {
+            View decor = activity.getWindow().getDecorView();
+            if (android.os.Build.VERSION.SDK_INT >= 29 && decor.isHardwareAccelerated())
+                decor.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);
+            else decor.postOnAnimation(frame::countDown);
+            decor.invalidate();
+        });
+        assertTrue("Current native window frame must complete before input",
+                frame.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        instrumentation.waitForIdleSync();
+    }
+
+    private void tapTaskControl(ActivityScenario<TasksActivity> page, int controlId) {
+        assertNotEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper());
+        AtomicReference<float[]> target = new AtomicReference<>();
+        page.onActivity(activity -> {
+            View control = activity.findViewById(controlId);
+            android.graphics.Rect visible = new android.graphics.Rect();
+            assertTrue(control.hasWindowFocus());
+            assertTrue(control.isShown() && control.isEnabled() && control.isClickable());
+            assertTrue(control.getGlobalVisibleRect(visible));
+            assertEquals(control.getWidth(), visible.width());
+            assertEquals(control.getHeight(), visible.height());
+            int[] origin = new int[2]; control.getLocationOnScreen(origin);
+            target.set(new float[]{origin[0] + control.getWidth() / 2f, origin[1] + control.getHeight() / 2f});
+        });
+        float[] point = target.get();
+        long downTime = SystemClock.uptimeMillis();
+        android.view.MotionEvent down = android.view.MotionEvent.obtain(downTime, downTime,
+                android.view.MotionEvent.ACTION_DOWN, point[0], point[1], 0);
+        down.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+        try {
+            // Android's public app-scoped injector synchronizes compositor/input transactions
+            // around this one DOWN/UP pair; a View frame alone can still be mid-window transition.
+            instrumentation.sendPointerSync(down);
+            android.view.MotionEvent up = android.view.MotionEvent.obtain(downTime, SystemClock.uptimeMillis(),
+                    android.view.MotionEvent.ACTION_UP, point[0], point[1], 0);
+            up.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            try { instrumentation.sendPointerSync(up); }
+            finally { up.recycle(); }
+        } finally { down.recycle(); }
+        instrumentation.waitForIdleSync();
+    }
+
+    private static androidx.test.espresso.ViewAction swipeTaskListAboveNavigation() {
+        return new androidx.test.espresso.ViewAction() {
+            @Override public org.hamcrest.Matcher<View> getConstraints() {
+                return org.hamcrest.Matchers.allOf(
+                        androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(android.widget.ScrollView.class),
+                        androidx.test.espresso.matcher.ViewMatchers.isDisplayed());
+            }
+            @Override public String getDescription() { return "one native swipe above the floating Tasks navigation"; }
+            @Override public void perform(androidx.test.espresso.UiController ui, View view) {
+                android.graphics.Rect viewport = new android.graphics.Rect();
+                android.graphics.Rect navigation = new android.graphics.Rect();
+                assertTrue(view.getGlobalVisibleRect(viewport));
+                View nav = view.getRootView().findViewById(R.id.bottom_navigation);
+                assertNotNull(nav);
+                assertTrue(nav.getGlobalVisibleRect(navigation));
+                int bottom = Math.min(viewport.bottom, navigation.top);
+                float[] finger = androidx.test.espresso.action.Press.FINGER.describePrecision();
+                float clearance = Math.max(PersonUi.dp(view.getContext(), 24), 2 * finger[1]);
+                assertTrue("Unobscured viewport must fit one real swipe", bottom - viewport.top > 4 * clearance);
+                float[] start = {viewport.exactCenterX(), bottom - clearance};
+                float[] end = {viewport.exactCenterX(), viewport.top + clearance};
+                assertTrue("Start clears the actual floating navbar", start[1] + finger[1] < navigation.top);
+                assertTrue(viewport.contains(Math.round(start[0]), Math.round(start[1])));
+                assertTrue(viewport.contains(Math.round(end[0]), Math.round(end[1])));
+                System.out.println("Tasks native swipe start=" + start[0] + "," + start[1]
+                        + " end=" + end[0] + "," + end[1] + " viewport=" + viewport.flattenToString()
+                        + " nav=" + navigation.flattenToString());
+                assertEquals("Exactly one native swipe must inject successfully",
+                        androidx.test.espresso.action.Swiper.Status.SUCCESS,
+                        androidx.test.espresso.action.Swipe.FAST.sendSwipe(ui, start, end, finger));
+                ui.loopMainThreadUntilIdle();
+            }
+        };
+    }
+
+    /** Failure-only metadata; never include task text, names or content descriptions. */
+    private String taskNavigationDiagnostic(ActivityScenario<TasksActivity> page, TasksActivity host, String gesture) {
+        AtomicReference<String> result = new AtomicReference<>();
+        String scenarioState = page.getState().toString();
+        instrumentation.runOnMainSync(() -> {
+            StringBuilder out = new StringBuilder(gesture).append("; scenarioState=").append(scenarioState)
+                    .append("; failureState=").append(taskNavigationState(host));
+            result.set(out.toString());
+        });
+        return result.get();
+    }
+
+    private static String taskNavigationState(TasksActivity activity) {
+        StringBuilder out = new StringBuilder("hostLifecycle=").append(activity.getLifecycle().getCurrentState())
+                .append(" finishing=").append(activity.isFinishing()).append(" destroyed=").append(activity.isDestroyed());
+        try {
+            java.lang.reflect.Field modelField = TasksActivity.class.getDeclaredField("model");
+            modelField.setAccessible(true); Object model = modelField.get(activity);
+            for (String name : List.of("selected", "form", "proofAttachments", "busy", "loading", "dom", "readSequence")) {
+                java.lang.reflect.Field field = TasksActivity.UiState.class.getDeclaredField(name);
+                field.setAccessible(true); out.append("; ").append(name).append('=').append(field.get(model));
+            }
+            for (String name : List.of("primary", "resumed", "taskDataDirty")) {
+                java.lang.reflect.Field field = TasksActivity.class.getDeclaredField(name);
+                field.setAccessible(true); out.append("; ").append(name).append('=').append(field.get(activity));
+            }
+        } catch (ReflectiveOperationException unavailable) { out.append("; model observer unavailable"); }
+        View back = activity.findViewById(R.id.button_back);
+        if (back != null) {
+            int[] origin = new int[2]; back.getLocationOnScreen(origin);
+            out.append("; backWindowFocus=").append(back.hasWindowFocus()).append(" backBounds=")
+                    .append(origin[0]).append(',').append(origin[1]).append(',').append(back.getWidth()).append(',').append(back.getHeight());
+            out.append(" backClickable=").append(back.isClickable()).append(" backListener=").append(back.hasOnClickListeners());
+            if (back instanceof android.widget.TextView) {
+                android.widget.TextView text = (android.widget.TextView) back;
+                out.append(" backPressed=").append(text.isPressed()).append(" backFocused=").append(text.isFocused())
+                        .append(" backFocusableInTouchMode=").append(text.isFocusableInTouchMode())
+                        .append(" backTextSelectable=").append(text.isTextSelectable()).append(" backInputType=").append(text.getInputType())
+                        .append(" backMovementMethod=").append(text.getMovementMethod() == null ? "none"
+                                : text.getMovementMethod().getClass().getName());
+            }
+        }
+        return out.toString();
     }
 
     @Test public void subRequestsCompletionWithNativeTextThenDomAcceptsTheExactSubmission() throws Exception {

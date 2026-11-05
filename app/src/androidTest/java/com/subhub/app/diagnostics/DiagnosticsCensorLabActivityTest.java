@@ -27,6 +27,8 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class DiagnosticsCensorLabActivityTest {
+    @org.junit.Rule public final com.subhub.app.OwnedUiIntegrationFixture readers =
+            new com.subhub.app.OwnedUiIntegrationFixture(false);
     @Before public void resetSession() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
         if (!ControllerPinManager.isConfigured(context)) {
@@ -45,8 +47,15 @@ public final class DiagnosticsCensorLabActivityTest {
                 } catch (Exception error) {
                     throw new AssertionError(error);
                 }
-                activity.findViewById(R.id.button_refresh).performClick();
             });
+            long deadline = SystemClock.uptimeMillis() + 5_000;
+            java.util.concurrent.atomic.AtomicBoolean rendered = new java.util.concurrent.atomic.AtomicBoolean();
+            do {
+                scenario.onActivity(activity -> rendered.set(
+                        activity.findViewById(R.id.button_censor_lab_stop).isEnabled()));
+                if (!rendered.get()) SystemClock.sleep(40);
+            } while (!rendered.get() && SystemClock.uptimeMillis() < deadline);
+            assertTrue("Diagnostics updates automatically after telemetry starts", rendered.get());
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             scenario.onActivity(activity -> {
                 assertTrue(CensorLabRecorder.isActive());

@@ -26,7 +26,6 @@
     <string name="tasks_media_title">Task attachment</string>
     <string name="tasks_media_unavailable">This attachment is unavailable or cannot be played.</string>
     <string name="tasks_cancel">Cancel</string>
-    <string name="tasks_refresh">Refresh</string>
     <string name="tasks_show_history">Show history</string>
     <string name="tasks_empty">No tasks.</string>
     <string name="tasks_empty_group">No tasks in this section.</string>
@@ -58,7 +57,7 @@
     <string name="tasks_working">Saving…</string>
     <string name="tasks_unavailable">Tasks are unavailable. Check the selected profile and current role.</string>
     <string name="tasks_changed">The profile, pairing or role changed. Reopen the form to continue.</string>
-    <string name="tasks_error">Could not save this change. Refresh and try again.</string>
+    <string name="tasks_error">Could not save this change. Try again.</string>
     <string name="tasks_import_error">Could not read this attachment. Choose a supported image, audio or video of at most 25 MiB.</string>
     <string name="tasks_duplicate_media">This attachment has already been added.</string>
     <string name="tasks_title_error">Enter a title of at most 160 characters.</string>

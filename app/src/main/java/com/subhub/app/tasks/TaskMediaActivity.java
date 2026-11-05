@@ -33,6 +33,7 @@ public final class TaskMediaActivity extends RolePage {
     private TaskAttachment attachment;
     private String scope;
     private boolean dom, resumed;
+    private TaskStore.Observation taskObservation;
     private long generation;
     private ImageView image;
     private VideoView player;
@@ -62,12 +63,16 @@ public final class TaskMediaActivity extends RolePage {
 
     @Override protected void onResume() {
         resumed = true;
+        taskObservation = TaskRuntime.get(this).store.observe(() -> {
+            if (resumed && displayed == null && !data.isPending("task-media")) refresh();
+        });
         super.onResume();
         if (body != null) secondaryBack(this::finish);
     }
 
     @Override protected void onPause() {
         resumed = false;
+        if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
         ++generation;
         if (data != null) { data.cancel("task-media"); data.cancel("task-play"); }
         clearMedia();
@@ -205,7 +210,6 @@ public final class TaskMediaActivity extends RolePage {
         clearMedia();
         if (!resumed || isFinishing()) return;
         PersonUi.text(body, getString(R.string.tasks_media_unavailable), false);
-        PersonUi.action(body, R.string.tasks_refresh, this::refresh, false);
     }
 
     private void clearMedia() {
