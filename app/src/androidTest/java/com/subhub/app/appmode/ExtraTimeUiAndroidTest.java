@@ -263,9 +263,59 @@ public final class ExtraTimeUiAndroidTest {
         scenario.onActivity(a -> target.set(findText(a.findViewById(android.R.id.content), predicate)));
         assertNotNull("Capture target " + name, target.get());
         onView(withText(target.get().getText().toString())).perform(reveal());
-        TextFrameWitness.capture(target.get(), UiRefreshWitness.scroll(target.get()),
-                InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui"), name);
-        scenario.onActivity(a -> readable(a.findViewById(android.R.id.content)));
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        String run = InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui");
+        assertTrue(run.matches("[A-Za-z0-9_-]+") && name.matches("[A-Za-z0-9_.-]+"));
+        java.io.File folder = new java.io.File(target.get().getContext().getFilesDir(), "ui-v3/" + run);
+        assertTrue(folder.isDirectory() || folder.mkdirs());
+        java.io.File diagnostic = new java.io.File(folder, name + ".input-mode.json");
+        assertFalse("Preserve earlier input-mode evidence", diagnostic.exists());
+        AtomicReference<org.json.JSONObject> before = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> before.set(focusState(target.get())));
+        boolean initialTouchMode = before.get().getBoolean("targetInTouchMode");
+        org.json.JSONObject evidence = new org.json.JSONObject().put("before", before.get())
+                .put("requestedTouchMode", true).put("restoreInitialTouchMode", initialTouchMode);
+        try {
+            // Key injection plus recreation can leave the focusable content's framework highlight
+            // above its children. Capture ordinary touch presentation without weakening pixel proof.
+            instrumentation.setInTouchMode(true);
+            instrumentation.waitForIdleSync();
+            AtomicReference<org.json.JSONObject> after = new AtomicReference<>();
+            instrumentation.runOnMainSync(() -> after.set(focusState(target.get())));
+            evidence.put("after", after.get());
+            assertTrue("Capture uses the actual target's touch mode", after.get().getBoolean("targetInTouchMode"));
+            TextFrameWitness.capture(target.get(), UiRefreshWitness.scroll(target.get()), run, name);
+            scenario.onActivity(a -> readable(a.findViewById(android.R.id.content)));
+        } finally {
+            try {
+                instrumentation.setInTouchMode(initialTouchMode);
+                instrumentation.waitForIdleSync();
+                AtomicReference<org.json.JSONObject> restored = new AtomicReference<>();
+                instrumentation.runOnMainSync(() -> restored.set(focusState(target.get())));
+                evidence.put("restored", restored.get());
+                assertEquals("Restore the fixture's previous input modality", initialTouchMode,
+                        restored.get().getBoolean("targetInTouchMode"));
+            } finally {
+                java.nio.file.Files.write(diagnostic.toPath(), evidence.toString(2).getBytes(
+                        java.nio.charset.StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE_NEW);
+            }
+        }
+    }
+
+    private static org.json.JSONObject focusState(View target) {
+        try {
+            View focus = target.getRootView().findFocus();
+            org.json.JSONObject value = new org.json.JSONObject().put("targetInTouchMode", target.isInTouchMode())
+                    .put("windowFocused", target.getRootView().hasWindowFocus())
+                    .put("targetTag", String.valueOf(target.getTag()));
+            if (focus == null) return value.put("focusedClass", org.json.JSONObject.NULL);
+            int[] origin = new int[2]; focus.getLocationOnScreen(origin);
+            return value.put("focusedClass", focus.getClass().getName()).put("focusedTag", String.valueOf(focus.getTag()))
+                    .put("focusedInTouchMode", focus.isInTouchMode()).put("focusedHasFocus", focus.hasFocus())
+                    .put("defaultFocusHighlightEnabled", focus.getDefaultFocusHighlightEnabled())
+                    .put("focusedBounds", new Rect(origin[0], origin[1], origin[0] + focus.getWidth(),
+                            origin[1] + focus.getHeight()).flattenToString());
+        } catch (org.json.JSONException failure) { throw new AssertionError(failure); }
     }
 
     private static void readable(View view) {
