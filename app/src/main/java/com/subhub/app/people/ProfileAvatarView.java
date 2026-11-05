@@ -1,6 +1,8 @@
 package com.subhub.app.people;
 
 import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -14,10 +16,14 @@ public final class ProfileAvatarView extends FrameLayout {
     private final ImageView image;
     private final String job = "profile-avatar:" + System.identityHashCode(this);
     private AsyncUiScope scope;
+    private final Paint presencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean presenceVisible, online;
 
     public ProfileAvatarView(Context context, ProfileData profile) {
         super(context);
         this.profile = profile;
+        // Only the image child is oval-clipped; the corner badge needs the full square bounds.
+        setClipToOutline(false);
         TextView fallback = ProfileViews.avatar(context, profile.name);
         addView(fallback, new LayoutParams(-1, -1));
         image = new ImageView(context);
@@ -27,6 +33,32 @@ public final class ProfileAvatarView extends FrameLayout {
         image.setVisibility(View.INVISIBLE);
         addView(image, new LayoutParams(-1, -1));
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    /** Callers supply confirmed foreground presence; avatar previews have no badge by default. */
+    public void setPresence(boolean online) {
+        this.online = online;
+        presenceVisible = true;
+        invalidate();
+    }
+
+    public void clearPresence() {
+        presenceVisible = false;
+        invalidate();
+    }
+
+    @Override protected void dispatchDraw(Canvas canvas) {
+        super.dispatchDraw(canvas);
+        if (!presenceVisible) return;
+        float edge = Math.min(getWidth(), getHeight());
+        float outer = edge * .16f;
+        float cx = getWidth() - outer, cy = getHeight() - outer;
+        // Both circles stay inside the avatar bounds, including inside clipping parents.
+        presencePaint.setColor(getContext().getColor(R.color.surface_card));
+        canvas.drawCircle(cx, cy, outer, presencePaint);
+        presencePaint.setColor(getContext().getColor(online
+                ? R.color.avatar_presence_online : R.color.avatar_presence_offline));
+        canvas.drawCircle(cx, cy, edge * .11f, presencePaint);
     }
 
     @Override protected void onAttachedToWindow() {

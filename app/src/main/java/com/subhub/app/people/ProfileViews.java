@@ -41,6 +41,7 @@ public final class ProfileViews {
         Context context = parent.getContext();
         LinearLayout hero = PersonUi.card(parent); hero.setBackgroundResource(R.drawable.bg_home_composition_person);
         ProfilePreview identity = new ProfilePreview(context, person.profile, false, "person", false, null);
+        presence(identity, "person", person.id, person.connection);
         View about = identity.findViewWithTag("person_about");
         if (about != null) about.setTag("person_about:" + person.id.value());
         hero.addView(identity, new LinearLayout.LayoutParams(-1, -2));
@@ -59,6 +60,7 @@ public final class ProfileViews {
         card.setBackgroundResource(R.drawable.bg_home_composition_person);
         String prefix = "roster:" + person.id.value();
         ProfilePreview preview = ProfilePreview.roster(context, person.profile, prefix);
+        presence(preview, prefix, person.id, person.connection);
         card.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         connectionSummary(card, person, prefix + "_connection", false);
         card.setOnClickListener(view -> open.run());
@@ -91,13 +93,24 @@ public final class ProfileViews {
     }
 
     /** Presence shares the existing metadata row; the profile's role choice and tags stay intact. */
-    static void inlineLastOnline(ProfilePreview preview, String prefix, PersonId target, PersonSnapshot.Connection state, long observed) {
+    static void inlineLastOnline(View preview, String prefix, PersonId target, PersonSnapshot.Connection state, long observed) {
+        presence(preview, prefix, target, state);
         if (!remoteContactTarget(target)) return;
         TextView details = preview.findViewWithTag(prefix + "_details");
         CharSequence existing = details.getText();
         details.setText(android.text.TextUtils.concat(PersonUi.connection(preview.getContext(), state, observed),
                 existing.length() == 0 ? "" : " · ", existing));
         details.setVisibility(View.VISIBLE);
+    }
+
+    /** Only the repository's foreground-presence projection may supply CONNECTED here. */
+    static void presence(View identity, String prefix, PersonId target, PersonSnapshot.Connection state) {
+        View candidate = identity.findViewWithTag(prefix + "_avatar");
+        if (!(candidate instanceof ProfileAvatarView)) return;
+        ProfileAvatarView avatar = (ProfileAvatarView) candidate;
+        avatar.clearPresence();
+        if (remoteContactTarget(target) && state != null && state != PersonSnapshot.Connection.LOCAL)
+            avatar.setPresence(state == PersonSnapshot.Connection.CONNECTED);
     }
 
     /** Journal targets route local profiles; only a transport peer generation can carry contact time. */

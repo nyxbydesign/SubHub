@@ -286,7 +286,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
 
     private List<Object> personSignature(PersonSnapshot person, boolean favorite) {
         List<Object> signature = new ArrayList<>(java.util.Arrays.asList(person.id, person.name, person.profile,
-                ProfileViews.targetDiscriminator(activity, person), PersonUi.connection(activity, person)));
+                ProfileViews.targetDiscriminator(activity, person), person.connection, person.lastOnlineAt,
+                PersonUi.connection(activity, person)));
         if (favorite) java.util.Collections.addAll(signature, person.serviceLabel,
                 person.sync.runtime, person.sync.stats, person.protectedSeconds, person.activityEvents);
         return signature;
@@ -435,6 +436,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private LinearLayout identityHeader(LinearLayout parent, PersonSnapshot person, boolean favorite) {
         OverviewUi.Identity identity = OverviewUi.identity(parent, person.profile, false,
                 (favorite ? "home_favorite:" : "home_recent:") + person.id.value());
+        ProfileViews.presence(identity.view, (favorite ? "home_favorite:" : "home_recent:")
+                + person.id.value(), person.id, person.connection);
         identity.copy.setTag("home_identity_copy");
         identity.name.setTag((favorite ? "home_favorite_name:" : "home_recent_name:") + person.id.value());
         if (person.connection != PersonSnapshot.Connection.LOCAL) {
@@ -476,7 +479,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private void renderSub(PersonSnapshot person, AssignedDom dom) {
         subPerson = person; subDom = dom;
         if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
-        List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId,
+        List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId, person.contractDomContact,
                 person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
                 dom == null ? null : dom.name, dom == null ? null : dom.profile,
                 dom == null ? null : dom.status, subFormal, subRelationshipUnavailable);
@@ -498,6 +501,10 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 if (profile == null) profile = ProfileData.empty(dom == null
                         ? activity.getString(R.string.role_unknown_data) : dom.name);
                 OverviewUi.Identity identity = OverviewUi.identity(linked, profile, true, "home_contract_dom");
+                PersonSnapshot.PeerContact contact = person.contractDomContact;
+                if (profile == person.contractDom && contact != null && contact.id.equals(person.contractDomId))
+                    ProfileViews.inlineLastOnline(identity.view, "home_contract_dom", person.contractDomId,
+                            contact.state, contact.lastOnlineAt);
                 if (!profile.about.isEmpty()) {
                     TextView about = OverviewUi.text(activity, profile.about, 13, false);
                     about.setMaxLines(2); about.setEllipsize(android.text.TextUtils.TruncateAt.END);
