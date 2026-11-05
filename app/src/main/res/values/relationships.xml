@@ -6,7 +6,6 @@
     <string name="relationships_link">Link</string>
     <string name="relationships_resume">Resume</string>
     <string name="relationships_retry">Retry</string>
-    <string name="relationships_refresh">Refresh</string>
     <string name="relationships_preparing">Preparing link</string>
     <string name="relationships_prepared">Prepared</string>
     <string name="relationships_pending">Pending</string>

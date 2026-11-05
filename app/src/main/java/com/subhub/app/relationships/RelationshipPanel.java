@@ -53,13 +53,24 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
     private RelationshipUi.Provider presentationProvider;
     private long contextEpoch;
     private long rosterChangesSeen;
+    private boolean pageSnapshotUnavailable, pageRetryScheduled;
+    private final Runnable observeData = new Runnable() {
+        @Override public void run() {
+            if (currentContext() == null) return;
+            model.observe(() -> { if (pageSnapshotUnavailable && pageRetry) requestPageRetry(); });
+            main.postDelayed(this, 2000);
+        }
+    };
     private final Runnable checkContext = new Runnable() {
         @Override public void run() {
             if (!isAttachedToWindow() || !activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)) return;
             String current = currentContext();
             if (!Objects.equals(renderedContext, current)) {
                 model.detach(); removeAllViews(); setVisibility(GONE);
-                if (current != null) refresh();
+                if (current != null) {
+                    refresh(); if (pageRetry) requestPageRetry();
+                    main.removeCallbacks(observeData); main.postDelayed(observeData, 2000);
+                }
             }
             main.postDelayed(this, 250);
         }
@@ -84,28 +95,36 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
     }
 
     private void presentationChanged() {
-        render();
+        if (!pageSnapshotUnavailable) render();
         if (pageRetry && model.mode() == RelationshipPresentation.Mode.READY && !model.busy() && rosterChangesSeen != model.rosterChanges()) {
             rosterChangesSeen = model.rosterChanges();
-            String expectedContext = currentContext(); long expectedEpoch = model.reviewEpoch();
-            main.post(() -> {
-                if (expectedContext != null && expectedContext.equals(currentContext()) && model.reviewEpoch() == expectedEpoch)
-                    retry.run();
-            });
+            requestPageRetry();
         }
+    }
+
+    private void requestPageRetry() {
+        if (pageRetryScheduled) return;
+        pageRetryScheduled = true;
+        String expectedContext = currentContext(); long expectedEpoch = model.reviewEpoch();
+        main.post(() -> {
+            pageRetryScheduled = false;
+            if (expectedContext != null && expectedContext.equals(currentContext()) && model.reviewEpoch() == expectedEpoch)
+                retry.run();
+        });
     }
 
     public void refresh() {
         if (currentContext() == null) return;
+        pageSnapshotUnavailable = false;
         renderedContext = currentContext(); model.refresh();
     }
 
-    /** A page snapshot failure owns one retry for both its controls and its roster. */
+    /** Keep failed page data hidden while lifecycle observation recovers its current snapshot. */
     public void snapshotUnavailable() {
         if (currentContext() == null) return;
-        model.detach(); removeAllViews(); setVisibility(VISIBLE);
+        pageSnapshotUnavailable = true;
+        removeAllViews(); setVisibility(VISIBLE);
         text(R.string.relationships_unavailable, "relationship_unavailable");
-        action(R.string.relationships_retry, "relationship_refresh", retry, true);
     }
 
     private String currentContext() {
@@ -142,7 +161,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         }
         if (model.mode() == RelationshipPresentation.Mode.UNAVAILABLE) {
             text(R.string.relationships_unavailable, "relationship_unavailable");
-            action(R.string.relationships_retry, "relationship_refresh", retry, true); return;
+            return;
         }
         RelationshipUi.Snapshot snapshot = model.snapshot();
         localUnlink(snapshot);
@@ -150,8 +169,6 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         RelationshipUi.LocalReview review = model.review();
         RelationshipUi.Operation operation = model.operation();
         RelationshipRecoveryUi.OperationSummary selected = model.summary();
-        if (model.unlinkUnavailable() && (saved != null || operation == null))
-            action(R.string.relationships_refresh, "relationship_unlink_refresh", retry, !model.busy());
         if (review != null) {
             text(R.string.relationships_review_title, "relationship_review_title");
             if (selected != null) summaryNames(selected, "");
@@ -194,7 +211,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             } else if (saved != null) {
                 action(R.string.relationships_resume, "relationship_resume", () -> model.resume(saved), !model.busy());
                 action(android.R.string.cancel, "relationship_cancel", () -> model.cancel(saved), !model.busy());
-            } else action(R.string.relationships_refresh, "relationship_refresh", retry, true);
+            }
             return;
         }
         if (model.recoveryAware()) {
@@ -372,18 +389,20 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         main.removeCallbacks(checkContext); main.post(checkContext); refresh();
+        main.removeCallbacks(observeData); main.postDelayed(observeData, 2000);
     }
     @Override protected void onDetachedFromWindow() {
-        model.detach(); main.removeCallbacks(checkContext); super.onDetachedFromWindow();
+        model.detach(); main.removeCallbacks(checkContext); main.removeCallbacks(observeData); super.onDetachedFromWindow();
     }
     @Override public void onResume(LifecycleOwner owner) {
         refresh(); main.removeCallbacks(checkContext); main.post(checkContext);
+        main.removeCallbacks(observeData); main.postDelayed(observeData, 2000);
     }
     @Override public void onPause(LifecycleOwner owner) {
-        model.detach(); removeAllViews(); setVisibility(GONE); main.removeCallbacks(checkContext);
+        model.detach(); removeAllViews(); setVisibility(GONE); main.removeCallbacks(checkContext); main.removeCallbacks(observeData);
     }
     @Override public void onDestroy(LifecycleOwner owner) {
-        model.detach(); main.removeCallbacks(checkContext); activity.getLifecycle().removeObserver(this);
+        model.detach(); main.removeCallbacks(checkContext); main.removeCallbacks(observeData); activity.getLifecycle().removeObserver(this);
     }
 
     public static RelationshipPresentation.Journal journal(Context context) {

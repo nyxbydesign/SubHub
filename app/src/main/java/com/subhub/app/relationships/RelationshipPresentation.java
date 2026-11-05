@@ -78,6 +78,12 @@ public final class RelationshipPresentation {
                 return CompletableFuture.completedFuture(new Access(true, provider, null, null, journal));
             }
             if (!journal.markAuthoritativeSeen()) return failed();
+            return snapshotAccess(provider, journal);
+        } catch (RuntimeException failure) { return failed(); }
+    }
+
+    private static CompletableFuture<Access> snapshotAccess(RelationshipUi.Provider provider, Journal journal) {
+        try {
             if (provider instanceof RelationshipRecoveryUi.Provider) {
                 return Objects.requireNonNull(((RelationshipRecoveryUi.Provider) provider).recoverySnapshot()).thenApply(value -> {
                     if (value == null || !value.snapshot.supported)
@@ -105,7 +111,8 @@ public final class RelationshipPresentation {
     private final Supplier<String> context;
     private final BooleanSupplier mayLink;
     private final Consumer<RelationshipPresentation> changed;
-    private boolean attached, busy;
+    private boolean attached, busy, observing;
+    private long observationSequence;
     private long epoch;
     private String boundContext, domChoice, subChoice;
     private RelationshipUi.Provider provider;
@@ -149,6 +156,7 @@ public final class RelationshipPresentation {
     public String subChoice() { return subChoice; }
 
     public void refresh() {
+        observing = false; ++observationSequence;
         boundContext = context.get(); attached = boundContext != null;
         long request = ++epoch;
         provider = source.get(); snapshot = null; review = null; operation = null;
@@ -161,7 +169,56 @@ public final class RelationshipPresentation {
                 (owner, value, failure) -> owner.loaded(request, value, failure));
     }
 
+    /** Read current data without replacing an unchanged review or dispatching an operation. */
+    public void observe(Runnable observed) {
+        if (!valid(epoch) || busy || observing) return;
+        observing = true;
+        long request = epoch, sequence = ++observationSequence;
+        // READY already crossed the durable journal barrier; passive reads need no further writes.
+        CompletableFuture<Access> pending = mode == Mode.READY ? snapshotAccess(provider, journal) : access(provider, journal);
+        observe(this, pending, (owner, value, failure) -> {
+            if (sequence != owner.observationSequence) return;
+            owner.observing = false;
+            if (!owner.valid(request) || owner.busy) return;
+            if (failure != null || value == null || !value.current(owner.source)) {
+                if (owner.mode != Mode.UNAVAILABLE) { ++owner.epoch; owner.unavailable(); }
+                return;
+            }
+            boolean changed = value.legacy ? owner.mode != Mode.LEGACY
+                    : owner.mode != Mode.READY || owner.snapshot == null
+                    || !value.snapshot.revision.equals(owner.snapshot.revision) || owner.unlinkUnavailable;
+            if (changed) {
+                Saved saved = owner.journal.read();
+                if (saved != null && !saved.unresolved() && value.recovery != null) {
+                    RelationshipRecoveryUi.OperationSummary previous = owner.boundSummary(saved);
+                    for (RelationshipRecoveryUi.OperationSummary next : value.recovery.summaries) {
+                        if (!saved.operationId.equals(next.operation.operationId)) continue;
+                        if (!matches(saved, next.operation) || previous != null && !sameScope(previous, next)
+                                || owner.reviewBasis != null && (next.kind != RelationshipRecoveryUi.OperationKind.LOCAL_LINK
+                                || next.delivery != RelationshipUi.Delivery.LOCAL
+                                || owner.reviewBasis.originalDeadline != next.operation.originalDeadline
+                                || !owner.reviewBasis.domParticipantRef.equals(next.domParticipantRef)
+                                || !owner.reviewBasis.subParticipantRef.equals(next.subParticipantRef))) {
+                            ++owner.epoch; owner.unavailable(); return;
+                        }
+                    }
+                }
+                ++owner.epoch;
+                owner.review = null; owner.operation = null; owner.summary = null;
+                owner.reviewBasis = null; owner.recoveryState = RecoveryState.NONE;
+                owner.unlinkUnavailable = false;
+                ++owner.rosterChanges;
+                owner.loaded(owner.epoch, value, null, true);
+            }
+            if (owner.valid(owner.epoch)) observed.run();
+        });
+    }
+
     private void loaded(long request, Access value, Throwable failure) {
+        loaded(request, value, failure, false);
+    }
+
+    private void loaded(long request, Access value, Throwable failure, boolean passive) {
         if (!valid(request)) return;
         busy = false;
         if (failure != null || value == null || !value.current(source)) { unavailable(); return; }
@@ -175,7 +232,11 @@ public final class RelationshipPresentation {
             if (!has(subChoice, RelationshipUi.Role.SUB)) subChoice = first(RelationshipUi.Role.SUB);
         }
         if (saved != null && recoveryAware()) {
-            if (saved.unresolved()) { lookup(saved); return; }
+            if (saved.unresolved()) {
+                if (passive) { recoveryState = RecoveryState.UNKNOWN; notifyChanged(); }
+                else lookup(saved);
+                return;
+            }
             summary = findSummary(saved.operationId);
             if (summary != null) {
                 if (!matches(saved, summary.operation)) { unavailable(); return; }
@@ -187,6 +248,7 @@ public final class RelationshipPresentation {
     }
 
     public void detach() {
+        observing = false; ++observationSequence;
         attached = false; ++epoch; busy = false; snapshot = null; review = null; operation = null;
         recovery = null; summary = null; reviewBasis = null; recoveryState = RecoveryState.NONE;
     }

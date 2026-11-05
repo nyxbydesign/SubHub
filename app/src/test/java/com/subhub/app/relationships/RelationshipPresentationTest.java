@@ -17,6 +17,86 @@ public class RelationshipPresentationTest {
     private static final String DIGEST =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    @Test public void passiveObservationPreservesAnUnchangedReviewWithoutJournalWritesOrActions() {
+        Fixture fixture = ready(); fixture.model.prepare();
+        fixture.provider.preparation.complete(review("dom", "sub"));
+        RelationshipUi.LocalReview reviewed = fixture.model.review();
+        long epoch = fixture.model.reviewEpoch(); int marks = fixture.journal.marks;
+        fixture.model.observe(() -> { });
+        assertSame(reviewed, fixture.model.review()); assertEquals(epoch, fixture.model.reviewEpoch());
+        assertEquals(marks, fixture.journal.marks);
+        assertTrue(fixture.provider.resumes.isEmpty()); assertTrue(fixture.provider.confirmations.isEmpty());
+        assertTrue(fixture.provider.cancellations.isEmpty()); assertEquals(1, fixture.provider.preparations.size());
+    }
+
+    @Test public void passiveObservationInvalidatesChangedReviewsAndRecoversTheSameProvider() {
+        Fixture fixture = ready(); fixture.model.prepare();
+        fixture.provider.preparation.complete(review("dom", "sub"));
+        RelationshipUi.LocalReview old = fixture.model.review(); long epoch = fixture.model.reviewEpoch();
+        fixture.provider.snapshot = CompletableFuture.completedFuture(snapshot("changed", "dom", "sub"));
+        fixture.model.observe(() -> { });
+        assertEquals("changed", fixture.model.snapshot().revision); assertNull(fixture.model.review());
+        fixture.model.confirm(old, epoch); assertTrue(fixture.provider.confirmations.isEmpty());
+        fixture.provider.snapshot = new CompletableFuture<>();
+        fixture.model.observe(() -> { });
+        fixture.provider.snapshot.completeExceptionally(new IllegalStateException("Unavailable"));
+        assertEquals(RelationshipPresentation.Mode.UNAVAILABLE, fixture.model.mode());
+        fixture.provider.snapshot = CompletableFuture.completedFuture(snapshot("recovered", "dom", "sub"));
+        fixture.model.observe(() -> { });
+        assertEquals(RelationshipPresentation.Mode.READY, fixture.model.mode());
+        assertEquals("recovered", fixture.model.snapshot().revision);
+        assertTrue(fixture.provider.resumes.isEmpty()); assertTrue(fixture.provider.confirmations.isEmpty());
+        assertTrue(fixture.provider.cancellations.isEmpty()); assertEquals(1, fixture.provider.preparations.size());
+    }
+
+    @Test public void passiveObservationCoalescesAndCannotOverwriteAnInFlightActionOrDetachedContext() {
+        Fixture fixture = ready();
+        CompletableFuture<RelationshipUi.Snapshot> delayed = new CompletableFuture<>();
+        fixture.provider.snapshot = delayed;
+        int reads = fixture.provider.reads;
+        fixture.model.observe(() -> { }); fixture.model.observe(() -> { });
+        assertEquals(reads + 1, fixture.provider.reads);
+        fixture.model.prepare(); fixture.model.observe(() -> { });
+        assertEquals(reads + 1, fixture.provider.reads);
+        delayed.complete(snapshot("stale", "dom", "sub"));
+        assertTrue(fixture.model.busy());
+        fixture.provider.preparation.complete(review("dom", "sub"));
+        assertNotNull(fixture.model.review());
+        fixture.provider.snapshot = new CompletableFuture<>();
+        fixture.model.observe(() -> { }); fixture.model.detach();
+        fixture.provider.snapshot.complete(snapshot("detached", "dom", "sub"));
+        assertNull(fixture.model.snapshot()); assertNull(fixture.model.review());
+        assertTrue(fixture.provider.confirmations.isEmpty());
+    }
+
+    @Test public void passiveRecoveryKeepsOriginalReferencesAndNeverObtainsOrConfirmsReview() {
+        RecoveryFixture fixture = new RecoveryFixture(); fixture.open();
+        RelationshipPresentation.Saved original = RelationshipPresentation.Saved.preparing("retained-key", "dom", "sub", "original-revision");
+        fixture.journal.value = original;
+        fixture.provider.projection = CompletableFuture.completedFuture(recoverySnapshot(REVISION + "-changed"));
+        fixture.model.observe(() -> { });
+        assertEquals(original, fixture.journal.value);
+        assertEquals(RelationshipPresentation.RecoveryState.UNKNOWN, fixture.model.recoveryState());
+        assertTrue(fixture.provider.lookups.isEmpty()); assertTrue(fixture.provider.reviews.isEmpty());
+        assertTrue(fixture.provider.preparations.isEmpty()); assertTrue(fixture.provider.confirmations.isEmpty());
+        assertTrue(fixture.provider.resumes.isEmpty()); assertTrue(fixture.provider.unlinks.isEmpty());
+    }
+
+    @Test public void passiveObservationRejectsChangedTypedOperationScopeAndDeadline() {
+        RecoveryFixture fixture = new RecoveryFixture();
+        fixture.journal.value = RelationshipPresentation.Saved.operation("operation", DIGEST);
+        fixture.provider.projection = CompletableFuture.completedFuture(recoverySnapshot(REVISION,
+                localSummary(operation(RelationshipUi.OperationState.PREPARED))));
+        fixture.open();
+        fixture.provider.projection = CompletableFuture.completedFuture(recoverySnapshot(REVISION + "-changed",
+                localSummary(new RelationshipUi.Operation("operation", DIGEST,
+                        RelationshipUi.OperationState.PENDING, 6000, null, null, null))));
+        fixture.model.observe(() -> { });
+        assertEquals(RelationshipPresentation.Mode.UNAVAILABLE, fixture.model.mode());
+        assertEquals("operation", fixture.journal.value.operationId);
+        assertTrue(fixture.provider.reviews.isEmpty()); assertTrue(fixture.provider.confirmations.isEmpty());
+    }
+
     @Test public void onlyExactDefaultWithoutAuthoritativeHistoryUsesLegacy() {
         Fixture fixture = new Fixture();
         fixture.source = RelationshipUi.unavailable();
@@ -624,9 +704,10 @@ public class RelationshipPresentationTest {
     }
     private static final class MemoryJournal implements RelationshipPresentation.Journal {
         boolean seen, writable = true;
+        int marks;
         RelationshipPresentation.Saved value;
         public boolean authoritativeSeen() { return seen; }
-        public boolean markAuthoritativeSeen() { if (!writable) return false; seen = true; return true; }
+        public boolean markAuthoritativeSeen() { marks++; if (!writable) return false; seen = true; return true; }
         public RelationshipPresentation.Saved read() { return value; }
         public boolean replace(RelationshipPresentation.Saved expected, RelationshipPresentation.Saved next) {
             if (!writable || !Objects.equals(expected, value)) return false;
@@ -646,12 +727,13 @@ public class RelationshipPresentationTest {
         }
     }
     private static class Provider implements RelationshipUi.Provider {
+        int reads;
         CompletableFuture<RelationshipUi.Snapshot> snapshot = new CompletableFuture<>();
         CompletableFuture<RelationshipUi.LocalReview> preparation = new CompletableFuture<>();
         CompletableFuture<RelationshipUi.Operation> result = new CompletableFuture<>();
         final List<List<String>> preparations = new ArrayList<>(), confirmations = new ArrayList<>();
         final List<String> resumes = new ArrayList<>(), cancellations = new ArrayList<>();
-        public CompletableFuture<RelationshipUi.Snapshot> snapshot() { return snapshot; }
+        public CompletableFuture<RelationshipUi.Snapshot> snapshot() { reads++; return snapshot; }
         public CompletableFuture<RelationshipUi.LocalReview> prepareLocal(String key, String dom, String sub, String revision) {
             preparations.add(Arrays.asList(key, dom, sub, revision)); return preparation;
         }

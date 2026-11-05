@@ -24,10 +24,77 @@ import java.util.concurrent.atomic.*;
 import org.junit.*;
 
 public class RemoteSessionControlsAndroidTest {
-    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
-            new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final org.junit.rules.TestRule integration = isolatedIntegration();
+    private boolean readersDrained;
+    private android.app.Application observedApplication;
+    private final java.util.Set<com.subhub.app.util.AsyncUiScope> ownedReaders =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final android.app.Application.ActivityLifecycleCallbacks readerObservation = new android.app.Application.ActivityLifecycleCallbacks() {
+        public void onActivityStarted(android.app.Activity activity) {
+            if (activity instanceof androidx.appcompat.app.AppCompatActivity) synchronized (ownedReaders) {
+                ownedReaders.add(com.subhub.app.util.AsyncUiScope.forPage((androidx.appcompat.app.AppCompatActivity) activity));
+            }
+        }
+        public void onActivityCreated(android.app.Activity activity, android.os.Bundle state) { }
+        public void onActivityResumed(android.app.Activity activity) { }
+        public void onActivityPaused(android.app.Activity activity) { }
+        public void onActivityStopped(android.app.Activity activity) { }
+        public void onActivitySaveInstanceState(android.app.Activity activity, android.os.Bundle state) { }
+        public void onActivityDestroyed(android.app.Activity activity) { }
+    };
+    private org.junit.rules.TestRule isolatedIntegration() {
+        return (base, description) -> new org.junit.runners.model.Statement() {
+            @Override public void evaluate() throws Throwable {
+                KeyholderPresentationAndroidTest.IntegrationFixture original = new KeyholderPresentationAndroidTest.IntegrationFixture();
+                invokeIntegration(original, "before");
+                Throwable failure = null;
+                try { base.evaluate(); } catch (Throwable problem) { failure = problem; }
+                if (readersDrained) {
+                    try { invokeIntegration(original, "after"); }
+                    catch (Throwable problem) { if (failure == null) failure = problem; else failure.addSuppressed(problem); }
+                } else if (failure == null) failure = new AssertionError("Keep fixture hooks isolated until every owned reader drains");
+                if (failure != null) throw failure;
+            }
+        };
+    }
+    private static void invokeIntegration(KeyholderPresentationAndroidTest.IntegrationFixture original, String phase) throws Throwable {
+        java.lang.reflect.Method method = KeyholderPresentationAndroidTest.IntegrationFixture.class.getDeclaredMethod(phase);
+        method.setAccessible(true);
+        try { method.invoke(original); }
+        catch (java.lang.reflect.InvocationTargetException failed) { throw failed.getCause(); }
+    }
+    private void observeOwnedPages() {
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        observedApplication = (android.app.Application) instrumentation.getTargetContext().getApplicationContext();
+        instrumentation.runOnMainSync(() -> observedApplication.registerActivityLifecycleCallbacks(readerObservation));
+    }
+    private void awaitOwnedReaders() throws Exception {
+        assertNotEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper());
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        instrumentation.runOnMainSync(() -> {
+            if (observedApplication != null) observedApplication.unregisterActivityLifecycleCallbacks(readerObservation);
+        });
+        instrumentation.waitForIdleSync();
+        java.lang.reflect.Field worker = com.subhub.app.util.AsyncUiScope.class.getDeclaredField("worker");
+        java.lang.reflect.Field serial = com.subhub.app.util.AsyncUiScope.class.getDeclaredField("serialWorker");
+        worker.setAccessible(true); serial.setAccessible(true);
+        java.util.List<com.subhub.app.util.AsyncUiScope> readers;
+        synchronized (ownedReaders) { readers = new java.util.ArrayList<>(ownedReaders); }
+        for (com.subhub.app.util.AsyncUiScope reader : readers) {
+            for (java.util.concurrent.ExecutorService executor : new java.util.concurrent.ExecutorService[]{
+                    (java.util.concurrent.ExecutorService) worker.get(reader),
+                    (java.util.concurrent.ExecutorService) serial.get(reader)}) if (executor != null) {
+                assertTrue("Closed page must stop its owned executor", executor.isShutdown());
+                assertTrue("Page readers must drain before restoring shared hooks",
+                        executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+        }
+        instrumentation.waitForIdleSync();
+    }
+
     @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
     private static final String DOM = repeat('a'), SUB = repeat('b'), WITNESS = repeat('c'), IDLE = repeat('d');
+    private com.subhub.app.activity.ActivityRepository beforeActivity;
     private Context context;
     private RemoteFeature feature, previous;
     private RemoteStore source;
@@ -39,7 +106,10 @@ public class RemoteSessionControlsAndroidTest {
     private final RemoteSessionCommands.Duration service = new RemoteSessionCommands.Duration(3_600_000, 1_800_000, 7_200_000, false);
 
     @Before public void setup() throws Exception {
+        observeOwnedPages();
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        beforeActivity = com.subhub.app.activity.ActivitySources.repository();
+        com.subhub.app.activity.ActivitySources.install(new SessionControlsActivityIsolation());
         SharedPreferences prefs = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
         hadMode = prefs.contains(DeviceRolePreferences.KEY_MODE); mode = prefs.getString(DeviceRolePreferences.KEY_MODE, "BOTH");
         prefs.edit().putString(DeviceRolePreferences.KEY_MODE, DeviceRolePreferences.Mode.BOTH.name()).commit();
@@ -67,14 +137,19 @@ public class RemoteSessionControlsAndroidTest {
     }
 
     @After public void cleanup() throws Exception {
+        awaitOwnedReaders();
+        // Retain the fixture hooks and selected endpoint until every fixture worker has exited.
+        if (feature != null) shutdownOwnedFeature();
+        if (source != null) source.close();
         if (singleton != null) synchronized (RemoteFeature.class) {
             assertSame("Selected fixture endpoint changed before restoration", feature, singleton.get(null));
             singleton.set(null, previous);
         }
-        if (feature != null) feature.shutdownForTest(); if (source != null) source.close();
         if (previous != null) {
             assertSame(previous, RemoteFeature.get(context)); assertAccepting(previous, "Restored application endpoint");
         }
+        if (beforeActivity != null) com.subhub.app.activity.ActivitySources.install(beforeActivity);
+        readersDrained = true;
         if (database != null) { context.deleteDatabase(database + ".db"); context.deleteDatabase(database + "-source.db"); }
         if (context != null) {
             SharedPreferences.Editor edit = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit();
@@ -84,6 +159,22 @@ public class RemoteSessionControlsAndroidTest {
         ControllerPinManager.enterSubMode();
     }
 
+    private void shutdownOwnedFeature() throws Exception {
+        feature.shutdownForTest();
+        for (String name : new String[]{"timer", "pairingDeadlineTimer", "acceptor", "operations", "incomingSessions", "sessions"}) {
+            java.lang.reflect.Field field = RemoteFeature.class.getDeclaredField(name); field.setAccessible(true);
+            java.util.concurrent.ExecutorService executor = (java.util.concurrent.ExecutorService) field.get(feature);
+            assertTrue("Fixture endpoint must stop its owned " + name, executor.isShutdown());
+            assertTrue("Fixture endpoint must drain before restoring the application endpoint",
+                    executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        java.lang.reflect.Field worker = RemoteActivityRepository.class.getDeclaredField("worker"); worker.setAccessible(true);
+        java.util.concurrent.ExecutorService activityWorker = (java.util.concurrent.ExecutorService) worker.get(feature.activity);
+        assertTrue(activityWorker.isShutdown());
+        assertTrue(activityWorker.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
     @Test public void unsupportedPeerHasOneDisabledStartAndRecreationQueuesNothing() throws Exception {
         try (ActivityScenario<PersonActivity> page = open()) {
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_unsupported)));
@@ -91,6 +182,7 @@ public class RemoteSessionControlsAndroidTest {
                 assertEquals(1, count(a.findViewById(android.R.id.content), "remote_session_controls"));
                 assertFalse(tag(a, "remote_session_start").isEnabled()); assertFalse(tag(a, "remote_session_stop").isEnabled());
                 assertNull(a.findViewById(R.id.person_session_action));
+                assertNull(tag(a, "remote_session_refresh"));
             });
             page.recreate();
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_unsupported)));
@@ -116,7 +208,7 @@ public class RemoteSessionControlsAndroidTest {
         Gateway gateway = new Gateway(); gateway.reviewed = new CompletableFuture<>();
         try (ActivityScenario<PersonActivity> page = open()) {
             inject(page, gateway); tap("remote_session_start"); await(() -> gateway.reviews.get() == 1);
-            gateway.failSnapshot = true; tap("remote_session_refresh");
+            gateway.failSnapshot = true;
             await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
             gateway.reviewed.complete(review(RemoteSessionCommands.Action.START, WITNESS));
             InstrumentationRegistry.getInstrumentation().waitForIdleSync(); assertEquals(0, gateway.confirms.get());
@@ -128,17 +220,17 @@ public class RemoteSessionControlsAndroidTest {
         try (ActivityScenario<PersonActivity> page = open()) {
             inject(page, gateway);
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
-            dirty.set(false); tap("remote_session_refresh"); await(() -> enabled(page, "remote_session_start"));
+            dirty.set(false); await(() -> enabled(page, "remote_session_start"));
             tap("remote_session_start"); await(() -> gateway.confirms.get() == 1);
             RemoteSessionCommands.Request request = gateway.confirmed.request;
             gateway.receipt(request, RemoteSessionCommands.State.ACKNOWLEDGED, null);
-            tap("remote_session_refresh");
+
             await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_session_received)));
             assertFalse(hasText(page, "remote_session_status", context.getString(R.string.remote_session_applied)));
             RemoteSessionCommands.Proof proof = new RemoteSessionCommands.Proof(true, repeat('e'), request.issuedAt,
                     request.issuedAt + 3_600_000, 3_600_000);
             gateway.receipt(request, RemoteSessionCommands.State.APPLIED, proof);
-            tap("remote_session_refresh");
+
             await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_session_applied)));
             page.recreate(); InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             assertEquals(1, gateway.reviews.get()); assertEquals(1, gateway.confirms.get());
@@ -152,7 +244,7 @@ public class RemoteSessionControlsAndroidTest {
             await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
             assertEquals(0, gateway.confirms.get());
             gateway.reviewWitness = WITNESS; gateway.stopAvailable = true; dirty.set(true);
-            tap("remote_session_refresh"); await(() -> enabled(page, "remote_session_stop"));
+            await(() -> enabled(page, "remote_session_stop"));
             assertFalse(SubFeaturePolicy.hardcoreOverride(context));
             tap("remote_session_stop"); await(() -> gateway.confirms.get() == 1);
             assertEquals(RemoteSessionCommands.Action.STOP, gateway.confirmed.request.action);
@@ -168,7 +260,7 @@ public class RemoteSessionControlsAndroidTest {
             await(() -> enabled(page, "remote_session_start"));
             onView(withTagValue(is("remote_duration_choice"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             androidx.test.espresso.Espresso.onData(org.hamcrest.Matchers.anything()).atPosition(2).perform(click());
-            tap("remote_session_refresh");
+
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
@@ -178,7 +270,7 @@ public class RemoteSessionControlsAndroidTest {
             page.onActivity(a -> assertEquals(2, ((android.widget.Spinner) tag(a, "remote_duration_choice")).getSelectedItemPosition()));
             tap("remote_duration_apply");
             await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
-            tap("remote_session_refresh");
+
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
             assertEquals(RemoteStore.CommandState.QUEUED, feature.store.latestCommand(peer.identity, peer.generation).state);
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
@@ -196,7 +288,7 @@ public class RemoteSessionControlsAndroidTest {
             new RemoteSessionControls(a, parent, person, duration::hasUnappliedDraft, gateway).bind();
         });
         await(() -> hasTag(page, "remote_duration_apply"));
-        tap("remote_session_refresh");
+
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
@@ -260,14 +352,55 @@ public class RemoteSessionControlsAndroidTest {
         finally { bitmap.recycle(); }
     }
 
+    @Test public void snapshotFailureRecoversAutomaticallyAndObservationResumesWithoutCommands() throws Exception {
+        Gateway gateway = new Gateway();
+        // RolePage refreshes on resume, so every replacement must retain this fixture's backend.
+        People.installConnectionUi(new ConnectionUi() {
+            public void openPairing(android.app.Activity activity) { throw new AssertionError("Unexpected pairing command"); }
+            public void openConnection(android.app.Activity activity, PersonId person) { throw new AssertionError("Unexpected connection command"); }
+            @Override public boolean bindSessionControls(android.app.Activity activity, LinearLayout parent, PersonSnapshot person) {
+                new RemoteSessionControls(activity, parent, person, dirty::get, gateway).bind();
+                return true;
+            }
+        });
+        try (ActivityScenario<PersonActivity> page = open()) {
+            inject(page, gateway);
+            page.onActivity(a -> assertNull(tag(a, "remote_session_refresh")));
+            gateway.failSnapshot = true;
+            await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
+            gateway.failSnapshot = false;
+            await(() -> enabled(page, "remote_session_start"));
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            int stopped = gateway.reads.get();
+            Thread.sleep(2200);
+            assertEquals("Stopped controls must not read", stopped, gateway.reads.get());
+            gateway.stopAvailable = true;
+            page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            await(() -> enabled(page, "remote_session_stop"));
+            assertTrue(gateway.reads.get() > stopped);
+            assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+        }
+    }
+
+    /** This fixture exercises session controls, never an unrelated canonical Activity data source. */
+    private static final class SessionControlsActivityIsolation implements com.subhub.app.activity.ActivityRepository {
+        public boolean supports(PersonId person) { return false; }
+        public Page load(String before, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public Page locate(String key, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public List<com.subhub.app.activity.ActivityEntry> recent(PersonId person, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public int unreadCount() { return 0; }
+        public void markRead(List<String> keys) { throw new AssertionError("Unexpected activity write"); }
+    }
+
     private final class Gateway implements RemoteSessionControls.Gateway {
-        final AtomicInteger reviews = new AtomicInteger(), confirms = new AtomicInteger();
+        final AtomicInteger reads = new AtomicInteger(), reviews = new AtomicInteger(), confirms = new AtomicInteger();
         volatile boolean stopAvailable, failSnapshot;
         volatile String reviewWitness = WITNESS;
         volatile RemoteSessionRuntime.Record record;
         CompletableFuture<RemoteSessionRuntime.Review> reviewed;
         RemoteSessionRuntime.Review confirmed;
         public CompletableFuture<RemoteSessionRuntime.Snapshot> snapshot() {
+            reads.incrementAndGet();
             if (failSnapshot) {
                 CompletableFuture<RemoteSessionRuntime.Snapshot> failed = new CompletableFuture<>();
                 failed.completeExceptionally(new IllegalStateException("Fixture snapshot unavailable")); return failed;

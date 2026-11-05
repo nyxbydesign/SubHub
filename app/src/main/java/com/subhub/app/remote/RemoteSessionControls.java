@@ -31,7 +31,6 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         CompletableFuture<RemoteSessionRuntime.Snapshot> snapshot();
         CompletableFuture<RemoteSessionRuntime.Review> review(RemoteSessionCommands.Action action);
         CompletableFuture<String> confirm(RemoteSessionRuntime.Review review);
-        default void refresh() { }
     }
 
     public static final class Operation extends ViewModel {
@@ -87,7 +86,6 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 return backend.reviewSession(selected, action);
             }
             public CompletableFuture<String> confirm(RemoteSessionRuntime.Review review) { return backend.confirmSession(review); }
-            public void refresh() { backend.changed(); }
         };
         lifecycle = ((LifecycleOwner) activity).getLifecycle();
         work = AsyncUiScope.forContext(activity);
@@ -113,8 +111,6 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         status = PersonUi.text(controls, activity.getString(R.string.role_loading), false);
         status.setTag("remote_session_status");
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
-        PersonUi.action(controls, R.string.remote_session_refresh, () -> { gateway.refresh(); load(); }, false)
-                .setTag("remote_session_refresh");
         start.setEnabled(false); stop.setEnabled(false);
         lifecycle.addObserver(this);
     }

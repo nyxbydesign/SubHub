@@ -67,7 +67,8 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         }, loaded -> {
             if (!mayManagePeople() || !resumed) return;
             if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
-                showRosterUnavailable();
+                renderedPeople.clear(); roster.removeAllViews();
+                favoriteGuidance.setVisibility(android.view.View.GONE);
                 snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
             }
             renderPeople(loaded);

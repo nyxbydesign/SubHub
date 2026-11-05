@@ -72,17 +72,87 @@ import org.junit.Test;
 
 /** Provider fixtures qualify presentation only; they create no production relationship or authority. */
 public final class RelationshipUiAndroidTest {
-    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
-            new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final org.junit.rules.TestRule integration = isolatedIntegration();
+    private boolean readersDrained;
+    private android.app.Application observedApplication;
+    private final java.util.Set<com.subhub.app.util.AsyncUiScope> ownedReaders =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final android.app.Application.ActivityLifecycleCallbacks readerObservation = new android.app.Application.ActivityLifecycleCallbacks() {
+        public void onActivityStarted(android.app.Activity activity) {
+            if (activity instanceof androidx.appcompat.app.AppCompatActivity) synchronized (ownedReaders) {
+                ownedReaders.add(com.subhub.app.util.AsyncUiScope.forPage((androidx.appcompat.app.AppCompatActivity) activity));
+            }
+        }
+        public void onActivityCreated(android.app.Activity activity, android.os.Bundle state) { }
+        public void onActivityResumed(android.app.Activity activity) { }
+        public void onActivityPaused(android.app.Activity activity) { }
+        public void onActivityStopped(android.app.Activity activity) { }
+        public void onActivitySaveInstanceState(android.app.Activity activity, android.os.Bundle state) { }
+        public void onActivityDestroyed(android.app.Activity activity) { }
+    };
+    private org.junit.rules.TestRule isolatedIntegration() {
+        return (base, description) -> new org.junit.runners.model.Statement() {
+            @Override public void evaluate() throws Throwable {
+                KeyholderPresentationAndroidTest.IntegrationFixture original = new KeyholderPresentationAndroidTest.IntegrationFixture();
+                invokeIntegration(original, "before");
+                Throwable failure = null;
+                try { base.evaluate(); } catch (Throwable problem) { failure = problem; }
+                if (readersDrained) {
+                    try { invokeIntegration(original, "after"); }
+                    catch (Throwable problem) { if (failure == null) failure = problem; else failure.addSuppressed(problem); }
+                } else if (failure == null) failure = new AssertionError("Keep fixture hooks isolated until every owned reader drains");
+                if (failure != null) throw failure;
+            }
+        };
+    }
+    private static void invokeIntegration(KeyholderPresentationAndroidTest.IntegrationFixture original, String phase) throws Throwable {
+        java.lang.reflect.Method method = KeyholderPresentationAndroidTest.IntegrationFixture.class.getDeclaredMethod(phase);
+        method.setAccessible(true);
+        try { method.invoke(original); }
+        catch (java.lang.reflect.InvocationTargetException failed) { throw failed.getCause(); }
+    }
+    private void observeOwnedPages() {
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        observedApplication = (android.app.Application) instrumentation.getTargetContext().getApplicationContext();
+        instrumentation.runOnMainSync(() -> observedApplication.registerActivityLifecycleCallbacks(readerObservation));
+    }
+    private void awaitOwnedReaders() throws Exception {
+        assertNotEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper());
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        instrumentation.runOnMainSync(() -> {
+            if (observedApplication != null) observedApplication.unregisterActivityLifecycleCallbacks(readerObservation);
+        });
+        instrumentation.waitForIdleSync();
+        java.lang.reflect.Field worker = com.subhub.app.util.AsyncUiScope.class.getDeclaredField("worker");
+        java.lang.reflect.Field serial = com.subhub.app.util.AsyncUiScope.class.getDeclaredField("serialWorker");
+        worker.setAccessible(true); serial.setAccessible(true);
+        java.util.List<com.subhub.app.util.AsyncUiScope> readers;
+        synchronized (ownedReaders) { readers = new java.util.ArrayList<>(ownedReaders); }
+        for (com.subhub.app.util.AsyncUiScope reader : readers) {
+            for (java.util.concurrent.ExecutorService executor : new java.util.concurrent.ExecutorService[]{
+                    (java.util.concurrent.ExecutorService) worker.get(reader),
+                    (java.util.concurrent.ExecutorService) serial.get(reader)}) if (executor != null) {
+                assertTrue("Closed page must stop its owned executor", executor.isShutdown());
+                assertTrue("Page readers must drain before restoring shared hooks",
+                        executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+        }
+        instrumentation.waitForIdleSync();
+    }
+
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private static final String STORE = "subhub_relationship_presentation";
     private static final String DIGEST =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private RelationshipUi.Provider beforeProvider;
+    private com.subhub.app.activity.ActivityRepository beforeActivity;
     private Map<String, ?> beforeJournal, beforeFavorites;
     private String beforeAccessibility, beforeServices;
 
     @Before public void prepare() throws Exception {
+        observeOwnedPages();
+        beforeActivity = com.subhub.app.activity.ActivitySources.repository();
+        com.subhub.app.activity.ActivitySources.install(new RelationshipActivityIsolation());
         beforeProvider = RelationshipUi.provider();
         beforeJournal = new LinkedHashMap<>(context.getSharedPreferences(STORE, 0).getAll());
         beforeFavorites = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
@@ -101,6 +171,9 @@ public final class RelationshipUiAndroidTest {
     }
 
     @After public void restore() throws Exception {
+        awaitOwnedReaders();
+        readersDrained = true;
+        if (beforeActivity != null) com.subhub.app.activity.ActivitySources.install(beforeActivity);
         RelationshipUi.install(beforeProvider);
         SharedPreferenceTestRestore.restore(context.getSharedPreferences(STORE, 0), beforeJournal);
         clearJournalCache();
@@ -109,15 +182,44 @@ public final class RelationshipUiAndroidTest {
         assertEquals(beforeServices, Settings.Secure.getString(context.getContentResolver(), "enabled_accessibility_services"));
     }
 
-    @Test @SdkSuppress(minSdkVersion = 29)
-    public void defaultCompatibilityIsNotRestoredAfterAnAuthoritativeFailure() throws Exception {
+    @Test public void sameProviderSnapshotRecoversAutomaticallyWithoutManualDataActions() throws Exception {
+        Fixture provider = new Fixture(); provider.snapshot = failed(); RelationshipUi.install(provider);
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
             AtomicReference<PeopleActivity> host = host(scenario);
-            await(() -> tagged(host.get(), "person:local") != null);
+            await(() -> tagged(host.get(), "relationship_unavailable") != null);
+            scenario.onActivity(a -> {
+                assertNull(tagged(a, "relationship_refresh"));
+                assertNull(tagged(a, "relationship_unlink_refresh"));
+                assertNull(tagged(a, "relationship_prepare"));
+            });
+            provider.snapshot = CompletableFuture.completedFuture(snapshot(Collections.emptyList(), participants()));
+            await(() -> tagged(host.get(), "relationship_prepare") != null
+                    && tagged(host.get(), "relationship_unavailable") == null);
+            scenario.onActivity(a -> assertTrue(textExists(a, R.string.relationships_no_subs)));
+            assertTrue(provider.preparations.isEmpty()); assertTrue(provider.confirmations.isEmpty());
+            assertTrue(provider.cancellations.isEmpty());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void defaultCompatibilityIsNotRestoredAfterAnAuthoritativeFailure() throws Exception {
+        PersonSnapshot legacy = person("fixture-legacy", "Legacy paired Sub", PersonSnapshot.Connection.OFFLINE);
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return Collections.singletonList(legacy.id); }
+            public PersonSnapshot load(PersonId id) { assertEquals(legacy.id, id); return legacy; }
+        });
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            AtomicReference<PeopleActivity> host = host(scenario);
+            // Compatibility retains remote rows; mere local existence never proves a local relationship.
+            await(() -> tagged(host.get(), "person:" + legacy.id.value()) != null);
+            scenario.onActivity(a -> assertNull(tagged(a, "person:local")));
             Fixture provider = new Fixture(); RelationshipUi.install(provider);
             scenario.recreate(); scenario.onActivity(host::set);
             await(() -> textExists(host.get(), R.string.relationships_no_subs));
-            scenario.onActivity(a -> assertNull(tagged(a, "person:local")));
+            scenario.onActivity(a -> {
+                assertNull(tagged(a, "person:local"));
+                assertNull(tagged(a, "person:" + legacy.id.value()));
+            });
             provider.snapshot = failed();
             scenario.recreate(); scenario.onActivity(host::set);
             await(() -> {
@@ -128,7 +230,9 @@ public final class RelationshipUiAndroidTest {
             });
             scenario.onActivity(a -> {
                 assertNull(tagged(a, "person:local"));
-                assertEquals(1, countText(a.findViewById(android.R.id.content), a.getString(R.string.relationships_retry)));
+                assertNull(tagged(a, "person:" + legacy.id.value()));
+                assertNull(tagged(a, "relationship_refresh"));
+                assertEquals(0, countText(a.findViewById(android.R.id.content), a.getString(R.string.relationships_retry)));
                 TextView favorite = findText(a.findViewById(android.R.id.content), a.getString(R.string.home_favorite_gesture));
                 assertNotNull(favorite); assertEquals(View.GONE, favorite.getVisibility());
                 assertFalse(textExists(a, R.string.role_person_unavailable));
@@ -141,7 +245,10 @@ public final class RelationshipUiAndroidTest {
                 return tagged(host.get(), "relationship_unavailable") != null
                         && guidance != null && guidance.getVisibility() == View.GONE;
             });
-            scenario.onActivity(a -> assertNull(tagged(a, "person:local")));
+            scenario.onActivity(a -> {
+                assertNull(tagged(a, "person:local"));
+                assertNull(tagged(a, "person:" + legacy.id.value()));
+            });
             onView(tag("relationship_unavailable")).perform(revealAboveNavigation());
             capture(host.get(), "authoritative-unavailable", "relationship_unavailable");
             PersonSnapshot recovered = person("fixture-recovered", "Recovered Sub", PersonSnapshot.Connection.OFFLINE);
@@ -156,7 +263,6 @@ public final class RelationshipUiAndroidTest {
             provider.snapshot = CompletableFuture.completedFuture(snapshot(Collections.singletonList(
                     edge(recovered.id, 10, RelationshipUi.Availability.OFFLINE)), participants()));
             RelationshipUi.install(provider);
-            onView(tag("relationship_refresh")).perform(revealAboveNavigation(), click());
             await(() -> tagged(host.get(), "person:" + recovered.id.value()) != null
                     && tagged(host.get(), "relationship_prepare") != null);
             scenario.onActivity(a -> {
@@ -680,6 +786,16 @@ public final class RelationshipUiAndroidTest {
         CompletableFuture<T> future = new CompletableFuture<>(); future.completeExceptionally(new IllegalStateException("Unavailable"));
         return future;
     }
+    /** Keep synthetic relationship screens isolated from the canonical Activity data source. */
+    private static final class RelationshipActivityIsolation implements com.subhub.app.activity.ActivityRepository {
+        public boolean supports(PersonId person) { return false; }
+        public Page load(String before, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public Page locate(String key, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public List<com.subhub.app.activity.ActivityEntry> recent(PersonId person, int limit) { throw new AssertionError("Unexpected activity read"); }
+        public int unreadCount() { return 0; }
+        public void markRead(List<String> keys) { throw new AssertionError("Unexpected activity write"); }
+    }
+
     private static class Fixture implements RelationshipUi.Provider {
         volatile CompletableFuture<RelationshipUi.Snapshot> snapshot = CompletableFuture.completedFuture(
                 RelationshipUiAndroidTest.snapshot(Collections.emptyList(), participants()));
