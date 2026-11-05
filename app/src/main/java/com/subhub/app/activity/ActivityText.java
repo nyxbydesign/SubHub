@@ -57,6 +57,7 @@ public final class ActivityText {
 
     private static String reason(Context context, String reason) {
         switch (reason) {
+            case "extra_time_request": return context.getString(R.string.extra_time_tribute_rule_enabled);
             case "watched_app_open": return context.getString(R.string.dom_activity_reason_app);
             case "censored_dwell": return context.getString(R.string.dom_activity_reason_dwell);
             case "censored_tap": return context.getString(R.string.dom_activity_reason_tap);

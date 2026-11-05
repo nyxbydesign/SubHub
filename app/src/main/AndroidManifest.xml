@@ -132,6 +132,8 @@
             android:exported="false" />
         <activity android:name=".commitment.CommitmentActivity" android:exported="false" />
         <activity android:name=".appmode.AppModeActivity" android:exported="false" />
+        <activity android:name=".appmode.ExtraTimeActivity" android:exported="false"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
         <activity android:name=".penance.PenanceActivity" android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>

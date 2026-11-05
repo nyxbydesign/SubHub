@@ -21,7 +21,7 @@ capture status all match.
 
 Every new API payment includes a purchase description built from its immutable settlement:
 the cause, counted events, and actual charged amount in EUR or USD. Charges of the same cause
-are grouped, so a full 200-entry ledger becomes at most six cause rows. Applied caps are already
+are grouped into one row per cause, including extra-time requests. Applied caps are already
 reflected in the amounts; the bill does not invent a per-event price or include later ledger entries.
 Tamper events and paid pauses have their own labels. The compact purchase summary fits PayPal's
 127-character limit; longer bills remain complete in the item description, rather than being silently
@@ -127,3 +127,26 @@ development architecture.
 Only a completed provider capture with the expected settlement reference, amount, currency and capture identity can create Tribute-paid activity. Triggered charges, checkout creation, balances and manually confirmed links do not provide that proof. The checkout retains its original approved activity audience; a later relationship cannot receive an earlier payment's activity.
 
 Verified completion acknowledges the ledger, paid total and optional activity receipt in one preference commit. A verified paid-pause grant shares that commit with its exact settlement owner and original expiry. Reconciliation never credits the same settlement twice, extends an acknowledged pause, or restarts an expired grant. Activity projection runs separately from payment processing; its bounded outbox and delivery failures cannot initiate another payment or block successful credit. Only hash-based event identity and the advisory amount/currency cross the paired Activity stream.
+
+## Extra-time requests
+
+Both paired apps must support app-time requests. When a selected app reaches an active
+individual or combined limit, the Sub can open **App time requests** from Home or the
+limit notification and submit a request. The assigned Dom reviews it from that Sub's
+profile and approves a positive number of minutes or declines. Limits remain in place
+while the request is pending or declined.
+
+An approval adds a one-time allowance for that app on the Sub's current local day.
+It does not edit the recurring daily allowance or unlock other apps after a combined
+limit. Unused extra time expires at the end of that day; a changed configuration or
+relationship cannot reuse a stale approval. After a decision and exhaustion of any
+approved time, the Sub may deliberately submit another request.
+
+In **Tribute > Rules > Apps & requests**, the **Extra-time requests** rule controls
+tribute on submission. It is off by default, with a configurable initial price of 1.00
+in the selected wallet currency. The request page shows the current bounded amount
+before submission. Existing daily and weekly caps, correction window, currency and
+Wallet participation apply. Approval and decline never trigger another tribute;
+a retry or reconnect of the same request does not create a second debit. An assessed
+tribute is a ledger balance, not proof of a completed payment, and requesting does not
+guarantee approval.

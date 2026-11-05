@@ -110,6 +110,7 @@ public final class RemoteConfiguration {
         Set<String> included=new HashSet<>();sections.keys().forEachRemaining(included::add);
         if(!included.equals(ConfigurationSchema.SECTIONS))throw new IllegalArgumentException("Incomplete active configuration");
         com.subhub.app.tasks.TaskContractFields.expandLegacy(sections);
+        ExtraTimeContractFields.expandLegacy(sections);
         for(String section:included) {
             Set<String> fields=new HashSet<>();sections.getJSONObject(section).keys().forEachRemaining(fields::add);
             if(!fields.equals(ConfigurationSettingCatalog.keys(section)))throw new IllegalArgumentException("Incomplete active settings");

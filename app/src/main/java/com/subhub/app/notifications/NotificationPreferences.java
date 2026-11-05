@@ -8,7 +8,7 @@ import com.subhub.app.security.DeviceRolePreferences;
 public final class NotificationPreferences {
     public enum Role { DOM, SUB }
     public enum Event { ACTIVITY, TASK_REVIEW, CONTRACT_CHANGED, SESSION_STARTED, SESSION_STOPPED,
-        TRACKED_APP_OPENED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED, TRIBUTE_TRIGGERED, TRIBUTE_PAID, SESSIONS, TASKS }
+        TRACKED_APP_OPENED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED, TRIBUTE_TRIGGERED, TRIBUTE_PAID, SESSIONS, TASKS, EXTRA_TIME_REQUESTS }
     /** Acquire after store/runtime locks. Code holding this lock never enters those subsystems. */
     public static final Object DELIVERY_LOCK = new Object();
     public static final String STORE = "local_notification_choices";
@@ -43,8 +43,8 @@ public final class NotificationPreferences {
         }
     }
     private static boolean supported(Role role, Event event) {
-        return role == Role.DOM ? isActivity(event) || event == Event.TASK_REVIEW
-                : event == Event.CONTRACT_CHANGED || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED || event == Event.SESSIONS || event == Event.TASKS;
+        return role == Role.DOM ? isActivity(event) || event == Event.TASK_REVIEW || event == Event.EXTRA_TIME_REQUESTS
+                : event == Event.CONTRACT_CHANGED || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED || event == Event.SESSIONS || event == Event.TASKS || event == Event.EXTRA_TIME_REQUESTS;
     }
     static String sessionEpoch(Context context) { return preferences(context).getString("sessions_epoch", ""); }
     private static boolean session(Event event) {

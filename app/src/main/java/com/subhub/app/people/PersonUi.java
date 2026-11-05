@@ -107,7 +107,8 @@ public final class PersonUi {
     }
 
     public static void allowances(LinearLayout parent, PersonSnapshot snapshot) {
-        if (snapshot.allowances.isEmpty()) return;
+        if (snapshot.allowances.isEmpty()
+                && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())) return;
         LinearLayout card = card(parent);
         UiIdentity.sectionIcon(text(card, parent.getContext().getString(R.string.role_app_time), true),
                 R.drawable.ic_nav_limits);
@@ -129,7 +130,12 @@ public final class PersonUi {
             progress.setProgressTintList(android.content.res.ColorStateList.valueOf(parent.getContext().getColor(R.color.accent_text)));
             progress.setContentDescription(value.label);
             card.addView(progress, new LinearLayout.LayoutParams(-1, dp(parent.getContext(), 6)));
+            if (snapshot.id.isLocal() && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())
+                    && !value.packageName.isEmpty() && value.dailyMinutes > 0
+                    && value.usedMillis >= value.dailyMinutes * 60_000L)
+                com.subhub.app.appmode.ExtraTimeEntry.request(card, snapshot.id, value.packageName);
         }
+        com.subhub.app.appmode.ExtraTimeEntry.review(card, snapshot.id);
     }
 
     public static String connection(Context context, PersonSnapshot person) {

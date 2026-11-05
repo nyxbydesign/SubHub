@@ -25,11 +25,13 @@ public final class NotificationControls {
             toggle(context, container, role, Event.TRIBUTE_TRIGGERED, R.string.notification_tribute_triggered);
             toggle(context, container, role, Event.TRIBUTE_PAID, R.string.notification_tribute_paid);
             toggle(context, container, role, Event.TASK_REVIEW, R.string.notification_task_reviews);
+            toggle(context, container, role, Event.EXTRA_TIME_REQUESTS, R.string.extra_time_notification_choice);
             return;
         }
         toggle(context, container, role, Event.CONTRACT_CHANGED, R.string.notification_contract_changes);
         toggle(context, container, role, Event.SESSIONS, R.string.notification_sessions);
         toggle(context, container, role, Event.TASKS, R.string.notification_tasks);
+        toggle(context, container, role, Event.EXTRA_TIME_REQUESTS, R.string.extra_time_notification_choice);
     }
     private static void toggle(Context context, LinearLayout container, Role role, Event event, int label) {
         StateToggle control = new StateToggle(context);

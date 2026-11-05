@@ -229,12 +229,14 @@ public final class AppTimerManager {
         Settings settings = loadSettings();
         if (!settings.anyEnabled()) return LimitStatus.NONE;
         UsageSnapshot usage = snapshot(packageName, nowMillis);
+        ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
         if (settings.perAppEnabled
-                && usage.appUsedMillis >= minutesToMillis(allowanceMinutes(packageName))) {
+                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(allowanceMinutes(packageName)))) {
             return LimitStatus.PER_APP;
         }
         if (settings.totalEnabled
-                && usage.totalUsedMillis >= minutesToMillis(settings.totalMinutes)) {
+                && usage.totalUsedMillis >= minutesToMillis(settings.totalMinutes)
+                && !extra.permitsSharedException(usage.appUsedMillis)) {
             return LimitStatus.COMBINED;
         }
         return LimitStatus.NONE;

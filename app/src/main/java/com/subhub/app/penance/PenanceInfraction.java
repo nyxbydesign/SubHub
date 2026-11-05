@@ -8,6 +8,7 @@ public enum PenanceInfraction {
     WATCHED_APP_OPEN("watched_app_open", 50, false),
     TAMPER_ATTEMPT("tamper_attempt", 500, false),
     TASK_FAILURE("task_failure", 100, false),
+    EXTRA_TIME_REQUEST("extra_time_request", 100, false),
     PAID_PAUSE("paid_pause", PaidPauseManager.DEFAULT_PRICE_CENTS, false);
 
     private final String preferenceKey;

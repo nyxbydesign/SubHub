@@ -254,6 +254,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 }, true).setTag("home_choose_favorite");
             } else favoriteOverview(favorite);
         }
+        if (favorite != null) com.subhub.app.appmode.ExtraTimeEntry.refresh(domFavorite, favorite.id);
         signature = new ArrayList<>();
         for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
                 person.id, person.connection, person.serviceActive, person.sync.runtime);
@@ -413,6 +414,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         LinearLayout identity = identityHeader(card, person, true);
         identity.setTag("home_favorite_identity:" + person.id.value());
         LinearLayout copy = identity.findViewWithTag("home_identity_copy");
+        com.subhub.app.appmode.ExtraTimeEntry.review(card, person.id);
         if (person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN && person.sync.stats == PersonSnapshot.Freshness.UNKNOWN) {
             TextView unknown = OverviewUi.text(activity, activity.getString(R.string.overview_session_stats_unknown), 13, false);
             unknown.setTag("home_favorite_unknown:" + person.id.value()); copy.addView(unknown); return;
@@ -604,6 +606,9 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             progress.setContentDescription(value.label);
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, dp(4));
             size.setMarginStart(dp(36)); size.bottomMargin = dp(8); card.addView(progress, size);
+            if (!value.packageName.isEmpty() && value.dailyMinutes > 0
+                    && value.usedMillis >= value.dailyMinutes * 60_000L)
+                com.subhub.app.appmode.ExtraTimeEntry.request(card, person.id, value.packageName);
         }
     }
 

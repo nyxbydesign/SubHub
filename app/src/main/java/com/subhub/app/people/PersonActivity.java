@@ -92,6 +92,7 @@ public final class PersonActivity extends RolePage {
             if (!guardTarget() || !observing || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
             if (!requested.equals(person.id)) { rendered = null; unavailable(); return; }
+            com.subhub.app.appmode.ExtraTimeEntry.refresh(body, requested);
             java.util.List<Object> next = signature(person);
             if (next.equals(rendered)) return;
             android.view.ViewParent ancestor = body.getParent();

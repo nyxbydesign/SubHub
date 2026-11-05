@@ -359,6 +359,79 @@ public final class PenanceManager {
         }
     }
 
+    /** The price of requesting time, after the current currency's existing spending caps. */
+    public int quoteExtraTimeRequest(long nowMillis) {
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) { return extraTimeQuoteLocked(nowMillis); }
+        }
+    }
+
+    private int extraTimeQuoteLocked(long nowMillis) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits")
+                || !isInfractionEnabled(PenanceInfraction.EXTRA_TIME_REQUEST)
+                || !new AppModeManager(context).isArmed()) return 0;
+        List<PenanceEvent> events = loadEvents();
+        trimHistoryForInsertion(events);
+        return events.size() >= MAX_EVENTS ? 0 : PenancePolicy.boundedCharge(
+                currentCurrencyEvents(events), nowMillis, 1,
+                getInfractionCents(PenanceInfraction.EXTRA_TIME_REQUEST), getDailyCapCents(),
+                getWeeklyCapCents(), ZoneId.systemDefault());
+    }
+
+    /** A stable submission receipt and its debit share one acknowledged ledger write. */
+    public int extraTimeRequestReceipt(String request) {
+        if (request == null || request.isEmpty() || request.length() > 512)
+            throw new IllegalArgumentException("Invalid app-time submission");
+        String receipt = "extra_time_receipt_" + UUID.nameUUIDFromBytes(
+                request.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        synchronized (LOCK) {
+            if (!preferences.contains(receipt)) return -1;
+            if (!preferences.edit().commit()) throw new IllegalStateException("App-time tribute is not saved");
+            return preferences.getInt(receipt,0);
+        }
+    }
+
+    /** Only the submission owner may call this; approval and transport receive never debit Wallet. */
+    public int recordExtraTimeRequest(String request, int quotedCents, String quotedCurrency, long nowMillis) {
+        if (request == null || request.isEmpty() || request.length() > 512 || nowMillis <= 0)
+            throw new IllegalArgumentException("Invalid app-time submission");
+        String receipt = "extra_time_receipt_" + UUID.nameUUIDFromBytes(
+                request.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        int amount; String assessedCurrency = quotedCurrency;
+        StatsRepository.SessionStamp source = null;
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) {
+                if (preferences.contains(receipt)) {
+                    // A failed commit may have updated memory. Acknowledge it before publishing a request.
+                    if (!preferences.edit().commit()) throw new IllegalStateException("App-time tribute is not saved");
+                    amount = preferences.getInt(receipt, 0);
+                    assessedCurrency = preferences.getString(receipt + "_currency", quotedCurrency);
+                    if (amount != quotedCents || !assessedCurrency.equals(quotedCurrency))
+                        throw new IllegalArgumentException("The saved request has a different tribute");
+                } else {
+                    amount = extraTimeQuoteLocked(nowMillis);
+                    if (amount != quotedCents || !getCurrency().equals(quotedCurrency))
+                        throw new IllegalArgumentException("The tribute changed. Review the request again.");
+                    List<PenanceEvent> events = loadEvents();
+                    trimHistoryForInsertion(events);
+                    source = new StatsRepository(context).sessionStamp();
+                    if (amount > 0) events.add(new PenanceEvent(receipt, nowMillis,
+                            nowMillis + getMercyMinutes() * 60_000L, amount, 1,
+                            PenanceInfraction.EXTRA_TIME_REQUEST, PenanceEvent.Status.OPEN, "", assessedCurrency));
+                    if (!preferences.edit().putInt(receipt, amount).putString(receipt + "_currency",assessedCurrency).putString(KEY_EVENTS, encodeEvents(events)).commit())
+                        throw new IllegalStateException("App-time tribute was not saved");
+                }
+            }
+        }
+        if (amount > 0) {
+            // Both effects are safe to replay from the stable ledger ID after a process or observer failure.
+            new StatsRepository(context).recordRequestTributeReceipt(receipt,amount,assessedCurrency,source);
+            HardcoreAutoPayManager.schedule(context);
+            com.subhub.app.remote.RemoteActivityRecorder.tribute(receipt);
+        }
+        return amount;
+    }
+
     public enum SourceDetectionStatus { REJECTED, APPLIED, ACKNOWLEDGED }
     public static final class SourceDetectionResult {
         public final SourceDetectionStatus status;
@@ -416,7 +489,7 @@ public final class PenanceManager {
         if ((infraction == PenanceInfraction.NEW_DETECTION
                 || infraction == PenanceInfraction.CENSORED_DWELL
                 || infraction == PenanceInfraction.CENSORED_TAP) && !modules.isCensorEnabled()) return rejected;
-        if (infraction == PenanceInfraction.TASK_FAILURE) return rejected;
+        if (infraction == PenanceInfraction.TASK_FAILURE || infraction == PenanceInfraction.EXTRA_TIME_REQUEST) return rejected;
         if (infraction == null || !isEnabled() || !isInfractionEnabled(infraction)
                 || !new AppModeManager(context).isArmed() || count <= 0) return rejected;
         PenanceEvent assessed;

@@ -857,6 +857,11 @@ public final class RemoteFeature {
                         peer.localRole == RemoteProtocol.Role.DOM), peer.localRole, details, roleIdentity));
             }
             @Override public int tasksVersion() { return 1; }
+            @Override public int extraTimeVersion() { return ExtraTimePeer.VERSION; }
+            @Override public void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+                requireActive(peer);
+                ExtraTimePeer.exchange(context, store, active.localIdentity(), connection, peer, deadline);
+            }
             @Override public int taskCancelVersion() { return 1; }
             @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
                 requireActive(peer);

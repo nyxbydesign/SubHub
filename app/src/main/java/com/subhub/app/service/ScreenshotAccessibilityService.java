@@ -6038,6 +6038,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 : com.subhub.app.R.string.app_timer_blocked_total;
         if (!repeated) {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            com.subhub.app.remote.ExtraTimeNotifications.reached(this, blockedPackage);
             stats.recordLimitIntervention();
         }
         if (!productQualificationRoute) com.subhub.app.remote.RemoteActivityRecorder.limit(blockedPackage,

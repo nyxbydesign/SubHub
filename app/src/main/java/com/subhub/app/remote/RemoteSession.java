@@ -36,6 +36,8 @@ public final class RemoteSession {
         default JSONObject profile(RemoteStore.Peer peer, boolean details) throws Exception { return profile(peer); }
         default JSONObject profile(RemoteStore.Peer peer, boolean details, boolean roleIdentity) throws Exception { return profile(peer, details); }
         default int tasksVersion() { return 0; }
+        default int extraTimeVersion() { return 0; }
+        default void extraTime(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default int taskCancelVersion() { return 0; }
         default void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception { }
         default String displayName(RemoteStore.Peer peer) { return ""; }
@@ -69,11 +71,13 @@ public final class RemoteSession {
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", "0");
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
+        if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
         if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileDetailsVersion() == 1) hello.put("profileDetailsVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileRoleVersion() == 1) hello.put("profileRoleVersion", 1);
@@ -90,6 +94,8 @@ public final class RemoteSession {
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
         requireType(connection,response,"hello_ack",peer);
+        boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
         boolean priority = phasePlanVersion(response) == 1 && controls;
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");
@@ -110,7 +116,7 @@ public final class RemoteSession {
         }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
         exchange(connection,peer,deadlineNanos,activityVersion(response)==2,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls,
-                appIconsVersion(response)==1 && localAppIcons==1,priority);
+                appIconsVersion(response)==1 && localAppIcons==1,priority,extraTime);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
@@ -123,6 +129,7 @@ public final class RemoteSession {
             terminalDrain(connection,"revoked_ack",peer,deadlineNanos);return;
         }
         requirePeer(connection,peer);requireType(connection,hello,"hello",peer);
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", "0");
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(hello) == 1 && hooks.sessionControlVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");
@@ -130,6 +137,9 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         boolean priority = phasePlanVersion(hello) == 1 && controls;
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
+        boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
+        store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
+        if (extraTime) ready.put("extraTimeVersion", 1);
         if (priority) ready.put("phasePlanVersion",1);
         boolean appIcons=appIconsVersion(hello)==1 && hooks.appIconsVersion()==1;
         if (appIcons) ready.put("appIconsVersion",1);
@@ -162,7 +172,7 @@ public final class RemoteSession {
             send(connection, message("profile", peer).put("profile", hooks.profile(peer, details, roleIdentity)), deadlineNanos);
         }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
-        exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls,appIcons,priority);
+        exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls,appIcons,priority,extraTime);
     }
 
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
@@ -247,6 +257,13 @@ public final class RemoteSession {
         return value;
     }
 
+    private static long extraTimeVersion(JSONObject frame) throws JSONException {
+        if (!frame.has("extraTimeVersion")) return 0;
+        long value = RemoteProtocol.integer(frame, "extraTimeVersion");
+        if (value <= 0) throw new SecurityException("Invalid extra-time capability");
+        return value;
+    }
+
     private static long appIconsVersion(JSONObject frame) throws JSONException {
         if (!frame.has("appIconsVersion")) return 0;
         long value=RemoteProtocol.integer(frame,"appIconsVersion");
@@ -266,7 +283,7 @@ public final class RemoteSession {
                 || stream == RemoteProtocol.Stream.RUNTIME || stream == RemoteProtocol.Stream.BASELINE;
     }
 
-    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls,boolean appIcons,boolean priority) throws Exception {
+    private void exchange(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean activity,boolean tasks,boolean journal,boolean controls,boolean appIcons,boolean priority,boolean extraTime) throws Exception {
         hooks.prepare(peer);
         if(peer.localRole==RemoteProtocol.Role.DOM) {
             if (priority) {
@@ -287,6 +304,7 @@ public final class RemoteSession {
             if (journal) journal(connection,peer,deadline);
             if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
+            if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
             send(connection,message("done",peer),deadline);requireType(connection,read(connection,deadline),"done_ack",peer);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
@@ -309,6 +327,7 @@ public final class RemoteSession {
             if (journal) journal(connection,peer,deadline);
             if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
+            if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
             requireType(connection,read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());

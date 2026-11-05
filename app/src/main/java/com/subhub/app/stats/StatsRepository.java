@@ -771,6 +771,33 @@ public final class StatsRepository {
         }
     }
 
+    /** A request's durable debit can replay its projection without counting it twice or inventing a session. */
+    public void recordRequestTributeReceipt(String ledgerId, int amountCents, String currency, SessionStamp expected) {
+        if (amountCents <= 0) return;
+        String receipt = "request_tribute_receipt_" + java.util.UUID.nameUUIDFromBytes(
+                ledgerId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        synchronized (SESSION_LOCK) {
+            if (preferences.contains(receipt)) {
+                if (!preferences.edit().commit()) throw new IllegalStateException("Request tribute statistics are not saved");
+                return;
+            }
+            restoreActiveSession();
+            String totalKey = currencyKey(KEY_TRIBUTE_CENTS,currency);
+            SharedPreferences.Editor edit = preferences.edit().putBoolean(receipt,true)
+                    .putLong(KEY_TRIBUTE_EVENTS,safeAdd(preferences.getLong(KEY_TRIBUTE_EVENTS,0),1))
+                    .putLong(totalKey,safeAdd(preferences.getLong(totalKey,0),amountCents));
+            if (expected != null && expected == activeStamp && sessionStartMs != 0) {
+                String sessionKey = currencyKey(KEY_ACTIVE_SESSION_TRIBUTE_CENTS,currency);
+                edit.putLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS,safeAdd(activeLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS),1))
+                        .putLong(sessionKey,safeAdd(activeLong(sessionKey),amountCents));
+            }
+            edit.putLong(DailyStatsStore.STAMP,System.currentTimeMillis())
+                    .putString(DailyStatsStore.ZONE,java.time.ZoneId.systemDefault().getId());
+            if (!edit.commit()) throw new IllegalStateException("Request tribute statistics were not saved");
+            syncDaily();
+        }
+    }
+
     private void writeDaily(SharedPreferences.Editor editor) {
         editor.putLong(DailyStatsStore.STAMP, System.currentTimeMillis())
                 .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).apply();

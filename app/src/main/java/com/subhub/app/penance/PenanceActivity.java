@@ -167,13 +167,22 @@ public final class PenanceActivity extends AppCompatActivity {
     private void bindRemoteRules() {
         binding.walletOverview.setVisibility(View.GONE);
         binding.walletEditor.setVisibility(View.VISIBLE);
-        View rules = binding.ruleConfigCard, pause = binding.paidPauseConfigCard;
+        View[] editors = {binding.ruleConfigCard, binding.safetyConfigCard,
+                binding.paidPauseConfigCard};
         android.view.ViewGroup container = (android.view.ViewGroup) binding.walletEditor;
-        if (rules.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) rules.getParent()).removeView(rules);
-        if (pause.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) pause.getParent()).removeView(pause);
+        for (View editor : editors) {
+            if (editor.getParent() instanceof android.view.ViewGroup)
+                ((android.view.ViewGroup) editor.getParent()).removeView(editor);
+        }
         container.removeAllViews();
-        rules.setVisibility(View.VISIBLE); pause.setVisibility(View.VISIBLE);
-        container.addView(rules); container.addView(pause);
+        for (View editor : editors) {
+            editor.setVisibility(View.VISIBLE);
+            android.widget.LinearLayout.LayoutParams params =
+                    (android.widget.LinearLayout.LayoutParams) editor.getLayoutParams();
+            params.topMargin = editor == editors[0] ? 0
+                    : getResources().getDimensionPixelSize(R.dimen.ui_gap_section);
+            container.addView(editor);
+        }
         populateRules(); attachRuleMathListeners(); renderRuleMathPreview();
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         FeatureEditorSession.bind(this, binding.getRoot(), "wallet", () -> saveRules(true));
@@ -182,12 +191,17 @@ public final class PenanceActivity extends AppCompatActivity {
     private void arrangeWalletSections() {
         walletDestination(
                 "rules",
-                R.string.wallet_rules_caps_title,
+                R.string.tribute_rules_title,
                 R.drawable.ic_tab_settings,
                 binding.ruleConfigCard);
         walletDestination(
+                "limits",
+                R.string.tribute_spending_limits_title,
+                R.drawable.ic_ux_lock,
+                binding.safetyConfigCard);
+        walletDestination(
                 "pause",
-                R.string.paid_pause_config_title,
+                R.string.tribute_paid_pauses_title,
                 R.drawable.ic_nav_limits, binding.paidPauseConfigCard);
         com.subhub.app.databinding.ViewWalletConnectionBinding panel =
                 com.subhub.app.databinding.ViewWalletConnectionBinding.inflate(
@@ -202,7 +216,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 new WalletConnectionController(this, panel, walletActions.get("paypal").summary());
         walletDestination(
                 "corrections",
-                R.string.penance_mercy_title,
+                R.string.tribute_adjustments_title,
                 R.drawable.ic_ux_lock,
                 binding.correctionsCard);
         walletActions.get("corrections").summary().setVisibility(View.GONE);
@@ -280,11 +294,28 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
+        // Remote writes stay in the identity-bound draft until Apply is chosen.
+        commitRules(false);
         FeatureEditorSession.saveState(this, state);
         state.putString("wallet_section", expandedWalletSection);
         state.putInt("wallet_overview_scroll", overviewScroll);
         state.putBoolean("wallet_history_expanded", historyExpanded);
         super.onSaveInstanceState(state);
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Bundle state) {
+        // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
+        populatingRules = true;
+        try {
+            super.onRestoreInstanceState(state);
+        } finally {
+            populatingRules = false;
+        }
+        if (binding != null) {
+            populateRules();
+            renderRuleMathPreview();
+        }
     }
 
     private int dp(int value) {
@@ -314,7 +345,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleDetectionAmount, binding.detectionBatch, binding.ruleDwellEnabled,
                 binding.ruleDwellAmount, binding.dwellSeconds,
                 binding.ruleTapEnabled, binding.ruleTapAmount,
-                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount, binding.dailyCap,
+                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount, binding.dailyCap,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes,
                 binding.weeklyCap, binding.mercyMinutes,
@@ -345,6 +377,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount);
         populateRule(PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        populateRule(PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
         populateRule(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         populateRule(PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
@@ -380,6 +414,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.dwellSeconds);
         syncRuleInputState(binding.ruleTapEnabled, binding.ruleTapAmount);
         syncRuleInputState(binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        syncRuleInputState(binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
         syncRuleInputState(binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         syncPaidPauseInputs();
@@ -410,6 +445,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.dwellSeconds);
         attachRuleToggle(PenanceInfraction.CENSORED_TAP, binding.ruleTapEnabled, binding.ruleTapAmount);
         attachRuleToggle(PenanceInfraction.WATCHED_APP_OPEN, binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        attachRuleToggle(PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
         attachRuleToggle(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
@@ -427,6 +464,7 @@ public final class PenanceActivity extends AppCompatActivity {
         });
         EditText[] inputs = {binding.ruleTaskFailureAmount, binding.ruleDetectionAmount, binding.detectionBatch,
                 binding.ruleDwellAmount, binding.ruleTapAmount, binding.ruleAppOpenAmount,
+                binding.ruleExtraTimeRequestAmount,
                 binding.ruleTamperAmount, binding.tamperCooldownMinutes,
                 binding.dailyCap, binding.weeklyCap, binding.mercyMinutes,
                 binding.dwellSeconds, binding.paidPauseAmount, binding.paidPauseMinutes};
@@ -517,6 +555,8 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount)
                 || !readRule(rules, PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount)
+                || !readRule(rules, PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount)
                 || !readRule(rules, PenanceInfraction.TASK_FAILURE,
                 binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount)
                 || !readRule(rules, PenanceInfraction.TAMPER_ATTEMPT,
@@ -869,10 +909,15 @@ public final class PenanceActivity extends AppCompatActivity {
                 .get("rules")
                 .summary()
                 .setText(
-                        getString(
-                                R.string.wallet_rules_caps_summary,
-                                enabled,
-                                manager.money(manager.getDailyCapCents())));
+                        getResources().getQuantityString(
+                                R.plurals.tribute_rules_enabled_summary, enabled, enabled));
+        walletActions
+                .get("limits")
+                .summary()
+                .setText(getString(
+                        R.string.tribute_spending_limits_summary,
+                        manager.money(manager.getDailyCapCents()),
+                        manager.money(manager.getWeeklyCapCents())));
         PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
         walletActions
                 .get("pause")
