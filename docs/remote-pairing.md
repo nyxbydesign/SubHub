@@ -71,7 +71,11 @@ Compatible devices can reuse unchanged feature sections from a document retained
 
 Keep both apps open for the fingerprint reviews and large transfers. Pending pairing can continue through its user-started foreground service within the original operation's bounds. Android may stop the service; it does not automatically restart after process loss or reboot. Open Add Sub again to check the outgoing request and automatically resume eligible work or receive a fresh code. This is best effort and does not guarantee progress during Doze, under battery restrictions, or while either phone is offline.
 
-With an active relationship, Android schedules network-constrained background work at an approximately 15-minute cadence and can delay it substantially. Each worker opens a bounded listening and connection window of up to 55 seconds, then releases its temporary endpoint when no other work owns it. One open app and one backgrounded app is best effort; the phones' background windows need not overlap. Both apps closed, force-stopped, battery-restricted, or offline can prevent synchronization. There is no server mailbox to deliver data while both phones are unavailable.
+With an active relationship, opening SubHub can start a persistent connection service that keeps the peer endpoint available after the app goes into the background. It uses an ongoing connection notification, subject to Android notification controls. Network-constrained background jobs provide a fallback at an approximately 15-minute cadence; Android can delay them substantially. Each job opens a listening and connection window of up to 55 seconds, then releases its temporary endpoint when no other work owns it.
+
+Settings → Background sync is on by default and saves a choice for this device. Turning it off stops the persistent connection service and its background jobs. Sync continues while SubHub is open; pairing, queued changes and acknowledged progress are preserved. User-started pending pairing work retains its separate controls and original bounds. Turning Background sync back on restores eligible background syncing, subject to Android's service-start, network and battery restrictions.
+
+Background syncing is best effort. Force-stopping an app, Doze, battery restrictions, unavailable networks or nonoverlapping connection windows can prevent delivery. There is no server mailbox to deliver data while both phones are unavailable.
 
 ## Unpair, reinstall, and recovery
 

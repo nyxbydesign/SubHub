@@ -31,8 +31,11 @@ public final class PeerSyncForegroundService extends Service {
 
     /** Called from a visible Activity or the existing user-started pairing operation, never boot or a job. */
     static void requestStart(Context context){
+        synchronized(BackgroundSyncPreferences.LOCK){
+        if(!BackgroundSyncPreferences.enabled(context))return;
         try{context.startForegroundService(new Intent(context,PeerSyncForegroundService.class));}
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Connected service start deferred");}
+        }
     }
     @Override public void onCreate(){
         super.onCreate();
@@ -42,6 +45,7 @@ public final class PeerSyncForegroundService extends Service {
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(destroyed)return START_NOT_STICKY;
+        if(!BackgroundSyncPreferences.enabled(this)){finish();return START_NOT_STICKY;}
         try{
             Notification notification=notification();
             if(Build.VERSION.SDK_INT>=29)startForeground(NOTIFICATION,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
@@ -53,6 +57,7 @@ public final class PeerSyncForegroundService extends Service {
         acquiring=feature.acquireConnectedService(()->main.post(()->{if(!destroyed&&attempt==acquisition)finish();}));
         acquiring.whenComplete((acquired,failure)->main.post(()->{
             if(destroyed||attempt!=acquisition){if(acquired!=null)acquired.close();return;}
+            if(!BackgroundSyncPreferences.enabled(this)){if(acquired!=null)acquired.close();finish();return;}
             acquiring=null;
             if(failure!=null||acquired==null||acquired.isClosed()){if(acquired!=null)acquired.close();finish();return;}
             lease=acquired;
@@ -70,12 +75,14 @@ public final class PeerSyncForegroundService extends Service {
     }
     private void finish(){
         if(destroyed)return;
+        acquisition++;
+        acquiring=null;
         if(lease!=null){lease.close();lease=null;}
         stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();
     }
     @Override public IBinder onBind(Intent intent){return null;}
     @Override public void onDestroy(){
-        destroyed=true;acquisition++;
+        destroyed=true;acquisition++;acquiring=null;
         // A late acquisition callback closes its own lease instead of reviving a destroyed service.
         if(lease!=null){lease.close();lease=null;}
         stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();

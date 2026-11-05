@@ -27,17 +27,38 @@ public final class RemoteFeatureSchedulingAndroidTest {
     private final Set<String> preferenceNames=new HashSet<>();
     private String wrappingAlias;
     private final AtomicInteger serviceStarts=new AtomicInteger();
+    private final AtomicInteger serviceStops=new AtomicInteger(),backgroundKicks=new AtomicInteger();
+    private final AtomicBoolean failNextChoiceCommit=new AtomicBoolean();
+    private volatile boolean backgroundNeeded;
     @Before public void setup() throws Exception {
         target=InstrumentationRegistry.getInstrumentation().getTargetContext();
         prefix="scheduling-"+UUID.randomUUID()+"-";directory=new File(target.getCacheDir(),prefix+"owned");
         context=new ContextWrapper(target) {
             @Override public Context getApplicationContext(){return this;}
-            @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(preferenceNames){preferenceNames.add(name);}return target.getSharedPreferences(prefix+name,mode);}
+            @Override public SharedPreferences getSharedPreferences(String name,int mode){
+                synchronized(preferenceNames){preferenceNames.add(name);}
+                SharedPreferences selected=target.getSharedPreferences(prefix+name,mode);
+                if(!BackgroundSyncPreferences.STORE.equals(name)||!failNextChoiceCommit.get())return selected;
+                return (SharedPreferences)Proxy.newProxyInstance(SharedPreferences.class.getClassLoader(),new Class<?>[]{SharedPreferences.class},(proxy,method,args)->{
+                    if(!method.getName().equals("edit"))return method.invoke(selected,args);
+                    SharedPreferences.Editor edit=selected.edit();
+                    return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),new Class<?>[]{SharedPreferences.Editor.class},(editor,operation,values)->{
+                        if(operation.getName().equals("commit")&&failNextChoiceCommit.compareAndSet(true,false)){
+                            // Inject the documented commit(false) contract: memory changed although persistence failed.
+                            edit.apply();return false;
+                        }
+                        Object result=operation.invoke(edit,values);return result==edit?editor:result;
+                    });
+                });
+            }
             @Override public File getFilesDir(){return child("files");}
             @Override public File getNoBackupFilesDir(){return child("no-backup");}
             @Override public File getCacheDir(){return child("cache");}
             @Override public android.content.ComponentName startForegroundService(android.content.Intent service){
                 assertEquals(PeerSyncForegroundService.class.getName(),service.getComponent().getClassName());serviceStarts.incrementAndGet();return service.getComponent();
+            }
+            @Override public boolean stopService(android.content.Intent service){
+                assertEquals(PeerSyncForegroundService.class.getName(),service.getComponent().getClassName());serviceStops.incrementAndGet();return true;
             }
             private File child(String name){File f=new File(directory,name);if(!f.isDirectory()&&!f.mkdirs())throw new IllegalStateException();return f;}
         };
@@ -48,8 +69,8 @@ public final class RemoteFeatureSchedulingAndroidTest {
         for(int i=87;i<90;i++)insert(i,RemoteStore.State.ACTIVE);
         wrappingAlias="subhub.test.scheduling."+UUID.randomUUID();
         feature=new RemoteFeature(context,store,new RemoteSecrets(context,"secrets",wrappingAlias),PairingLifecycleClock.source(context),new RemoteFeature.BackgroundScheduling(){
-            public void synchronize(Context ignored,boolean needed){}
-            public void kick(Context ignored){}
+            public void synchronize(Context ignored,boolean needed){backgroundNeeded=needed;}
+            public void kick(Context ignored){backgroundKicks.incrementAndGet();}
         });assertTrue(feature.recoveryReady());
         leases=(AtomicInteger)field("leases");leases.incrementAndGet();
         transport=new BlockingTransport();set("endpoint",transport);
@@ -274,6 +295,69 @@ public final class RemoteFeatureSchedulingAndroidTest {
             assertEquals(1,transport.activeCalls.get());assertEquals(1,transport.revokedCalls.get());
         }finally{if(owner!=null)owner.close();}
     }
+    @Test public void backgroundOptOutRetiresOnlyBackgroundOwnersAndForegroundSyncContinues()throws Exception{
+        assertTrue(BackgroundSyncPreferences.enabled(context));
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(keyForTest(peer),SystemClock.elapsedRealtime()+60_000);
+        RemoteFeature.ConnectedServiceLease owner=feature.acquireConnectedService(()->{}).get(5,TimeUnit.SECONDS);
+        assertNotNull(owner);assertTrue(feature.hasConnectedService());
+        failNextChoiceCommit.set(true);assertFalse("Report the failed save while reconciling its observed memory state",feature.setBackgroundSyncEnabled(false));
+        assertFalse(BackgroundSyncPreferences.enabled(context));assertTrue(owner.isClosed());assertFalse(feature.hasConnectedService());
+        assertNull(field("connectedServiceWake"));assertFalse(backgroundNeeded);assertEquals(1,serviceStops.get());
+        assertEquals(90,store.peers(true).size());assertTrue(((Map<?,?>)field("pairingLeases")).isEmpty());
+        feature.changed();feature.requestAutomaticSync();
+        ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+        assertEquals(0,backgroundKicks.get());assertTrue(feature.backgroundWindow(1000));
+        assertEquals(0,((AtomicInteger)field("backgroundWindows")).get());
+        set("foreground",true);feature.kick();
+        assertTrue("Opting out cannot disable foreground exchange",transport.activeEntered.await(5,TimeUnit.SECONDS));
+        assertSame(transport,field("endpoint"));assertFalse(transport.closed);
+        set("foreground",false);assertTrue(feature.setBackgroundSyncEnabled(true));
+        ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+        assertTrue(backgroundNeeded);assertTrue(backgroundKicks.get()>0);assertTrue(BackgroundSyncPreferences.enabled(context));
+    }
+    @Test public void queuedServiceStartAndLeaseAcquisitionCannotOutrunPersistedOptOut()throws Exception{
+        CountDownLatch timerEntered=new CountDownLatch(1),timerRelease=new CountDownLatch(1),operationEntered=new CountDownLatch(1);
+        ScheduledExecutorService clock=(ScheduledExecutorService)field("timer");
+        clock.execute(()->{timerEntered.countDown();try{timerRelease.await();}catch(InterruptedException stopped){Thread.currentThread().interrupt();}});
+        assertTrue(timerEntered.await(5,TimeUnit.SECONDS));
+        feature.submit(()->{operationEntered.countDown();blockIgnoringInterrupts();return null;});
+        assertTrue(operationEntered.await(5,TimeUnit.SECONDS));
+        set("installed",true);set("foreground",true);invoke("requestConnectedServiceStart",new Class<?>[0]);
+        CompletableFuture<RemoteFeature.ConnectedServiceLease> acquiring=feature.acquireConnectedService(()->{});
+        try{
+            assertTrue(feature.setBackgroundSyncEnabled(false));
+            timerRelease.countDown();clock.submit(()->{}).get(5,TimeUnit.SECONDS);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals(0,serviceStarts.get());assertFalse(feature.hasConnectedService());assertFalse(backgroundNeeded);
+            set("foreground",false);set("installed",false);
+            assertTrue(feature.setBackgroundSyncEnabled(true));
+            Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            for(RemoteStore.Peer peer:store.peers(true))due.put(keyForTest(peer),SystemClock.elapsedRealtime()+60_000);
+            CompletableFuture<RemoteFeature.ConnectedServiceLease> replacement=feature.acquireConnectedService(()->{});
+            release.countDown();assertNull("Off/on cannot revive a request admitted under the old choice",acquiring.get(5,TimeUnit.SECONDS));
+            RemoteFeature.ConnectedServiceLease first=replacement.get(5,TimeUnit.SECONDS);assertNotNull(first);assertFalse(first.isClosed());
+            RemoteFeature.ConnectedServiceLease newest=feature.acquireConnectedService(()->{}).get(5,TimeUnit.SECONDS);
+            assertNotNull(newest);assertNotSame(first,newest);assertTrue(first.isClosed());
+            first.close();assertTrue(feature.hasConnectedService());assertSame(newest,field("connectedServiceLease"));assertFalse(newest.isClosed());
+            newest.close();
+        }finally{release.countDown();timerRelease.countDown();}
+    }
+    @Test public void optOutDrainsOwnedBackgroundWindowWithoutClosingForegroundEndpoint()throws Exception{
+        set("foreground",true);
+        Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+        for(RemoteStore.Peer peer:store.peers(true))due.put(keyForTest(peer),SystemClock.elapsedRealtime()+60_000);
+        ExecutorService worker=Executors.newSingleThreadExecutor();
+        try{
+            Future<Boolean> result=worker.submit(()->feature.backgroundWindow(55_000));
+            until(()->((AtomicInteger)unchecked("backgroundWindows")).get()==1);
+            assertTrue(feature.setBackgroundSyncEnabled(false));
+            assertTrue(result.get(5,TimeUnit.SECONDS));assertEquals(1,leases.get());
+            assertEquals(0,((AtomicInteger)field("backgroundWindows")).get());
+            assertSame(transport,field("endpoint"));assertFalse(transport.closed);assertEquals(90,store.peers(true).size());
+        }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+    private static String keyForTest(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
     @After public void cleanup()throws Exception{
         release.countDown();
         if(feature!=null){if(leases!=null)leases.decrementAndGet();feature.shutdownForTest();}

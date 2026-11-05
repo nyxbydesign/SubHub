@@ -10,11 +10,13 @@ public final class RemoteScheduler {
     private RemoteScheduler(){}
     private static Constraints constraints(){return new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();}
     public static void synchronize(Context context,boolean needed) {
+        synchronized(BackgroundSyncPreferences.LOCK){
         WorkManager manager=WorkManager.getInstance(context);
-        if(!needed){manager.cancelUniqueWork(PERIODIC);manager.cancelUniqueWork(IMMEDIATE);return;}
+        if(!needed||!BackgroundSyncPreferences.enabled(context)){manager.cancelUniqueWork(PERIODIC);manager.cancelUniqueWork(IMMEDIATE);return;}
         PeriodicWorkRequest request=new PeriodicWorkRequest.Builder(RemoteSyncWorker.class,15,TimeUnit.MINUTES)
                 .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build();
         manager.enqueueUniquePeriodicWork(PERIODIC,ExistingPeriodicWorkPolicy.KEEP,request);
+        }
     }
     static OneTimeWorkRequest immediateRequest() {
         OneTimeWorkRequest.Builder request=new OneTimeWorkRequest.Builder(RemoteSyncWorker.class).setConstraints(constraints())
@@ -24,7 +26,10 @@ public final class RemoteScheduler {
         return request.build();
     }
     public static void kick(Context context) {
+        synchronized(BackgroundSyncPreferences.LOCK){
+        if(!BackgroundSyncPreferences.enabled(context))return;
         OneTimeWorkRequest request=immediateRequest();
         WorkManager.getInstance(context).enqueueUniqueWork(IMMEDIATE,ExistingWorkPolicy.KEEP,request);
+        }
     }
 }

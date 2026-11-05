@@ -79,6 +79,7 @@ public final class RemoteFeature {
     private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean librariesRetired;
     private final Object connectedServiceLock=new Object();
+    private final Object backgroundPreferenceChangeLock=new Object();
     private volatile ConnectedServiceLease connectedServiceLease;
     private ScheduledFuture<?> connectedServiceWake;
     private long connectedServiceWakeAt;
@@ -142,7 +143,7 @@ public final class RemoteFeature {
         };
         app.registerActivityLifecycleCallbacks(lifecycleCallbacks);
         timer.scheduleWithFixedDelay(()->{try{if(foreground)tick();}catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}},2,2,TimeUnit.SECONDS);
-        backgroundScheduling.synchronize(context,needsBackground());
+        synchronizeBackground();
         try { connectivityWake=new RemoteConnectivityWake(app,this::requestAutomaticSync); }
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
     }
@@ -152,7 +153,7 @@ public final class RemoteFeature {
         try{timer.execute(()->{
             automaticSyncPending.set(false);if(stopped)return;
             try{invalidateAttempts();if(!needsBackground())return;
-                if(hasConnectedService())scheduleConnectedSync(0);else if(foreground)tick();else backgroundScheduling.kick(context);
+                if(hasConnectedService())scheduleConnectedSync(0);else if(foreground)tick();else kickBackground();
             }catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}
         });}catch(RejectedExecutionException closed){automaticSyncPending.set(false);}
     }
@@ -530,7 +531,26 @@ public final class RemoteFeature {
             nextAttempt.put(key,SystemClock.elapsedRealtime()+delay);
         }
     }
-    public void changed(){invalidateAttempts();backgroundScheduling.synchronize(context,needsBackground());if(needsBackground()&&!hasConnectedService())backgroundScheduling.kick(context);kick();}
+    public void changed(){invalidateAttempts();synchronizeBackground();if(needsBackground()&&!hasConnectedService())kickBackground();kick();}
+    private void synchronizeBackground(){backgroundScheduling.synchronize(context,BackgroundSyncPreferences.enabled(context)&&needsBackground());}
+    private void kickBackground(){if(BackgroundSyncPreferences.enabled(context))backgroundScheduling.kick(context);}
+    /** Save a local choice before retiring only the persistent/background synchronization owners. */
+    public boolean setBackgroundSyncEnabled(boolean enabled){
+        synchronized(backgroundPreferenceChangeLock){
+            boolean saved=BackgroundSyncPreferences.set(context,enabled);
+            // A failed disk commit can still publish the new in-memory preference. Runtime follows that observation.
+            if(!BackgroundSyncPreferences.enabled(context)){
+                synchronized(connectedServiceLock){
+                    ConnectedServiceLease selected=connectedServiceLease;if(selected!=null)selected.close();
+                }
+                context.stopService(new android.content.Intent(context,PeerSyncForegroundService.class));
+            }
+            synchronizeBackground();
+            if(BackgroundSyncPreferences.enabled(context)){requestConnectedServiceStart();requestAutomaticSync();}
+            else deferSuspendIfIdle();
+            return saved;
+        }
+    }
     public void kick(){if(hasConnectedService()){scheduleConnectedSync(0);return;}try{timer.execute(()->{try{if(foreground)tick();}catch(RuntimeException ignored){android.util.Log.w("PeerSync","Sync attempt deferred");}});}catch(RejectedExecutionException ignored){}}
     public boolean isConnected(RemoteStore.Peer peer){return connections.containsValue(key(peer));}
     private static String key(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
@@ -718,7 +738,7 @@ public final class RemoteFeature {
                 String owner=pairingKey(generation,generation,true);PairingOperationLease lease=pairingLeases.get(owner);
                 if(!foreground&&backgroundWindows.get()==0&&lease!=null&&!lease.isClosed())pairingConnections.put(selected,owner);
                 connections.put(selected,identity+":"+generation);
-                pairing(active).handle(selected,first,System.currentTimeMillis());backgroundScheduling.synchronize(context,needsBackground());return;
+                pairing(active).handle(selected,first,System.currentTimeMillis());synchronizeBackground();return;
             }
             String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.authorityAccess(()->store.peer(selected.authenticatedPeerIdentity(),generation));
             if(peer==null)throw new SecurityException("Unknown peer");
@@ -730,7 +750,7 @@ public final class RemoteFeature {
                 store.putMetadata(peer.identity,peer.generation,"connection_error","");
             }
         }catch(Exception unavailable){logSessionFailure("incoming",unavailable);}
-        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);backgroundScheduling.synchronize(context,needsBackground());scheduleConnectedSync(0);suspendIfIdle();}
+        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);synchronizeBackground();scheduleConnectedSync(0);suspendIfIdle();}
     }
     private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
         if (Thread.holdsLock(store) || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
@@ -852,7 +872,7 @@ public final class RemoteFeature {
     public boolean backgroundWindow() throws Exception {return backgroundWindow(55_000,()->false);}
     boolean backgroundWindow(long durationMillis) throws Exception {return backgroundWindow(durationMillis,()->false);}
     boolean backgroundWindow(long durationMillis,java.util.function.BooleanSupplier cancelled) throws Exception {
-        if(stopped||cancelled.getAsBoolean()||!needsBackground())return true;
+        if(stopped||!BackgroundSyncPreferences.enabled(context)||cancelled.getAsBoolean()||!needsBackground())return true;
         if(durationMillis<=0||durationMillis>55_000)throw new IllegalArgumentException("Invalid sync window");
         leases.incrementAndGet();backgroundWindows.incrementAndGet();
         long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(durationMillis);
@@ -861,10 +881,11 @@ public final class RemoteFeature {
         Map<String,Long> completedGeneration=new HashMap<>();
         Map<String,long[]> observedSync=new HashMap<>();
         try {
+            if(!BackgroundSyncPreferences.enabled(context)||cancelled.getAsBoolean())return true;
             transport();
             // Retain the listener for the whole bounded window: another phone may wake after our outgoing IO ends.
             long nextRefresh=0,observedGeneration=-1;
-            while(!stopped&&!cancelled.getAsBoolean()&&System.nanoTime()<deadline) {
+            while(!stopped&&BackgroundSyncPreferences.enabled(context)&&!cancelled.getAsBoolean()&&System.nanoTime()<deadline) {
                 for(Iterator<Map.Entry<Future<Boolean>,String>> iterator=attempts.entrySet().iterator();iterator.hasNext();) {
                     Map.Entry<Future<Boolean>,String> entry=iterator.next();
                     if(!entry.getKey().isDone())continue;
@@ -898,6 +919,7 @@ public final class RemoteFeature {
                 }
                 Thread.sleep(Math.min(100,Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
             }
+            if(!BackgroundSyncPreferences.enabled(context))return true;
             if(stopped||cancelled.getAsBoolean())throw new InterruptedException("Sync work stopped");
             for(Map.Entry<Future<Boolean>,String> entry:attempts.entrySet()) {
                 if(!entry.getKey().isDone())return false;
@@ -930,8 +952,9 @@ public final class RemoteFeature {
     /** An active-pair connection owner; this never grants invitation or approval lifetime. */
     final class ConnectedServiceLease implements AutoCloseable {
         private final Runnable noPeers;
+        private final String admission;
         private final java.util.concurrent.atomic.AtomicBoolean closed=new java.util.concurrent.atomic.AtomicBoolean();
-        private ConnectedServiceLease(Runnable noPeers){this.noPeers=noPeers;}
+        private ConnectedServiceLease(Runnable noPeers,String admission){this.noPeers=noPeers;this.admission=admission;}
         boolean isClosed(){return closed.get();}
         @Override public void close(){
             if(!closed.compareAndSet(false,true))return;
@@ -944,31 +967,39 @@ public final class RemoteFeature {
         void noPeers(){
             close();
             // Retained revocations keep their bounded WorkManager delivery after the last active pair leaves.
-            boolean needed=needsBackground();backgroundScheduling.synchronize(context,needed);
-            if(needed)backgroundScheduling.kick(context);
+            boolean needed=needsBackground();synchronizeBackground();
+            if(needed)kickBackground();
             noPeers.run();
         }
     }
     CompletableFuture<ConnectedServiceLease> acquireConnectedService(Runnable noPeers){
+        String admission=BackgroundSyncPreferences.admission(context);
+        if(admission==null)return CompletableFuture.completedFuture(null);
         return submit(()->{
             if(stopped||!hasActivePeers())return null;
+            ConnectedServiceLease selected;
             synchronized(connectedServiceLock){
-                if(!hasConnectedService())connectedServiceLease=new ConnectedServiceLease(Objects.requireNonNull(noPeers));
+                if(!BackgroundSyncPreferences.admits(context,admission))return null;
+                // Each request owns its exact handle. A retired Service's late callback cannot close its successor.
+                ConnectedServiceLease previous=connectedServiceLease;
+                selected=new ConnectedServiceLease(Objects.requireNonNull(noPeers),admission);
+                connectedServiceLease=selected;
+                if(previous!=null)previous.close();
             }
-            scheduleConnectedSync(0);return connectedServiceLease;
+            scheduleConnectedSync(0);return selected;
         });
     }
-    boolean hasConnectedService(){ConnectedServiceLease selected=connectedServiceLease;return selected!=null&&!selected.isClosed();}
+    boolean hasConnectedService(){ConnectedServiceLease selected=connectedServiceLease;return selected!=null&&!selected.isClosed()&&BackgroundSyncPreferences.admits(context,selected.admission);}
     private boolean hasActivePeers(){
         if(!recoveryReady())return false;
         for(RemoteStore.Peer peer:store.peers(false))if(peer.state==RemoteStore.State.ACTIVE)return true;
         return false;
     }
     private void requestConnectedServiceStart(){
-        if(!installed||stopped||!foreground&&!hasPairingLease())return;
+        if(!installed||stopped||!BackgroundSyncPreferences.enabled(context)||!foreground&&!hasPairingLease())return;
         try{timer.execute(()->{
-            if(stopped||!hasActivePeers())return;
-            serviceMain.post(()->{if(!stopped&&(foreground||hasPairingLease()))PeerSyncForegroundService.requestStart(context);});
+            if(stopped||!BackgroundSyncPreferences.enabled(context)||!hasActivePeers())return;
+            serviceMain.post(()->{if(!stopped&&BackgroundSyncPreferences.enabled(context)&&(foreground||hasPairingLease()))PeerSyncForegroundService.requestStart(context);});
         });}catch(RejectedExecutionException closed){/* A retired runtime cannot restart service ownership. */}
     }
     /** One scheduled due wake, coalesced with mutations and completions, rather than a background polling loop. */
@@ -988,7 +1019,7 @@ public final class RemoteFeature {
         }
     }
     private void connectedSync(){
-        ConnectedServiceLease owner=connectedServiceLease;if(owner==null||owner.isClosed()||stopped)return;
+        ConnectedServiceLease owner=connectedServiceLease;if(owner==null||owner.isClosed()||stopped||!BackgroundSyncPreferences.enabled(context))return;
         try{
             if(!hasActivePeers()){owner.noPeers();return;}
             android.net.ConnectivityManager network=(android.net.ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);

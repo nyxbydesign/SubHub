@@ -60,7 +60,8 @@ public final class PeerSyncForegroundServiceAndroidTest {
             for(Field field:com.subhub.app.people.People.class.getDeclaredFields())if(java.lang.reflect.Modifier.isStatic(field.getModifiers())&&!java.lang.reflect.Modifier.isFinal(field.getModifiers())){
                 field.setAccessible(true);hooks.put(field,field.get(null));
             }
-            for(String name:List.of(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,"subhub_controller_auth","subhub_home","subhub_onboarding"))saved.put(name,new LinkedHashMap<>(target.getSharedPreferences(name,0).getAll()));
+            for(String name:List.of(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,"subhub_controller_auth","subhub_home","subhub_onboarding",BackgroundSyncPreferences.STORE))saved.put(name,new LinkedHashMap<>(target.getSharedPreferences(name,0).getAll()));
+            assertTrue(BackgroundSyncPreferences.set(target,true));
             com.subhub.app.people.People.installKeyholder(KeyholderPresentationAndroidTest.provider(com.subhub.app.security.KeyholderProvider.State.NONE,""));
             com.subhub.app.people.People.installRemoteAuthority(()->false);com.subhub.app.people.People.installRemoteRepository(null);
             com.subhub.app.people.People.installLocalProjection(java.util.function.UnaryOperator.identity());com.subhub.app.people.People.installConnectionUi(null);
@@ -81,7 +82,7 @@ public final class PeerSyncForegroundServiceAndroidTest {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         }
     };
-    @Test public void activeServiceDeliversBothDirectionsInBackgroundReconnectsAndStopsOnUnpair() throws Exception {
+    @Test public void activeServiceDeliversBothDirectionsHonorsOptOutAndResumesBeforeUnpair() throws Exception {
         try(Fixture fixture=new Fixture(()->readersDrained=true)) { fixture.exchange(); }
     }
     private static final class Fixture implements AutoCloseable {
@@ -96,7 +97,11 @@ public final class PeerSyncForegroundServiceAndroidTest {
         final java.util.concurrent.atomic.AtomicInteger credentialReceipts=new java.util.concurrent.atomic.AtomicInteger();
         final Context context=new ContextWrapper(target){
             @Override public Context getApplicationContext(){return this;}
-            @Override public SharedPreferences getSharedPreferences(String name,int mode){preferences.add(name);return target.getSharedPreferences(prefix+name,mode);}
+            @Override public SharedPreferences getSharedPreferences(String name,int mode){
+                // The actual Android Service and this endpoint must observe the same device-local choice.
+                if(BackgroundSyncPreferences.STORE.equals(name))return target.getSharedPreferences(name,mode);
+                preferences.add(name);return target.getSharedPreferences(prefix+name,mode);
+            }
             @Override public File getFilesDir(){return child("files");}
             @Override public File getNoBackupFilesDir(){return child("private");}
             @Override public File getCacheDir(){return child("cache");}
@@ -201,6 +206,34 @@ public final class PeerSyncForegroundServiceAndroidTest {
             assertNotNull(value("endpoint"));assertNotSame(original,value("endpoint"));
             assertTrue(runningService().foreground);assertBackground();assertTrue(credentialReceipts.get()>=5);
             await(()->((Set<?>)value("busy")).isEmpty());
+            PeerSyncForegroundService stoppedService=actualService.get();
+            assertTrue(feature.setBackgroundSyncEnabled(false));
+            await(()->runningService()==null&&serviceDestroyed(stoppedService));
+            assertFalse(feature.hasConnectedService());assertNull(value("connectedServiceWake"));
+            for(StatusBarNotification notice:notifications.getActiveNotifications())assertNotEquals(PeerSyncForegroundService.NOTIFICATION,notice.getId());
+            local.publish(peerIdentity,generation,RemoteProtocol.Stream.CONFIGURATION,"service-proof",new JSONObject().put("phase",4),false,System.currentTimeMillis());
+            int kicksWhileOff=fallbackKicks.get();feature.changed();feature.requestAutomaticSync();
+            ((ScheduledExecutorService)value("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(kicksWhileOff,fallbackKicks.get());assertNull(runningService());
+            assertFalse(local.nextBatch(peerIdentity,generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
+            assertEquals(3,remote.mirrored(localIdentity,generation,RemoteProtocol.Stream.CONFIGURATION,"service-proof").getInt("phase"));
+            feature.installLifecycle((android.app.Application)target.getApplicationContext());
+            remote.publish(localIdentity,generation,RemoteProtocol.Stream.STATS,"service-proof",new JSONObject().put("phase",3),false,System.currentTimeMillis());
+            Future<?> foregroundDelivery=workers.submit(()->{serve();return null;});
+            page.moveToState(Lifecycle.State.RESUMED);foregroundDelivery.get(25,TimeUnit.SECONDS);
+            assertEquals(4,remote.mirrored(localIdentity,generation,RemoteProtocol.Stream.CONFIGURATION,"service-proof").getInt("phase"));
+            assertEquals(3,local.mirrored(peerIdentity,generation,RemoteProtocol.Stream.STATS,"service-proof").getInt("phase"));
+            assertTrue(local.nextBatch(peerIdentity,generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
+            assertTrue(remote.nextBatch(localIdentity,generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
+            assertNull("Foreground sync while opted out does not need an ongoing service",runningService());
+            assertTrue(feature.setBackgroundSyncEnabled(true));
+            await(()->runningService()!=null&&runningService().foreground&&feature.hasConnectedService());
+            page.moveToState(Lifecycle.State.CREATED);assertBackground();
+            Future<?> resumedDelivery=workers.submit(()->{serve();return null;});
+            local.publish(peerIdentity,generation,RemoteProtocol.Stream.CONFIGURATION,"service-proof",new JSONObject().put("phase",5),false,System.currentTimeMillis());feature.changed();
+            resumedDelivery.get(25,TimeUnit.SECONDS);
+            assertEquals(5,remote.mirrored(localIdentity,generation,RemoteProtocol.Stream.CONFIGURATION,"service-proof").getInt("phase"));
+            assertTrue(feature.hasConnectedService());await(()->((Set<?>)value("busy")).isEmpty());
             local.revoke(peerIdentity,generation);
             await(()->!feature.hasConnectedService()&&runningService()==null);
             await(()->value("endpoint")==null);

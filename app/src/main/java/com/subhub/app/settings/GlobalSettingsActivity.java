@@ -42,7 +42,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     public static final String EXTRA_SHOW_INCLUDED_APPS = "show_included_apps";
     private ActivityGlobalSettingsBinding binding;
     private DeviceRoleView role;
-    private LinearLayout privacy, permissions, localPermissions, notifications;
+    private LinearLayout privacy, permissions, localPermissions, notifications, backgroundSync;
     private View permissionsHeading;
     private HardcoreModeManager hardcore;
     private ActivityResultLauncher<Intent> hardcoreActivation, hardcoreAccessibility;
@@ -117,6 +117,8 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         device.addView(role, new LinearLayout.LayoutParams(-1, -2));
         action(device, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
                 .setId(R.id.settings_connections_security);
+        backgroundSync = PersonUi.column(this);
+        device.addView(backgroundSync, new LinearLayout.LayoutParams(-1, -2));
 
         heading(body, R.string.device_settings_privacy, "privacy");
         privacy = PersonUi.card(body);
@@ -267,6 +269,7 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
     private void applyState() {
         if (binding == null || role == null) return;
         role.refresh();
+        com.subhub.app.remote.BackgroundSyncControls.bind(this, backgroundSync);
         com.subhub.app.notifications.NotificationControls.bind(this, notifications);
         refreshConnection();
         boolean local = DeviceRolePreferences.supportsSub(this);
