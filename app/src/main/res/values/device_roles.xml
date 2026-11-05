@@ -12,8 +12,10 @@
     <string name="device_role_unlock">Unlock</string>
     <string name="device_role_lock">Lock</string>
     <string name="device_role_pin_setup_required">Set a PIN to secure Dom access.</string>
-    <string name="device_settings_privacy">Privacy</string>
+    <string name="device_settings_connections">Connections</string>
+    <string name="device_settings_privacy">Privacy and safety</string>
     <string name="device_settings_permissions">Permissions</string>
+    <string name="device_settings_app">App</string>
     <string name="device_settings_help">Help</string>
     <item name="device_role_status" type="id" />
     <item name="keyholder_add_sub" type="id" />
