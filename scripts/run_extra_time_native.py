@@ -24,6 +24,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 API = 35
+BUILD_TOOLS_VERSION = "35.0.0"
 SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
 RUNNER = "com.subhub.app.test/com.subhub.app.SubHubTestRunner"
 GIB = 1024 ** 3
@@ -156,18 +157,28 @@ def properties(path):
     return int(values["VERSION_CODE"]), values["VERSION_NAME"]
 
 
+def signer_certificate(signature):
+    declarations = [line.strip() for line in signature.splitlines() if "certificate SHA-256 digest:" in line]
+    if len(declarations) != 1:
+        raise ValueError("APK signature must declare exactly one signer certificate")
+    certificate = re.fullmatch(r"(?:Signer #1 certificate|V2 Signer: certificate) SHA-256 digest: ([0-9a-f]{64})", declarations[0])
+    if not certificate:
+        raise ValueError("Unsupported signer declaration or malformed certificate digest")
+    return certificate[1]
+
+
 def apk_metadata(kind, badging, manifest, signature, source_code, source_name):
     """Read literal APK declarations, keeping an absent test version separate."""
     package = re.search(r"package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'", badging)
-    certs = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})", signature)
-    if not package or len(certs) != 1:
+    certificate = signer_certificate(signature)
+    if not package:
         raise ValueError(f"Incomplete actual APK metadata: {kind}")
     code = int(package[2]) if package[2] else None
     minimum = re.search(r"^sdkVersion:'(\d+)'", badging, re.MULTILINE)
     if not minimum or int(minimum[1]) > API:
         raise ValueError(f"APK is not eligible for selected Android API: {kind}")
     item = {"package": package[1], "declaredVersionCode": code, "declaredVersionName": package[3] or None,
-            "minSdk": int(minimum[1]), "certificateSha256": certs[0]}
+            "minSdk": int(minimum[1]), "certificateSha256": certificate}
     if kind == "target":
         native = re.search(r"^native-code:\s*(.*)$", badging, re.MULTILINE)
         if package[1] != "com.subhub.app" or code != source_code or package[3] != source_name:
@@ -367,16 +378,22 @@ class Producer:
         self.command([sdkmanager, "--version"], label="sdkmanager-version")
         self.command([sdkmanager, "--licenses"], timeout=120, label="sdk-licenses", input_bytes=b"y\n" * 100)
         self.command([sdkmanager, "--install", "platform-tools", "emulator", "platforms;android-35",
-                      "build-tools;35.0.0", SYSTEM_IMAGE], timeout=900, label="sdk-install")
+                      f"build-tools;{BUILD_TOOLS_VERSION}", SYSTEM_IMAGE], timeout=900, label="sdk-install")
         self.command([sdkmanager, "--list_installed"], timeout=60, label="sdk-installed")
         self.avdmanager = self.discover("avdmanager")
-        tools = [path for path in (self.sdk / "build-tools").iterdir()
-                 if re.fullmatch(r"\d+(?:\.\d+)+", path.name)
-                 and all((path / tool).is_file() for tool in ("aapt", "apksigner"))]
-        if not tools:
-            raise RuntimeError("No installed build-tools contain both aapt and apksigner")
-        self.tools = max(tools, key=lambda path: tuple(map(int, path.name.split("."))))
-        self.record["buildTools"] = self.tools.name
+        self.tools = self.sdk / "build-tools" / BUILD_TOOLS_VERSION
+        if not all((self.tools / tool).is_file() and os.access(self.tools / tool, os.X_OK) for tool in ("aapt", "apksigner")):
+            raise RuntimeError("The declared build-tools version lacks executable aapt or apksigner")
+        tool_properties = (self.tools / "source.properties").read_text(encoding="utf-8")
+        revision = re.search(r"^Pkg\.Revision\s*=\s*([^\r\n]+)", tool_properties, re.MULTILINE)
+        if not revision or revision[1].strip() != BUILD_TOOLS_VERSION:
+            raise RuntimeError("Installed build-tools package revision differs from the declared version")
+        signer_version, _ = self.command([self.tools / "apksigner", "--version"], label="apksigner-version")
+        aapt_version, aapt_version_exit = self.command([self.tools / "aapt", "version"], check=False, label="aapt-version")
+        self.record["buildTools"] = BUILD_TOOLS_VERSION
+        self.record["buildToolVersions"] = {"packageRevision": revision[1].strip(), "sourceProperties": tool_properties,
+                                             "apksigner": signer_version.strip(), "aapt": aapt_version.strip(),
+                                             "aaptVersionExit": aapt_version_exit}
         for relative in ("emulator/source.properties", "system-images/android-35/google_apis/x86_64/source.properties"):
             path = self.sdk / relative
             if not path.is_file():
@@ -453,6 +470,7 @@ class Producer:
             raise ValueError("Tracked or untracked source changed during paired build")
         self.record["build"] = {"pairedInvocation": True, "sourceUnchanged": True,
                                 "buildConfigSha256": digest(config), "unitOrFullLintRepeated": False}
+        self.retain_apk_pair()
         self.record["apks"] = {}
         for kind, relative in {"target": "app/build/outputs/apk/debug/app-x86_64-debug.apk",
                                "test": "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"}.items():
@@ -466,6 +484,34 @@ class Producer:
         if len({value["certificateSha256"] for value in self.record["apks"].values()}) != 1:
             raise ValueError("Paired APK signatures differ")
         self.save()
+
+    def retain_apk_pair(self):
+        sources = {"target-x86_64-debug.apk": ROOT / "app/build/outputs/apk/debug/app-x86_64-debug.apk",
+                   "test-debug-androidTest.apk": ROOT / "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"}
+        if any(not path.is_file() or path.is_symlink() or path.resolve() != path for path in sources.values()):
+            raise ValueError("Recovery retains only the two regular task-built APK files")
+        total = sum(path.stat().st_size for path in sources.values())
+        if total <= 0 or total > 256 * MIB or any(path.stat().st_size <= 0 for path in sources.values()):
+            raise ValueError("Retained APK pair exceeds its 256 MiB bound or is empty")
+        folder = self.out / "apk-pair"
+        folder.mkdir(exist_ok=False)
+        recovery = {key: self.record[key] for key in ("sourceCommit", "sourceTree", "appTree", "profile",
+                                                      "sourceVersionCode", "sourceVersionName", "runId", "runAttempt")}
+        recovery.update(schema=1, buildConfigSha256=self.record["build"]["buildConfigSha256"],
+                        metadataVerification="pending; retained bytes are not a native qualification", artifacts={})
+        for name, source in sources.items():
+            before = digest(source)
+            destination = folder / name
+            with source.open("rb") as original, destination.open("xb") as retained:
+                shutil.copyfileobj(original, retained, MIB)
+            if destination.stat().st_size != source.stat().st_size or digest(destination) != before or digest(source) != before:
+                raise ValueError("APK bytes changed while retaining the paired build")
+            recovery["artifacts"][name] = {"sourcePath": source.relative_to(ROOT).as_posix(),
+                                           "bytes": destination.stat().st_size, "sha256": before}
+        (folder / "recovery.json").write_text(json.dumps(recovery, indent=2) + "\n", encoding="utf-8")
+        self.record["retainedApkPair"] = {"manifest": "apk-pair/recovery.json", "totalBytes": total,
+                                          "metadataVerified": False}
+        self.save()  # Preserve the complete pair and its source binding before any metadata observer.
 
     def boot(self):
         self.resource_guard(first_boot=True)
