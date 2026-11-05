@@ -150,11 +150,11 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         for (int index = 0; index < loaded.people.size(); index++) {
             PersonSnapshot person = loaded.people.get(index);
             boolean favorite = favorites.isFavorite(person);
-            long contact = person.lastContactAt;
+            long contact = person.lastOnlineAt;
             String time = contact <= 0 || contact > System.currentTimeMillis() ? getString(R.string.remote_unknown)
                     : ProfileViews.formatLastSeen(contact);
             List<Object> signature = java.util.Arrays.asList(person.profile, person.connection,
-                    PersonUi.connection(this, person), time, favorite);
+                    PersonUi.connection(this, person), person.lastOnlineAt, time, favorite);
             RenderedPerson previous = renderedPeople.get(person.id);
             LinearLayout card;
             if (previous != null && previous.signature.equals(signature)) card = previous.view;
@@ -170,6 +170,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
                 }
                 renderedPeople.put(person.id, new RenderedPerson(card, signature));
             }
+            ProfileViews.presence(card, "roster:" + person.id.value(), person.id, person.connection);
             if (roster.getChildAt(index) != card) {
                 if (card.getParent() == roster) roster.removeView(card);
                 roster.addView(card, index);

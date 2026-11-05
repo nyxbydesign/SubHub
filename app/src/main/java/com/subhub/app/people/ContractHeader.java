@@ -16,7 +16,8 @@ public final class ContractHeader {
         ProfileData profile = person.contractDom == null
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
         ProfilePreview preview = new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion);
-        PersonSnapshot.PeerContact contact = person.contractDomContact;
+        PersonSnapshot.PeerContact contact = person.contractDomContact != null
+                && person.contractDomContact.id.equals(person.contractDomId) ? person.contractDomContact : null;
         if (contact != null) ProfileViews.inlineLastOnline(preview, "contract_dom", person.contractDomId,
                 contact.state, contact.lastOnlineAt);
         View avatar = preview.findViewWithTag("contract_dom_avatar");
