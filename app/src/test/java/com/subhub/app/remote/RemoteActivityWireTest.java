@@ -50,4 +50,15 @@ public class RemoteActivityWireTest {
         assertFalse(value.has("paid"));assertFalse(value.has("settlementId"));
         assertThrows(Exception.class,()->RemoteActivityWire.decode(value.put("reason","invalid\ntext")));
     }
+    @Test public void confirmedPaidFactIsDistinctFromAssessedTributeAndExportsNoProviderPayload() throws Exception {
+        ActivityEvent paid = new ActivityEvent("paid_fixture", ActivityEvent.Kind.TRIBUTE_PAID, TIME, "", 250, "USD", "", 0);
+        JSONObject wire = RemoteActivityWire.encode(paid, "UTC", "");
+        ActivityEvent parsed = RemoteActivityWire.decode(wire);
+        assertEquals(ActivityEvent.Kind.TRIBUTE_PAID, parsed.kind);
+        assertEquals(250, parsed.amountCents); assertEquals("USD", parsed.currency);
+        assertFalse(wire.has("captureId")); assertFalse(wire.has("settlementId")); assertFalse(wire.has("payer"));
+        assertThrows(Exception.class, () -> RemoteActivityWire.decode(new JSONObject(wire.toString()).put("amountCents", 0)));
+        assertThrows(Exception.class, () -> RemoteActivityWire.decode(new JSONObject(wire.toString()).put("reason", "watched_app_open")));
+    }
+
 }

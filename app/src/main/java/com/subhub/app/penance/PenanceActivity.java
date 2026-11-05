@@ -744,7 +744,7 @@ public final class PenanceActivity extends AppCompatActivity {
                                 capture.vaultStatus(), capture.vaultId(), capture.customerId(),
                                 capture.payerEmail(), capture.payerAccountId());
                     }
-                    if (!manager.completeSettlement(settlementId, snapshot.getCheckoutCents())) {
+                    if (!manager.completeVerifiedSettlement(settlementId, snapshot.getCheckoutCents(), capture)) {
                         toast(R.string.penance_payment_mismatch);
                     } else toast(R.string.penance_payment_complete);
                     render();

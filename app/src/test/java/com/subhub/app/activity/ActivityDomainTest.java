@@ -82,4 +82,12 @@ public final class ActivityDomainTest {
         for (int i = 0; i < 101; i++) oversized.add(entry("key-" + i, true, "Chrome"));
         assertThrows(IllegalArgumentException.class, () -> new ActivityRepository.Page(oversized, null));
     }
+    @Test public void paidActivityIsAdvisoryAndCannotMasqueradeAsAnAssessedCause() {
+        ActivityEvent paid = fact(ActivityEvent.Kind.TRIBUTE_PAID, "", 125, "EUR", 0);
+        assertEquals(ActivityEvent.Kind.TRIBUTE_PAID, paid.kind);
+        assertThrows(IllegalArgumentException.class, () -> new ActivityEvent("paid", ActivityEvent.Kind.TRIBUTE_PAID,
+                1700000000000L, "", 125, "EUR", "new_detection", 0));
+        assertThrows(IllegalArgumentException.class, () -> fact(ActivityEvent.Kind.TRIBUTE_PAID, "", 0, "EUR", 0));
+    }
+
 }

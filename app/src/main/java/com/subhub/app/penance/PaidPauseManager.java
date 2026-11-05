@@ -28,6 +28,7 @@ public final class PaidPauseManager {
     private static final String KEY_DURATION_MINUTES = "paid_pause_duration_minutes";
     private static final String KEY_ACTIVE_UNTIL = "paid_pause_active_until";
     private static final String KEY_REARM = "paid_pause_rearm";
+    private static final String KEY_SETTLEMENT = "paid_pause_settlement_v1";
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -112,12 +113,49 @@ public final class PaidPauseManager {
             String identity = java.util.UUID.randomUUID().toString();
             ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
             if (!preferences.edit().putLong(KEY_ACTIVE_UNTIL, until)
-                    .putString("paid_pause_session_identity", identity).putBoolean(KEY_REARM, rearm).commit()) return false;
+                    .putString("paid_pause_session_identity", identity).putBoolean(KEY_REARM, rearm).remove(KEY_SETTLEMENT).commit()) return false;
             RuntimeSessionIdentity.changed();
             new AppModeManager(context).setArmed(false);
             SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, retired, identity, until);
             SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
             return true;
+        }
+    }
+
+    static final class SettlementActivation {
+        final String identity, retired;
+        final long until;
+        final ScreenCaptureService.StopTarget capture;
+        SettlementActivation(String identity, String retired, long until, ScreenCaptureService.StopTarget capture) {
+            this.identity = identity; this.retired = retired; this.until = until; this.capture = capture;
+        }
+    }
+    /** The verified Wallet transaction owns both its paid rows and the exact pause grant in this store. */
+    SettlementActivation prepareSettlement(String settlement, SharedPreferences.Editor completion) {
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime transaction required");
+        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context) || !canPurchase()) return null;
+        String identity = java.util.UUID.randomUUID().toString();
+        String retired = preferences.getString("paid_pause_session_identity", "");
+        long until = System.currentTimeMillis() + getDurationMinutes() * 60_000L;
+        completion.putLong(KEY_ACTIVE_UNTIL, until).putString("paid_pause_session_identity", identity)
+                .putBoolean(KEY_REARM, isProtectionRunning()).putString(KEY_SETTLEMENT, settlement);
+        return new SettlementActivation(identity, retired, until, ScreenCaptureService.observedStopTarget(context));
+    }
+    void finishSettlement(SettlementActivation activation) {
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime transaction required");
+        if (!activation.identity.equals(preferences.getString("paid_pause_session_identity", ""))
+                || activation.until != preferences.getLong(KEY_ACTIVE_UNTIL, 0)) return;
+        RuntimeSessionIdentity.changed();
+        new AppModeManager(context).setArmed(false);
+        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, activation.retired, activation.identity, activation.until);
+        SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), activation.capture, false, false);
+    }
+    /** Reuse the acknowledged grant; a replay never chooses a new identity or extends its original deadline. */
+    void reconcileSettlement(String settlement) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!settlement.equals(preferences.getString(KEY_SETTLEMENT, ""))) return;
+            if (preferences.getLong(KEY_ACTIVE_UNTIL, 0) <= 0) return;
+            applyBootPolicy();
         }
     }
 

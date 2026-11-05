@@ -37,6 +37,11 @@ public final class PrivacyNotifications {
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         for (StatusBarNotification active : manager.getActiveNotifications()) {
+            if (active.getTag() != null && active.getTag().startsWith("subhub.activity:")
+                    && com.subhub.app.notifications.OptionalNotificationPresentation.activityType(active.getNotification()) != null) {
+                com.subhub.app.notifications.OptionalNotificationPresentation.refreshActivity(context, active.getTag(), active.getId(), active.getNotification());
+                continue;
+            }
             Notification original = originals.getOrDefault(active.getId(), active.getNotification());
             manager.notify(active.getTag(), active.getId(), present(context, active.getId(), original));
         }

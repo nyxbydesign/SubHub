@@ -24,7 +24,7 @@ import org.junit.runner.RunWith;
 
 /** Real native Start/expiry persistence and receiving ledger; deliberately no OS notification permission claim. */
 @RunWith(AndroidJUnit4.class)
-public final class RemoteLifecycleNotificationsAndroidTest {
+public final class SubSessionNotificationsAndroidTest {
     private static final String DOM = String.join("", Collections.nCopies(64, "a"));
     private static final String SUB = String.join("", Collections.nCopies(64, "b"));
     private Context context, target;
@@ -36,7 +36,7 @@ public final class RemoteLifecycleNotificationsAndroidTest {
     private RemoteSessionNative.PreparedStart prepared;
     @Before public void prepare() throws Exception {
         target = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        prefix = "lifecycle-notification-" + UUID.randomUUID() + "-";
+        prefix = "sub-session-notification-" + UUID.randomUUID() + "-";
         context = new ContextWrapper(target) {
             @Override public Context getApplicationContext() { return this; }
             @Override public SharedPreferences getSharedPreferences(String name, int mode) {
@@ -59,17 +59,8 @@ public final class RemoteLifecycleNotificationsAndroidTest {
                 new RemoteSessionCommands.Duration(3600000, 1800000, 3600000, false));
         prepared = RemoteSessionNative.prepare(request, now);
         assertTrue(nativeSession.commitPreparedStart(prepared, RemoteSessionClock.observe(context)));
-        rememberApplied(request);
     }
     private SharedPreferences main() { return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0); }
-    private void rememberApplied(RemoteSessionCommands.Request request) throws Exception {
-        RemoteSessionCommands.Result result = new RemoteSessionCommands.Result(request, RemoteSessionCommands.State.APPLIED,
-                RemoteSessionCommands.Reason.NONE, prepared.statistics.startedAt,
-                new RemoteSessionCommands.Proof(true, RuntimeSessionIdentity.current(context), prepared.statistics.startedAt,
-                        prepared.endsAt, prepared.selectedDuration));
-        RemoteAppliedNotifications.session(context, dom, dom.peer(SUB, generation), new RemoteSessionRuntime.Record(
-                RemoteSessionRuntime.Direction.OUTGOING, request, result, new RemoteSessionClock.Bounds(1, 1, 1, 2)));
-    }
     @After public void clean() throws Throwable {
         Throwable failure = null;
         try {
@@ -114,68 +105,56 @@ public final class RemoteLifecycleNotificationsAndroidTest {
         }
         return first;
     }
-    private JSONObject expire() throws Exception {
+    private long expire() throws Exception {
         RemoteSessionClock.Sample now = RemoteSessionClock.observe(context);
         assertTrue(main().edit().putLong("commitment_ends_at", now.wall - 1)
                 .putLong("commitment_ends_elapsed", now.elapsed - 1).putInt("commitment_boot", now.boot).commit());
         assertTrue(CommitmentManager.expireIfDue(context, prepared.pactIdentity));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        assertFalse(RuntimeSessionIdentity.active(context));
-        assertTrue(RemoteLifecycleNotifications.ready(context, main().getLong("notification_pact_expiry_sequence", 0)));
-        RemoteLifecycleNotifications.publish(context, sub, sub.peer(DOM, generation));
-        for (RemoteProtocol.Change change : sub.published(DOM, generation, RemoteProtocol.Stream.RUNTIME))
-            if (RemoteLifecycleNotifications.KEY.equals(change.key) && !change.deleted) return new JSONObject(change.body);
-        throw new AssertionError("Missing exact-owned expiry publication");
+        assertFalse(RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).active);
+        return main().getLong("notification_pact_expiry_sequence", 0);
     }
-    @Test public void committedOwnedExpiryIsAcceptedOnceAndDisabledEventsHaveNoReplayBacklog() throws Exception {
-        JSONObject receipt = expire();
-        assertTrue(NotificationPreferences.set(context, NotificationPreferences.Role.DOM, NotificationPreferences.Event.SESSION_STOPPED, false));
-        assertTrue(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation), receipt));
-        String key = "DOM:SESSION_STOPPED:" + SUB + ":" + generation + ":pact-expiry";
-        SharedPreferences ledger = context.getSharedPreferences("local_notification_receipts", 0);
-        assertEquals(receipt.getLong("sequence"), ledger.getLong(key, 0));
-        int size = ledger.getAll().size();
-        assertTrue(NotificationPreferences.set(context, NotificationPreferences.Role.DOM, NotificationPreferences.Event.SESSION_STOPPED, true));
-        assertTrue(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation), receipt));
-        assertEquals(size, ledger.getAll().size());
-        assertEquals(receipt.getLong("sequence"), ledger.getLong(key, 0));
+    private RemoteSessionRuntime.Record appliedRecord() throws Exception {
+        RemoteSessionCommands.Request request = prepared.request;
+        RemoteSessionCommands.Result result = new RemoteSessionCommands.Result(request, RemoteSessionCommands.State.APPLIED,
+                RemoteSessionCommands.Reason.NONE, prepared.statistics.startedAt,
+                new RemoteSessionCommands.Proof(true, RuntimeSessionIdentity.current(context), prepared.statistics.startedAt,
+                        prepared.endsAt, prepared.selectedDuration));
+        return new RemoteSessionRuntime.Record(RemoteSessionRuntime.Direction.INCOMING, request, result,
+                new RemoteSessionClock.Bounds(1, 1, 1, 2));
     }
-    @Test public void tamperedWrongRelationshipAndUnappliedStartCannotGenerateAnExpiryNotification() throws Exception {
-        JSONObject receipt = expire();
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation),
-                new JSONObject(receipt.toString()).put("digest", String.join("", Collections.nCopies(64, "c")))));
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation),
-                new JSONObject(receipt.toString()).put("generation", "other-generation")));
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation),
-                new JSONObject(receipt.toString()).put("sub", DOM)));
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation),
-                new JSONObject(receipt.toString()).put("request", "stale-request")));
-        dom.putMetadata(SUB, generation, "notification_applied_session", "{}");
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, dom.peer(SUB, generation), receipt));
+    @Test public void appliedSessionReceiptNotifiesOnlySubAndRejectsReplay() throws Exception {
+        RemoteSessionRuntime.Record record = appliedRecord();
+        RemoteAppliedNotifications.nativeSession(context, sub, DOM, generation, record);
+        SharedPreferences receipts = context.getSharedPreferences("local_notification_receipts", 0);
+        String key = "SUB:SESSION_STARTED:" + DOM + ":" + generation;
+        assertEquals(1, receipts.getLong(key, 0));
+        java.util.Map<String, ?> first = new java.util.HashMap<>(receipts.getAll());
+        RemoteAppliedNotifications.nativeSession(context, sub, DOM, generation, record);
+        RemoteAppliedNotifications.session(context, dom.peer(SUB, generation), record);
+        assertEquals(first, receipts.getAll());
+        assertEquals("", dom.metadata(SUB, generation, "notification_applied_session", ""));
     }
-    @Test public void revokedRelationshipCannotReceiveHistoricalExpiry() throws Exception {
-        JSONObject receipt = expire();
-        RemoteStore.Peer before = dom.peer(SUB, generation);
-        dom.revoke(SUB, generation);
-        assertFalse(RemoteLifecycleNotifications.accept(context, dom, before, receipt));
+    @Test public void naturalExpiryConsumesSubStopWithoutCreatingDomLifecycleMetadata() throws Exception {
+        long sequence = expire();
+        assertEquals(sequence, context.getSharedPreferences("local_notification_receipts", 0)
+                .getLong("SUB:SESSION_STOPPED:local-pact-expiry", 0));
+        assertFalse(main().contains("notification_pact_expiry_receipt"));
+        assertFalse(main().contains("notification_pact_expiry_ready"));
+        assertTrue(sub.published(DOM, generation, RemoteProtocol.Stream.RUNTIME).isEmpty());
     }
-    @Test public void delayedNativeExpiryClosureRejectsReplacementStartAndStop() throws Exception {
-        delayedExpiryRejectsReplacement(true);
-    }
-    @Test public void delayedLocalOnlyExpiryClosureRejectsReplacementStartAndStop() throws Exception {
-        delayedExpiryRejectsReplacement(false);
-    }
+    @Test public void delayedNativeExpiryClosureRejectsReplacementStartAndStop() throws Exception { delayedExpiryRejectsReplacement(true); }
+    @Test public void delayedLocalOnlyExpiryClosureRejectsReplacementStartAndStop() throws Exception { delayedExpiryRejectsReplacement(false); }
     @Test public void localOnlyExpiryWithoutReplacementConsumesItsOwnPersistedIdentity() throws Exception {
         java.util.concurrent.CompletableFuture<Void> done = deferredExpiry(false, () -> true);
         done.get(5, java.util.concurrent.TimeUnit.SECONDS);
         assertEquals(1, context.getSharedPreferences("local_notification_receipts", 0)
                 .getLong("SUB:SESSION_STOPPED:local-pact-expiry", 0));
-        assertEquals(0, main().getLong(RemoteLifecycleNotifications.READY, 0));
     }
-    private void delayedExpiryRejectsReplacement(boolean remoteOwned) throws Exception {
+    private void delayedExpiryRejectsReplacement(boolean nativeStart) throws Exception {
         java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
         java.util.concurrent.CountDownLatch observedPending = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.CompletableFuture<Void> done = deferredExpiry(remoteOwned, () -> {
+        java.util.concurrent.CompletableFuture<Void> done = deferredExpiry(nativeStart, () -> {
             observedPending.countDown(); return closed.get();
         });
         try {
@@ -185,17 +164,13 @@ public final class RemoteLifecycleNotificationsAndroidTest {
             new AppModeManager(context).setArmed(false);
             assertFalse(RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).active);
         } finally { closed.set(true); done.get(5, java.util.concurrent.TimeUnit.SECONDS); }
-        assertFalse(context.getSharedPreferences("local_notification_receipts", 0)
-                .contains("SUB:SESSION_STOPPED:local-pact-expiry"));
-        assertEquals(0, main().getLong(RemoteLifecycleNotifications.READY, 0));
-        RemoteLifecycleNotifications.publish(context, sub, sub.peer(DOM, generation));
-        for (RemoteProtocol.Change change : sub.published(DOM, generation, RemoteProtocol.Stream.RUNTIME))
-            if (RemoteLifecycleNotifications.KEY.equals(change.key)) assertTrue(change.deleted);
+        assertFalse(context.getSharedPreferences("local_notification_receipts", 0).contains("SUB:SESSION_STOPPED:local-pact-expiry"));
+        assertFalse(main().contains("notification_pact_expiry_receipt"));
     }
     @SuppressWarnings("unchecked")
-    private java.util.concurrent.CompletableFuture<Void> deferredExpiry(boolean remoteOwned,
+    private java.util.concurrent.CompletableFuture<Void> deferredExpiry(boolean nativeStart,
             java.util.function.BooleanSupplier closed) throws Exception {
-        if (!remoteOwned) {
+        if (!nativeStart) {
             CommitmentManager.emergencyRelease(context);
             boolean wasDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
             try {
@@ -204,45 +179,25 @@ public final class RemoteLifecycleNotificationsAndroidTest {
             } finally { if (!wasDom) com.subhub.app.security.ControllerPinManager.enterSubMode(); }
         }
         synchronized (RuntimeSessionIdentity.LOCK) {
-            String pact = main().getString("commitment_session_identity", "");
-            String statisticsIdentity = statistics.activeSessionIdentity();
             SharedPreferences.Editor edit = main().edit().putLong("notification_pact_expiry_sequence", 1);
-            com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, pact, statisticsIdentity, 1);
-            boolean captured = RemoteLifecycleNotifications.appendExpiry(context, edit, pact, statisticsIdentity, 1);
-            assertEquals(remoteOwned, captured);
+            com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit,
+                    main().getString("commitment_session_identity", ""), statistics.activeSessionIdentity(), 1);
             assertTrue(edit.commit());
             CommitmentManager.emergencyRelease(context);
         }
         java.lang.reflect.Method deferred = com.subhub.app.notifications.LocalPactExpiryNotifications.class.getDeclaredMethod(
-                "afterCaptureClosure", Context.class, java.util.function.BooleanSupplier.class, long.class, boolean.class);
+                "afterCaptureClosure", Context.class, java.util.function.BooleanSupplier.class, long.class);
         deferred.setAccessible(true);
-        return (java.util.concurrent.CompletableFuture<Void>) deferred.invoke(null, context, closed, 1L, remoteOwned);
+        return (java.util.concurrent.CompletableFuture<Void>) deferred.invoke(null, context, closed, 1L);
     }
     @Test public void failedPostCommitPeerLookupCannotEscapeAppliedResultObserver() throws Exception {
-        RemoteSessionCommands.Request request = prepared.request;
-        RemoteSessionCommands.Result applied = new RemoteSessionCommands.Result(request, RemoteSessionCommands.State.APPLIED,
-                RemoteSessionCommands.Reason.NONE, prepared.statistics.startedAt,
-                new RemoteSessionCommands.Proof(true, RuntimeSessionIdentity.current(context), prepared.statistics.startedAt,
-                        prepared.endsAt, prepared.selectedDuration));
-        RemoteSessionRuntime.Record record = new RemoteSessionRuntime.Record(RemoteSessionRuntime.Direction.INCOMING,
-                request, applied, new RemoteSessionClock.Bounds(1, 1, 1, 2));
-        dom.getWritableDatabase().execSQL("ALTER TABLE peers RENAME TO notification_fixture_peers");
+        RemoteSessionRuntime.Record record = appliedRecord();
+        sub.getWritableDatabase().execSQL("ALTER TABLE peers RENAME TO notification_fixture_peers");
         try {
-            assertThrows(android.database.sqlite.SQLiteException.class, () -> dom.peer(SUB, generation));
-            RemoteAppliedNotifications.nativeSession(context, dom, SUB, generation, record);
+            assertThrows(android.database.sqlite.SQLiteException.class, () -> sub.peer(DOM, generation));
+            RemoteAppliedNotifications.nativeSession(context, sub, DOM, generation, record);
             assertEquals(RemoteSessionCommands.State.APPLIED, record.result.state);
             assertTrue(RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).active);
-        } finally {
-            dom.getWritableDatabase().execSQL("ALTER TABLE notification_fixture_peers RENAME TO peers");
-        }
-    }
-    @Test public void activeReplacementCannotCompleteOrRepublishHistoricalExpiry() throws Exception {
-        JSONObject receipt = expire();
-        new AppModeManager(context).setArmed(true);
-        assertTrue(RuntimeSessionIdentity.active(context));
-        assertFalse(RemoteLifecycleNotifications.ready(context, receipt.getLong("sequence")));
-        RemoteLifecycleNotifications.publish(context, sub, sub.peer(DOM, generation));
-        for (RemoteProtocol.Change change : sub.published(DOM, generation, RemoteProtocol.Stream.RUNTIME))
-            if (RemoteLifecycleNotifications.KEY.equals(change.key)) assertTrue(change.deleted);
+        } finally { sub.getWritableDatabase().execSQL("ALTER TABLE notification_fixture_peers RENAME TO peers"); }
     }
 }

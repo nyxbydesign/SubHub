@@ -121,3 +121,9 @@ Android Keystore protects credentials and tokens at rest but cannot make a merch
 unextractable while the app process is running. An on-device client also cannot reliably receive a
 public PayPal webhook while offline or unreachable; those are deliberate tradeoffs of this local
 development architecture.
+
+## Payment activity
+
+Only a completed provider capture with the expected settlement reference, amount, currency and capture identity can create Tribute-paid activity. Triggered charges, checkout creation, balances and manually confirmed links do not provide that proof. The checkout retains its original approved activity audience; a later relationship cannot receive an earlier payment's activity.
+
+Verified completion acknowledges the ledger, paid total and optional activity receipt in one preference commit. A verified paid-pause grant shares that commit with its exact settlement owner and original expiry. Reconciliation never credits the same settlement twice, extends an acknowledged pause, or restarts an expired grant. Activity projection runs separately from payment processing; its bounded outbox and delivery failures cannot initiate another payment or block successful credit. Only hash-based event identity and the advisory amount/currency cross the paired Activity stream.

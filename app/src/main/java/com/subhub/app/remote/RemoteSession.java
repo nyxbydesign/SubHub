@@ -69,7 +69,7 @@ public final class RemoteSession {
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
-        JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",1).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
+        JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
@@ -107,7 +107,7 @@ public final class RemoteSession {
             RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"), details, roleIdentity);
         }
         if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==1,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls,
+        exchange(connection,peer,deadlineNanos,activityVersion(response)==2,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls,
                 appIconsVersion(response)==1 && localAppIcons==1,priority);
     }
 
@@ -145,8 +145,8 @@ public final class RemoteSession {
         if (details) ready.put("profileDetailsVersion", 1);
         if (roleIdentity) ready.put("profileRoleVersion", 1);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
-        boolean activity=activityVersion(hello)==1;
-        if(activity)ready.put("activityVersion",1);
+        boolean activity=activityVersion(hello)==2;
+        if(activity)ready.put("activityVersion",2);
         boolean tasks = tasksVersion(hello)==1 && hooks.tasksVersion()==1;
         store.putMetadata(peer.identity,peer.generation,"tasks_version",tasks ? "1" : "0");
         if (tasks) ready.put("tasksVersion",1);

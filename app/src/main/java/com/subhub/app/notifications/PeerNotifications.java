@@ -36,13 +36,14 @@ public final class PeerNotifications {
     }
 
     public static void applied(Context context, Role role, Event event, String scope, long sequence) {
+        if (role != Role.SUB) return;
         try { synchronized (DELIVERY_LOCK) { deliver(context, role, event, scope, sequence); } }
         catch (RuntimeException unavailable) { /* Optional presentation cannot fail a committed application effect. */ }
     }
     /** A saved expiry cannot claim Stop until its exact historical capture and runtime fence settle. */
     public static void pactExpired(Context context, com.subhub.app.service.ScreenCaptureService.StopTarget capture,
-            long sequence, boolean remoteOwned) {
-        LocalPactExpiryNotifications.schedule(context, capture, sequence, remoteOwned);
+            long sequence) {
+        LocalPactExpiryNotifications.schedule(context, capture, sequence);
     }
     private static void deliver(Context context, Role role, Event event, String scope, long sequence) {
         if (!consume(context, role, event, scope, sequence)) return;

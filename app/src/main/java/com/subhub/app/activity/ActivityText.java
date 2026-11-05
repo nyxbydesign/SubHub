@@ -14,6 +14,7 @@ public final class ActivityText {
         switch (entry.event.kind) {
             case APP_OPENED: return context.getString(R.string.dom_activity_app_opened, entry.appLabel);
             case TRIBUTE_TRIGGERED: return context.getString(R.string.dom_activity_tribute_triggered);
+            case TRIBUTE_PAID: return context.getString(R.string.dom_activity_tribute_paid);
             case APP_LIMIT_REACHED: return context.getString(R.string.dom_activity_app_limit, entry.appLabel);
             case SHARED_LIMIT_REACHED: return context.getString(R.string.dom_activity_shared_limit);
             default: throw new IllegalArgumentException("Unknown activity kind");
@@ -22,6 +23,11 @@ public final class ActivityText {
 
     public static String detail(Context context, ActivityEntry entry) {
         ActivityEvent event = entry.event;
+        if (event.kind == ActivityEvent.Kind.TRIBUTE_PAID) {
+            NumberFormat paid = NumberFormat.getCurrencyInstance(context.getResources().getConfiguration().getLocales().get(0));
+            paid.setCurrency(Currency.getInstance(event.currency));
+            return context.getString(R.string.dom_activity_paid_detail, paid.format(BigDecimal.valueOf(event.amountCents, 2)));
+        }
         if (event.kind == ActivityEvent.Kind.TRIBUTE_TRIGGERED) {
             NumberFormat amount = NumberFormat.getCurrencyInstance(context.getResources().getConfiguration().getLocales().get(0));
             amount.setCurrency(Currency.getInstance(event.currency));
@@ -36,7 +42,7 @@ public final class ActivityText {
     public static int icon(ActivityEntry entry) {
         switch (entry.event.kind) {
             case APP_OPENED: return R.drawable.ic_settings_apps;
-            case TRIBUTE_TRIGGERED: return R.drawable.ic_nav_money;
+            case TRIBUTE_TRIGGERED: case TRIBUTE_PAID: return R.drawable.ic_nav_money;
             default: return R.drawable.ic_nav_limits;
         }
     }

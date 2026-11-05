@@ -17,14 +17,13 @@ import com.subhub.app.people.PersonId;
 public final class ActivityNotifications {
     public static final String CHANNEL = "sub_activity";
     private static final int ID = 1;
+    public static final String EXTRA_TYPE = "com.subhub.app.activity.NOTIFICATION_TYPE";
+    public enum Delivery { POSTED, SUPPRESSED, UNAVAILABLE }
     private static final String PREFIX = "subhub.activity:";
 
     private ActivityNotifications() {}
 
     public static boolean enabled(Context context) {
-        if (!com.subhub.app.notifications.NotificationPreferences.enabled(context,
-                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
-                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY)) return false;
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) return false;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -34,9 +33,14 @@ public final class ActivityNotifications {
     }
 
     /** Called only after the receiver durably accepts and revalidates a new eligible event. */
-    public static boolean show(Context context, ActivityEntry entry) {
+    public static boolean show(Context context, ActivityEntry entry) { return deliver(context, entry) == Delivery.POSTED; }
+    public static Delivery deliver(Context context, ActivityEntry entry) {
         synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
-            return showLocked(context, entry);
+            if (!entry.unread || !com.subhub.app.security.DeviceRolePreferences.supportsDom(context)
+                    || !com.subhub.app.notifications.NotificationPreferences.enabled(context,
+                            com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                            com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind))) return Delivery.SUPPRESSED;
+            return showLocked(context, entry) ? Delivery.POSTED : Delivery.UNAVAILABLE;
         }
     }
     private static boolean showLocked(Context context, ActivityEntry entry) {
@@ -54,24 +58,42 @@ public final class ActivityNotifications {
         NotificationCompat.Builder publicVersion = new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification_subhub).setContentTitle(context.getString(R.string.app_name))
                 .setContentText(context.getString(R.string.dom_activity_new_activity));
+        String copy = context.getString(com.subhub.app.notifications.NotificationPreferences.activityLabel(
+                com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind)));
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification_subhub)
                 .setContentTitle(context.getString(R.string.app_name))
-                .setContentText(context.getString(R.string.dom_activity_new_activity))
+                .setContentText(copy)
                 .setWhen(entry.event.observedAt).setShowWhen(true).setContentIntent(destination)
                 .setAutoCancel(true).setOnlyAlertOnce(true).setGroup(peerPrefix(entry.personId))
                 .setCategory(NotificationCompat.CATEGORY_SOCIAL).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicVersion.build());
+        android.os.Bundle type = new android.os.Bundle();
+        type.putString(EXTRA_TYPE, com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind).name());
+        notification.addExtras(type);
         return com.subhub.app.notifications.OptionalNotificationDispatch.post(context,
                 com.subhub.app.notifications.NotificationPreferences.Role.DOM,
-                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY, tag(entry), ID,
+                com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind), tag(entry), ID,
                 com.subhub.app.notifications.OptionalNotificationPresentation.present(context, notification.build()));
     }
 
     public static void cancel(Context context, ActivityEntry entry) {
         com.subhub.app.notifications.OptionalNotificationDispatch.cancelExact(context,
                 com.subhub.app.notifications.NotificationPreferences.Role.DOM,
-                com.subhub.app.notifications.NotificationPreferences.Event.ACTIVITY, tag(entry), ID);
+                com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind), tag(entry), ID);
+    }
+
+    public static void cancelType(Context context, com.subhub.app.notifications.NotificationPreferences.Event event) {
+        synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
+            NotificationManager manager = context.getSystemService(NotificationManager.class);
+            if (manager == null) return;
+            for (android.service.notification.StatusBarNotification active : manager.getActiveNotifications()) {
+                if (active.getTag() == null || !active.getTag().startsWith(PREFIX)) continue;
+                String type = active.getNotification().extras.getString(EXTRA_TYPE, "");
+                // Older generic notices have no type; retire them when an individual choice is disabled.
+                if (type.isEmpty() || event.name().equals(type)) manager.cancel(active.getTag(), active.getId());
+            }
+        }
     }
 
     public static void cancelPeer(Context context, PersonId person) { cancelPrefix(context, peerPrefix(person)); }

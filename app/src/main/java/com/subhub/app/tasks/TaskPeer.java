@@ -15,7 +15,10 @@ public final class TaskPeer {
     private final PeerTransport.Connection connection;
     private final long deadline;
     private TaskPeer(Context context, PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) {
-        runtime = TaskRuntime.get(context); target = new TaskRepository.Target(peer.identity + "_" + peer.generation, peer);
+        this(TaskRuntime.get(context), connection, peer, deadline);
+    }
+    private TaskPeer(TaskRuntime selected, PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) {
+        runtime = Objects.requireNonNull(selected); target = new TaskRepository.Target(peer.identity + "_" + peer.generation, peer);
         this.connection = connection; this.deadline = deadline;
         if (!peer.identity.equals(connection.authenticatedPeerIdentity())) throw new SecurityException("Task peer mismatch");
     }

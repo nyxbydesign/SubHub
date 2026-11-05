@@ -25,10 +25,14 @@ public final class TaskRuntime {
         return instance;
     }
     private final Context context;
+    private final RemoteStore scopedAuthority;
     public final TaskStore store;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "subhub-tasks"));
     private volatile boolean installed, foreground;
-    private TaskRuntime(Context context) { this.context = context; store = new TaskStore(context); }
+    private TaskRuntime(Context context) { this(context, null); }
+    private TaskRuntime(Context context, RemoteStore authority) {
+        this.context = context; scopedAuthority = authority; store = new TaskStore(context);
+    }
     boolean hasCancellations(String scope) {
         try { return store.load(scope).hasCancellations(); }
         catch (org.json.JSONException invalid) { throw new IllegalStateException("Task history unavailable", invalid); }
@@ -55,27 +59,27 @@ public final class TaskRuntime {
     }
     public void changed() {
         executor.execute(this::tick);
-        RemoteFeature.get(context).changed();
+        if (scopedAuthority == null) RemoteFeature.get(context).changed();
     }
     public void tick() {
         try {
-            RemoteFeature remote = RemoteFeature.get(context);
-            boolean controlled = remote.store.isRemotelyControlled();
+            RemoteStore remote = authorityLock();
+            boolean controlled = remote.isRemotelyControlled();
             if (!controlled && DeviceRolePreferences.supportsSub(context)) sweep(new TaskRepository.Target("local", null));
-            for (RemoteStore.Peer peer : remote.store.peers(false)) if (peer.state == RemoteStore.State.ACTIVE)
+            for (RemoteStore.Peer peer : remote.peers(false)) if (peer.state == RemoteStore.State.ACTIVE)
                 sweep(new TaskRepository.Target(peer.identity + "_" + peer.generation, peer));
         } catch (Exception unavailable) { android.util.Log.w("Tasks", "Task update deferred"); }
     }
     public void requireActive(TaskRepository.Target target) {
         if (target.peer == null) {
-            if (RemoteFeature.get(context).store.isRemotelyControlled()) throw new SecurityException("Local task authority changed");
+            if (authorityLock().isRemotelyControlled()) throw new SecurityException("Local task authority changed");
         } else {
-            RemoteStore.Peer live = RemoteFeature.get(context).store.peer(target.peer.identity, target.peer.generation);
+            RemoteStore.Peer live = authorityLock().peer(target.peer.identity, target.peer.generation);
             if (live == null || live.state != RemoteStore.State.ACTIVE || live.localRole != target.peer.localRole)
                 throw new SecurityException("Task pairing is no longer active");
         }
     }
-    public RemoteStore authorityLock() { return RemoteFeature.get(context).store; }
+    public RemoteStore authorityLock() { return scopedAuthority == null ? RemoteFeature.get(context).store : scopedAuthority; }
     public void sweep(TaskRepository.Target target) throws Exception {
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (authorityLock()) {

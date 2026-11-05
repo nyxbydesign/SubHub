@@ -49,11 +49,19 @@ Compatible devices expose Start and Stop beside the Sub profile’s applied serv
 
 ## Activity
 
-The Dom's Activity tab shows selected-app entries, triggered Tributes, and reached app or shared limits. A Tribute event includes its assessed amount and rule. App entries and limits require the Sub's Accessibility service and the corresponding settings. Both devices must support Activity; older peers continue compatible statistics and configuration synchronization without sending Activity events.
+The Dom's Activity tab shows tracked-app entries, triggered Tributes, verified Tribute payments, and reached app or shared limits. Triggered and paid are separate facts: a triggered Tribute describes an assessed charge; paid requires a completed PayPal capture matching the original checkout amount, currency and settlement. Manual payment-link confirmation does not create a verified paid event. Paid-pause purchases do not create Tribute-paid activity. App entries and limits require the Sub's Accessibility service and the corresponding settings.
 
-Events retain their source time and local receipt time. Interrupted synchronization can delay arrival; replayed receipts preserve read state and do not create another notification. Android notification permission and channel settings control alerts. OS notifications use generic text; unlock the Activity feed to view details. Only entries visible on screen become read.
+Both devices must negotiate Activity version 2 before exchanging the Events stream. Older peers continue compatible statistics, configuration and pairing operations while Events queues retain their existing cursors and pending records.
+
+Events retain their source time and local receipt time. Interrupted synchronization can delay arrival; replayed receipts preserve read state and do not create another notification. Android notification permission and channel settings control alerts. OS notifications identify the event type without app names or payment details; lock-screen public copy remains generic, and discreet mode redacts the type. Unlock the Activity feed to view details. Only entries visible on screen become read.
 
 Profiles show recent events for the selected person. This device's history stays local unless a new event was recorded for its currently approved Dom. Pairing with another Dom does not send earlier local history. Unpairing stops accepting events and cancels that relationship's notifications.
+
+## Notifications
+
+Settings → Notifications shows only the current Dom workspace or Sub view. Dom choices are tracked app opened, app limit reached, shared limit reached, Tribute triggered, Tribute paid, and task reviews. Sub choices are contract changes, session starts, and session stops. Choices are saved separately on this device, stay unchanged when switching workspaces, and are never sent to the other phone. An earlier disabled Activity choice remains the default for each new individual activity choice until that choice is changed. Disabling a type cancels its optional notices and consumes incoming disabled events without replaying them when enabled again. Required protection, pairing, security and payment-consent notices retain their own controls.
+
+Verified paid activity keeps the audience recorded when the checkout began. A delayed payment cannot be reassigned to a replacement Dom. Its capture reference is hashed for event identity; provider credentials, payer information and raw capture identifiers are not shared. Paid activity is advisory and never credits the receiving Dom's Wallet.
 
 ## Offline and background behavior
 

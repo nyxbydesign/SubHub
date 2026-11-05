@@ -28,20 +28,7 @@ public final class RemoteContracts {
     }
 
     public void prepare(RemoteStore.Peer peer) throws Exception {
-        if(peer.localRole==RemoteProtocol.Role.DOM) {
-            RemoteStore.Command pending = store.latestCommand(peer.identity, peer.generation);
-            if (pending != null && pending.pending()) {
-                String key = "notification_before_configuration";
-                if (!Long.toString(pending.revision).equals(store.metadata(peer.identity, peer.generation, "notification_before_revision", ""))) {
-                    JSONObject before = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.BASELINE, "active");
-                    if (before != null) {
-                        store.putMetadata(peer.identity, peer.generation, key, RemoteProtocol.canonical(before));
-                        store.putMetadata(peer.identity, peer.generation, "notification_before_revision", Long.toString(pending.revision));
-                    }
-                }
-            }
-            return;
-        }
+        if(peer.localRole==RemoteProtocol.Role.DOM)return;
         if(store.metadata(peer.identity,peer.generation,"initial_configuration","").isEmpty()) {
             JSONObject current=capture(peer);
             store.putMetadata(peer.identity,peer.generation,"initial_configuration",RemoteProtocol.canonical(current));
@@ -136,20 +123,8 @@ public final class RemoteContracts {
 
     public void process(RemoteStore.Peer peer) throws Exception {
         if(peer.localRole==RemoteProtocol.Role.DOM) {
-            for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.COMMAND_RESULT))if(!row.deleted) {
-                JSONObject result = new JSONObject(row.body);
-                synchronized (store) {
-                    RemoteStore.Command before = store.command(peer.identity, peer.generation, result.getString("id"));
-                    store.acceptResult(peer.identity,peer.generation,result);
-                    RemoteStore.Command after = store.command(peer.identity, peer.generation, result.getString("id"));
-                    if (before != null && before.pending() && after != null && after.state == RemoteStore.CommandState.APPLIED) {
-                        String previous = Long.toString(after.revision).equals(store.metadata(peer.identity, peer.generation, "notification_before_revision", ""))
-                                ? store.metadata(peer.identity, peer.generation, "notification_before_configuration", "") : "";
-                        if (!previous.isEmpty()) RemoteAppliedNotifications.configurationCommand(context, peer,
-                                after.revision, previous, after.body);
-                    }
-                }
-            }
+            for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.COMMAND_RESULT))if(!row.deleted)
+                store.acceptResult(peer.identity,peer.generation,new JSONObject(row.body));
             return;
         }
         JSONObject desired=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"desired");if(desired==null)return;

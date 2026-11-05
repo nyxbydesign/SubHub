@@ -195,25 +195,19 @@ final class RemoteSessionControlPeer {
         List<RemoteSessionCommands.Result> parsed = new ArrayList<>();
         for (int index = 0; index < results.length(); index++)
             parsed.add(RemoteSessionCommands.Result.parse(requests.get(index), results.getJSONObject(index)));
-        List<RemoteSessionRuntime.Record> applied = new ArrayList<>();
         synchronized (store) {
             android.database.sqlite.SQLiteDatabase db = store.getWritableDatabase(); db.beginTransaction();
             try {
                 requireCurrent(peer);
                 for (RemoteSessionControlAck ack : acknowledged) store.clearSessionControlAck(peer.identity, peer.generation, ack);
                 for (int index = 0; index < parsed.size(); index++) {
-                    RemoteSessionRuntime.Record before = store.sessionControl(peer.identity, peer.generation,
-                            RemoteSessionRuntime.Direction.OUTGOING, requests.get(index).id);
-                    RemoteSessionRuntime.Record after = store.advanceSessionControl(peer.identity, peer.generation,
+                    store.advanceSessionControl(peer.identity, peer.generation,
                             RemoteSessionRuntime.Direction.OUTGOING, requests.get(index).id, parsed.get(index).json());
-                    if (before != null && before.result.state != RemoteSessionCommands.State.APPLIED
-                            && after.result.state == RemoteSessionCommands.State.APPLIED) applied.add(after);
                     if (parsed.get(index).state.terminal()) store.retainSessionControlAck(peer.identity, peer.generation, requests.get(index).id);
                 }
                 db.setTransactionSuccessful();
             } finally { db.endTransaction(); }
         }
-        for (RemoteSessionRuntime.Record record : applied) RemoteAppliedNotifications.session(context, store, peer, record);
     }
     private void require(PeerTransport.Connection connection, RemoteStore.Peer peer) {
         if (peer == null || peer.identity.equals(self) || !peer.identity.equals(connection.authenticatedPeerIdentity()))

@@ -29,12 +29,16 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
     interface Notifications {
         boolean enabled(Context context);
         boolean show(Context context,ActivityEntry entry);
+        default boolean deliveredOrSuppressed(Context context, ActivityEntry entry) { return show(context, entry); }
         void cancel(Context context,ActivityEntry entry);
         void cancelPeer(Context context,PersonId person);
     }
     private static final Notifications SYSTEM_NOTIFICATIONS=new Notifications(){
         public boolean enabled(Context context){return ActivityNotifications.enabled(context);}
         public boolean show(Context context,ActivityEntry entry){return ActivityNotifications.show(context,entry);}
+        public boolean deliveredOrSuppressed(Context context, ActivityEntry entry) {
+            return ActivityNotifications.deliver(context, entry) != ActivityNotifications.Delivery.UNAVAILABLE;
+        }
         public void cancel(Context context,ActivityEntry entry){ActivityNotifications.cancel(context,entry);}
         public void cancelPeer(Context context,PersonId person){ActivityNotifications.cancelPeer(context,person);}
     };
@@ -46,7 +50,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
     private final Notifications notifications;
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(256), r -> new Thread(r, "subhub-activity"), new ThreadPoolExecutor.AbortPolicy());
-    private final AtomicBoolean notificationQueued = new AtomicBoolean(), gap = new AtomicBoolean();
+    private final AtomicBoolean notificationQueued = new AtomicBoolean(), gap = new AtomicBoolean(), paymentQueued = new AtomicBoolean();
     private volatile RemoteStore.Peer source;
     private AutoCloseable observer;
 
@@ -61,6 +65,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             for (PenanceEvent event : new PenanceManager(this.context).durableActivityEvents())
                 if (event.getInfraction() != PenanceInfraction.PAID_PAUSE)
                     append(tributeFact(event), "tribute:" + event.getId(), "UTC", "", null);
+            projectPayments();
         });
     }
 
@@ -85,6 +90,34 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
     void received(RemoteStore.Peer peer) { changed();dispatchNotifications(); }
     void revoked(RemoteStore.Peer peer) {
         refreshSource();notifications.cancelPeer(context, RemotePersonRepository.id(peer));changed();
+    }
+
+    @Override public RemoteActivityRecorder.PaymentAudience paymentAudience(Context origin) {
+        if (origin.getApplicationContext() != context || !DeviceRolePreferences.supportsSub(context)) return RemoteActivityRecorder.PaymentAudience.NONE;
+        synchronized (store) {
+            RemoteStore.Peer captured = source;
+            return captured != null && activeSource(captured)
+                    ? new RemoteActivityRecorder.PaymentAudience(captured.identity, captured.generation)
+                    : RemoteActivityRecorder.PaymentAudience.NONE;
+        }
+    }
+    @Override public void payments() {
+        if (!paymentQueued.compareAndSet(false, true)) return;
+        if (!enqueue(() -> { paymentQueued.set(false); projectPayments(); })) paymentQueued.set(false);
+    }
+    private void projectPayments() throws Exception {
+        if (!DeviceRolePreferences.supportsSub(context)) return;
+        PenanceManager ledger = new PenanceManager(context);
+        if (ledger.paymentActivityGap()) gap.set(true);
+        if (!ledger.hasPaymentActivity()) return;
+        for (com.subhub.app.penance.PaymentActivityReceipt receipt : ledger.durablePaymentActivity()) {
+            // The checkout's audience is immutable, including a missing or revoked original relationship.
+            RemoteStore.Peer captured = receipt.peer.isEmpty() ? null : new RemoteStore.Peer(receipt.peer, receipt.generation, "",
+                    RemoteProtocol.Role.SUB, RemoteStore.State.REVOKED, 0, "");
+            append(new ActivityEvent(receipt.id, ActivityEvent.Kind.TRIBUTE_PAID, receipt.observedAt, "", receipt.amountCents,
+                    receipt.currency, "", 0), "paid:" + receipt.id, "UTC", "", captured);
+            if (!ledger.acknowledgePaymentActivity(receipt)) throw new java.io.IOException("Payment activity acknowledgement is pending");
+        }
     }
 
     @Override public void foreground(String previousPackage, String packageName, boolean selected, long observedAt) {
@@ -146,17 +179,26 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
             SQLiteDatabase db = store.getWritableDatabase();db.beginTransaction();
             try {
                 if(foreground!=null)RemoteActivityStore.writeState(db,"foreground",foreground);
-                boolean exists;String priorPeer;String priorBody;
-                try (Cursor old = db.rawQuery("SELECT peer,body FROM activity_source WHERE source_key=?", new String[]{key})) {
-                    exists = old.moveToFirst();priorPeer = exists ? old.getString(0) : null;priorBody = exists ? StoredPayloads.read(old,1) : null;
+                boolean exists;String priorPeer;String priorGeneration;String priorBody;
+                try (Cursor old = db.rawQuery("SELECT peer,generation,body FROM activity_source WHERE source_key=?", new String[]{key})) {
+                    exists = old.moveToFirst();priorPeer = exists ? old.getString(0) : null;priorGeneration = exists ? old.getString(1) : null;
+                    priorBody = exists ? StoredPayloads.read(old,2) : null;
                 }
                 boolean permitted = captured != null && activeSource(captured)
                         && event.observedAt >= Long.parseLong(store.metadata(captured.identity, captured.generation, "activity_started_at", "0"));
                 if (!exists) {
                     ContentValues row = new ContentValues();row.put("event_id", event.id);row.put("source_key", key);
                     StoredPayloads.put(row,"body",encoded);row.put("observed", event.observedAt);
-                    if (permitted) { row.put("peer", captured.identity);row.put("generation", captured.generation); }
+                    if (permitted || key.startsWith("paid:") && captured != null) { row.put("peer", captured.identity);row.put("generation", captured.generation); }
+                    if (key.startsWith("paid:") && !permitted) row.put("published", 1);
                     db.insertOrThrow("activity_source", null, row);modified = true;
+                } else if (key.startsWith("paid:")) {
+                    ActivityEvent old = RemoteActivityWire.decode(new JSONObject(priorBody));
+                    if (old.kind != ActivityEvent.Kind.TRIBUTE_PAID || old.observedAt != event.observedAt
+                            || old.amountCents != event.amountCents || !old.currency.equals(event.currency)
+                            || !Objects.equals(priorPeer, captured == null ? null : captured.identity)
+                            || !Objects.equals(priorGeneration, captured == null ? null : captured.generation))
+                        throw new SecurityException("Payment activity fact changed");
                 } else if (permitted && priorPeer == null && key.startsWith("tribute:")) {
                     ActivityEvent old = RemoteActivityWire.decode(new JSONObject(priorBody));
                     if (old.observedAt != event.observedAt || old.amountCents != event.amountCents || !old.reason.equals(event.reason)
@@ -193,9 +235,11 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
 
     void prepare(RemoteStore.Peer peer) throws Exception {
         if (peer.localRole != RemoteProtocol.Role.SUB) return;
+        payments();
+        boolean unavailable = gap.get();
         synchronized (store) {
             SQLiteDatabase db = store.getWritableDatabase();db.beginTransaction();
-            try { publishPending(db, peer);store.putMetadata(peer.identity, peer.generation, "unavailable_EVENTS", Boolean.toString(gap.get()));db.setTransactionSuccessful(); }
+            try { publishPending(db, peer);store.putMetadata(peer.identity, peer.generation, "unavailable_EVENTS", Boolean.toString(unavailable));db.setTransactionSuccessful(); }
             finally { db.endTransaction(); }
         }
     }
@@ -412,7 +456,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
                 while (rows.moveToNext()) {
                     count++;RemoteStore.Peer peer = store.peer(rows.getString(1), rows.getString(2));
                     ActivityEntry entry = entry(peer, rows.getString(0), StoredPayloads.read(rows,3), rows.getLong(4), true);
-                    if (DeviceRolePreferences.supportsDom(context) && notifications.show(context, entry)) {
+                    if (DeviceRolePreferences.supportsDom(context) && notifications.deliveredOrSuppressed(context, entry)) {
                         store.getWritableDatabase().execSQL("UPDATE activity_receipts SET notified=1 WHERE entry_key=?", new Object[]{entry.key});progress = true;
                     }
                 }

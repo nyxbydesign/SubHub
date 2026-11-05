@@ -79,9 +79,13 @@ public class RemoteActivityAndroidTest {
     }
     private void authenticateDom() {
         ControllerPinManager.initialize(context);
-        assertTrue("Use the guest's existing configured controller PIN", ControllerPinManager.isConfigured(context));
-        assertTrue("Authenticate the configured PIN without replacing it", ControllerPinManager.verify(context,
-                InstrumentationRegistry.getArguments().getString("controller_pin", "2468")));
+        String pin = InstrumentationRegistry.getArguments().getString("controller_pin", "2468");
+        if (!ControllerPinManager.isConfigured(context)) {
+            assertFalse("Do not replace another credential owner", ControllerPinManager.hasCredentials(context));
+            // IntegrationFixture restores the original settings, including an initially unkeyed guest.
+            assertTrue("Prepare only the missing ordinary local PIN", ControllerPinManager.setPin(context, pin));
+        }
+        assertTrue("Authenticate the configured PIN without replacing it", ControllerPinManager.verify(context, pin));
         assertTrue(ControllerPinManager.isDomWorkspaceUnlocked());
     }
     private RemoteStore database(){String name="activity-"+UUID.randomUUID()+".db";databases.add(name);return new RemoteStore(context,name);}
@@ -110,6 +114,32 @@ public class RemoteActivityAndroidTest {
         notifications.store=receiver;receiving=new RemoteActivityRepository(context,receiver,()->{},notifications);receiver.onActivityReceived(receiving::received);
         drain(receiving);assertFalse(receiving.load(null,20).entries.get(0).unread);receiving.dispatchNotifications();drain(receiving);
         assertEquals(1,notifications.calls.get());assertFalse(notifications.insideTransaction);
+    }
+    @Test public void perKindSuppressionIsConsumedBeforeReenableOrTransportReplay() throws Exception {
+        assertTrue("The coordinator must provision POST_NOTIFICATIONS and an enabled Activity channel before this OS-delivery fixture",
+                ActivityNotifications.enabled(context));
+        SharedPreferences choices = context.getSharedPreferences(com.subhub.app.notifications.NotificationPreferences.STORE, 0);
+        Map<String, ?> original = new HashMap<>(choices.getAll());
+        String key = com.subhub.app.notifications.NotificationPreferences.key(
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.TRACKED_APP_OPENED);
+        String id = "suppressed_" + UUID.randomUUID();
+        try {
+            assertTrue(choices.edit().putBoolean(key, false).commit());
+            receiving.close(); receiving = new RemoteActivityRepository(context, receiver, () -> {});
+            receiver.onActivityReceived(receiving::received); drain(receiving);
+            RemoteProtocol.Batch batch = publish(id, System.currentTimeMillis());
+            receiver.receive(SUB, batch); drain(receiving);
+            try (Cursor row = receiver.getReadableDatabase().rawQuery("SELECT notified FROM activity_receipts WHERE event_id=?", new String[]{id})) {
+                assertTrue(row.moveToFirst()); assertEquals(1, row.getInt(0));
+            }
+            assertTrue(choices.edit().putBoolean(key, true).commit());
+            receiver.receive(SUB, batch); receiving.dispatchNotifications(); drain(receiving);
+            android.app.NotificationManager manager = context.getSystemService(android.app.NotificationManager.class);
+            String entry = RemoteActivityStore.entryKey(targetPeer, id);
+            for (android.service.notification.StatusBarNotification active : manager.getActiveNotifications())
+                assertFalse(active.getTag() != null && active.getTag().endsWith(entry));
+        } finally { restore(choices, original); }
     }
     @Test public void alteredImmutableFactsAndUnknownSchemasNeverAdvanceTheReceiptCursor()throws Exception {
         RemoteProtocol.Batch initial=publish("event_one",System.currentTimeMillis());receiver.receive(SUB,initial);

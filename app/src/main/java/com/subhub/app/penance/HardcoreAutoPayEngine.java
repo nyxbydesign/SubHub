@@ -77,8 +77,8 @@ final class HardcoreAutoPayEngine {
                 settlement.getAmountCents(), settlement.getCurrency(), vault.vaultId(), bill, result -> {
                     try {
                         if (result.isSuccess()) {
-                            if (penance.completeSettlement(
-                                    settlement.getId(), settlement.getAmountCents())) {
+                            if (penance.completeVerifiedSettlement(
+                                    settlement.getId(), settlement.getAmountCents(), result.value())) {
                                 policy.markPaid();
                                 notify(app, true, "Wallet payment completed · "
                                         + WalletCurrency.format(settlement.getCurrency(),

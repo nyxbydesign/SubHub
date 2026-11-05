@@ -89,9 +89,9 @@ public final class NotificationDeliveryRaceAndroidTest {
     @After public void clean() {
         releaseRead.countDown(); releaseCommit.countDown();
         if (manager != null && prefix != null) {
-            OptionalNotificationDispatch.cancelExact(target, Role.DOM, Event.CONTRACT_CHANGED,
-                    "subhub.optional:DOM:CONTRACT_CHANGED:" + prefix + "peer", 2140 + Event.CONTRACT_CHANGED.ordinal());
-            OptionalNotificationDispatch.cancelExact(target, Role.DOM, Event.ACTIVITY,
+            OptionalNotificationDispatch.cancelExact(target, Role.SUB, Event.CONTRACT_CHANGED,
+                    "subhub.optional:SUB:CONTRACT_CHANGED:" + prefix + "peer", 2140 + Event.CONTRACT_CHANGED.ordinal());
+            OptionalNotificationDispatch.cancelExact(target, Role.DOM, Event.TRACKED_APP_OPENED,
                     "subhub.activity:" + android.net.Uri.encode(prefix + "person") + ":" + prefix + "entry", 1);
             OptionalNotificationDispatch.cancelExact(target, Role.DOM, Event.TASK_REVIEW,
                     "tasks:" + prefix + "scope:" + prefix + "effect", 1);
@@ -107,19 +107,19 @@ public final class NotificationDeliveryRaceAndroidTest {
         if (target != null) for (String name : stores) target.deleteSharedPreferences(name);
     }
     @Test public void peerDisableWaitsForAdmittedPostAndCancelsItBeforeReturning() throws Exception {
-        requireType(PeerNotifications.CHANNEL, "subhub.optional:DOM:CONTRACT_CHANGED:");
-        blockedKey = key(Role.DOM, Event.CONTRACT_CHANGED);
-        race(Event.CONTRACT_CHANGED, () -> PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, prefix + "peer", 1),
+        requireType(PeerNotifications.CHANNEL, "subhub.optional:SUB:CONTRACT_CHANGED:");
+        blockedKey = key(Role.SUB, Event.CONTRACT_CHANGED);
+        race(Role.SUB, Event.CONTRACT_CHANGED, () -> PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, prefix + "peer", 1),
                 R.string.notification_contract_changed);
     }
     @Test public void activityDisableWaitsForAdmittedPostAndCancelsItBeforeReturning() throws Exception {
         requireType(ActivityNotifications.CHANNEL, "subhub.activity:");
-        blockedKey = key(Role.DOM, Event.ACTIVITY);
+        blockedKey = key(Role.DOM, Event.TRACKED_APP_OPENED);
         ActivityEvent event = new ActivityEvent(prefix + "event", ActivityEvent.Kind.APP_OPENED,
                 System.currentTimeMillis(), "com.example.synthetic", 0, "", "", 0);
         ActivityEntry entry = new ActivityEntry(prefix + "entry", new PersonId(prefix + "person"), "Synthetic", "", event,
                 System.currentTimeMillis(), true, "Synthetic app");
-        race(Event.ACTIVITY, () -> assertTrue(ActivityNotifications.show(context, entry)), R.string.dom_activity_new_activity);
+        race(Role.DOM, Event.TRACKED_APP_OPENED, () -> assertTrue(ActivityNotifications.show(context, entry)), R.string.notification_tracked_app_opened);
     }
     @Test public void taskReviewDisableWaitsForAdmittedPostAndCancelsItBeforeReturning() throws Exception {
         requireType("tasks", "tasks:");
@@ -150,7 +150,7 @@ public final class NotificationDeliveryRaceAndroidTest {
             java.lang.reflect.Method notify = com.subhub.app.tasks.TaskRuntime.class.getDeclaredMethod("notifyDom",
                     com.subhub.app.tasks.TaskRepository.Target.class, com.subhub.app.tasks.TaskStore.Effect.class);
             notify.setAccessible(true);
-            race(Event.TASK_REVIEW, () -> {
+            race(Role.DOM, Event.TASK_REVIEW, () -> {
                 try { assertEquals(Boolean.TRUE, notify.invoke(runtime, selected, effect)); }
                 catch (ReflectiveOperationException failed) { throw new AssertionError(failed); }
             }, R.string.tasks_review_notification);
@@ -162,7 +162,7 @@ public final class NotificationDeliveryRaceAndroidTest {
             runtime.store.close();
         }
     }
-    private void race(Event event, Runnable delivery, int copy) throws Exception {
+    private void race(Role role, Event event, Runnable delivery, int copy) throws Exception {
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
             Future<?> posted = workers.submit(() -> { poster.set(Thread.currentThread()); delivery.run(); });
@@ -170,7 +170,7 @@ public final class NotificationDeliveryRaceAndroidTest {
             CountDownLatch attempted = new CountDownLatch(1);
             Future<Boolean> disabled = workers.submit(() -> {
                 disabler.set(Thread.currentThread()); attempted.countDown();
-                return NotificationPreferences.set(context, Role.DOM, event, false);
+                return NotificationPreferences.set(context, role, event, false);
             });
             assertTrue(attempted.await(5, TimeUnit.SECONDS));
             long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
@@ -185,7 +185,7 @@ public final class NotificationDeliveryRaceAndroidTest {
             releaseCommit.countDown();
             assertTrue(disabled.get(5, TimeUnit.SECONDS));
             awaitAbsent();
-            assertFalse(NotificationPreferences.enabled(context, Role.DOM, event));
+            assertFalse(NotificationPreferences.enabled(context, role, event));
         } finally {
             releaseRead.countDown(); releaseCommit.countDown(); workers.shutdownNow();
             assertTrue("No fixture delivery worker retained", workers.awaitTermination(5, TimeUnit.SECONDS));

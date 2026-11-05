@@ -22,56 +22,164 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class TaskPeerAndroidTest {
     @Rule public final com.subhub.app.UiAutomationStateRule automation = new com.subhub.app.UiAutomationStateRule();
-    private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    @Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    private final Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    private Context context;
+    private String prefix;
+    private File fixtureFiles;
+    private final Set<String> preferenceNames = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> databaseNames = Collections.synchronizedSet(new HashSet<>());
     private TaskRuntime runtime;
     private RemoteStore store;
     private RemoteStore.Peer domPeer, subPeer;
     private String domId, subId, generation, domScope, subScope;
+    private final Set<String> ownedScopes = new LinkedHashSet<>();
     private TaskDefinition task;
     private long start;
-    private boolean oldTasks;
     private boolean cancelSupport = true;
     @Before public void setup() throws Exception {
-        runtime = TaskRuntime.get(context); store = RemoteFeature.get(context).store;
-        oldTasks = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getBoolean("tasks", true);
-        generation = "tasks_" + UUID.randomUUID();
-        domId = RemoteProtocol.sha256(("dom" + generation).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        subId = RemoteProtocol.sha256(("sub" + generation).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'DOM','ACTIVE','')", new Object[]{subId, generation, "Synthetic Sub"});
-        store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'SUB','ACTIVE','')", new Object[]{domId, generation, "Synthetic Dom"});
-        domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
-        domScope = subId + "_" + generation; subScope = domId + "_" + generation;
+        prefix = "task-peer-fixture-" + UUID.randomUUID() + "-";
+        fixtureFiles = new File(target.getFilesDir(), prefix);
+        assertTrue(fixtureFiles.mkdir());
+        context = new android.content.ContextWrapper(target) {
+            @Override public Context getApplicationContext() { return this; }
+            @Override public File getFilesDir() { return fixtureFiles; }
+            @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                String owned = prefix + name; preferenceNames.add(owned);
+                return target.getSharedPreferences(owned, mode);
+            }
+            private String databaseName(String name) { String owned = prefix + name; databaseNames.add(owned); return owned; }
+            @Override public File getDatabasePath(String name) { return target.getDatabasePath(databaseName(name)); }
+            @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name, int mode,
+                    android.database.sqlite.SQLiteDatabase.CursorFactory factory) {
+                return target.openOrCreateDatabase(databaseName(name), mode, factory);
+            }
+            @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name, int mode,
+                    android.database.sqlite.SQLiteDatabase.CursorFactory factory, android.database.DatabaseErrorHandler handler) {
+                return target.openOrCreateDatabase(databaseName(name), mode, factory, handler);
+            }
+        };
+        assertTrue(com.subhub.app.security.ControllerPinManager.setPin(context, "2468"));
+        store = new RemoteStore(context, "peer.db");
+        java.lang.reflect.Constructor<TaskRuntime> constructor = TaskRuntime.class.getDeclaredConstructor(Context.class, RemoteStore.class);
+        constructor.setAccessible(true); runtime = constructor.newInstance(context, store);
+        domId = RemoteProtocol.sha256(("dom" + prefix).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        subId = RemoteProtocol.sha256(("sub" + prefix).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        pair();
         context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", true).commit();
         LocalDateTime local = LocalDateTime.ofInstant(Instant.now().minusSeconds(120), ZoneOffset.UTC).withSecond(0).withNano(0);
         start = local.toInstant(ZoneOffset.UTC).toEpochMilli();
         task = new TaskDefinition(UUID.randomUUID().toString(), "Synthetic task", "Read", local,
                 ZoneId.of("UTC"), 3_600_000, Set.of(), true, false, null);
     }
-    @After public void cleanup() throws Exception {
-        context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", oldTasks).commit();
-        for (String scope : new String[]{domScope, subScope}) {
-            if (scope == null) continue;
-            for (String table : new String[]{"projections", "journal", "receipts", "cursors", "effects"})
-                runtime.store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE scope=?", new Object[]{scope});
-            File directory = new File(context.getFilesDir(), "tasks-media/" + scope);
-            if (directory.exists()) try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(directory.toPath())) {
-                paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { java.nio.file.Files.delete(path); } catch (IOException failure) { throw new IllegalStateException(failure); } });
+    @After public void cleanup() throws Throwable {
+        Throwable failure = null;
+        boolean[] drained = {runtime == null};
+        failure = cleanupStep(failure, () -> {
+            if (runtime == null) return;
+            java.lang.reflect.Field executor = TaskRuntime.class.getDeclaredField("executor"); executor.setAccessible(true);
+            ScheduledExecutorService worker = (ScheduledExecutorService) executor.get(runtime);
+            worker.shutdown(); drained[0] = worker.awaitTermination(10, TimeUnit.SECONDS);
+            assertTrue("Keep owned fixture files if its worker has not drained", drained[0]);
+        });
+        failure = cleanupStep(failure, () -> {
+            if (!drained[0]) return;
+            // Cancel admitted keys too: Android may not list a post immediately after accepting it.
+            if (runtime != null) try (android.database.Cursor rows = runtime.store.getReadableDatabase().rawQuery(
+                    "SELECT scope,id FROM effects WHERE kind='notification'", null)) {
+                while (rows.moveToNext()) {
+                    if (!ownedScopes.contains(rows.getString(0))) continue;
+                    com.subhub.app.notifications.OptionalNotificationDispatch.cancelExact(context,
+                            com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                            com.subhub.app.notifications.NotificationPreferences.Event.TASK_REVIEW,
+                            "tasks:" + rows.getString(0) + ":" + rows.getString(1), 1);
+                }
             }
+        });
+        failure = cleanupStep(failure, () -> {
+            if (!drained[0]) return;
+            NotificationManager manager = target.getSystemService(NotificationManager.class);
+            for (android.service.notification.StatusBarNotification notification : manager.getActiveNotifications()) {
+                String tag = notification.getTag();
+                if (tag != null) for (String scope : ownedScopes)
+                    if (tag.startsWith("tasks:" + scope + ":")) manager.cancel(tag, notification.getId());
+            }
+        });
+        failure = cleanupStep(failure, () -> { if (drained[0] && runtime != null) runtime.store.close(); });
+        failure = cleanupStep(failure, () -> { if (drained[0] && store != null) store.close(); });
+        if (drained[0]) {
+            for (String name : new HashSet<>(databaseNames)) failure = cleanupStep(failure, () -> target.deleteDatabase(name));
+            for (String name : new HashSet<>(preferenceNames)) failure = cleanupStep(failure, () -> target.deleteSharedPreferences(name));
         }
-        for (String table : new String[]{"activity_receipts", "remote_metadata", "local_objects", "outbox", "remote_objects", "outgoing", "incoming", "commands", "peers"})
-            store.getWritableDatabase().execSQL("DELETE FROM " + table + " WHERE generation=?", new Object[]{generation});
-        if (domPeer != null) com.subhub.app.activity.ActivityNotifications.cancelPeer(context, RemotePersonRepository.id(domPeer));
-        NotificationManager manager = context.getSystemService(NotificationManager.class);
-        for (android.service.notification.StatusBarNotification notification : manager.getActiveNotifications())
-            if (notification.getTag() != null && notification.getTag().startsWith("tasks:" + domScope + ":")) manager.cancel(notification.getTag(), notification.getId());
+        failure = cleanupStep(failure, () -> {
+            if (drained[0] && fixtureFiles != null && fixtureFiles.exists()) {
+                assertEquals(target.getFilesDir().getCanonicalFile(), fixtureFiles.getCanonicalFile().getParentFile());
+                try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(fixtureFiles.toPath())) {
+                    for (java.nio.file.Path path : (Iterable<java.nio.file.Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                        java.nio.file.Files.delete(path);
+                }
+            }
+        });
+        com.subhub.app.security.ControllerPinManager.initialize(target);
+        if (failure != null) throw failure;
+    }
+    private interface CleanupStep { void run() throws Exception; }
+    private static Throwable cleanupStep(Throwable first, CleanupStep step) {
+        try { step.run(); } catch (Throwable failure) {
+            if (first == null) return failure;
+            if (first != failure) first.addSuppressed(failure);
+        }
+        return first;
+    }
+    private static Object invoke(Object receiver, java.lang.reflect.Method method, Object... args) throws Exception {
+        try { return method.invoke(receiver, args); }
+        catch (java.lang.reflect.InvocationTargetException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof Error) throw (Error) cause;
+            if (cause instanceof Exception) throw (Exception) cause;
+            throw new AssertionError(cause);
+        }
+    }
+    private Object peerMethod(String name, Class<?>[] types, Object... args) throws Exception {
+        java.lang.reflect.Method method = RemoteStore.class.getDeclaredMethod(name, types); method.setAccessible(true);
+        return invoke(store, method, args);
+    }
+    private void pair() throws Exception {
+        long now = System.currentTimeMillis(); PairingInvite invite = PairingInvite.create(domId, "fixture", now);
+        generation = invite.id;
+        peerMethod("saveInvite", new Class<?>[]{PairingInvite.class}, invite);
+        peerMethod("bindInvite", new Class<?>[]{String.class, String.class, String.class, long.class}, generation, subId, invite.tokenHash(), now + 1);
+        peerMethod("approveInvite", new Class<?>[]{String.class, String.class, String.class, long.class}, generation, subId, "Synthetic Sub", now + 1);
+        peerMethod("acceptInvite", new Class<?>[]{PairingInvite.class, String.class}, invite, "Synthetic Dom");
+        peerMethod("activate", new Class<?>[]{String.class, String.class}, subId, generation);
+        peerMethod("activate", new Class<?>[]{String.class, String.class}, domId, generation);
+        domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
+        domScope = subId + "_" + generation; subScope = domId + "_" + generation;
+        ownedScopes.add(domScope); ownedScopes.add(subScope);
+    }
+    private TaskRepository repository() throws Exception {
+        java.lang.reflect.Constructor<TaskRepository> constructor = TaskRepository.class.getDeclaredConstructor(
+                Context.class, com.subhub.app.people.PersonId.class, RemoteStore.class, TaskRuntime.class);
+        constructor.setAccessible(true); return constructor.newInstance(context, RemotePersonRepository.id(domPeer), store, runtime);
+    }
+    private void exchangeTasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
+        java.lang.reflect.Constructor<TaskPeer> constructor = TaskPeer.class.getDeclaredConstructor(
+                TaskRuntime.class, PeerTransport.Connection.class, RemoteStore.Peer.class, long.class);
+        constructor.setAccessible(true);
+        TaskPeer selected = constructor.newInstance(runtime, connection, peer, deadline);
+        java.lang.reflect.Method exchange = TaskPeer.class.getDeclaredMethod("exchange"); exchange.setAccessible(true);
+        invoke(selected, exchange);
     }
     private void create() throws Exception {
         runtime.store.append(domScope, new TaskAction("create", task.id, TaskAction.Kind.CREATE, null, start - 1000,
                 "", "", List.of(), task), true, false);
     }
     @Test public void newPeersNegotiateTasksOldPeersSkipThemAndReconnectKeepsOneRequestNotification() throws Exception {
-        if (android.os.Build.VERSION.SDK_INT >= 33) InstrumentationRegistry.getInstrumentation().getUiAutomation()
-                .grantRuntimePermission(context.getPackageName(), Manifest.permission.POST_NOTIFICATIONS);
+        if (android.os.Build.VERSION.SDK_INT >= 33) assertEquals(
+                "The coordinator must grant notification permission before this OS-delivery fixture",
+                android.content.pm.PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS));
         create(); AtomicInteger calls = new AtomicInteger();
         session(false, calls); assertEquals(0, calls.get()); assertTrue(runtime.store.load(subScope).definitions().isEmpty());
         session(true, calls); assertEquals(2, calls.get()); assertEquals(1, runtime.store.load(subScope).definitions().size());
@@ -129,7 +237,7 @@ public class TaskPeerAndroidTest {
             assertEquals(ZoneId.of("Asia/Tokyo"), TaskTimezone.require("Asia/Tokyo", received, System.currentTimeMillis()));
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
             com.subhub.app.security.ControllerPinManager.enterDomMode();
-            TaskRepository repository = new TaskRepository(context, RemotePersonRepository.id(domPeer));
+            TaskRepository repository = repository();
             assertEquals(ZoneId.of("Asia/Tokyo"), repository.schedulingZone());
             store.taskTimezoneReceived(subId, generation, "Asia/Tokyo", 1);
             assertThrows(IllegalStateException.class, repository::schedulingZone);
@@ -178,7 +286,9 @@ public class TaskPeerAndroidTest {
         assertThrows(IOException.class, () -> runtime.assets("local").open(hash));
     }
     @Test public void revocationBlocksPreviouslyQueuedTaskActions() throws Exception {
-        create(); store.getWritableDatabase().execSQL("UPDATE peers SET state='REVOKED' WHERE generation=?", new Object[]{generation});
+        create();
+        peerMethod("revoke", new Class<?>[]{String.class, String.class}, subId, generation);
+        peerMethod("revoke", new Class<?>[]{String.class, String.class}, domId, generation);
         assertThrows(SecurityException.class, () -> runtime.sweep(new TaskRepository.Target(domScope, domPeer)));
         assertEquals(0, runtime.store.received(subScope));
     }
@@ -188,12 +298,10 @@ public class TaskPeerAndroidTest {
         ExecutorService serving = Executors.newSingleThreadExecutor();
         try (PeerTransport domTransport = IrohPeerTransport.open(context, domSeed, new String[0], 10_000);
                 PeerTransport subTransport = IrohPeerTransport.open(context, subSeed, new String[0], 10_000)) {
-            store.getWritableDatabase().execSQL("DELETE FROM peers WHERE generation=?", new Object[]{generation});
+            peerMethod("revoke", new Class<?>[]{String.class, String.class}, subId, generation);
+            peerMethod("revoke", new Class<?>[]{String.class, String.class}, domId, generation);
             domId = domTransport.localIdentity(); subId = subTransport.localIdentity();
-            store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'DOM','ACTIVE','')", new Object[]{subId, generation, "Synthetic Sub"});
-            store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state,route) VALUES(?,?,?,'SUB','ACTIVE','')", new Object[]{domId, generation, "Synthetic Dom"});
-            domPeer = store.peer(subId, generation); subPeer = store.peer(domId, generation);
-            domScope = subId + "_" + generation; subScope = domId + "_" + generation;
+            pair();
             create(); AtomicInteger calls = new AtomicInteger();
             irohSession(domTransport, subTransport, serving, calls);
             byte[] image = android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", android.util.Base64.DEFAULT);
@@ -248,7 +356,7 @@ public class TaskPeerAndroidTest {
             try (PeerTransport.Connection connection = subTransport.accept(10_000)) {
                 JSONObject hello = RemoteProtocol.read(connection.input());
                 assertEquals(domId, connection.authenticatedPeerIdentity());
-                assertEquals(1, hello.getInt("activityVersion")); assertEquals(1, hello.getInt("tasksVersion"));
+                assertEquals(2, hello.getInt("activityVersion")); assertEquals(1, hello.getInt("tasksVersion"));
                 new RemoteSession(store, subTransport, hooks(true, calls)).incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(25));
             } catch (Exception failure) { throw new RuntimeException(failure); }
         });
@@ -277,7 +385,7 @@ public class TaskPeerAndroidTest {
             @Override public int tasksVersion() { return support ? 1 : 0; }
             @Override public int taskCancelVersion() { return support && cancelSupport ? 1 : 0; }
             @Override public void tasks(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
-                calls.incrementAndGet(); TaskPeer.exchange(context, connection, peer, deadline);
+                calls.incrementAndGet(); exchangeTasks(connection, peer, deadline);
             }
             @Override public void prepare(RemoteStore.Peer peer) { }
             @Override public void received(RemoteStore.Peer peer, RemoteProtocol.Stream stream) { }

@@ -48,8 +48,8 @@ public final class PeerNotificationsAndroidTest {
                 channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
         for (StatusBarNotification active : manager.getActiveNotifications()) {
             // The real disable operation cancels this whole type. Require an empty owned type before exercising it.
-            assumeTrue("Owned guest must have no existing Dom contract notices to preserve",
-                    active.getTag() == null || !active.getTag().startsWith("subhub.optional:DOM:CONTRACT_CHANGED:"));
+            assumeTrue("Owned guest must have no existing Sub contract notices to preserve",
+                    active.getTag() == null || !active.getTag().startsWith("subhub.optional:SUB:CONTRACT_CHANGED:"));
             unrelated.add(identity(active));
         }
         prefix = "peer-notification-os-" + UUID.randomUUID() + "-";
@@ -78,43 +78,47 @@ public final class PeerNotificationsAndroidTest {
         if (target != null) for (String store : stores) assertTrue(target.deleteSharedPreferences(store));
     }
     @Test public void realOsDeliveryPreservesRoleAndCopyRejectsReplayCancelsOnlyTypeAndRedactsDiscreet() {
-        String domContract = scope("dom-contract"), subStart = scope("sub-start"), domStop = scope("dom-stop");
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, domContract, 1);
+        String forbidden = scope("forbidden-dom");
+        for (Event event : new Event[]{Event.CONTRACT_CHANGED, Event.SESSION_STARTED, Event.SESSION_STOPPED})
+            PeerNotifications.applied(context, Role.DOM, event, forbidden, 1);
+        assertRemainsAbsent(forbidden);
+        String subContract = scope("sub-contract"), subStart = scope("sub-start"), subStop = scope("sub-stop");
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, subContract, 1);
         createdChannel = !channelExisted && manager.getNotificationChannel(PeerNotifications.CHANNEL) != null;
         PeerNotifications.applied(context, Role.SUB, Event.SESSION_STARTED, subStart, 1);
-        PeerNotifications.applied(context, Role.DOM, Event.SESSION_STOPPED, domStop, 1);
+        PeerNotifications.applied(context, Role.SUB, Event.SESSION_STOPPED, subStop, 1);
         assertEquals(3, awaitCount(3).size());
-        assertCopy(await(domContract), Role.DOM, Event.CONTRACT_CHANGED, R.string.notification_contract_changed);
+        assertCopy(await(subContract), Role.SUB, Event.CONTRACT_CHANGED, R.string.notification_contract_changed);
         assertCopy(await(subStart), Role.SUB, Event.SESSION_STARTED, R.string.notification_session_started);
-        assertCopy(await(domStop), Role.DOM, Event.SESSION_STOPPED, R.string.notification_session_stopped);
+        assertCopy(await(subStop), Role.SUB, Event.SESSION_STOPPED, R.string.notification_session_stopped);
 
         // Removing the original makes a replay visible even if Android would replace an existing tag silently.
-        StatusBarNotification original = await(domContract);
+        StatusBarNotification original = await(subContract);
         manager.cancel(original.getTag(), original.getId());
         awaitCount(2);
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, domContract, 1);
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, subContract, 1);
         assertEquals(2, awaitCount(2).size());
-        assertRemainsAbsent(domContract);
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, domContract, 2);
+        assertRemainsAbsent(subContract);
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, subContract, 2);
         awaitCount(3);
         for (StatusBarNotification active : manager.getActiveNotifications())
-            assumeTrue("Do not cancel a concurrently posted unrelated Dom contract notice",
-                    active.getTag() == null || !active.getTag().startsWith("subhub.optional:DOM:CONTRACT_CHANGED:") || owned(active));
-        assertTrue(NotificationPreferences.set(context, Role.DOM, Event.CONTRACT_CHANGED, false));
+            assumeTrue("Do not cancel a concurrently posted unrelated Sub contract notice",
+                    active.getTag() == null || !active.getTag().startsWith("subhub.optional:SUB:CONTRACT_CHANGED:") || owned(active));
+        assertTrue(NotificationPreferences.set(context, Role.SUB, Event.CONTRACT_CHANGED, false));
         awaitCount(2);
-        assertNull(find(domContract));
-        assertNotNull(find(subStart)); assertNotNull(find(domStop));
+        assertNull(find(subContract));
+        assertNotNull(find(subStart)); assertNotNull(find(subStop));
         assertUnrelatedRetained();
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, domContract, 3);
-        assertRemainsAbsent(domContract);
-        assertTrue(NotificationPreferences.set(context, Role.DOM, Event.CONTRACT_CHANGED, true));
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, domContract, 3);
-        assertRemainsAbsent(domContract);
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, subContract, 3);
+        assertRemainsAbsent(subContract);
+        assertTrue(NotificationPreferences.set(context, Role.SUB, Event.CONTRACT_CHANGED, true));
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, subContract, 3);
+        assertRemainsAbsent(subContract);
 
         // Isolated privacy data exercises production presentation without changing launcher aliases or other notices.
         assertTrue(context.getSharedPreferences("subhub_privacy", 0).edit().putBoolean("discreet", true).commit());
         String discreet = scope("discreet");
-        PeerNotifications.applied(context, Role.DOM, Event.CONTRACT_CHANGED, discreet, 1);
+        PeerNotifications.applied(context, Role.SUB, Event.CONTRACT_CHANGED, discreet, 1);
         Notification redacted = await(discreet).getNotification();
         assertEquals(context.getString(R.string.privacy_discreet_name), redacted.extras.getCharSequence(Notification.EXTRA_TITLE).toString());
         assertEquals(context.getString(R.string.privacy_notification_body), redacted.extras.getCharSequence(Notification.EXTRA_TEXT).toString());

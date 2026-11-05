@@ -44,6 +44,7 @@ final class RemoteAppliedNotifications {
     }
     static void configuration(Context context, RemoteStore.Peer peer, long revision,
             JSONObject before, JSONObject after) {
+        if (peer.localRole != RemoteProtocol.Role.SUB) return;
         try {
             if (changed(before, after)) PeerNotifications.applied(context, role(peer), Event.CONTRACT_CHANGED, scope(peer), revision);
         } catch (JSONException | RuntimeException malformed) { /* Presentation cannot fail committed application. */ }
@@ -52,33 +53,17 @@ final class RemoteAppliedNotifications {
         try { configuration(context, peer, revision, new JSONObject(before), after); }
         catch (JSONException | RuntimeException malformed) { /* Optional observer only. */ }
     }
-    static void configurationCommand(Context context, RemoteStore.Peer peer, long revision, String before, String command) {
-        try { configuration(context, peer, revision, before, new JSONObject(command).getJSONObject("configuration")); }
-        catch (JSONException | RuntimeException malformed) { /* Optional observer only. */ }
-    }
     static void nativeSession(Context context, RemoteStore store, String identity, String generation,
             RemoteSessionRuntime.Record record) {
         try {
             RemoteStore.Peer peer = store.peer(identity, generation);
-            if (peer != null) session(context, store, peer, record);
+            if (peer != null && peer.state == RemoteStore.State.ACTIVE) session(context, peer, record);
         } catch (RuntimeException unavailable) { /* Include lookup in the optional post-commit boundary. */ }
     }
-    static void session(Context context, RemoteStore store, RemoteStore.Peer peer, RemoteSessionRuntime.Record record) {
-        if (record.result.state != RemoteSessionCommands.State.APPLIED) return;
-        try {
-            if (peer.localRole == RemoteProtocol.Role.DOM) synchronized (store) {
-                long previousSequence = -1;
-                String known = store.metadata(peer.identity, peer.generation, "notification_applied_session", "");
-                if (!known.isEmpty()) try {
-                    previousSequence = RemoteSessionCommands.Request.parse(new JSONObject(known).getJSONObject("request")).sequence;
-                } catch (JSONException | RuntimeException malformed) { /* Replace only this optional cache. */ }
-                if (record.request.sequence >= previousSequence) store.putMetadata(peer.identity, peer.generation,
-                        "notification_applied_session", RemoteProtocol.canonical(new JSONObject()
-                                .put("request", record.request.json()).put("result", record.result.json())));
-            }
-            PeerNotifications.applied(context, role(peer), record.request.action == RemoteSessionCommands.Action.START
-                    ? Event.SESSION_STARTED : Event.SESSION_STOPPED, scope(peer), record.request.sequence);
-        } catch (JSONException | RuntimeException unavailable) { /* Optional observer only. */ }
+    static void session(Context context, RemoteStore.Peer peer, RemoteSessionRuntime.Record record) {
+        if (peer.localRole != RemoteProtocol.Role.SUB || record.result.state != RemoteSessionCommands.State.APPLIED) return;
+        PeerNotifications.applied(context, Role.SUB, record.request.action == RemoteSessionCommands.Action.START
+                ? Event.SESSION_STARTED : Event.SESSION_STOPPED, scope(peer), record.request.sequence);
     }
     private static Role role(RemoteStore.Peer peer) { return peer.localRole == RemoteProtocol.Role.DOM ? Role.DOM : Role.SUB; }
     private static String scope(RemoteStore.Peer peer) { return peer.identity + ":" + peer.generation; }

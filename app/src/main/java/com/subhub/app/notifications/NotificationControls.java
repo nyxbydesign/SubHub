@@ -14,14 +14,18 @@ public final class NotificationControls {
     private NotificationControls() { }
     public static void bind(Context context, LinearLayout container) {
         container.removeAllViews();
-        if (DeviceRolePreferences.supportsDom(context)) group(context, container, Role.DOM);
-        if (DeviceRolePreferences.supportsSub(context)) group(context, container, Role.SUB);
+        group(context, container, DeviceRolePreferences.isDomWorkspace(context) ? Role.DOM : Role.SUB);
     }
     private static void group(Context context, LinearLayout container, Role role) {
         PersonUi.text(container, context.getString(role == Role.DOM ? R.string.role_dom : R.string.role_sub), true);
         if (role == Role.DOM) {
-            toggle(context, container, role, Event.ACTIVITY, R.string.notification_activity);
+            toggle(context, container, role, Event.TRACKED_APP_OPENED, R.string.notification_tracked_app_opened);
+            toggle(context, container, role, Event.APP_LIMIT_REACHED, R.string.notification_app_limit_reached);
+            toggle(context, container, role, Event.SHARED_LIMIT_REACHED, R.string.notification_shared_limit_reached);
+            toggle(context, container, role, Event.TRIBUTE_TRIGGERED, R.string.notification_tribute_triggered);
+            toggle(context, container, role, Event.TRIBUTE_PAID, R.string.notification_tribute_paid);
             toggle(context, container, role, Event.TASK_REVIEW, R.string.notification_task_reviews);
+            return;
         }
         toggle(context, container, role, Event.CONTRACT_CHANGED, R.string.notification_contract_changes);
         toggle(context, container, role, Event.SESSION_STARTED, R.string.notification_session_starts);

@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import com.subhub.app.appmode.RuntimeSessionIdentity;
-import com.subhub.app.remote.RemoteLifecycleNotifications;
 import com.subhub.app.remote.RemoteSessionClock;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.settings.SettingsRepository;
@@ -27,11 +26,11 @@ public final class LocalPactExpiryNotifications {
                     .put("statistics", statistics).put("token", UUID.randomUUID().toString()).toString());
         } catch (JSONException | RuntimeException unavailable) { /* Optional presentation only. */ }
     }
-    public static void schedule(Context context, ScreenCaptureService.StopTarget capture, long sequence, boolean remoteOwned) {
-        afterCaptureClosure(context, () -> capture == null || capture.isClosed(), sequence, remoteOwned);
+    public static void schedule(Context context, ScreenCaptureService.StopTarget capture, long sequence) {
+        afterCaptureClosure(context, () -> capture == null || capture.isClosed(), sequence);
     }
     /** Wait for the historical capture rather than the state of a replacement service. */
-    static CompletableFuture<Void> afterCaptureClosure(Context context, BooleanSupplier closed, long sequence, boolean remoteOwned) {
+    static CompletableFuture<Void> afterCaptureClosure(Context context, BooleanSupplier closed, long sequence) {
         CompletableFuture<Void> done = new CompletableFuture<>();
         try {
             final SharedPreferences main = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
@@ -62,9 +61,6 @@ public final class LocalPactExpiryNotifications {
                                     || !fence.equals(main.getString(FENCE, ""))
                                     || !fence.equals(RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).idleFence)
                                     || RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).active) {
-                                done.complete(null); return;
-                            }
-                            if (remoteOwned && !RemoteLifecycleNotifications.ready(context, sequence)) {
                                 done.complete(null); return;
                             }
                             PeerNotifications.applied(context, NotificationPreferences.Role.SUB,

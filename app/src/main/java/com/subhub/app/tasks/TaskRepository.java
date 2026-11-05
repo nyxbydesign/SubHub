@@ -14,8 +14,23 @@ public final class TaskRepository {
     private final Context context;
     public final PersonId person;
     private final RemoteFeature remote;
+    private final RemoteStore authority;
+    private final TaskRuntime scopedRuntime;
     public TaskRepository(Context context, PersonId person) {
         this.context = context.getApplicationContext(); this.person = person; remote = RemoteFeature.get(context);
+        authority = remote.store; scopedRuntime = null;
+    }
+    private TaskRepository(Context context, PersonId person, RemoteStore authority, TaskRuntime runtime) {
+        this.context = context.getApplicationContext(); this.person = person; remote = null;
+        this.authority = Objects.requireNonNull(authority); scopedRuntime = Objects.requireNonNull(runtime);
+        if (runtime.authorityLock() != authority) throw new IllegalArgumentException("Tasks authority mismatch");
+    }
+    private TaskRuntime runtime() { return scopedRuntime == null ? TaskRuntime.get(context) : scopedRuntime; }
+    private RemoteStore.Peer selectedPeer() {
+        if (remote != null) return new RemotePersonRepository(context, remote).peer(person);
+        for (RemoteStore.Peer peer : authority.peers(true))
+            if (RemotePersonRepository.id(peer).equals(person)) return peer;
+        throw new IllegalArgumentException("Peer unavailable");
     }
     public static final class Target {
         public final String scope;
@@ -25,14 +40,14 @@ public final class TaskRepository {
     public Target target() {
         if (person.isLocal()) {
             if (!DeviceRolePreferences.supportsSub(context)) throw new SecurityException("Sub profile unavailable");
-            for (RemoteStore.Peer peer : remote.store.peers(false))
+            for (RemoteStore.Peer peer : authority.peers(false))
                 if (peer.localRole == RemoteProtocol.Role.SUB && peer.state == RemoteStore.State.ACTIVE)
                     return new Target(peer.identity + "_" + peer.generation, peer);
             return new Target("local", null);
         }
         if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context))
             throw new SecurityException("Dom access required");
-        RemoteStore.Peer peer = new RemotePersonRepository(context, remote).peer(person);
+        RemoteStore.Peer peer = selectedPeer();
         if (peer.localRole != RemoteProtocol.Role.DOM || peer.state != RemoteStore.State.ACTIVE)
             throw new SecurityException("Pairing is no longer active");
         return new Target(peer.identity + "_" + peer.generation, peer);
@@ -45,24 +60,24 @@ public final class TaskRepository {
     public boolean isDom() { target(); return domSession(person); }
     public boolean supported() {
         Target target = target();
-        return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"))
-                && (cancellationSupported() || !TaskRuntime.get(context).hasCancellations(target.scope));
+        return target.peer == null || "1".equals(authority.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"))
+                && (cancellationSupported() || !runtime().hasCancellations(target.scope));
     }
     public boolean allowed() {
         if (person.isLocal()) return SubFeaturePolicy.allowed(context, "tasks");
         Target target = target();
-        return "true".equals(remote.store.metadata(target.peer.identity, target.peer.generation, "tasks_allowed", "false"));
+        return "true".equals(authority.metadata(target.peer.identity, target.peer.generation, "tasks_allowed", "false"));
     }
     public void setAllowed(boolean value) {
         if (!person.isLocal() || DeviceRolePreferences.isDomWorkspace(context)) throw new SecurityException("Local Sub choice required");
         if (!SubFeaturePolicy.setAllowed(context, "tasks", value)) throw new IllegalStateException("Could not save Tasks preference");
-        TaskRuntime.get(context).changed();
+        runtime().changed();
     }
-    public TaskEngine engine() throws Exception { return TaskRuntime.get(context).store.load(target().scope); }
+    public TaskEngine engine() throws Exception { return runtime().store.load(target().scope); }
     public List<TaskEngine.Occurrence> list(long now) throws Exception {
         Target target = target();
-        if (allowed()) TaskRuntime.get(context).sweep(target);
-        TaskEngine engine = TaskRuntime.get(context).store.load(target.scope);
+        if (allowed()) runtime().sweep(target);
+        TaskEngine engine = runtime().store.load(target.scope);
         List<TaskEngine.Occurrence> result = new ArrayList<>(engine.recorded(now));
         Set<String> present = new HashSet<>(); for (TaskEngine.Occurrence row : result) present.add(row.id);
         for (TaskDefinition task : engine.definitions()) {
@@ -88,11 +103,11 @@ public final class TaskRepository {
     public ZoneId schedulingZone() {
         Target target = target();
         if (person.isLocal()) return ZoneId.systemDefault();
-        synchronized (remote.store) {
+        synchronized (authority) {
             Target live = target();
-            String zone = remote.store.metadata(live.peer.identity, live.peer.generation, "tasks_timezone", "");
+            String zone = authority.metadata(live.peer.identity, live.peer.generation, "tasks_timezone", "");
             long received;
-            try { received = Long.parseLong(remote.store.metadata(live.peer.identity, live.peer.generation, "tasks_timezone_received", "0")); }
+            try { received = Long.parseLong(authority.metadata(live.peer.identity, live.peer.generation, "tasks_timezone_received", "0")); }
             catch (NumberFormatException invalid) { received = 0; }
             return TaskTimezone.require(zone, received, System.currentTimeMillis());
         }
@@ -120,15 +135,15 @@ public final class TaskRepository {
     }
     public boolean cancellationSupported() {
         Target target = target();
-        return target.peer == null || "1".equals(remote.store.metadata(target.peer.identity,
+        return target.peer == null || "1".equals(authority.metadata(target.peer.identity,
                 target.peer.generation, "tasks_cancel_version", "0"));
     }
     public void cancel(String taskId, LocalDate date, boolean series) throws Exception {
         synchronized (SubFeaturePolicy.LOCK) {
-            synchronized (remote.store) {
+            synchronized (authority) {
                 Target target = target(); requireDom(target);
                 if (!cancellationSupported()) throw new IllegalStateException("Update both devices to cancel tasks");
-                TaskEngine engine = TaskRuntime.get(context).store.load(target.scope);
+                TaskEngine engine = runtime().store.load(target.scope);
                 TaskEngine.Occurrence occurrence = engine.occurrence(taskId, date, System.currentTimeMillis());
                 if (series && !occurrence.task.recurring()) series = false;
                 if (series ? engine.seriesCancelled(taskId) : engine.cancelled(taskId, date)) return;
@@ -142,11 +157,11 @@ public final class TaskRepository {
 
     private void append(Target target, TaskAction action, boolean dom) throws Exception {
         synchronized (SubFeaturePolicy.LOCK) {
-            synchronized (remote.store) {
+            synchronized (authority) {
                 Target live = target();
                 if (!live.scope.equals(target.scope) || !allowed() && !action.cancellation()) throw new SecurityException("Tasks are unavailable");
                 if (dom) requireDom(live); else requireSub(live);
-                TaskRuntime runtime = TaskRuntime.get(context);
+                TaskRuntime runtime = runtime();
                 if (action.kind == TaskAction.Kind.CREATE) {
                     for (TaskDefinition existing : runtime.store.load(target.scope).definitions()) {
                         if (!existing.id.equals(action.taskId)) continue;
@@ -176,7 +191,7 @@ public final class TaskRepository {
             throw new SecurityException("Sub access required");
     }
     private void requireMedia(Target target, List<TaskAttachment> attachments) throws Exception {
-        RemoteAssets assets = TaskRuntime.get(context).assets(target.scope);
+        RemoteAssets assets = runtime().assets(target.scope);
         for (TaskAttachment attachment : attachments)
             if (!assets.isComplete(attachment.hash) || assets.length(attachment.hash) != attachment.length)
                 throw new IllegalArgumentException("Attachment is not ready");
@@ -185,19 +200,19 @@ public final class TaskRepository {
         Target target = target();
         if (isDom()) requireDom(target); else requireSub(target);
         if (!allowed()) throw new SecurityException("Tasks are disabled");
-        return TaskMedia.importMedia(context, uri, TaskRuntime.get(context).assets(target.scope));
+        return TaskMedia.importMedia(context, uri, runtime().assets(target.scope));
     }
     public InputStream openMedia(TaskAttachment attachment) throws Exception {
         Target target = target();
         if (!allowed()) throw new SecurityException("Tasks are disabled");
         // A caller must name an attachment actually visible in this relationship's projection.
         if (!TaskMedia.references(engine()).containsKey(attachment.hash)) throw new SecurityException("Unreferenced task attachment");
-        return TaskRuntime.get(context).assets(target.scope).open(attachment.hash);
+        return runtime().assets(target.scope).open(attachment.hash);
     }
     public File mediaFile(TaskAttachment attachment) throws Exception {
         Target target = target();
         try (InputStream ignored = openMedia(attachment)) {
-            return TaskRuntime.get(context).assets(target.scope).finish(attachment.hash);
+            return runtime().assets(target.scope).finish(attachment.hash);
         }
     }
 }

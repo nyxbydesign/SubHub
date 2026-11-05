@@ -42,7 +42,7 @@ public class RemoteSessionAndroidTest {
     private FixtureHooks dh,sh;
     private ExecutorService server;
     private WireTrace wireTrace;
-    private Object phaseOverride;
+    private Object phaseOverride, activityOverride;
 
     @Before public void setup() throws Exception {
         domName="session-dom-"+UUID.randomUUID();subName="session-sub-"+UUID.randomUUID();
@@ -367,6 +367,28 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).changes.isEmpty());
         try(android.database.Cursor rows=dom.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_receipts",null)){assertTrue(rows.moveToFirst());assertEquals(1,rows.getInt(0));}
     }
+    @Test public void versionOnePeerRetainsPaidQueueWhileCoreSyncsAndVersionTwoResumes() throws Exception {
+        long now = System.currentTimeMillis();
+        com.subhub.app.activity.ActivityEvent paid = new com.subhub.app.activity.ActivityEvent("paid_capability_fixture",
+                com.subhub.app.activity.ActivityEvent.Kind.TRIBUTE_PAID, now, "", 250, "EUR", "", 0);
+        sub.publish(dt.localIdentity(), generation, RemoteProtocol.Stream.EVENTS, paid.id,
+                RemoteActivityWire.encode(paid, "UTC", ""), false, now);
+        RemoteProtocol.Batch pending = sub.nextBatch(dt.localIdentity(), generation, RemoteProtocol.Stream.EVENTS);
+        sub.publish(dt.localIdentity(), generation, RemoteProtocol.Stream.STATS, "summary", new JSONObject().put("count", 32), false, now);
+        activityOverride = 1;
+        try { exchange(false, false); } finally { activityOverride = null; }
+        assertEquals(32, dom.mirrored(st.localIdentity(), generation, RemoteProtocol.Stream.STATS, "summary").getInt("count"));
+        assertTrue(dom.mirror(st.localIdentity(), generation, RemoteProtocol.Stream.EVENTS).isEmpty());
+        assertEquals(pending.digest(), sub.nextBatch(dt.localIdentity(), generation, RemoteProtocol.Stream.EVENTS).digest());
+        exchange(true, false);
+        assertEquals(com.subhub.app.activity.ActivityEvent.Kind.TRIBUTE_PAID, RemoteActivityWire.decode(dom.mirrored(st.localIdentity(), generation,
+                RemoteProtocol.Stream.EVENTS, paid.id)).kind);
+        assertTrue(sub.nextBatch(dt.localIdentity(), generation, RemoteProtocol.Stream.EVENTS).changes.isEmpty());
+        exchange(false, false);
+        try (android.database.Cursor rows = dom.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_receipts WHERE event_id=?", new String[]{paid.id})) {
+            assertTrue(rows.moveToFirst()); assertEquals(1, rows.getInt(0));
+        }
+    }
     @Test public void legacyPeerContinuesStatisticsWithoutReceivingOrAcknowledgingEvents() throws Exception {
         long now=System.currentTimeMillis();com.subhub.app.activity.ActivityEvent event=new com.subhub.app.activity.ActivityEvent("activity_fixture",com.subhub.app.activity.ActivityEvent.Kind.APP_OPENED,now,"com.example.selected",0,"","",0);
         sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS,event.id,RemoteActivityWire.encode(event,"UTC",""),false,now);
@@ -523,6 +545,7 @@ public class RemoteSessionAndroidTest {
                 PeerTransport.Connection measured=wireTrace==null?connection:new WireFrames(connection,wireTrace);
                 PeerTransport.Connection observed=dropAck?new DropAck(measured):measured;
                 JSONObject hello=RemoteProtocol.read(observed.input());if(!activity)hello.remove("activityVersion");
+                if(activityOverride!=null)hello.put("activityVersion",activityOverride);
                 if(!priority)hello.remove("phasePlanVersion");
                 if(phaseOverride!=null)hello.put("phasePlanVersion",phaseOverride);
                 incoming.incoming(observed,hello,System.nanoTime()+60_000_000_000L);

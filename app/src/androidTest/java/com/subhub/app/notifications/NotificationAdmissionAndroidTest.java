@@ -67,6 +67,23 @@ public final class NotificationAdmissionAndroidTest {
         assertEquals(0, admissions.trackedCount(ROLE, EVENT));
         assertEquals(Collections.singleton("unrelated-mandatory:7"), queue.pending);
     }
+    @Test public void sameNumericActivityIdKeepsIndependentExactAdmissionsPerKind() {
+        OptionalNotificationDispatch.Admissions selected = new OptionalNotificationDispatch.Admissions();
+        Set<String> pending = new LinkedHashSet<>();
+        OptionalNotificationDispatch.Operations platform = new OptionalNotificationDispatch.Operations() {
+            public void post(String tag, int id, Notification notice) { pending.add(tag + ":" + id); }
+            public void cancel(String tag, int id) { pending.remove(tag + ":" + id); }
+        };
+        String opened = prefix + "opened", paid = prefix + "paid";
+        selected.post(Role.DOM, Event.TRACKED_APP_OPENED, opened, 1, new Notification(), platform);
+        selected.post(Role.DOM, Event.TRIBUTE_PAID, paid, 1, new Notification(), platform);
+        selected.cancelTracked(Role.DOM, Event.TRACKED_APP_OPENED, platform);
+        assertEquals(Collections.singleton(paid + ":1"), pending);
+        assertFalse(selected.tracked(Role.DOM, Event.TRACKED_APP_OPENED, opened, 1));
+        assertTrue(selected.tracked(Role.DOM, Event.TRIBUTE_PAID, paid, 1));
+        selected.cancelTracked(Role.DOM, Event.TRIBUTE_PAID, platform);
+        assertTrue(pending.isEmpty());
+    }
     private final class QueueOperations implements OptionalNotificationDispatch.Operations {
         final Set<String> pending = new LinkedHashSet<>(), visible = new LinkedHashSet<>();
         final List<String> cancelled = new ArrayList<>();

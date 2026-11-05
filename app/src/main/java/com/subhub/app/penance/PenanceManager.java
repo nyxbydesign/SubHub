@@ -649,6 +649,8 @@ public final class PenanceManager {
     }
 
     private Settlement beginSettlement(long nowMillis, int minimumCents) {
+        com.subhub.app.remote.RemoteActivityRecorder.PaymentAudience audience =
+                com.subhub.app.remote.RemoteActivityRecorder.paymentAudience(context);
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
             String existingId = "";
@@ -679,7 +681,9 @@ public final class PenanceManager {
                             PenanceEvent.Status.CHECKOUT, settlementId));
                 }
             }
-            saveEvents(events);
+            SharedPreferences.Editor checkout = preferences.edit().putString(KEY_EVENTS, encodeEvents(events));
+            PaymentActivityStore.bind(checkout, settlementId, audience);
+            checkout.apply();
             clearOrderState();
             return settlement(events, settlementId);
         }
@@ -806,44 +810,115 @@ public final class PenanceManager {
     }
 
     public boolean completeSettlement(String settlementId, int paidAmountCents) {
+        return completeSettlement(settlementId, paidAmountCents, null);
+    }
+
+    /** Only a parser-verified provider capture can create a Paid activity fact. */
+    public boolean completeVerifiedSettlement(String settlementId, int paidAmountCents, PayPalOrdersClient.Capture capture) {
+        if (capture == null || !capture.matches(settlementId, paidAmountCents, getCurrency())) return false;
+        boolean completed = completeSettlement(settlementId, paidAmountCents, capture);
+        if (completed) try { com.subhub.app.remote.RemoteActivityRecorder.paymentCommitted(); }
+        catch (RuntimeException unavailable) { /* A wake failure cannot change durable payment completion. */ }
+        return completed;
+    }
+
+    private boolean completeSettlement(String settlementId, int paidAmountCents, PayPalOrdersClient.Capture capture) {
         if (settlementId == null || settlementId.isEmpty() || paidAmountCents <= 0) return false;
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
+            if (capture != null && !capture.matches(settlementId, paidAmountCents, getCurrency())) return false;
             Settlement selected = settlement(events, settlementId);
-            if (selected == null || !getCurrency().equals(selected.getCurrency())) return false;
+            if (selected == null) return false;
+            // The shared selector returns an empty settlement after all matching rows are PAID.
+            if (selected.getEvents().isEmpty()) {
+                if (capture == null) return false;
+                int paid = 0, tribute = 0;
+                boolean paidPause = false;
+                for (PenanceEvent event : events) if (event.getStatus() == PenanceEvent.Status.PAID
+                        && settlementId.equals(event.getSettlementId()) && capture.currency().equals(event.getCurrency())) {
+                    paid += event.getAmountCents();
+                    if (event.getInfraction() != PenanceInfraction.PAID_PAUSE) tribute += event.getAmountCents();
+                    else paidPause = true;
+                }
+                if (paid != paidAmountCents) return false;
+                // Reconciliation never credits or activates a pause twice. Reuse only the original checkout's audience.
+                try {
+                    org.json.JSONObject audience = new org.json.JSONObject(preferences.getString(PaymentActivityStore.AUDIENCE, "{}"));
+                    if (settlementId.equals(audience.optString("settlement"))) {
+                        SharedPreferences.Editor receipt = preferences.edit();
+                        PaymentActivityStore.append(preferences, receipt, settlementId, capture, tribute, System.currentTimeMillis());
+                        receipt.apply();
+                    }
+                } catch (org.json.JSONException | RuntimeException unavailable) { /* Optional projection cannot undo payment completion. */ }
+                // A refused prior commit may have changed memory. A successful flush is required before acknowledgement.
+                if (!preferences.edit().commit()) return false;
+                if (paidPause) try { new PaidPauseManager(context).reconcileSettlement(settlementId); }
+                catch (RuntimeException unavailable) { android.util.Log.w("PaidPause", "Paid pause effects pending"); }
+                try { com.subhub.app.stats.DailyStatsStore.get(context).syncWallet(); }
+                catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
+                // A delayed retry must not clear the order belonging to a newer checkout.
+                if (getActiveSettlementId().isEmpty()) {
+                    clearOrderState();
+                    HardcoreAutoPayManager.schedule(context);
+                }
+                return true;
+            }
+            if (!getCurrency().equals(selected.getCurrency())) return false;
             com.subhub.app.stats.DailyStatsStore daily = com.subhub.app.stats.DailyStatsStore.get(context);
             try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
             long paidBeforeSettlement = totalPaidCentsLocked(events);
-            int expected = 0;
+            int expected = 0, tribute = 0;
             boolean activatesPause = false;
             for (PenanceEvent event : events) {
                 if (event.getStatus() == PenanceEvent.Status.CHECKOUT
                         && settlementId.equals(event.getSettlementId())) {
                     expected += event.getAmountCents();
+                    if (event.getInfraction() != PenanceInfraction.PAID_PAUSE) tribute += event.getAmountCents();
                     activatesPause |= event.getInfraction() == PenanceInfraction.PAID_PAUSE;
                 }
             }
             if (expected != paidAmountCents) return false;
-            if (activatesPause && !new PaidPauseManager(context).activate()) return false;
-            for (int index = 0; index < events.size(); index++) {
-                PenanceEvent event = events.get(index);
-                if (event.getStatus() == PenanceEvent.Status.CHECKOUT
-                        && settlementId.equals(event.getSettlementId())) {
-                    events.set(index, event.withStatus(
-                            PenanceEvent.Status.PAID, settlementId));
-                }
+            if (activatesPause && capture != null) synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                return completeLedgerPayment(events, settlementId, paidAmountCents, capture, paidBeforeSettlement, tribute, daily, true);
             }
-            saveEvents(events);
-            long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
-                    ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
-            preferences.edit().putLong(totalPaidKey(), updatedTotal)
-                    .putLong(com.subhub.app.stats.DailyStatsStore.STAMP, System.currentTimeMillis())
-                    .putString(com.subhub.app.stats.DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).commit();
-            try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
-            clearOrderState();
-            HardcoreAutoPayManager.schedule(context);
-            return true;
+            if (activatesPause && !new PaidPauseManager(context).activate()) return false;
+            return completeLedgerPayment(events, settlementId, paidAmountCents, capture, paidBeforeSettlement, tribute, daily, false);
         }
+    }
+    private boolean completeLedgerPayment(List<PenanceEvent> events, String settlementId, int paidAmountCents,
+            PayPalOrdersClient.Capture capture, long paidBeforeSettlement, int tribute,
+            com.subhub.app.stats.DailyStatsStore daily, boolean preparePause) {
+        SharedPreferences.Editor completion = preferences.edit();
+        PaidPauseManager.SettlementActivation activation = preparePause
+                ? new PaidPauseManager(context).prepareSettlement(settlementId, completion) : null;
+        if (preparePause && activation == null) return false;
+        for (int index = 0; index < events.size(); index++) {
+            PenanceEvent event = events.get(index);
+            if (event.getStatus() == PenanceEvent.Status.CHECKOUT
+                    && settlementId.equals(event.getSettlementId())) {
+                events.set(index, event.withStatus(
+                        PenanceEvent.Status.PAID, settlementId));
+            }
+        }
+        if (capture == null) saveEvents(events);
+        long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
+                ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
+        completion.putLong(totalPaidKey(), updatedTotal)
+                .putLong(com.subhub.app.stats.DailyStatsStore.STAMP, System.currentTimeMillis())
+                .putString(com.subhub.app.stats.DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
+        if (capture != null) {
+            completion.putString(KEY_EVENTS, encodeEvents(events));
+            try { PaymentActivityStore.append(preferences, completion, settlementId, capture, tribute, System.currentTimeMillis()); }
+            catch (RuntimeException unavailable) { /* Optional outbox failure cannot change successful credit. */ }
+        }
+        boolean committed = completion.commit();
+        if (capture != null && !committed) return false;
+        if (activation != null) try { new PaidPauseManager(context).finishSettlement(activation); }
+        catch (RuntimeException unavailable) { android.util.Log.w("PaidPause", "Paid pause effects pending"); }
+        try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
+        clearOrderState();
+        HardcoreAutoPayManager.schedule(context);
+        return true;
     }
 
     private long totalPaidCentsLocked(List<PenanceEvent> events) {
@@ -872,6 +947,26 @@ public final class PenanceManager {
         if (settlementId == null || settlementId.isEmpty()) return false;
         synchronized (LOCK) {
             return containsPaidPause(loadEvents(), settlementId);
+        }
+    }
+
+    public boolean hasPaymentActivity() {
+        synchronized (LOCK) { return !"[]".equals(preferences.getString(PaymentActivityStore.OUTBOX, "[]")); }
+    }
+    public boolean paymentActivityGap() { synchronized (LOCK) { return preferences.getBoolean(PaymentActivityStore.GAP, false); } }
+    public List<PaymentActivityReceipt> durablePaymentActivity() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Payment activity projection must be off main");
+        synchronized (LOCK) {
+            if (!preferences.edit().commit()) throw new IllegalStateException("Payment activity persistence unavailable");
+            try { return Collections.unmodifiableList(PaymentActivityStore.read(preferences)); }
+            catch (org.json.JSONException invalid) { throw new IllegalStateException("Payment activity unavailable", invalid); }
+        }
+    }
+    public boolean acknowledgePaymentActivity(PaymentActivityReceipt receipt) {
+        synchronized (LOCK) {
+            try { return PaymentActivityStore.acknowledge(preferences, receipt); }
+            catch (org.json.JSONException invalid) { throw new IllegalStateException("Payment activity acknowledgement unavailable", invalid); }
         }
     }
 

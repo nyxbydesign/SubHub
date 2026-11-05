@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="notification_category">Notifications</string>
-    <string name="notification_activity">Activity</string>
+    <string name="notification_tracked_app_opened">Tracked app opened</string>
+    <string name="notification_app_limit_reached">App limit reached</string>
+    <string name="notification_shared_limit_reached">Shared limit reached</string>
+    <string name="notification_tribute_triggered">Tribute triggered</string>
+    <string name="notification_tribute_paid">Tribute paid</string>
+    <string name="dom_activity_tribute_paid">Tribute paid</string>
+    <string name="dom_activity_paid_detail">%1$s confirmed</string>
     <string name="notification_task_reviews">Task reviews</string>
     <string name="notification_contract_changes">Contract changes</string>
     <string name="notification_session_starts">Session starts</string>

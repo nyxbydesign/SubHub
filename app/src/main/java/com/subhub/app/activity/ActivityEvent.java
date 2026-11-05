@@ -3,9 +3,9 @@ package com.subhub.app.activity;
 import java.util.Currency;
 import java.util.Objects;
 
-/** A source-observed fact; amounts describe assessed Tributes, never payment success. */
+/** Advisory source facts describe assessed charges or verified capture receipts, never Wallet authority. */
 public final class ActivityEvent {
-    public enum Kind { APP_OPENED, TRIBUTE_TRIGGERED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED }
+    public enum Kind { APP_OPENED, TRIBUTE_TRIGGERED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED, TRIBUTE_PAID }
     public final String id;
     public final Kind kind;
     public final long observedAt;
@@ -30,9 +30,10 @@ public final class ActivityEvent {
         boolean limit = kind == Kind.APP_LIMIT_REACHED || kind == Kind.SHARED_LIMIT_REACHED;
         if (app && this.packageName.isEmpty() || limit && limitMinutes == 0)
             throw new IllegalArgumentException("Incomplete activity fact");
-        if (kind == Kind.TRIBUTE_TRIGGERED) {
-            if (amountCents <= 0) throw new IllegalArgumentException("Missing assessed amount");
+        if (kind == Kind.TRIBUTE_TRIGGERED || kind == Kind.TRIBUTE_PAID) {
+            if (amountCents <= 0) throw new IllegalArgumentException("Missing activity amount");
             Currency.getInstance(this.currency);
+            if (kind == Kind.TRIBUTE_PAID && !this.reason.isEmpty()) throw new IllegalArgumentException("Unexpected paid activity reason");
         } else if (amountCents != 0 || !this.currency.isEmpty() || !this.reason.isEmpty()) {
             throw new IllegalArgumentException("Unexpected Tribute fields");
         }
