@@ -42,16 +42,17 @@ public final class UpdatesActivity extends AppCompatActivity {
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean checking;
+    private boolean resumed;
     private boolean changingAutomatic;
     private boolean installAfterPermission;
     private boolean finalizingDownload;
-    private boolean installPromptQueued;
+    private boolean verifyingInstall;
     private String historyFingerprint = "";
     private final Set<String> expandedHistory = new HashSet<>();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             render();
-            if (binding != null && state.downloadId() >= 0) main.postDelayed(this, 750L);
+            if (binding != null && resumed) main.postDelayed(this, 750L);
         }
     };
     private final ActivityResultLauncher<Intent> installPermission = registerForActivityResult(
@@ -107,9 +108,10 @@ public final class UpdatesActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         render();
         main.removeCallbacks(poll);
-        if (state.downloadId() >= 0) main.post(poll);
+        main.post(poll);
     }
 
     private void checkNow() {
@@ -120,6 +122,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.updateStatus.setText(R.string.update_checking);
         network.execute(() -> {
             GitHubReleaseRepository.Result result = new GitHubReleaseRepository(this).check();
+            if (result.succeeded() && result.candidate != null) downloads.prepare(result.candidate, false);
             main.post(() -> {
                 if (binding == null) return;
                 checking = false;
@@ -128,6 +131,8 @@ public final class UpdatesActivity extends AppCompatActivity {
                 else binding.updateStatus.setText(result.candidate == null
                         ? R.string.update_none_available : R.string.update_available_body);
                 render();
+                main.removeCallbacks(poll);
+                if (resumed) main.post(poll);
             });
         });
     }
@@ -184,14 +189,6 @@ public final class UpdatesActivity extends AppCompatActivity {
             binding.buttonAction.setOnClickListener(view -> installVerified());
             binding.buttonCancel.setVisibility(View.GONE);
             if (!checking) binding.updateStatus.setText(R.string.update_ready_body);
-            if (state.installRequested() && !installAfterPermission && !installPromptQueued) {
-                state.setInstallRequested(false);
-                installPromptQueued = true;
-                main.post(() -> {
-                    installPromptQueued = false;
-                    installVerified();
-                });
-            }
             return;
         }
         UpdateDownloadCoordinator.Status download = downloads.status();
@@ -327,6 +324,34 @@ public final class UpdatesActivity extends AppCompatActivity {
     }
 
     private void installVerified() {
+        if (verifyingInstall) return;
+        final UpdateCandidate candidate = state.candidate();
+        final String path = state.verifiedPath();
+        final long revision = state.channelRevision();
+        UpdateManifest.Asset asset = candidate == null ? null : candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
+        if (asset == null || path.isEmpty()) { render(); return; }
+        verifyingInstall = true;
+        network.execute(() -> {
+            boolean verified = UpdateVerifier.verify(this, new File(path), candidate.manifest, asset).succeeded();
+            main.post(() -> {
+                verifyingInstall = false;
+                if (binding == null) return;
+                synchronized (UpdateStateStore.class) {
+                    if (revision != state.channelRevision() || !path.equals(state.verifiedPath())
+                            || !UpdateStateStore.sameCandidate(candidate, state.candidate())) { render(); return; }
+                    if (!verified) {
+                        downloads.cancel();
+                        binding.updateStatus.setText(R.string.update_verification_failed);
+                        render();
+                        return;
+                    }
+                    launchInstaller();
+                }
+            });
+        });
+    }
+
+    private void launchInstaller() {
         if (state.candidate() == null) {
             downloads.cancel();
             render();
@@ -352,6 +377,12 @@ public final class UpdatesActivity extends AppCompatActivity {
         startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,
                         "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        main.removeCallbacks(poll);
+        super.onPause();
     }
 
     @Override protected void onDestroy() {

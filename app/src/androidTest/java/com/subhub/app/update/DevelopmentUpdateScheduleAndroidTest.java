@@ -74,6 +74,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
     private String previousServices;
     private int previousEnabled, previousReceiver;
     private boolean previousDom;
+    private boolean quiesced;
     private ComponentName receiver;
     private final AtomicInteger workerRuns = new AtomicInteger();
     private final AtomicInteger unexpectedWorkers = new AtomicInteger();
@@ -85,6 +86,7 @@ public final class DevelopmentUpdateScheduleAndroidTest {
         assertEquals("true", InstrumentationRegistry.getArguments().getString("bound_censor_fixture"));
         assertTrue("Not authorized on a phone", ProductCensorQualification.supported());
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        UpdaterTestQuiescence.requireColdStartBaseline(context, WorkManager.getInstance(context));
         previousServices = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         previousEnabled = Settings.Secure.getInt(context.getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 0);
         assertFalse("No live capture owner", ScreenshotAccessibilityService.isRunning());
@@ -99,9 +101,11 @@ public final class DevelopmentUpdateScheduleAndroidTest {
         assertFalse(output.exists()); assertTrue(output.mkdirs());
         write("started.json", new JSONObject().put("schemaVersion", 1).put("case", name.getMethodName())
                 .put("pid", android.os.Process.myPid()).put("ownedEmulator", true));
+        originalManager = (WorkManagerImpl) WorkManager.getInstance(context);
+        UpdaterTestQuiescence.stop(context, originalManager);
+        quiesced = true;
         assertTrue(preferences.edit().clear().putBoolean("automatic_checks", false).commit());
         state = new UpdateStateStore(context);
-        originalManager = (WorkManagerImpl) WorkManager.getInstance(context);
         androidx.work.Configuration configuration = new androidx.work.Configuration.Builder()
                 .setExecutor(new SynchronousExecutor())
                 .setWorkerFactory(new WorkerFactory() {
@@ -116,24 +120,26 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 }).build();
         WorkManagerTestInitHelper.initializeTestWorkManager(context, configuration);
         manager = WorkManager.getInstance(context); assertNotSame(originalManager, manager);
-        ControllerPinManager.enterDomMode();
     }
 
     @After public void restoreOriginalManagerAndExactUpdaterState() throws Exception {
-        if (savedPreferences == null) return;
+        if (savedPreferences == null || !quiesced) return;
+        // ActivityScenario.close() has stopped the visible-activity timer; drain its queued work
+        // before closing the fixture database and restoring the original WorkManager delegate.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        UpdaterTestQuiescence.stop(context, manager == null ? originalManager : manager);
         Throwable failure = null;
         try {
-            if (manager != null) {
-                manager.cancelAllWork().getResult().get(5, TimeUnit.SECONDS);
-                WorkManagerTestInitHelper.closeWorkDatabase();
-            }
+            if (manager != null) WorkManagerTestInitHelper.closeWorkDatabase();
         } catch (Exception | Error error) { failure = error; }
         finally {
             if (originalManager != null) WorkManagerImpl.setDelegate(originalManager);
             SharedPreferenceTestRestore.restore(preferences, savedPreferences);
             if (receiver != null) context.getPackageManager().setComponentEnabledSetting(
                     receiver, previousReceiver, android.content.pm.PackageManager.DONT_KILL_APP);
-            if (previousDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            if (ControllerPinManager.isDomModeActive() != previousDom) {
+                if (previousDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            }
         }
         boolean managerRestored = originalManager == null || WorkManager.getInstance(context) == originalManager;
         boolean preferencesMatch = savedPreferences.equals(preferences.getAll());
@@ -145,30 +151,33 @@ public final class DevelopmentUpdateScheduleAndroidTest {
                 .put("originalManagerRestored", managerRestored).put("preferencesMatch", preferencesMatch)
                 .put("secureValuesMatch", secureMatch).put("receiverMatch", receiverMatch)
                 .put("fakeWorkerRuns", workerRuns.get()).put("unexpectedWorkers", unexpectedWorkers.get())
-                .put("workerFactoryUsesReleaseHttp", false).put("captureServiceRunning", ScreenshotAccessibilityService.isRunning())
+                .put("workerFactoryUsesReleaseHttp", false).put("admittedFixtureChecksAndFinalizersDrainedBeforeRestore", true)
+                .put("originalUpdaterJobIdsPreserved", false).put("captureServiceRunning", ScreenshotAccessibilityService.isRunning())
                 .put("cleanupFailure", failure == null ? JSONObject.NULL : failure.getClass().getName()));
         assertTrue(managerRestored); assertTrue(preferencesMatch); assertTrue(secureMatch); assertTrue(receiverMatch);
         assertFalse(ScreenshotAccessibilityService.isRunning()); assertEquals(0, unexpectedWorkers.get());
         if (failure instanceof Exception) throw (Exception) failure;
         if (failure instanceof Error) throw (Error) failure;
+        // Restore scheduling behavior after exact preference/delegate/mode assertions; job IDs change.
+        UpdateScheduler.synchronize(context);
     }
 
     @Test public void channelChangesUpdateOneExistingPeriodicJobInBothDirections() throws Exception {
         state.setAutomaticChecks(true);
         UpdateScheduler.synchronize(context, false);
         WorkInfo stable = periodic(); UUID original = stable.getId();
-        assertInterval(stable, TimeUnit.HOURS.toMillis(6));
+        assertInterval(stable, TimeUnit.MINUTES.toMillis(15));
         state.setDevUpdates(true);
         UpdateScheduler.synchronize(context, false);
         WorkInfo dev = periodic(); assertEquals(original, dev.getId()); assertInterval(dev, TimeUnit.MINUTES.toMillis(15));
         for (int count = 0; count < 3; count++) UpdateScheduler.synchronize(context, false);
         assertEquals(original, periodic().getId());
         state.setDevUpdates(false); UpdateScheduler.synchronize(context, false);
-        assertEquals(original, periodic().getId()); assertInterval(periodic(), TimeUnit.HOURS.toMillis(6));
+        assertEquals(original, periodic().getId()); assertInterval(periodic(), TimeUnit.MINUTES.toMillis(15));
         assertEquals(1, manager.getWorkInfosForUniqueWork(UpdateScheduler.PERIODIC_NAME).get(5, TimeUnit.SECONDS).size());
         assertTrue(manager.getWorkInfosForUniqueWork(UpdateScheduler.IMMEDIATE_NAME).get(5, TimeUnit.SECONDS).isEmpty());
         write("result.json", new JSONObject().put("uniquePeriodicRows", 1).put("sameJobIdentity", true)
-                .put("stableMillis", TimeUnit.HOURS.toMillis(6)).put("devMillis", TimeUnit.MINUTES.toMillis(15)));
+                .put("stableMillis", TimeUnit.MINUTES.toMillis(15)).put("devMillis", TimeUnit.MINUTES.toMillis(15)));
     }
 
     @Test public void automaticOffCancelsAndReenableUsesTheSelectedChannel() throws Exception {
@@ -184,11 +193,11 @@ public final class DevelopmentUpdateScheduleAndroidTest {
         write("result.json", new JSONObject().put("disabledJobCancelled", true).put("reenabledDevMillis", TimeUnit.MINUTES.toMillis(15)));
     }
 
-    @Test public void foregroundStaleCheckUsesDevIntervalWithoutRunningReleaseHttp() throws Exception {
-        state.setAutomaticChecks(true); state.setLastCheck(System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(16));
+    @Test public void foregroundStaleCheckUsesOneMinuteWithoutRunningReleaseHttp() throws Exception {
+        state.setAutomaticChecks(true); state.setLastCheck(System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(30));
         UpdateScheduler.synchronize(context);
         assertTrue(manager.getWorkInfosForUniqueWork(UpdateScheduler.IMMEDIATE_NAME).get(5, TimeUnit.SECONDS).isEmpty());
-        state.setDevUpdates(true); state.setLastCheck(System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(16));
+        state.setDevUpdates(true); state.setLastCheck(System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(61));
         UpdateScheduler.synchronize(context);
         List<WorkInfo> immediate = manager.getWorkInfosForUniqueWork(UpdateScheduler.IMMEDIATE_NAME).get(5, TimeUnit.SECONDS);
         assertEquals(1, immediate.size()); assertEquals(NetworkType.CONNECTED, immediate.get(0).getConstraints().getRequiredNetworkType());
@@ -197,8 +206,8 @@ public final class DevelopmentUpdateScheduleAndroidTest {
         WorkManagerTestInitHelper.getTestDriver(context).setAllConstraintsMet(immediate.get(0).getId());
         awaitState(immediate.get(0).getId(), WorkInfo.State.SUCCEEDED);
         assertEquals(1, workerRuns.get());
-        write("result.json", new JSONObject().put("stableSixteenMinutesStillFresh", true)
-                .put("devSixteenMinutesStale", true).put("fakeWorkerRuns", 1));
+        write("result.json", new JSONObject().put("stableThirtySecondsStillFresh", true)
+                .put("devSixtyOneSecondsStale", true).put("fakeWorkerRuns", 1));
     }
 
     @Test public void nativeHistoryShowsPreviewTimeAndPreservesStableAndLegacyDates() throws Exception {

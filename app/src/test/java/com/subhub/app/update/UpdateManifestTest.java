@@ -36,6 +36,14 @@ public final class UpdateManifestTest {
         UpdateManifest.parse(manifest(asset("universal", "not-an-apk.zip")));
     }
 
+    @Test(expected = JSONException.class) public void rejectsParentPathInAssetName() throws Exception {
+        UpdateManifest.parse(manifest(asset("universal", "../escape.apk")));
+    }
+
+    @Test(expected = JSONException.class) public void rejectsWindowsPathInAssetName() throws Exception {
+        UpdateManifest.parse(manifest(asset("universal", "C:/escape.apk")));
+    }
+
     private static String manifest(String... assets) {
         return "{\"schema\":1,\"packageName\":\"com.subhub.app\",\"versionName\":\"0.4.0\","
                 + "\"versionCode\":4,\"minSdk\":26,\"tag\":\"v0.4.0\","

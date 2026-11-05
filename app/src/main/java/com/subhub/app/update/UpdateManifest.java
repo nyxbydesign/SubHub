@@ -81,7 +81,7 @@ public final class UpdateManifest {
             String digest = required(value, "sha256").toLowerCase(Locale.ROOT);
             long size = value.optLong("size", -1);
             if (!(abi.equals("universal") || abi.matches("[A-Za-z0-9_-]+"))
-                    || !name.endsWith(".apk") || !url.startsWith("https://github.com/")
+                    || !name.matches("[A-Za-z0-9][A-Za-z0-9._-]*\\.apk") || !url.startsWith("https://github.com/")
                     || !digest.matches("[0-9a-f]{64}") || size < 1) {
                 throw new JSONException("Invalid APK asset");
             }

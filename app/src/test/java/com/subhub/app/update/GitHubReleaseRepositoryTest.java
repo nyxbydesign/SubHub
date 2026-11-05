@@ -127,21 +127,20 @@ public final class GitHubReleaseRepositoryTest {
                 .put("tag", tag).put("assets", new JSONArray().put(asset)).toString());
     }
 
-    @Test public void sixHourScheduleIsStable() {
-        assertEquals(6L * 60L * 60L * 1000L, UpdateScheduler.INTERVAL_MILLIS);
+    @Test public void backgroundChecksUseAndroidMinimumForBothChannels() {
+        assertEquals(15L * 60L * 1000L, UpdateScheduler.INTERVAL_MILLIS);
         assertEquals(UpdateScheduler.INTERVAL_MILLIS, UpdateScheduler.intervalMillis(false));
+        assertEquals(UpdateScheduler.INTERVAL_MILLIS, UpdateScheduler.intervalMillis(true));
     }
 
-    @Test public void developmentChannelUsesFifteenMinutesForPeriodicAndStaleChecks() {
-        long interval = 15L * 60L * 1000L;
-        assertEquals(interval, UpdateScheduler.intervalMillis(true));
-        long last = 1_800_000_000_000L;
-        assertFalse(UpdateScheduler.checkDue(last + interval - 1, last, true));
-        assertTrue(UpdateScheduler.checkDue(last + interval, last, true));
-        assertFalse(UpdateScheduler.checkDue(last + interval, last, false));
-        assertFalse(UpdateScheduler.checkDue(last + UpdateScheduler.INTERVAL_MILLIS - 1, last, false));
-        assertTrue(UpdateScheduler.checkDue(last + UpdateScheduler.INTERVAL_MILLIS, last, false));
-        assertFalse(UpdateScheduler.checkDue(last - 1, last, true));
+    @Test public void foregroundChecksUseOneMinuteForBothChannelsAndRecoverClockChanges() {
+        long last = 100_000L;
+        for (boolean dev : new boolean[]{false, true}) {
+            assertFalse(UpdateScheduler.checkDue(last + 59_999L, last, dev));
+            assertTrue(UpdateScheduler.checkDue(last + 60_000L, last, dev));
+            assertTrue(UpdateScheduler.checkDue(last - 1L, last, dev));
+            assertTrue(UpdateScheduler.checkDue(10L, 0L, dev));
+        }
     }
 
     @Test public void manifestChangelogWinsOverReleaseDownloadGuidance() throws Exception {

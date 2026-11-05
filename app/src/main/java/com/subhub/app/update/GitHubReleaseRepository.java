@@ -74,7 +74,33 @@ public final class GitHubReleaseRepository {
         this.latestStableUrl = latestStableUrl;
     }
 
+    private static final Object CHECK_LOCK = new Object();
+    private static volatile long completedChecks;
+    private static Result lastResult;
+    private static String lastSource;
+    private static long lastRevision;
+
     public Result check() {
+        long observed = completedChecks;
+        long revision = state.channelRevision();
+        synchronized (CHECK_LOCK) {
+            if (observed != completedChecks && revision == state.channelRevision()
+                    && releasesUrl.equals(lastSource) && revision == lastRevision && lastResult != null) {
+                if (!lastResult.succeeded()) return lastResult;
+                UpdateCandidate current = state.candidate();
+                return Result.success(UpdateStateStore.sameCandidate(lastResult.candidate, current) ? current : null);
+            }
+            long runningRevision = state.channelRevision();
+            Result result = checkRelease();
+            lastResult = result;
+            lastSource = releasesUrl;
+            lastRevision = runningRevision;
+            completedChecks++;
+            return result;
+        }
+    }
+
+    private Result checkRelease() {
         try {
             final long revision;
             final boolean devUpdates;

@@ -37,20 +37,36 @@ public final class DevUpdatesAndroidTest {
     private Context context;
     private SharedPreferences preferences;
     private UpdateStateStore state;
+    private java.util.Map<String, ?> originalPreferences;
+    private boolean originalDom;
+    private boolean quiesced;
 
-    @Before public void setup() {
+    @Before public void setup() throws Exception {
         context = ApplicationProvider.getApplicationContext();
+        UpdaterTestQuiescence.requireColdStartBaseline(context, androidx.work.WorkManager.getInstance(context));
         preferences = context.getSharedPreferences("subhub_updates", Context.MODE_PRIVATE);
-        preferences.edit().clear().putBoolean("automatic_checks", false).commit();
+        originalPreferences = new java.util.LinkedHashMap<>(preferences.getAll());
+        originalDom = ControllerPinManager.isDomModeActive();
+        UpdaterTestQuiescence.stop(context, androidx.work.WorkManager.getInstance(context));
+        quiesced = true;
+        assertTrue(preferences.edit().clear().putBoolean("automatic_checks", false).commit());
         state = new UpdateStateStore(context);
-        UpdateScheduler.synchronize(context);
-        ControllerPinManager.enterDomMode();
     }
 
-    @After public void cleanup() {
-        new UpdateDownloadCoordinator(context).cancel();
-        preferences.edit().clear().putBoolean("automatic_checks", false).commit();
-        ControllerPinManager.enterSubMode();
+    @After public void cleanup() throws Exception {
+        if (originalPreferences == null || !quiesced) return;
+        UpdaterTestQuiescence.stop(context, androidx.work.WorkManager.getInstance(context));
+        try {
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(preferences, originalPreferences);
+        } finally {
+            if (ControllerPinManager.isDomModeActive() != originalDom) {
+                if (originalDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            }
+        }
+        assertEquals(originalPreferences, preferences.getAll());
+        assertEquals(originalDom, ControllerPinManager.isDomModeActive());
+        // The owned guest's cancelled updater jobs are recreated according to the restored preferences.
+        UpdateScheduler.synchronize(context);
     }
 
     @Test public void devUpdatesDefaultOffAndPersistAcrossStoreRecreation() {
@@ -191,6 +207,78 @@ public final class DevUpdatesAndroidTest {
         }
     }
 
+    @Test public void concurrentReleaseChecksShareOneFeedRequest() throws Exception {
+        try (FeedServer server = new FeedServer()) {
+            server.blockFirstFeed = true;
+            GitHubReleaseRepository repository = new GitHubReleaseRepository(context,
+                    server.root + "/feed", server.root + "/latest");
+            java.util.concurrent.FutureTask<GitHubReleaseRepository.Result> first =
+                    new java.util.concurrent.FutureTask<>(repository::check);
+            java.util.concurrent.FutureTask<GitHubReleaseRepository.Result> second =
+                    new java.util.concurrent.FutureTask<>(repository::check);
+            Thread one = new Thread(first, "updater-first-check");
+            Thread two = new Thread(second, "updater-second-check");
+            try {
+                one.start();
+                assertTrue(server.firstFeedEntered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                two.start();
+                awaitCheckMonitor(two);
+                server.releaseFirstFeed.countDown();
+                assertEquals("v0.6.4", first.get(5, java.util.concurrent.TimeUnit.SECONDS).candidate.manifest.tag);
+                assertEquals("v0.6.4", second.get(5, java.util.concurrent.TimeUnit.SECONDS).candidate.manifest.tag);
+                assertEquals(1, server.feedRequests.get());
+            } finally {
+                server.releaseFirstFeed.countDown();
+                one.join(5000); two.join(5000);
+                assertFalse(one.isAlive()); assertFalse(two.isAlive());
+            }
+        }
+    }
+
+    @Test public void channelChangeDuringInflightCheckStartsFreshLookup() throws Exception {
+        try (FeedServer server = new FeedServer()) {
+            server.blockFirstFeed = true;
+            GitHubReleaseRepository repository = new GitHubReleaseRepository(context,
+                    server.root + "/feed", server.root + "/latest");
+            java.util.concurrent.FutureTask<GitHubReleaseRepository.Result> first =
+                    new java.util.concurrent.FutureTask<>(repository::check);
+            java.util.concurrent.FutureTask<GitHubReleaseRepository.Result> second =
+                    new java.util.concurrent.FutureTask<>(repository::check);
+            Thread one = new Thread(first, "updater-old-channel-check");
+            Thread two = new Thread(second, "updater-new-channel-check");
+            try {
+                one.start();
+                assertTrue(server.firstFeedEntered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                state.setDevUpdates(true);
+                two.start();
+                awaitCheckMonitor(two);
+                server.releaseFirstFeed.countDown();
+                assertNull(first.get(5, java.util.concurrent.TimeUnit.SECONDS).candidate);
+                assertEquals("v0.6.4-dev.123", second.get(5, java.util.concurrent.TimeUnit.SECONDS).candidate.manifest.tag);
+                assertEquals(2, server.feedRequests.get());
+                assertEquals("v0.6.4-dev.123", state.candidate().manifest.tag);
+            } finally {
+                server.releaseFirstFeed.countDown();
+                one.join(5000); two.join(5000);
+                assertFalse(one.isAlive()); assertFalse(two.isAlive());
+            }
+        }
+    }
+
+    private static void awaitCheckMonitor(Thread thread) throws Exception {
+        long deadline = android.os.SystemClock.uptimeMillis() + 5000L;
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            if (thread.getState() == Thread.State.BLOCKED) {
+                for (StackTraceElement frame : thread.getStackTrace()) {
+                    if (frame.getClassName().equals(GitHubReleaseRepository.class.getName())
+                            && frame.getMethodName().equals("check")) return;
+                }
+            }
+            Thread.sleep(10L);
+        }
+        fail("Second check must be waiting on the in-flight check monitor");
+    }
+
     private static UpdateCandidate candidate(String version, long code) throws Exception {
         return new UpdateCandidate(UpdateManifest.parse(manifest(version, code)), "Fixture notes", "");
     }
@@ -210,6 +298,10 @@ public final class DevUpdatesAndroidTest {
         final String root;
         final AtomicInteger devManifestRequests = new AtomicInteger();
         final AtomicInteger notModified = new AtomicInteger();
+        final AtomicInteger feedRequests = new AtomicInteger();
+        final java.util.concurrent.CountDownLatch firstFeedEntered = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch releaseFirstFeed = new java.util.concurrent.CountDownLatch(1);
+        volatile boolean blockFirstFeed;
         volatile boolean invalidDev;
         volatile boolean closed;
 
@@ -241,6 +333,15 @@ public final class DevUpdatesAndroidTest {
                     for (String line; (line = reader.readLine()) != null && !line.isEmpty();) {
                         if (line.toLowerCase(java.util.Locale.ROOT).startsWith("if-none-match:")) cached = true;
                     }
+                    if (path.equals("/feed")) {
+                        int count = feedRequests.incrementAndGet();
+                        if (blockFirstFeed && count == 1) {
+                            firstFeedEntered.countDown();
+                            if (!releaseFirstFeed.await(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("Fixture feed gate timed out");
+                            }
+                        }
+                    }
                     String body;
                     int code = 200;
                     if (path.equals("/feed") && cached) {
@@ -271,6 +372,7 @@ public final class DevUpdatesAndroidTest {
 
         @Override public void close() throws Exception {
             closed = true;
+            releaseFirstFeed.countDown();
             listener.close();
             thread.join(5000);
             assertFalse("Fixture server must stop", thread.isAlive());

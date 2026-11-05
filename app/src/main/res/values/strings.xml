@@ -953,9 +953,9 @@
     <string name="update_server_error">GitHub returned an error. Try again later.</string>
     <string name="update_install_permission">Allow SubHub to install its signed update, then return here.</string>
     <string name="update_automatic_title">Automatic Checks</string>
-    <string name="update_automatic_toggle">Check every six hours</string>
-    <string name="update_automatic_dev_toggle">Check every 15 minutes</string>
-    <string name="update_automatic_help">Downloads always wait for your approval.</string>
+    <string name="update_automatic_toggle">Check automatically</string>
+    <string name="update_automatic_dev_toggle">Check automatically</string>
+    <string name="update_automatic_help">Checks every minute while SubHub is open. Android schedules background checks at intervals of at least 15 minutes and may delay them. Updates download automatically; you confirm installation.</string>
     <string name="update_dev_toggle">Dev updates</string>
     <string name="update_dev_help">Include development builds from GitHub. These may be less stable. Turning this off waits for a newer stable release; it does not downgrade your installed app.</string>
     <string name="update_dev_dom_help">Unlock Dom to change Dev updates.</string>
@@ -975,9 +975,9 @@
     <string name="update_download_universal">the Universal APK</string>
     <string name="update_channel_name">SubHub updates</string>
     <string name="update_available_title">SubHub %1$s is ready</string>
-    <string name="update_available_body">Tap to review and download the signed update.</string>
+    <string name="update_available_body">Update available</string>
     <string name="update_ready_title">SubHub %1$s is verified</string>
-    <string name="update_ready_body">Tap to open Android’s installer.</string>
+    <string name="update_ready_body">Downloaded and verified. Open to install.</string>
     <string name="update_failed_title">SubHub update rejected</string>
     <string name="update_failed_body">Open Builds &amp; Updates to retry.</string>
     <string name="update_help_current">Installed build · %1$s</string>

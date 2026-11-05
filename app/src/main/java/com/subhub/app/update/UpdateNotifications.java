@@ -21,31 +21,9 @@ public final class UpdateNotifications {
     private static final int DOWNLOAD_ID = 9072;
     private UpdateNotifications() {}
 
-    public static void available(Context context, UpdateCandidate candidate) {
-        UpdateStateStore state = new UpdateStateStore(context);
-        if (candidate.prerelease && !state.devUpdates()) return;
-        if (!canNotify(context) || !state.markNotified(candidate.manifest.versionName)) return;
-        post(context, AVAILABLE_ID, builder(context)
-                .setContentTitle(context.getString(R.string.update_available_title, candidate.manifest.versionName))
-                .setContentText(context.getString(R.string.update_available_body)).build());
-    }
-
-    /** Never hide the system notice unless this app and channel can show its replacement. */
+    /** Automatic transfers are silent; only a verified APK produces a notice. */
     static int downloadVisibility(Context context) {
-        return canNotify(context) && ContextCompat.checkSelfPermission(context,
-                "android.permission.DOWNLOAD_WITHOUT_NOTIFICATION") == PackageManager.PERMISSION_GRANTED
-                ? DownloadManager.Request.VISIBILITY_HIDDEN : DownloadManager.Request.VISIBILITY_VISIBLE;
-    }
-
-    static void downloading(Context context, UpdateCandidate candidate, long id) {
-        if (id < 0 || downloadVisibility(context) != DownloadManager.Request.VISIBILITY_HIDDEN) return;
-        android.app.Notification notification = builder(context)
-                .setContentTitle(context.getString(R.string.update_download_title, candidate.manifest.versionName))
-                .setContentText(context.getString(R.string.update_download_body))
-                .setProgress(0, 0, true).setOngoing(true).setAutoCancel(false)
-                .setOnlyAlertOnce(true).setSilent(true).build();
-        manager(context).notify(downloadTag(id), DOWNLOAD_ID,
-                com.subhub.app.privacy.PrivacyNotifications.present(context, DOWNLOAD_ID, notification));
+        return DownloadManager.Request.VISIBILITY_HIDDEN;
     }
 
     static void cancelDownload(Context context, long id) {
@@ -54,18 +32,27 @@ public final class UpdateNotifications {
 
     static String downloadTag(long id) { return "subhub-download-" + id; }
 
-    public static void ready(Context context, UpdateCandidate candidate) {
-        if (!canNotify(context)) return;
-        post(context, READY_ID, builder(context)
-                .setContentTitle(context.getString(R.string.update_ready_title, candidate.manifest.versionName))
-                .setContentText(context.getString(R.string.update_ready_body)).build());
+    static void cancelReady(Context context) {
+        manager(context).cancel(AVAILABLE_ID);
+        manager(context).cancel(READY_ID);
     }
 
-    public static void failed(Context context) {
-        if (!canNotify(context)) return;
-        post(context, READY_ID, builder(context)
-                .setContentTitle(context.getString(R.string.update_failed_title))
-                .setContentText(context.getString(R.string.update_failed_body)).build());
+    public static void ready(Context context, UpdateCandidate candidate) {
+        synchronized (UpdateStateStore.class) {
+            UpdateStateStore state = new UpdateStateStore(context);
+            String path = state.verifiedPath();
+            if (!UpdateStateStore.sameCandidate(candidate, state.candidate())
+                    || path.isEmpty() || !new java.io.File(path).isFile() || !canNotify(context)
+                    || state.wasNotified(candidate.manifest.tag)) return;
+            try {
+                post(context, READY_ID, builder(context)
+                        .setContentTitle(context.getString(R.string.update_ready_title, candidate.manifest.versionName))
+                        .setContentText(context.getString(R.string.update_ready_body)).build());
+                state.markNotified(candidate.manifest.tag);
+            } catch (SecurityException permissionChanged) {
+                // Keep the verified APK and allow a later check to retry notification.
+            }
+        }
     }
 
     private static void post(Context context, int id, android.app.Notification notification) {
