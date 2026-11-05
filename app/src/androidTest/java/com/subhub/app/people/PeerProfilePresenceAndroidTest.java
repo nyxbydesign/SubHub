@@ -357,7 +357,7 @@ public final class PeerProfilePresenceAndroidTest {
     }
     private static PersonSnapshot snapshot(PersonId id,PersonSnapshot.Connection state,long contact,PersonSnapshot.Freshness freshness) {
         return new PersonSnapshot(id,"Saved Sub","Saved device","Saved contract","Last observed: inactive",state,freshness,contact,
-                EnumSet.of(PersonSnapshot.Capability.VIEW_STATS),Collections.emptyList(),Collections.emptyList(),"EUR",7200,7,0,3,false);
+                EnumSet.of(PersonSnapshot.Capability.VIEW_STATS),Collections.emptyList(),Collections.emptyList(),"EUR",7200,7,0,3,false).withLastOnlineAt(contact);
     }
     private static PersonId remote(char c){return new PersonId("remote_"+new String(new char[64]).replace('\0',c)+"_"+UUID.randomUUID());}
 }

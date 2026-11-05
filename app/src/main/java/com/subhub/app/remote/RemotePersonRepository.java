@@ -33,8 +33,9 @@ public final class RemotePersonRepository implements PersonRepository {
         if(!RemoteTelemetry.validSummary(stats))stats=null;if(!RemoteTelemetry.validRuntime(runtime))runtime=null;
         PersonSnapshot.Freshness contract=freshness(peer,RemoteProtocol.Stream.BASELINE,configuration!=null,30*60_000),statistics=freshness(peer,RemoteProtocol.Stream.STATS,stats!=null,30*60_000),live=freshness(peer,RemoteProtocol.Stream.RUNTIME,runtime!=null,90_000);
         long contact=store.lastContactAt(peer);
+        PeerPresence.Observation presence=PeerPresence.read(store,peer);
         PersonSnapshot.Connection connection=peer.state==RemoteStore.State.REVOKED?PersonSnapshot.Connection.REVOKED:peer.state==RemoteStore.State.PENDING?PersonSnapshot.Connection.PENDING:
-                PeerPresence.online(feature.isConnected(peer),contact,System.currentTimeMillis())?PersonSnapshot.Connection.CONNECTED:
+                presence.online?PersonSnapshot.Connection.CONNECTED:
                 contact==0 && store.metadata(peer.identity,peer.generation,"connection_error","").isEmpty()?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
         EnumSet<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.MANAGE_CONNECTION,PersonSnapshot.Capability.VIEW_STATS);
         if(configuration!=null)capabilities.add(PersonSnapshot.Capability.VIEW_CONTRACT);
@@ -51,7 +52,7 @@ public final class RemotePersonRepository implements PersonRepository {
                 service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
-                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact);
+                .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
     }
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");
@@ -62,7 +63,7 @@ public final class RemotePersonRepository implements PersonRepository {
             EnumSet<PersonSnapshot.Capability> caps=local.capabilities.isEmpty()?EnumSet.noneOf(PersonSnapshot.Capability.class):EnumSet.copyOf(local.capabilities);caps.remove(PersonSnapshot.Capability.EDIT_CONTRACT);
             return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,caps,local.sections,local.allowances,local.currency,
                     local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                    .withLastContactAt(local.lastContactAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                    .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
                     .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }
         try {
@@ -70,7 +71,7 @@ public final class RemotePersonRepository implements PersonRepository {
             String name=applied==null?context.getString(R.string.role_local_configuration):applied.getJSONObject("contract").getString("name");
             if(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).contains("remote_active_configuration"))
                 return new PersonSnapshot(local.id,local.name,local.device,name,local.serviceLabel,local.connection,local.freshness,local.lastSyncedAt,local.capabilities,local.sections,local.allowances,local.currency,local.protectedSeconds,local.activityEvents,local.tributeCents,local.sessions,local.serviceActive,local.sync)
-                        .withLastContactAt(local.lastContactAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
+                        .withLastContactAt(local.lastContactAt).withLastOnlineAt(local.lastOnlineAt).withProfile(local.profile, local.featureConsent, local.consentHardcoreOverride)
                         .withContractDom(contractOwner.profile, contractOwner.id, contractOwner.contact);
         }catch(Exception invalid){/* Unavailable metadata never changes local authority. */}
         return local;

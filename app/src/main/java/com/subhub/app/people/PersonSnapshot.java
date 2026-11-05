@@ -21,6 +21,8 @@ public final class PersonSnapshot {
     public final long lastSyncedAt;
     /** Verified peer contact, which does not imply that every sync phase completed. */
     public final long lastContactAt;
+    /** Last locally observed authenticated foreground presence; background transport never advances it. */
+    public final long lastOnlineAt;
     public final Set<Capability> capabilities;
     public final List<Section> sections;
     public final List<Allowance> allowances;
@@ -89,7 +91,7 @@ public final class PersonSnapshot {
         this(id, name, device, contractName, serviceLabel, connection, freshness, lastSyncedAt, capabilities,
                 sections, allowances, currency, protectedSeconds, activityEvents, tributeCents, sessions,
                 serviceActive, sync, sessionIdentity, additionOrder, profile, featureConsent,
-                consentHardcoreOverride, contractDom, contractDomId, contractDomContact, lastSyncedAt);
+                consentHardcoreOverride, contractDom, contractDomId, contractDomContact, lastSyncedAt, 0);
     }
 
     private PersonSnapshot(PersonId id, String name, String device, String contractName,
@@ -98,7 +100,7 @@ public final class PersonSnapshot {
             String currency, long protectedSeconds, long activityEvents, long tributeCents, int sessions,
             boolean serviceActive, SyncState sync, String sessionIdentity, long additionOrder,
             ProfileData profile, java.util.Map<String, Boolean> featureConsent, boolean consentHardcoreOverride,
-            ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact, long lastContactAt) {
+            ProfileData contractDom, PersonId contractDomId, PeerContact contractDomContact, long lastContactAt, long lastOnlineAt) {
         if (additionOrder < 0) throw new IllegalArgumentException("Invalid addition order");
         this.additionOrder=additionOrder;
         this.sessionIdentity=java.util.Objects.requireNonNull(sessionIdentity);
@@ -111,6 +113,7 @@ public final class PersonSnapshot {
         this.freshness = java.util.Objects.requireNonNull(freshness);
         this.lastSyncedAt = lastSyncedAt;
         this.lastContactAt = Math.max(0, lastContactAt);
+        this.lastOnlineAt = Math.max(0, lastOnlineAt);
         this.capabilities = Collections.unmodifiableSet(capabilities.isEmpty()
                 ? EnumSet.noneOf(Capability.class) : EnumSet.copyOf(capabilities));
         this.sections = Collections.unmodifiableList(new ArrayList<>(sections));
@@ -140,7 +143,7 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, value.name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact, lastContactAt);
+                value, consent, hardcoreOverride, contractDom, contractDomId, contractDomContact, lastContactAt, lastOnlineAt);
     }
 
     public PersonSnapshot withContractDom(ProfileData value) {
@@ -156,17 +159,25 @@ public final class PersonSnapshot {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact, lastContactAt);
+                profile, featureConsent, consentHardcoreOverride, java.util.Objects.requireNonNull(value), target, contact, lastContactAt, lastOnlineAt);
     }
 
     public PersonSnapshot withLastContactAt(long contact) {
         return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
                 lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
                 activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
-                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact, contact);
+                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact, contact, lastOnlineAt);
     }
 
-    /** A verified authenticated contact for this exact peer generation, never controller authority. */
+    public PersonSnapshot withLastOnlineAt(long observed) {
+        return new PersonSnapshot(id, name, device, contractName, serviceLabel, connection, freshness,
+                lastSyncedAt, capabilities, sections, allowances, currency, protectedSeconds,
+                activityEvents, tributeCents, sessions, serviceActive, sync, sessionIdentity, additionOrder,
+                profile, featureConsent, consentHardcoreOverride, contractDom, contractDomId, contractDomContact,
+                lastContactAt, observed);
+    }
+
+    /** Verified foreground presence for this exact peer generation, never controller authority. */
     public static final class PeerContact {
         public final PersonId id;
         public final Connection state;

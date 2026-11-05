@@ -76,6 +76,10 @@ public final class RemoteFeature {
     private Application lifecycleApplication;
     private Application.ActivityLifecycleCallbacks lifecycleCallbacks;
     private RemoteConnectivityWake connectivityWake;
+    private final LocalAppPresence appPresence;
+    private volatile boolean presenceSyncPending;
+    private final Map<String,PresenceWake> presenceWakes=new HashMap<>();
+    private static final class PresenceWake { ScheduledFuture<?> task; }
     private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean librariesRetired;
     private final Object connectedServiceLock=new Object();
@@ -99,7 +103,9 @@ public final class RemoteFeature {
     RemoteFeature(Context context,RemoteStore store,RemoteSecrets secrets,PairingLifecycleClock.Source pairingClock,
             BackgroundScheduling backgroundScheduling) {
         this.backgroundScheduling=Objects.requireNonNull(backgroundScheduling);
-        this.context=context.getApplicationContext();this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
+        this.context=context.getApplicationContext();
+        appPresence=new LocalAppPresence(this.context,this::presenceChanged);
+        this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
         this.pairingClock=java.util.Objects.requireNonNull(pairingClock);
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
@@ -111,7 +117,7 @@ public final class RemoteFeature {
             PairingOperationLease lease=pairingDeadlineOwners.get(approved.direction);
             return lease!=null&&lease.matches(approved)?lease.stageApproval(approved,sampled):()->{};
         });
-        store.onRevoked((identity,generation)->{appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));scheduleConnectedSync(0);});
+        store.onRevoked((identity,generation)->{retirePresence(identity+":"+generation);appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));scheduleConnectedSync(0);});
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();requestConnectedServiceStart();scheduleConnectedSync(0);});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
@@ -133,6 +139,7 @@ public final class RemoteFeature {
         if(installed||stopped)return;installed=true;
         timer.execute(()->{try{appIcons.refresh();}catch(Exception unavailable){/* Reconstruct from a later verified sync. */}});
         lifecycleApplication=app;
+        appPresence.install(app);
         lifecycleCallbacks=new Application.ActivityLifecycleCallbacks() {
             private int started;
             @Override public void onActivityStarted(Activity activity){synchronized(RemoteFeature.this){if(stopped)return;if(++started==1){foreground=true;RemoteFeature.this.activity.dispatchNotifications();requestConnectedServiceStart();requestAutomaticSync();}}}
@@ -146,6 +153,40 @@ public final class RemoteFeature {
         synchronizeBackground();
         try { connectivityWake=new RemoteConnectivityWake(app,this::requestAutomaticSync); }
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
+    }
+    private void retirePresence(String key) {
+        synchronized(presenceWakes){PresenceWake old=presenceWakes.remove(key);if(old!=null&&old.task!=null)old.task.cancel(false);}
+        RemoteUi.presenceChanged();
+    }
+    private void receivedPresence(RemoteStore.Peer peer) {
+        PeerPresence.Observation observed=PeerPresence.read(store,peer);
+        synchronized(presenceWakes) {
+            PresenceWake old=presenceWakes.remove(key(peer));if(old!=null&&old.task!=null)old.task.cancel(false);
+            if(!stopped && observed.online) {
+                PresenceWake wake=new PresenceWake();presenceWakes.put(key(peer),wake);
+                try { wake.task=timer.schedule(()->{
+                    synchronized(presenceWakes){if(!presenceWakes.remove(key(peer),wake))return;}
+                    RemoteUi.presenceChanged();
+                },observed.expiresInMillis,TimeUnit.MILLISECONDS); }
+                catch(RejectedExecutionException closed){presenceWakes.remove(key(peer),wake);}
+            }
+        }
+        RemoteUi.presenceChanged();
+    }
+    private void presenceChanged() {
+        if(stopped)return;
+        // A final false observation is allowed on the existing bounded exchange path even after opt-out.
+        presenceSyncPending=true;
+        try { timer.execute(()->{if(stopped)return;invalidateAttempts();flushPresence();}); }
+        catch(RejectedExecutionException closed) { /* Retired endpoint. */ }
+    }
+    private void flushPresence() {
+        if(stopped)return;
+        if(!appPresence.foreground() && endpoint==null){presenceSyncPending=false;return;}
+        // Busy sessions send fresh presence at their checkpoints. Their completion also drains a
+        // transition that arrived just after the last checkpoint; no periodic background owner is created.
+        presenceSyncPending=!busy.isEmpty();
+        tick();
     }
     /** Coalesce lifecycle/network returns and preserve WorkManager's existing unique-work ownership. */
     void requestAutomaticSync() {
@@ -631,6 +672,7 @@ public final class RemoteFeature {
         if(revoked&&!revocations.tryAcquire()){deferAdmission(key,generation);busy.remove(key);return null;}
         AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner,generation),()->{
             if(revoked)revocations.release();busy.remove(key);scheduleConnectedSync(0);
+            if(presenceSyncPending)try{timer.execute(this::flushPresence);}catch(RejectedExecutionException closed){}
             for(Future<?> finished:pairingTasks.keySet())if(finished.isDone()){pairingTasks.remove(finished);pairingTaskDeadlines.remove(finished);}suspendIfIdle();
         });
         if(pairingOwner!=null){pairingTasks.put(task,pairingOwner);pairingTaskDeadlines.put(task,deadline);}
@@ -750,7 +792,9 @@ public final class RemoteFeature {
                 store.putMetadata(peer.identity,peer.generation,"connection_error","");
             }
         }catch(Exception unavailable){logSessionFailure("incoming",unavailable);}
-        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);synchronizeBackground();scheduleConnectedSync(0);suspendIfIdle();}
+        finally{untrack(connection);if(reservation!=null)busy.remove(reservation);synchronizeBackground();scheduleConnectedSync(0);
+            if(presenceSyncPending)try{timer.execute(this::flushPresence);}catch(RejectedExecutionException closed){}
+            suspendIfIdle();}
     }
     private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
         if (Thread.holdsLock(store) || Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)
@@ -767,6 +811,8 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
+            @Override public JSONObject presence() throws Exception { return appPresence.snapshot(); }
+            @Override public void presenceReceived(RemoteStore.Peer peer) { receivedPresence(peer); }
             @Override public int appIconsVersion() { return com.subhub.app.remote.icons.AppIconExchange.VERSION; }
             @Override public void appIcons(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
                 requireActive(peer);appIcons.exchange(connection,peer,deadline);
@@ -1066,6 +1112,8 @@ public final class RemoteFeature {
     }
     synchronized void shutdownForTest() throws Exception {
         stopped=true;
+        appPresence.close();
+        synchronized(presenceWakes){for(PresenceWake wake:presenceWakes.values())if(wake.task!=null)wake.task.cancel(false);presenceWakes.clear();}
         ConnectedServiceLease connected=connectedServiceLease;if(connected!=null)connected.close();
         if(connectivityWake!=null){connectivityWake.close();connectivityWake=null;}
         if(lifecycleApplication!=null&&lifecycleCallbacks!=null)lifecycleApplication.unregisterActivityLifecycleCallbacks(lifecycleCallbacks);

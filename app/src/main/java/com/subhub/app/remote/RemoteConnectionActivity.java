@@ -26,11 +26,12 @@ public final class RemoteConnectionActivity extends RemotePage {
     private void render(){
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
         long contact=feature.store.lastContactAt(peer);
-        boolean online=PeerPresence.online(feature.isConnected(peer),contact,System.currentTimeMillis());
+        PeerPresence.Observation presence=PeerPresence.read(feature.store,peer);
+        boolean online=presence.online;
         com.subhub.app.people.PersonSnapshot.Connection state=peer.state==RemoteStore.State.REVOKED?com.subhub.app.people.PersonSnapshot.Connection.REVOKED:
                 peer.state==RemoteStore.State.PENDING?com.subhub.app.people.PersonSnapshot.Connection.PENDING:
                 online?com.subhub.app.people.PersonSnapshot.Connection.CONNECTED:com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
-        String status=PersonUi.connection(this,state,contact);
+        String status=PersonUi.connection(this,state,presence.lastOnlineAt);
         if(codeDialog!=null&&(peer.state!=RemoteStore.State.ACTIVE||peer.localRole!=RemoteProtocol.Role.DOM||codeRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()))codeDialog.dismiss();
         StringBuilder observations=new StringBuilder();
         for(RemoteProtocol.Stream stream:observedStreams(peer))observations.append(':').append(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));

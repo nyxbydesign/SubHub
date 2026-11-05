@@ -99,15 +99,15 @@ public final class RemoteProfiles {
 
     private static ContractOwner owner(RemoteStore store, RemoteStore.Peer peer) {
         com.subhub.app.people.PersonId id = RemotePersonRepository.id(peer);
-        long contact = store.lastContactAt(peer);
+        PeerPresence.Observation presence = PeerPresence.read(store,peer);
         com.subhub.app.people.PersonSnapshot.Connection state = peer.state == RemoteStore.State.REVOKED
                 ? com.subhub.app.people.PersonSnapshot.Connection.REVOKED : peer.state == RemoteStore.State.PENDING
                 ? com.subhub.app.people.PersonSnapshot.Connection.PENDING
-                : PeerPresence.online(false, contact, System.currentTimeMillis())
+                : presence.online
                 ? com.subhub.app.people.PersonSnapshot.Connection.CONNECTED
                 : com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
         return new ContractOwner(read(store, peer), id,
-                new com.subhub.app.people.PersonSnapshot.PeerContact(id, state, contact));
+                new com.subhub.app.people.PersonSnapshot.PeerContact(id, state, presence.lastOnlineAt));
     }
 
     static ContractOwner contractOwner(android.content.Context context, RemoteStore store, RemoteContracts contracts) {
