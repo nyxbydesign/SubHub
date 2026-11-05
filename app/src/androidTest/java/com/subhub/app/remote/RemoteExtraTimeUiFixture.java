@@ -246,6 +246,13 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         assertFalse(ControllerPinManager.isDomWorkspaceUnlocked());
     }
 
+    public void authenticateSubController() {
+        assertSame(sub, selected);
+        assertTrue("Authenticate the Sub controller before protected relationship changes",
+                ControllerPinManager.verify(context, PIN));
+        assertTrue(ControllerPinManager.isSessionUnlocked());
+    }
+
     private void select(RemoteFeature value) throws Exception {
         assertNotNull(value);
         synchronized (RemoteFeature.class) {

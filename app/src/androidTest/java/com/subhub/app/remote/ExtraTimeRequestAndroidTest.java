@@ -59,7 +59,10 @@ public final class ExtraTimeRequestAndroidTest {
             fixture.switchSub();
             RemoteStore.Peer peer = RemoteFeature.get(context).store.peers(false).stream()
                     .filter(value->value.localRole==RemoteProtocol.Role.SUB).findFirst().orElseThrow();
+            assertThrows(SecurityException.class,()->RemoteFeature.get(context).store.revoke(peer.identity,peer.generation));
+            fixture.authenticateSubController();
             RemoteFeature.get(context).store.revoke(peer.identity,peer.generation);
+            fixture.switchSub();
             assertEquals(0,ExtraTimeRequests.allowance(context,fixture.firstPackage,System.currentTimeMillis()).bonusMillis);
         }
     }
