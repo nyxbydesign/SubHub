@@ -1,0 +1,727 @@
+"""Run the fixed extra-time native contracts on one fresh, owned Linux emulator.
+
+This producer is separate from canonical unit/lint CI and never signs or publishes a
+release. Each selected method runs once; a failure retains its log and the remaining
+inventory. A later explicit workflow dispatch may select only a named subset.
+"""
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tarfile
+import time
+import traceback
+
+
+ROOT = Path(__file__).resolve().parents[1]
+API = 35
+SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
+RUNNER = "com.subhub.app.test/com.subhub.app.SubHubTestRunner"
+GIB = 1024 ** 3
+MIB = 1024 ** 2
+# Android's first API>=24 userdata setup needs 6 GiB plus 20 percent free space.
+# Keep a separate runner reserve; never lower this first-boot requirement.
+FIRST_BOOT_FREE = math.ceil(6 * GIB * 1.2) + 3 * GIB
+RUNTIME_FREE = 3 * GIB
+MEMORY_AVAILABLE = (2560 + 2048) * MIB
+MAX_LOG = 16 * MIB
+MAX_ARCHIVE = 64 * MIB
+MAX_MEMBER = 16 * MIB
+NATIVE = {
+    "com.subhub.app.remote.ExtraTimeRequestAndroidTest": [
+        "submissionChargesOnceAndApprovalAppliesOnlyItsTemporaryAppCredit",
+        "declineDoesNotChargeAndChangedQuoteOrConfigurationCannotBeApplied",
+        "foreignDecisionAndReplayCannotManufactureTime",
+    ],
+    "com.subhub.app.remote.ExtraTimeTributeAndroidTest": [
+        "failedAcknowledgementRecoversOneDebitAndOneProjectionWithoutInventingPayment",
+        "configuredPriceCapsAndWalletOptoutApplyAtSubmissionNotDecision",
+    ],
+    "com.subhub.app.remote.ExtraTimeWireAndroidTest": [
+        "negotiatedPhaseRunsBeforeDrainForBothInitiatorsAndPhasePlans",
+        "legacyPeerSkipsPhaseInBothDirectionsAndClearsOldCapability",
+        "lostReceiptReconnectDoesNotRepeatCommittedApplication",
+        "failedDurabilityIsNotAcknowledgedOrMarkedApplied",
+        "revokedPairCannotApplyInFlightDecision",
+        "subDisabledAvailabilityExchangesNoPrivateRequestState",
+    ],
+    "com.subhub.app.appmode.ExtraTimeUiAndroidTest": [
+        "requestApproveAndDeclineRetainAllowanceAndInputDrafts",
+        "largeFontNarrowReviewKeepsControlsAndReceiptsReadable",
+    ],
+    "com.subhub.app.penance.TributeSettingsRestoreAndroidTest": [
+        "staleEnabledWidgetCannotReenableASavedOffRule",
+        "staleDisabledWidgetCannotDisableASavedOnRule",
+        "rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation",
+    ],
+}
+LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
+ALL_SELECTORS = [f"{cls}#{method}" for cls, methods in NATIVE.items() for method in methods]
+ALL_SELECTORS.remove(LARGE_FONT)
+ALL_SELECTORS.append(LARGE_FONT)
+UI_WITNESSES = {
+    "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
+        "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
+        "extra-time-sub-approved", "extra-time-sub-declined"],
+    LARGE_FONT: ["extra-time-sub-shared-only-large-font", "extra-time-dom-large-font"],
+    "com.subhub.app.penance.TributeSettingsRestoreAndroidTest#rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation": [
+        "tribute-rules-grouping", "tribute-spending-limits"],
+}
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(MIB), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def source_inventory():
+    """Accept runtime eligibility annotations between @Test and the method."""
+    inventory = {}
+    pattern = re.compile(
+        r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"
+        r"(?P<annotations>(?:\s*@[A-Za-z0-9_.]+(?:\([^)]*\))?)*)"
+        r"\s+public\s+void\s+(?P<method>[A-Za-z0-9_]+)\s*\(", re.MULTILINE)
+    for cls, expected in NATIVE.items():
+        path = ROOT / "app/src/androidTest/java" / (cls.replace(".", "/") + ".java")
+        text = path.read_text(encoding="utf-8")
+        package = re.search(r"^package\s+([\w.]+)\s*;", text, re.MULTILINE)
+        if not package or package[1] + "." + path.stem != cls:
+            raise ValueError(f"Wrong selected native class: {path}")
+        found = {}
+        for match in pattern.finditer(text):
+            name = match["method"]
+            if name in found:
+                raise ValueError(f"Duplicate native method: {cls}#{name}")
+            annotation = match["annotations"]
+            minimum = re.findall(r"(?:minSdkVersion\s*=\s*)(\d+)", annotation)
+            maximum = re.findall(r"(?:maxSdkVersion\s*=\s*)(\d+)", annotation)
+            if "RequiresApi" in annotation or any(int(v) > API for v in minimum) or any(int(v) < API for v in maximum):
+                raise ValueError(f"Selected native method is not eligible at API {API}: {cls}#{name}")
+            found[name] = {"annotations": annotation.strip(), "line": text.count("\n", 0, match.start()) + 1}
+        if set(found) != set(expected):
+            raise ValueError(f"Native inventory changed for {cls}: expected {expected}, found {list(found)}")
+        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found}
+    if len(ALL_SELECTORS) != 16 or len(set(ALL_SELECTORS)) != 16:
+        raise ValueError("The complete native inventory must contain exactly 16 methods")
+    return inventory
+
+
+def selectors(raw):
+    requested = [value.strip() for value in re.split(r"[,\n]", raw) if value.strip()]
+    if not requested:
+        return list(ALL_SELECTORS)
+    if len(set(requested)) != len(requested) or not set(requested).issubset(ALL_SELECTORS):
+        raise ValueError("Selectors must be a unique subset of the fixed native inventory")
+    return [value for value in ALL_SELECTORS if value in requested]
+
+
+def properties(path):
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            if key.strip() in values:
+                raise ValueError("Duplicate source version property")
+            values[key.strip()] = value.strip()
+    if not re.fullmatch(r"[1-9][0-9]*", values.get("VERSION_CODE", "")):
+        raise ValueError("Invalid source Android version code")
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", values.get("VERSION_NAME", "")):
+        raise ValueError("Invalid source version name")
+    return int(values["VERSION_CODE"]), values["VERSION_NAME"]
+
+
+def apk_metadata(kind, badging, manifest, signature, source_code, source_name):
+    """Read literal APK declarations, keeping an absent test version separate."""
+    package = re.search(r"package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'", badging)
+    certs = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})", signature)
+    if not package or len(certs) != 1:
+        raise ValueError(f"Incomplete actual APK metadata: {kind}")
+    code = int(package[2]) if package[2] else None
+    minimum = re.search(r"^sdkVersion:'(\d+)'", badging, re.MULTILINE)
+    if not minimum or int(minimum[1]) > API:
+        raise ValueError(f"APK is not eligible for selected Android API: {kind}")
+    item = {"package": package[1], "declaredVersionCode": code, "declaredVersionName": package[3] or None,
+            "minSdk": int(minimum[1]), "certificateSha256": certs[0]}
+    if kind == "target":
+        native = re.search(r"^native-code:\s*(.*)$", badging, re.MULTILINE)
+        if package[1] != "com.subhub.app" or code != source_code or package[3] != source_name:
+            raise ValueError("Target APK does not carry unexpanded source version metadata")
+        item["abis"] = re.findall(r"'([^']+)'", native[1]) if native else []
+        if item["abis"] != ["x86_64"]:
+            raise ValueError("Native APK does not contain exactly the selected x86_64 ABI")
+    elif kind == "test":
+        if package[1] != "com.subhub.app.test":
+            raise ValueError("Wrong instrumentation package")
+        section = re.search(r"(?ms)^\s*E: instrumentation\b.*?(?=^\s*E:|\Z)", manifest)
+        if not section or not re.search(r'android:name\([^)]*\)="com\.subhub\.app\.SubHubTestRunner"', section[0]) \
+                or not re.search(r'android:targetPackage\([^)]*\)="com\.subhub\.app"', section[0]):
+            raise ValueError("Actual test manifest does not declare the custom SubHub runner/target")
+        item["declaredRunner"] = RUNNER
+    else:
+        raise ValueError("Unexpected APK metadata kind")
+    return item
+
+
+def instrumentation_result(text, selector, exit_code):
+    """Require one exact started-and-passed test, never an ignored or assumed run."""
+    if exit_code != 0 or any(token in text for token in (
+            "FAILURES!!!", "INSTRUMENTATION_FAILED", "INSTRUMENTATION_ABORTED",
+            "AssumptionViolatedException", "INSTRUMENTATION_RESULT: shortMsg=")):
+        raise ValueError("Instrumentation failed, aborted, or assumed")
+    selected_class, selected_method = selector.split("#", 1)
+    bundle, statuses, final_codes = {}, [], []
+    for index, line in enumerate(text.splitlines()):
+        field = re.fullmatch(r"INSTRUMENTATION_STATUS: ([A-Za-z0-9_]+)=(.*)", line)
+        if field:
+            if field[1] in bundle:
+                raise ValueError("Ambiguous instrumentation status field")
+            bundle[field[1]] = field[2]
+        code = re.fullmatch(r"INSTRUMENTATION_STATUS_CODE: (-?\d+)", line)
+        if code:
+            statuses.append((int(code[1]), bundle, index)); bundle = {}
+        final = re.fullmatch(r"INSTRUMENTATION_CODE: (-?\d+)", line)
+        if final:
+            final_codes.append((int(final[1]), index))
+    if bundle or [item[0] for item in statuses] != [1, 0] or len(final_codes) != 1 \
+            or final_codes[0][0] != -1 or final_codes[0][1] <= statuses[-1][2]:
+        raise ValueError("Instrumentation did not report one start, exact success, and final RESULT_OK")
+    for _, fields, _ in statuses:
+        if fields.get("class") != selected_class or fields.get("test") != selected_method \
+                or fields.get("numtests") != "1" or fields.get("current") != "1" or "stack" in fields:
+            raise ValueError("Instrumentation selector or actual test count differs")
+    if not re.search(r"\bOK \(1 tests?\)", text):
+        raise ValueError("Instrumentation final summary is incomplete")
+    return {"class": selected_class, "test": selected_method, "numtests": 1,
+            "statusCodes": [1, 0], "instrumentationCode": -1}
+
+
+class Producer:
+    def __init__(self):
+        if sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true":
+            raise ValueError("Native production requires an ephemeral GitHub Linux runner")
+        self.run_id = os.environ["GITHUB_RUN_ID"]
+        self.attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+        if not self.run_id.isdigit() or not self.attempt.isdigit():
+            raise ValueError("Invalid hosted run identity")
+        self.run = f"extra-time-{self.run_id}-{self.attempt}"
+        self.out = ROOT / "build/reports/extra-time-native" / self.run
+        self.out.mkdir(parents=True, exist_ok=False)
+        temp = Path(os.environ["RUNNER_TEMP"]).resolve()
+        self.host = temp / self.run
+        if self.host.exists() or self.host.resolve().parent != temp:
+            raise ValueError("Owned emulator host directory is not fresh")
+        self.host.mkdir()
+        sdk_raw = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+        if not sdk_raw:
+            raise ValueError("Hosted Android SDK is unavailable")
+        self.sdk = Path(sdk_raw).resolve()
+        self.env = dict(os.environ, ANDROID_HOME=str(self.sdk), ANDROID_SDK_ROOT=str(self.sdk),
+                        ANDROID_USER_HOME=str(self.host / "android-user"),
+                        ANDROID_EMULATOR_HOME=str(self.host / "android-user"),
+                        ANDROID_AVD_HOME=str(self.host / "avd-index"))
+        self.serial = "emulator-5554"
+        self.avd = "subhub_extra_time_api35"
+        self.selected = selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""))
+        self.soft_deadline = time.monotonic() + 35 * 60
+        self.record = {"schema": 1, "workflowPath": ".github/workflows/extra-time-native.yml",
+                       "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
+                       "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
+                       "producerSoftTimeoutSeconds": 35 * 60,
+                       "selected": self.selected, "methods": {}, "remaining": list(self.selected), "notSelected": [
+                           value for value in ALL_SELECTORS if value not in self.selected], "hostedFreshGuest": True}
+        self.index = 0
+        self.emulator = None
+        self.emulator_log = None
+        self.original = None
+        self.closing = False
+        self.ready = False
+        self.save()
+
+    def save(self):
+        temporary = self.out / "receipt.tmp"
+        temporary.write_text(json.dumps(self.record, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(self.out / "receipt.json")
+
+    def resource_guard(self, first_boot=False):
+        if not self.closing and time.monotonic() >= self.soft_deadline:
+            raise TimeoutError("Producer soft deadline; reserve the remaining job time for restoration, shutdown and artifact upload")
+        probes = {"workspace": shutil.disk_usage(ROOT).free, "ownedGuest": shutil.disk_usage(self.host).free}
+        minimum = min(probes.values())
+        self.record["minimumFreeBytes"] = min(minimum, self.record.get("minimumFreeBytes", minimum))
+        required = FIRST_BOOT_FREE if first_boot else RUNTIME_FREE
+        if minimum < required:
+            raise RuntimeError(f"Disk admission refused: {minimum} free, {required} required; no cleanup or floor bypass")
+        if first_boot:
+            available = re.search(r"^MemAvailable:\s+(\d+)\s+kB$", Path("/proc/meminfo").read_text(), re.MULTILINE)
+            if not available or int(available[1]) * 1024 < MEMORY_AVAILABLE:
+                raise RuntimeError("Available RAM cannot reserve 2560 MiB emulator plus 2048 MiB host headroom")
+            self.record["admission"] = {"freeBytes": probes, "requiredFirstBootBytes": FIRST_BOOT_FREE,
+                                        "memoryAvailableBytes": int(available[1]) * 1024,
+                                        "requiredAvailableMemoryBytes": MEMORY_AVAILABLE,
+                                        "guestMemoryMiB": 2560, "guestCores": 2}
+
+    def command(self, args, timeout=30, check=True, label="command", input_bytes=None, quiet=False, limit=MAX_LOG):
+        self.index += 1
+        path = self.out / f"{self.index:03d}-{label}.log"
+        if not self.closing:
+            self.resource_guard()
+        started = time.monotonic()
+        with path.open("xb") as output:
+            child = subprocess.Popen([str(v) for v in args], cwd=ROOT, env=self.env,
+                                     stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+                                     stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                if input_bytes is not None:
+                    child.stdin.write(input_bytes)
+                    child.stdin.close()
+                while child.poll() is None:
+                    if not self.closing:
+                        self.resource_guard()
+                    if path.stat().st_size > limit:
+                        raise RuntimeError(f"Bounded command output exceeded {limit} bytes: {label}")
+                    if time.monotonic() - started > timeout:
+                        raise TimeoutError(f"Command deadline: {label}")
+                    time.sleep(0.25)
+            except BaseException:
+                os.killpg(child.pid, signal.SIGTERM)
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait(timeout=10)
+                raise
+        if path.stat().st_size > limit:
+            raise RuntimeError(f"Bounded command output exceeded {limit} bytes: {label}")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if check and child.returncode:
+            raise RuntimeError(f"Command {label} exited {child.returncode}; see {path.name}")
+        if quiet and child.returncode == 0:
+            path.unlink()  # Task-owned successful polling output has no remaining diagnostic use.
+        return text, child.returncode
+
+    def git(self, *args):
+        return self.command(["git", *args], label="git")[0].strip()
+
+    def adb(self, *args, **kwargs):
+        return self.command([self.sdk / "platform-tools/adb", "-s", self.serial, *args], **kwargs)[0]
+
+    def shell(self, *args, **kwargs):
+        return self.adb("shell", *args, **kwargs)
+
+    def source(self):
+        expected = os.environ["EXPECTED_HEAD"]
+        if not re.fullmatch(r"[a-f0-9]{40}", expected):
+            raise ValueError("Invalid immutable source head")
+        if self.git("rev-parse", "HEAD") != expected or self.git("status", "--porcelain"):
+            raise ValueError("Native producer must build the clean exact selected source head")
+        code, name = properties(ROOT / "version.properties")
+        self.record.update(sourceCommit=expected, sourceTree=self.git("rev-parse", "HEAD^{tree}"),
+                           appTree=self.git("rev-parse", "HEAD:app"), sourceVersionCode=code, sourceVersionName=name,
+                           inventory=source_inventory())
+        self.save()
+
+    def discover(self, name):
+        candidates = list((self.sdk / "cmdline-tools").glob(f"*/bin/{name}"))
+        candidates.sort(key=lambda value: (value.parent.parent.name == "latest", value.parent.parent.name), reverse=True)
+        for path in candidates:
+            if path.is_file() and os.access(path, os.X_OK):
+                return path
+        raise RuntimeError(f"Installed Android command-line tool unavailable: {name}")
+
+    def prepare_sdk(self):
+        self.resource_guard(first_boot=True)
+        if not Path("/dev/kvm").is_char_device():
+            raise RuntimeError("The ephemeral runner has no KVM device")
+        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+            self.command(["sudo", "setfacl", "-m", f"u:{os.getuid()}:rw", "/dev/kvm"], label="owned-runner-kvm-access")
+        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+            raise RuntimeError("KVM device access unavailable; software-emulation fallback is not permitted")
+        sdkmanager = self.discover("sdkmanager")
+        self.record["sdkmanager"] = str(sdkmanager)
+        self.command([sdkmanager, "--version"], label="sdkmanager-version")
+        self.command([sdkmanager, "--licenses"], timeout=120, label="sdk-licenses", input_bytes=b"y\n" * 100)
+        self.command([sdkmanager, "--install", "platform-tools", "emulator", "platforms;android-35",
+                      "build-tools;35.0.0", SYSTEM_IMAGE], timeout=900, label="sdk-install")
+        self.command([sdkmanager, "--list_installed"], timeout=60, label="sdk-installed")
+        self.avdmanager = self.discover("avdmanager")
+        tools = [path for path in (self.sdk / "build-tools").iterdir()
+                 if re.fullmatch(r"\d+(?:\.\d+)+", path.name)
+                 and all((path / tool).is_file() for tool in ("aapt", "apksigner"))]
+        if not tools:
+            raise RuntimeError("No installed build-tools contain both aapt and apksigner")
+        self.tools = max(tools, key=lambda path: tuple(map(int, path.name.split("."))))
+        self.record["buildTools"] = self.tools.name
+        for relative in ("emulator/source.properties", "system-images/android-35/google_apis/x86_64/source.properties"):
+            path = self.sdk / relative
+            if not path.is_file():
+                raise RuntimeError(f"Missing installed SDK package metadata: {relative}")
+            self.record.setdefault("sdkPackages", {})[relative] = path.read_text(encoding="utf-8")
+        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+            raise RuntimeError("KVM device access unavailable; software-emulation fallback is not permitted")
+        self.command([self.sdk / "emulator/emulator", "-accel-check"], label="kvm-check")
+        self.command([self.sdk / "emulator/emulator", "-version"], label="emulator-version")
+        self.save()
+
+    def build(self):
+        self.record["state"] = "paired_build"; self.save()
+        self.resource_guard(first_boot=True)
+        self.command(["bash", "./gradlew", "--no-daemon", "--no-parallel", "--max-workers=2",
+                      "-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m",
+                      "-PimmediateQualityExperiment=false", "-PreplacementLabCandidate=false",
+                      "assembleDebug", "assembleDebugAndroidTest"], timeout=1500, label="paired-build")
+        config = ROOT / "app/build/generated/source/buildConfig/debug/com/subhub/app/BuildConfig.java"
+        text = config.read_text(encoding="utf-8")
+        for field in ("IMMEDIATE_QUALITY_EXPERIMENT", "REPLACEMENT_LAB_CANDIDATE"):
+            if len(re.findall(r"boolean\s+" + field + r"\s*=\s*false\s*;", text)) != 1:
+                raise ValueError("Native candidate must retain the default experimental profile")
+        if self.git("rev-parse", "HEAD") != self.record["sourceCommit"] or self.git("status", "--porcelain"):
+            raise ValueError("Tracked or untracked source changed during paired build")
+        self.record["build"] = {"pairedInvocation": True, "sourceUnchanged": True,
+                                "buildConfigSha256": digest(config), "unitOrFullLintRepeated": False}
+        self.record["apks"] = {}
+        for kind, relative in {"target": "app/build/outputs/apk/debug/app-x86_64-debug.apk",
+                               "test": "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"}.items():
+            path = ROOT / relative
+            badging = self.command([self.tools / "aapt", "dump", "badging", path], label=f"{kind}-badging")[0]
+            manifest = self.command([self.tools / "aapt", "dump", "xmltree", path, "AndroidManifest.xml"], label=f"{kind}-manifest")[0]
+            signature = self.command([self.tools / "apksigner", "verify", "--print-certs", path], label=f"{kind}-signature")[0]
+            item = apk_metadata(kind, badging, manifest, signature, self.record["sourceVersionCode"], self.record["sourceVersionName"])
+            item.update(path=relative, bytes=path.stat().st_size, sha256=digest(path))
+            self.record["apks"][kind] = item
+        if len({value["certificateSha256"] for value in self.record["apks"].values()}) != 1:
+            raise ValueError("Paired APK signatures differ")
+        self.save()
+
+    def boot(self):
+        self.resource_guard(first_boot=True)
+        devices = self.command([self.sdk / "platform-tools/adb", "devices"], label="initial-devices")[0]
+        if any(re.fullmatch(r"\S+\s+(?:device|offline|unauthorized)", line) for line in devices.splitlines()):
+            raise RuntimeError("Hosted native runner is not isolated from existing Android devices")
+        for port in (5554, 5555):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", port))
+        profiles = self.command([self.avdmanager, "list", "device", "-c"], label="device-profiles")[0].splitlines()
+        device = next((candidate for candidate in ("pixel_7", "pixel_6", "pixel_2") if candidate in profiles), None)
+        if not device:
+            raise RuntimeError("No selected phone hardware profile is installed")
+        avd_path = self.host / "avd"
+        self.command([self.avdmanager, "create", "avd", "--name", self.avd, "--package", SYSTEM_IMAGE,
+                      "--path", avd_path, "--device", device], timeout=120, label="create-owned-avd", input_bytes=b"no\n")
+        if (avd_path / "userdata-qemu.img").exists():
+            raise RuntimeError("The new AVD unexpectedly contains initialized userdata")
+        config_path = avd_path / "config.ini"
+        self.record["avd"] = {"name": self.avd, "hardwareProfile": device, "configSha256": digest(config_path),
+                              "api": API, "abi": "x86_64", "systemImage": SYSTEM_IMAGE}
+        self.resource_guard(first_boot=True)
+        gpu_help = self.command([self.sdk / "emulator/emulator", "-help-gpu"], label="gpu-modes")[0]
+        gpu = "swiftshader" if re.search(r"\bswiftshader\b", gpu_help) else "swiftshader_indirect"
+        if gpu not in gpu_help:
+            raise RuntimeError("The installed emulator has no selected software graphics backend")
+        self.emulator_log = (self.out / "emulator.log").open("xb")
+        self.emulator = subprocess.Popen([str(self.sdk / "emulator/emulator"), "-avd", self.avd, "-port", "5554",
+                                         "-datadir", str(avd_path), "-no-window", "-no-snapshot", "-no-audio",
+                                         "-no-boot-anim", "-gpu", gpu, "-accel", "on", "-memory", "2560", "-cores", "2",
+                                         "-camera-back", "none", "-camera-front", "none", "-timezone", "UTC"],
+                                        env=self.env, stdout=self.emulator_log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, start_new_session=True)
+        self.record.update(state="booting", emulatorPid=self.emulator.pid, graphicsBackend=gpu); self.save()
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            self.resource_guard()
+            if self.emulator.poll() is not None:
+                raise RuntimeError("The owned emulator exited during first boot")
+            if (self.out / "emulator.log").stat().st_size > MAX_LOG:
+                raise RuntimeError("Emulator diagnostic log exceeded its bound")
+            try:
+                value = self.shell("getprop", "sys.boot_completed", timeout=10, check=False, label="boot-probe", quiet=True)
+            except TimeoutError:
+                self.record["bootProbeTimeouts"] = self.record.get("bootProbeTimeouts", 0) + 1
+                continue
+            if value.strip() == "1":
+                break
+            time.sleep(1)
+        else:
+            raise TimeoutError("Owned first-boot deadline")
+        if self.avd not in self.adb("emu", "avd", "name", label="owned-avd"):
+            raise ValueError("ADB selected a different AVD")
+        hardware = self.shell("getprop", "ro.hardware", label="hardware").strip()
+        if hardware not in ("ranchu", "goldfish") or self.shell("getprop", "ro.build.version.sdk", label="api").strip() != str(API):
+            raise ValueError("Actual guest is not the selected API35 emulator")
+        if self.shell("getprop", "ro.product.cpu.abi", label="guest-abi").strip() != "x86_64":
+            raise ValueError("Actual guest ABI differs")
+        self.ready = True
+        self.record["bootIdentityVerified"] = True; self.save()
+
+    def install(self):
+        for value in self.record["apks"].values():
+            package = value["package"]
+            if self.shell("pm", "list", "packages", package, label="fresh-package").strip():
+                raise ValueError("Selected package exists before first install; no replacement or wipe is permitted")
+        for kind, value in self.record["apks"].items():
+            if digest(ROOT / value["path"]) != value["sha256"]:
+                raise ValueError("APK bytes changed before installation")
+            if "Success" not in self.adb("install", str(ROOT / value["path"]), timeout=120, label=f"install-{kind}"):
+                raise ValueError("APK installation did not acknowledge success")
+        declared = self.shell("pm", "list", "instrumentation", label="declared-runner")
+        if f"instrumentation:{RUNNER} (target=com.subhub.app)" not in declared:
+            raise ValueError("Installed instrumentation does not declare the required custom runner")
+        installed = {}
+        for kind, value in self.record["apks"].items():
+            raw = self.shell("pm", "path", value["package"], label=f"{kind}-installed-path").strip()
+            if not re.fullmatch(r"package:/data/app/[A-Za-z0-9_./=+~-]+/base\.apk", raw):
+                raise ValueError("Unexpected installed APK path or split set")
+            path = raw[len("package:"):]
+            remote = self.shell("sha256sum", path, label=f"{kind}-installed-hash").strip()
+            if not re.fullmatch(r"[a-f0-9]{64}\s+" + re.escape(path), remote) or remote.split()[0] != value["sha256"]:
+                raise ValueError("Actual installed APK digest differs")
+            info = self.shell("dumpsys", "package", value["package"], label=f"{kind}-installed-package")
+            codes = re.findall(r"\bversionCode=(\d+)\b", info)
+            if not codes or len(set(codes)) != 1:
+                raise ValueError("Installed package version is ambiguous")
+            code = int(codes[0])
+            if value["declaredVersionCode"] is not None and code != value["declaredVersionCode"]:
+                raise ValueError("Installed package version differs from its declared version")
+            installed[kind] = {"sha256": remote.split()[0], "actualVersionCode": code,
+                               "declaredVersionCode": value["declaredVersionCode"],
+                               "versionComparison": "matches declaration" if value["declaredVersionCode"] is not None
+                               else "manifest declaration absent; actual platform default recorded separately"}
+        self.record["installed"] = installed
+        self.original = self.external_state()
+        if self.original["a11Enabled"] not in ("0", "null") or self.original["a11Services"] not in ("", "null"):
+            raise RuntimeError("Fresh owned guest unexpectedly has accessibility enabled")
+        if self.original["postNotifications"]["granted"]:
+            raise RuntimeError("Fresh target unexpectedly has notification access")
+        self.record["originalExternalState"] = self.original; self.save()
+
+    def external_state(self):
+        info = self.shell("dumpsys", "package", "com.subhub.app", label="permission-state")
+        matches = re.findall(r"android\.permission\.POST_NOTIFICATIONS: granted=(true|false), flags=\[([^]]*)\]", info)
+        if len(matches) != 1:
+            raise ValueError("Notification permission state is not uniquely observable")
+        values = {"a11Services": self.shell("settings", "get", "secure", "enabled_accessibility_services", label="a11-services").strip(),
+                  "a11Enabled": self.shell("settings", "get", "secure", "accessibility_enabled", label="a11-enabled").strip(),
+                  "fontScale": self.shell("settings", "get", "system", "font_scale", label="font-scale").strip(),
+                  "postNotifications": {"granted": matches[0][0] == "true", "flags": sorted(v.strip() for v in matches[0][1].split("|") if v.strip())}}
+        for key in ("a11Services", "a11Enabled", "fontScale"):
+            if not re.fullmatch(r"[A-Za-z0-9_./:+-]*", values[key]):
+                raise ValueError("External state token cannot be restored safely")
+        return values
+
+    def settings(self, namespace, key, value):
+        if value == "null":
+            self.shell("settings", "delete", namespace, key, label="restore-setting")
+        elif value == "":
+            # ADB shell interprets this fixed empty-string token; preserve an existing empty row.
+            self.shell("settings", "put", namespace, key, "''", label="restore-empty-setting")
+        else:
+            self.shell("settings", "put", namespace, key, value, label="set-setting")
+
+    def method(self, selector, index):
+        started = time.monotonic()
+        self.record["methods"][selector] = {"state": "running", "index": index}
+        self.record["remaining"].remove(selector)
+        self.save()
+        try:
+            text, code = self.command([self.sdk / "platform-tools/adb", "-s", self.serial, "shell", "am", "instrument", "-w", "-r",
+                                       "-e", "class", selector, "-e", "extra_time_ui_fixture", "true", "-e", "evidence_run", self.run,
+                                       RUNNER], timeout=180, check=False, label=f"method-{index:02d}")
+            actual = instrumentation_result(text, selector, code)
+            self.record["methods"][selector].update(state="passed", exitCode=code, actualInstrumentation=actual,
+                                                    seconds=round(time.monotonic() - started, 2))
+        except BaseException as failure:
+            self.record["methods"][selector].update(state="failed", failure=type(failure).__name__ + ": " + str(failure),
+                                                    seconds=round(time.monotonic() - started, 2))
+            raise
+        finally:
+            self.save()
+            print(json.dumps({"method": selector, "state": self.record["methods"][selector]["state"]}), flush=True)
+
+    def run_tests(self):
+        self.record["state"] = "selected_native_running"; self.save()
+        self.settings("system", "font_scale", "1.0")
+        for index, selector in enumerate(self.selected, 1):
+            if selector == LARGE_FONT:
+                self.settings("system", "font_scale", "1.5")
+            self.method(selector, index)
+        self.record["state"] = "selected_native_passed"; self.save()
+
+    def binary(self, args, path, limit):
+        error = path.with_suffix(path.suffix + ".stderr.log")
+        with path.open("xb") as output, error.open("xb") as errors:
+            child = subprocess.Popen([str(v) for v in args], cwd=ROOT, env=self.env,
+                                     stdout=output, stderr=errors, stdin=subprocess.DEVNULL, start_new_session=True)
+            deadline = time.monotonic() + 45
+            try:
+                while child.poll() is None:
+                    if time.monotonic() > deadline or path.stat().st_size > limit or error.stat().st_size > MIB:
+                        raise RuntimeError("Synthetic binary export deadline or size bound")
+                    time.sleep(0.1)
+            except BaseException:
+                os.killpg(child.pid, signal.SIGTERM)
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL); child.wait(timeout=10)
+                raise
+        if child.returncode or path.stat().st_size > limit:
+            raise RuntimeError(f"Synthetic binary export failed: {path.name}")
+
+    def export(self):
+        expected = [name for selector in self.selected for name in UI_WITNESSES.get(selector, [])]
+        self.record["expectedUiWitnesses"] = expected
+        self.adb("logcat", "-d", "-t", "4000", timeout=30, check=False, label="guest-logcat")
+        if self.record["state"] != "selected_native_passed":
+            self.binary([self.sdk / "platform-tools/adb", "-s", self.serial, "exec-out", "screencap", "-p"],
+                        self.out / "failure-screen.png", MAX_MEMBER)
+            if not (self.out / "failure-screen.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("Failure screenshot is not actual PNG bytes")
+        # Directory absence is expected when a pre-UI contract failed or a subset excludes UI.
+        _, status = self.command([self.sdk / "platform-tools/adb", "-s", self.serial, "shell", "run-as",
+                                       "com.subhub.app", "test", "-d", f"files/ui-v3/{self.run}"],
+                                      check=False, label="ui-evidence-admission")
+        if status:
+            self.record["uiEvidence"] = "No run-specific UI directory was produced"
+            if expected:
+                raise ValueError("Selected UI methods produced no required screenshot/composition directory")
+            return
+        archive = self.out / "synthetic-ui.tar"
+        self.binary([self.sdk / "platform-tools/adb", "-s", self.serial, "exec-out", "run-as", "com.subhub.app",
+                     "tar", "-cf", "-", "-C", "files/ui-v3", self.run], archive, MAX_ARCHIVE)
+        extracted = self.out / "synthetic-ui"
+        extracted.mkdir(exist_ok=False)
+        exported = []
+        with tarfile.open(archive) as data:
+            members = data.getmembers()
+            if len(members) > 128:
+                raise ValueError("Too many synthetic UI evidence entries")
+            total = 0
+            for member in members:
+                name = PurePosixPath(member.name)
+                if "\\" in member.name or name.is_absolute() or ".." in name.parts or not name.parts or name.parts[0] != self.run \
+                        or any(not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in name.parts) \
+                        or not (member.isdir() or member.isfile()):
+                    raise ValueError("Untrusted or non-regular synthetic evidence archive entry")
+                if member.isdir():
+                    continue
+                total += member.size
+                if member.size > MAX_MEMBER or total > MAX_ARCHIVE or name.suffix not in (".png", ".json"):
+                    raise ValueError("Synthetic UI evidence type or size exceeded its allowlist")
+                path = extracted.joinpath(*name.parts)
+                if not path.resolve().is_relative_to(extracted.resolve()):
+                    raise ValueError("Synthetic evidence escaped its owned root")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with data.extractfile(member) as source, path.open("xb") as target:
+                    shutil.copyfileobj(source, target, MIB)
+                if path.stat().st_size != member.size:
+                    raise ValueError("Synthetic evidence extraction was incomplete")
+                if name.suffix == ".json":
+                    json.loads(path.read_text(encoding="utf-8"))
+                elif not path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("Synthetic screenshot is not actual PNG bytes")
+                exported.append({"path": path.relative_to(self.out).as_posix(), "bytes": member.size, "sha256": digest(path)})
+        self.record["uiEvidence"] = exported
+        self.record["uiArchiveSha256"] = digest(archive)
+        missing = []
+        for name in expected:
+            screenshot = extracted / self.run / (name + ".png")
+            witness = extracted / self.run / (name + ".composition.json")
+            if not screenshot.is_file() or not witness.is_file():
+                missing.append(name)
+            elif json.loads(witness.read_text(encoding="utf-8")).get("composed") is not True:
+                missing.append(name + " (not composed)")
+        self.record["missingUiWitnesses"] = missing
+        if missing:
+            raise ValueError("Missing required composed native screenshots: " + ", ".join(missing))
+
+    def restore(self):
+        if self.original is None:
+            return
+        self.settings("system", "font_scale", self.original["fontScale"])
+        self.settings("secure", "enabled_accessibility_services", self.original["a11Services"])
+        self.settings("secure", "accessibility_enabled", self.original["a11Enabled"])
+        current = self.external_state()
+        previous = self.original["postNotifications"]
+        if current["postNotifications"] != previous:
+            permission = "android.permission.POST_NOTIFICATIONS"
+            self.shell("pm", "grant" if previous["granted"] else "revoke", "com.subhub.app", permission, label="restore-notification-grant")
+            self.shell("pm", "clear-permission-flags", "com.subhub.app", permission, "user-set", "user-fixed", label="restore-notification-flags")
+            for stored, flag in (("USER_SET", "user-set"), ("USER_FIXED", "user-fixed")):
+                if stored in previous["flags"]:
+                    self.shell("pm", "set-permission-flags", "com.subhub.app", permission, flag, label="restore-notification-flag")
+        self.record["finalExternalState"] = self.external_state()
+        if self.record["finalExternalState"] != self.original:
+            raise RuntimeError("Exact font/accessibility/notification state was not restored")
+
+    def finish(self):
+        self.closing = True
+        failures = []
+        if self.emulator is not None:
+            if self.ready:
+                for name, action in (("evidenceExport", self.export), ("externalStateRestore", self.restore)):
+                    try:
+                        action()
+                    except BaseException as failure:
+                        failures.append({"stage": name, "failure": type(failure).__name__ + ": " + str(failure)})
+            try:
+                self.record["shutdownAcknowledgement"] = self.adb("emu", "kill", timeout=15, check=False, label="owned-emulator-stop").strip()
+                self.emulator.wait(timeout=30)
+                self.record["emulatorStopped"] = True
+            except BaseException as failure:
+                failures.append({"stage": "ownedEmulatorShutdown", "failure": type(failure).__name__ + ": " + str(failure)})
+                # Exact owned process group only; retain the graceful refusal and all diagnostics.
+                if self.emulator.poll() is None:
+                    os.killpg(self.emulator.pid, signal.SIGTERM)
+                    try:
+                        self.emulator.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(self.emulator.pid, signal.SIGKILL); self.emulator.wait(timeout=10)
+                self.record["emulatorStoppedAfterFallback"] = self.emulator.poll() is not None
+            if self.emulator_log is not None:
+                self.emulator_log.close()
+        self.record["cleanupFailures"] = failures
+        self.record["finalFreeBytes"] = shutil.disk_usage(ROOT).free
+        self.record["passed"] = [name for name, result in self.record["methods"].items() if result["state"] == "passed"]
+        self.record["notPassed"] = [name for name in self.selected if name not in self.record["passed"]]
+        self.save()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-inventory", action="store_true", help="Parse the fixed tracked selectors without a build or emulator")
+    args = parser.parse_args()
+    if args.check_inventory:
+        print(json.dumps({"selectors": ALL_SELECTORS, "inventory": source_inventory()}, indent=2))
+        return
+    producer = Producer()
+    try:
+        producer.source()
+        producer.prepare_sdk()
+        producer.build()
+        producer.boot()
+        producer.install()
+        producer.run_tests()
+    except BaseException as failure:
+        producer.record.update(state="failed_preserved", failure=type(failure).__name__ + ": " + str(failure))
+        (producer.out / "failure.txt").write_text(traceback.format_exc(), encoding="utf-8")
+    finally:
+        producer.finish()
+    if producer.record["state"] != "selected_native_passed" or producer.record["cleanupFailures"]:
+        raise SystemExit(1)
+    print(json.dumps({"state": producer.record["state"], "passedMethods": len(producer.record["passed"]),
+                      "sourceCommit": producer.record["sourceCommit"], "receipt": str(producer.out / "receipt.json")}))
+
+
+if __name__ == "__main__":
+    main()
