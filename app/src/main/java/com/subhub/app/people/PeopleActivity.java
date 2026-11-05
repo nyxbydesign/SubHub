@@ -21,6 +21,8 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private LinearLayout activityCard;
     private com.subhub.app.relationships.RelationshipPanel relationships;
     private boolean snapshotUnavailable;
+    private AutoCloseable presenceObserver;
+    private long presenceEpoch;
     private final java.util.Map<PersonId, RenderedPerson> renderedPeople = new java.util.LinkedHashMap<>();
     private final android.os.Handler authority = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable checkAuthority = new Runnable() {
@@ -234,7 +236,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         SubHubNavigation.bind(this, findViewById(android.R.id.content), SubHubNavigation.Screen.PEOPLE);
         authority.removeCallbacks(checkAuthority);
         authority.postDelayed(checkAuthority, 500);
-        if (mayManagePeople()) refresh();
+        if (mayManagePeople()) { refresh(); observePresence(); }
         else {
             hideProtectedContent();
             com.subhub.app.security.ControllerEditMode.enterSubMode(this);
@@ -245,13 +247,42 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         rosterScroll.setVisibility(android.view.View.INVISIBLE);
     }
 
+    private void observePresence() {
+        stopPresenceObservation();
+        long request = ++presenceEpoch;
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider keyholder = People.keyholder();
+        com.subhub.app.security.DeviceRolePreferences.Mode mode = com.subhub.app.security.DeviceRolePreferences.get(this);
+        presenceObserver = com.subhub.app.remote.RemoteUi.observePresence(() -> {
+            if (request != presenceEpoch || !resumed || isFinishing() || isDestroyed()
+                    || !getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    || !body.isAttachedToWindow() || !mayManagePeople()
+                    || provider != com.subhub.app.relationships.RelationshipUi.provider() || keyholder != People.keyholder()
+                    || mode != com.subhub.app.security.DeviceRolePreferences.get(this) || snapshotUnavailable) return;
+            // Roster reads preserve the panel's pending operations and approval epoch.
+            refresh();
+        });
+    }
+
+    private void stopPresenceObservation() {
+        ++presenceEpoch;
+        AutoCloseable old = presenceObserver; presenceObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
+    }
+
     @Override protected void onPause() {
         rosterPosition = rosterScroll.getScrollY();
         resumed = false;
+        stopPresenceObservation();
         authority.removeCallbacks(checkAuthority);
         data.cancel("people");
         hideProtectedContent();
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        stopPresenceObservation();
+        super.onDestroy();
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
