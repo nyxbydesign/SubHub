@@ -133,16 +133,21 @@ public final class PersonUi {
     }
 
     public static String connection(Context context, PersonSnapshot person) {
-        switch (person.connection) {
+        return connection(context, person.connection, person.lastContactAt);
+    }
+
+    /** Contact history belongs to an offline peer; a current connection needs only its status. */
+    public static String connection(Context context, PersonSnapshot.Connection state, long lastContactAt) {
+        switch (state) {
             case LOCAL: return context.getString(R.string.role_local_data);
             case PENDING: return context.getString(R.string.role_connection_pending);
             case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
             case OFFLINE:
-                if (person.lastContactAt <= 0 || person.lastContactAt > System.currentTimeMillis())
-                    return context.getString(R.string.role_offline_last_online_unknown);
+                if (lastContactAt <= 0 || lastContactAt > System.currentTimeMillis())
+                    return context.getString(R.string.role_connection_offline);
                 return context.getString(R.string.role_offline_last_online,
-                        ProfileViews.formatLastSeen(person.lastContactAt));
+                        ProfileViews.formatLastSeen(lastContactAt));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);
             default: return context.getString(R.string.role_connection_unpaired);

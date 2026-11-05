@@ -221,9 +221,9 @@ public final class SubsRosterPreviewAndroidTest {
             scenario.onActivity(a -> {
                 ViewGroup card = tagged(a, "person:" + id.value());
                 assertNull(card.findViewWithTag(prefix(id) + "_about"));
-                assertEquals(a.getString(R.string.peer_last_online, a.getString(R.string.remote_unknown)),
-                        ((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString());
-                assertDetailsBelowName(card, prefix(id)); assertNoFiller(card);
+                assertEquals("", ((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString());
+                assertEquals(View.GONE, card.findViewWithTag(prefix(id) + "_details").getVisibility());
+                assertNoFiller(card);
                 assertEquals(a.getString(R.string.role_connection_offline),
                         ((TextView) card.findViewWithTag(prefix(id) + "_connection")).getText().toString());
                 assertNotEquals(View.VISIBLE, ((ViewGroup) card.findViewWithTag(prefix(id) + "_avatar")).getChildAt(1).getVisibility());

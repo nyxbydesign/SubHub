@@ -58,7 +58,7 @@ public final class RemoteConnectionStatusAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
             await(()->row(page,RemoteProtocol.Stream.CONFIGURATION)!=null);
             page.onActivity(a->{
-                assertNotNull(find(a.body,a.getString(R.string.role_connection_offline)+" · "+a.getString(R.string.role_last_online,ProfileViews.formatLastSeen(contact))));
+                assertNotNull(find(a.body,a.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(contact))));
                 assertTrue(text(a.body.findViewWithTag("connection_stream_CONFIGURATION")).contains(java.text.DateFormat.getDateTimeInstance().format(new Date(contact))));
             });
             assertEquals(completed,store.peer(identity,generation).lastSyncedAt);
@@ -67,6 +67,32 @@ public final class RemoteConnectionStatusAndroidTest {
     }
     @Test public void subViewingDomShowsConfigurationOnlyAndUpdatesWithoutAButtonOrNewContact() throws Exception {check(RemoteProtocol.Role.SUB);}
     @Test public void domViewingSubShowsCurrentBaselineStatsAndRuntime() throws Exception {check(RemoteProtocol.Role.DOM);}
+    @Test public void activeConnectionShowsOnlyOnlineAndOfflineHistoryWithoutCompletingSync() throws Exception {
+        String identity=repeat('a'),generation=UUID.randomUUID().toString();
+        android.database.sqlite.SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();try{
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'SUB','ACTIVE')",new Object[]{identity,generation,"Synthetic Dom"});
+            FormalRelationshipStore.mapPeer(db,identity,generation,true);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        Field busy=RemoteFeature.class.getDeclaredField("busy");busy.setAccessible(true);((Set<String>)busy.get(feature)).add(identity+":"+generation);
+        RemoteStore.Peer peer=store.peer(identity,generation);
+        try(ActivityScenario<RemoteConnectionActivity> page=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
+            await(()->presence(page).equals(context.getString(R.string.role_connection_offline)));
+            long contact=System.currentTimeMillis();store.putMetadata(identity,generation,"last_contact",Long.toString(contact));
+            await(()->presence(page).equals(context.getString(R.string.role_connection_connected)));
+            page.onActivity(a->assertEquals(a.getString(R.string.role_connection_connected),
+                    ((TextView)a.body.findViewWithTag("connection_presence")).getText().toString()));
+            long past=contact-180_000;store.putMetadata(identity,generation,"last_contact",Long.toString(past));
+            await(()->presence(page).equals(context.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(past))));
+            assertEquals(0,store.peer(identity,generation).lastSyncedAt);
+            assertEquals(past,store.lastContactAt(peer));
+        }
+    }
+    private static String presence(ActivityScenario<RemoteConnectionActivity> page){
+        java.util.concurrent.atomic.AtomicReference<String> value=new java.util.concurrent.atomic.AtomicReference<>("");
+        page.onActivity(a->{TextView status=a.body.findViewWithTag("connection_presence");if(status!=null)value.set(status.getText().toString());});
+        return value.get();
+    }
     @SuppressWarnings("unchecked") private void check(RemoteProtocol.Role role) throws Exception {
         String identity=repeat('a'),generation=UUID.randomUUID().toString();
         android.database.sqlite.SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();try{
@@ -86,7 +112,7 @@ public final class RemoteConnectionStatusAndroidTest {
                 assertNull(find(a.body,identity));
                 String discriminator=ProfileViews.targetDiscriminator(a,RemotePersonRepository.id(peer),"");
                 assertEquals(1,count(a.body,discriminator));
-                String status=a.getString(R.string.role_connection_offline)+" · "+a.getString(R.string.role_last_online,ProfileViews.formatLastSeen(contact));
+                String status=a.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(contact));
                 assertNotNull(find(a.body,status));
                 assertEquals(role==RemoteProtocol.Role.DOM,a.body.findViewWithTag("connection_device_model")!=null);
                 assertNotNull(find(a.body,a.getString(R.string.remote_unpair)));

@@ -17,8 +17,8 @@ public final class ContractHeader {
                 ? ProfileData.empty(context.getString(R.string.header_subtitle_dom)) : person.contractDom;
         ProfilePreview preview = new ProfilePreview(context, profile, true, "contract_dom", expanded, onExpansion);
         PersonSnapshot.PeerContact contact = person.contractDomContact;
-        ProfileViews.inlineLastOnline(preview, "contract_dom", person.contractDomId,
-                contact == null ? 0 : contact.lastOnlineAt);
+        if (contact != null) ProfileViews.inlineLastOnline(preview, "contract_dom", person.contractDomId,
+                contact.state, contact.lastOnlineAt);
         View avatar = preview.findViewWithTag("contract_dom_avatar");
         avatar.setLayoutParams(new LinearLayout.LayoutParams(PersonUi.dp(context, 56), PersonUi.dp(context, 56)));
         ((TextView) preview.findViewWithTag("contract_dom_name")).setTextSize(20);
@@ -31,7 +31,7 @@ public final class ContractHeader {
                 ((TextView) child).setTextSize(14);
         }
         parent.addView(preview, new LinearLayout.LayoutParams(-1, -2));
-        if (person.contractDomId != null) {
+        if (person.contractDomId != null && !ProfileViews.remoteContactTarget(person.contractDomId)) {
             if (contact != null && contact.state == PersonSnapshot.Connection.PENDING)
                 PersonUi.text(parent, context.getString(R.string.role_connection_pending), false);
             else if (contact != null && contact.state == PersonSnapshot.Connection.REVOKED)

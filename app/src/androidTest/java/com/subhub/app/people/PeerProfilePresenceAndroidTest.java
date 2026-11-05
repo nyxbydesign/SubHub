@@ -54,7 +54,7 @@ public final class PeerProfilePresenceAndroidTest {
                     PersonSnapshot saved=snapshot(sub,PersonSnapshot.Connection.OFFLINE,old,PersonSnapshot.Freshness.STALE)
                             .withProfile(new ProfileData("Saved Sub","","","Fixture gender",29),Collections.emptyMap());
                     ProfileViews.person(column,saved,()->{});
-                    PersonUi.text(column,context.getString(R.string.role_last_online,ProfileViews.formatLastSeen(old)),false)
+                    PersonUi.text(column,PersonUi.connection(context,saved),false)
                             .setTag("profile_last_online:connection");
                     LinearLayout outgoing=PersonUi.column(context);outgoing.setTag("outgoing_sub_profile");column.addView(outgoing);
                     ProfileViews.identity(outgoing,saved);
@@ -63,12 +63,20 @@ public final class PeerProfilePresenceAndroidTest {
                             .withContractDom(new ProfileData("Saved Dom","","","Fixture gender",37,true),dom,
                                     new PersonSnapshot.PeerContact(dom,PersonSnapshot.Connection.OFFLINE,old));
                     ContractHeader.add(counterpart,local,false,ignored->{});
+                    PersonId onlineId=new PersonId(sub.value()+"_online");
+                    PersonSnapshot online=snapshot(onlineId,PersonSnapshot.Connection.CONNECTED,old,PersonSnapshot.Freshness.STALE);
+                    ProfileViews.person(column,online,()->{});
+                    LinearLayout onlineProfile=PersonUi.column(context);onlineProfile.setTag("online_sub_profile");column.addView(onlineProfile);
+                    ProfileViews.identity(onlineProfile,online);
+                    LinearLayout onlineDom=PersonUi.card(column);onlineDom.setTag("online_dom_profile");
+                    ContractHeader.add(onlineDom,local.withContractDom(local.contractDom,dom,
+                            new PersonSnapshot.PeerContact(dom,PersonSnapshot.Connection.CONNECTED,old)),false,ignored->{});
                     ProfileViews.person(column,snapshot(new PersonId(sub.value()+"_unknown"),PersonSnapshot.Connection.OFFLINE,0,PersonSnapshot.Freshness.UNKNOWN),()->{});
                     ProfileViews.person(column,snapshot(new PersonId(sub.value()+"_future"),PersonSnapshot.Connection.OFFLINE,
                             System.currentTimeMillis()+3_600_000,PersonSnapshot.Freshness.UNKNOWN),()->{});
-                    ProfileViews.lastOnline(column,new PersonId(dom.value()+"_unknown"),0);
-                    ProfileViews.lastOnline(column,new PersonId(dom.value()+"_future"),System.currentTimeMillis()+3_600_000);
-                    ProfileViews.lastOnline(column,PersonId.LOCAL,old);
+                    ProfileViews.lastOnline(column,new PersonId(dom.value()+"_unknown"),PersonSnapshot.Connection.OFFLINE,0);
+                    ProfileViews.lastOnline(column,new PersonId(dom.value()+"_future"),PersonSnapshot.Connection.OFFLINE,System.currentTimeMillis()+3_600_000);
+                    ProfileViews.lastOnline(column,PersonId.LOCAL,PersonSnapshot.Connection.LOCAL,old);
                     LinearLayout pending=PersonUi.card(column);pending.setTag("pending_dom_profile");
                     ContractHeader.add(pending,local.withContractDom(local.contractDom,dom,
                             new PersonSnapshot.PeerContact(dom,PersonSnapshot.Connection.PENDING,0)),false,ignored->{});
@@ -93,7 +101,7 @@ public final class PeerProfilePresenceAndroidTest {
                         ProfileViews.person(column,journalPerson,()->{});
                         LinearLayout journalProfile=PersonUi.column(context);journalProfile.setTag("journal_profile:"+alias);column.addView(journalProfile);
                         ProfileViews.identity(journalProfile,journalPerson);
-                        ProfileViews.lastOnline(column,journal,old);
+                        ProfileViews.lastOnline(column,journal,PersonSnapshot.Connection.OFFLINE,old);
                     }
                     addOwnMetadataFixtures(column);
                     column.getViewTreeObserver().registerFrameCommitCallback(frame::countDown);column.requestLayout();column.invalidate();
@@ -109,37 +117,44 @@ public final class PeerProfilePresenceAndroidTest {
                     retainTextBounds(column,new File(evidence,locale.getLanguage()+".json"));
                     String observed=lastOnline(context,old);
                     String label=locale.equals(Locale.GERMAN)?"Zuletzt gesehen":"Last seen";
-                    assertEquals(label+": 03.02.2001 23:07",observed);
-                    assertEquals(label+": 03.02.2001 23:07",
+                    assertEquals("Offline · "+label+" 03.02.2001 23:07",observed);
+                    assertEquals(observed,
                             ((TextView)column.findViewWithTag("profile_last_online:connection")).getText().toString());
                     assertEquals("Offline · "+label+" 03.02.2001 23:07",PersonUi.connection(context,
                             snapshot(sub,PersonSnapshot.Connection.OFFLINE,old,PersonSnapshot.Freshness.STALE)));
-                    String offlineUnknown="Offline · "+label+(locale.equals(Locale.GERMAN)?" unbekannt":" unknown");
-                    assertEquals(offlineUnknown,context.getString(R.string.role_offline_last_online_unknown));
+                    String offlineUnknown=context.getString(R.string.role_connection_offline);
                     for(long invalid:new long[]{0,-1,System.currentTimeMillis()+3_600_000})
                         assertEquals(offlineUnknown,PersonUi.connection(context,
                                 snapshot(sub,PersonSnapshot.Connection.OFFLINE,invalid,PersonSnapshot.Freshness.UNKNOWN)));
+                    PersonSnapshot.Connection[] states={PersonSnapshot.Connection.LOCAL,PersonSnapshot.Connection.UNPAIRED,
+                            PersonSnapshot.Connection.PENDING,PersonSnapshot.Connection.PAIRED,PersonSnapshot.Connection.CONNECTED,
+                            PersonSnapshot.Connection.REVOKED,PersonSnapshot.Connection.ERROR};
+                    int[] labels={R.string.role_local_data,R.string.role_connection_unpaired,R.string.role_connection_pending,
+                            R.string.role_connection_paired,R.string.role_connection_connected,R.string.role_connection_revoked,R.string.role_connection_error};
+                    for(int i=0;i<states.length;i++)assertEquals(context.getString(labels[i]),PersonUi.connection(context,states[i],old));
                     View outgoing=column.findViewWithTag("outgoing_sub_profile"),incoming=column.findViewWithTag("incoming_dom_profile");
                     ProfileData subProfile=new ProfileData("Saved Sub","","","Fixture gender",29);
                     ProfileData domProfile=new ProfileData("Saved Dom","","","Fixture gender",37,true);
-                    assertInline(column,"roster:"+sub.value(),sub,observed,subProfile);
-                    assertEquals(context.getString(R.string.role_connection_offline),
+                    assertMetadata(column,"roster:"+sub.value(),subProfile);
+                    assertEquals(observed,
                             ((TextView)column.findViewWithTag("roster:"+sub.value()+"_connection")).getText().toString());
-                    assertInline(outgoing,"person",sub,observed,subProfile);
+                    assertMetadata(outgoing,"person",subProfile);
+                    assertEquals(observed,((TextView)outgoing.findViewWithTag("person_connection:"+sub.value())).getText().toString());
                     assertInline(incoming,"contract_dom",dom,observed,domProfile);
                     assertNotNull(column.findViewWithTag("profile_cached_data:"+sub.value()));
-                    String unknown=context.getString(R.string.peer_last_online,context.getString(R.string.remote_unknown));
+                    String unknown=context.getString(R.string.role_connection_offline);
                     assertEquals(unknown,((TextView)column.findViewWithTag("profile_last_online:"+dom.value()+"_unknown")).getText().toString());
                     assertEquals(unknown,((TextView)column.findViewWithTag("profile_last_online:"+dom.value()+"_future")).getText().toString());
                     assertNull(column.findViewWithTag("profile_last_online:"+PersonId.LOCAL.value()));
                     for(String suffix:new String[]{"_unknown","_future"}) {
                         PersonId targetId=new PersonId(sub.value()+suffix);
-                        assertInline(column,"roster:"+targetId.value(),targetId,unknown,ProfileData.empty("Saved Sub"));
+                        assertEmptyDetails(column,"roster:"+targetId.value());
+                        assertEquals(unknown,((TextView)column.findViewWithTag("roster:"+targetId.value()+"_connection")).getText().toString());
                     }
                     View pending=column.findViewWithTag("pending_dom_profile"),revoked=column.findViewWithTag("revoked_dom_profile");
-                    assertInline(pending,"contract_dom",dom,unknown,domProfile);
-                    assertInline(revoked,"contract_dom",dom,observed,domProfile);
-                    assertInline(column.findViewWithTag("replacement_dom_profile"),"contract_dom",new PersonId(dom.value()+"_replacement"),unknown,domProfile);
+                    assertInline(pending,"contract_dom",dom,context.getString(R.string.role_connection_pending),domProfile);
+                    assertInline(revoked,"contract_dom",dom,context.getString(R.string.role_connection_revoked),domProfile);
+                    assertMetadata(column.findViewWithTag("replacement_dom_profile"),"contract_dom",domProfile);
                     assertInline(column.findViewWithTag("future_dom_profile"),"contract_dom",dom,unknown,domProfile);
                     assertEmptyDetails(column.findViewWithTag("local_sub_profile"),"person");
                     assertEmptyDetails(column.findViewWithTag("local_dom_profile"),"contract_dom");
@@ -154,6 +169,16 @@ public final class PeerProfilePresenceAndroidTest {
                     assertTrue(text(revoked).contains(context.getString(R.string.role_connection_revoked)));
                     assertFalse(text(pending).contains(context.getString(R.string.role_connection_connected)));
                     assertFalse(text(revoked).contains(context.getString(R.string.role_connection_connected)));
+                    PersonId onlineId=new PersonId(sub.value()+"_online");
+                    String online=context.getString(R.string.role_connection_connected);
+                    assertEmptyDetails(column,"roster:"+onlineId.value());
+                    assertEquals(online,((TextView)column.findViewWithTag("roster:"+onlineId.value()+"_connection")).getText().toString());
+                    View onlineProfile=column.findViewWithTag("online_sub_profile");
+                    assertEmptyDetails(onlineProfile,"person");
+                    assertEquals(online,((TextView)onlineProfile.findViewWithTag("person_connection:"+onlineId.value())).getText().toString());
+                    assertInline(column.findViewWithTag("online_dom_profile"),"contract_dom",dom,online,domProfile);
+                    assertFalse(text(onlineProfile).contains(label));
+                    assertFalse(text(column.findViewWithTag("online_dom_profile")).contains(label));
                     assertTextFits(column);
                 });
             }
@@ -227,7 +252,7 @@ public final class PeerProfilePresenceAndroidTest {
         int currentYear = java.util.Calendar.getInstance(java.util.TimeZone.getDefault(), Locale.ROOT)
                 .get(java.util.Calendar.YEAR);
         String pattern = contact.get(java.util.Calendar.YEAR) == currentYear ? "dd.MM HH:mm" : "dd.MM.yyyy HH:mm";
-        return context.getString(R.string.peer_last_online,
+        return context.getString(R.string.role_offline_last_online,
                 new java.text.SimpleDateFormat(pattern,Locale.ROOT).format(new java.util.Date(observed)));
     }
 
@@ -257,8 +282,8 @@ public final class PeerProfilePresenceAndroidTest {
                     .put("laidOut",column.isLaidOut()).put("layoutRequested",column.isLayoutRequested())
                     .put("width",column.getWidth()).put("height",column.getHeight()).put("actualText",copy)
                     .put("expectedSavedData",context.getString(R.string.peer_cached_data))
-                    .put("expectedUnknownContact",context.getString(R.string.peer_last_online,context.getString(R.string.remote_unknown)))
-                    .put("metadataOrder","Last online, optional Switch, age, gender")
+                    .put("expectedUnknownContact",context.getString(R.string.role_connection_offline))
+                    .put("metadataOrder","Profile: optional Switch, age, gender; contract counterpart: presence then metadata")
                     .put("outgoingDetails",text(((View)column.findViewWithTag("outgoing_sub_profile")).findViewWithTag("person_details")).trim())
                     .put("rosterDetails",text(column.findViewWithTag("roster:"+sub.value()+"_details")).trim())
                     .put("incomingDetails",text(((View)column.findViewWithTag("incoming_dom_profile")).findViewWithTag("contract_dom_details")).trim())
@@ -276,7 +301,7 @@ public final class PeerProfilePresenceAndroidTest {
         TextView saved=column.findViewWithTag("profile_cached_data:"+sub.value());assertNotNull(saved);
         assertEquals(context.getString(R.string.peer_cached_data),saved.getText().toString());
         TextView unknown=column.findViewWithTag("profile_last_online:"+dom.value()+"_unknown");assertNotNull(unknown);
-        assertEquals(context.getString(R.string.peer_last_online,context.getString(R.string.remote_unknown)),unknown.getText().toString());
+        assertEquals(context.getString(R.string.role_connection_offline),unknown.getText().toString());
         Bitmap component=Bitmap.createBitmap(column.getWidth(),column.getHeight(),Bitmap.Config.ARGB_8888);
         try {
             Canvas canvas=new Canvas(component);canvas.drawColor(context.getColor(R.color.background));column.draw(canvas);
@@ -322,7 +347,7 @@ public final class PeerProfilePresenceAndroidTest {
     }
     private static boolean presenceCopy(View view) {
         if(!(view instanceof TextView)||!(view.getTag() instanceof String))return false;
-        String tag=(String)view.getTag();return tag.startsWith("profile_last_online:")||tag.startsWith("profile_cached_data:")
+        String tag=(String)view.getTag();return tag.startsWith("profile_last_online:")||tag.startsWith("profile_cached_data:")||tag.startsWith("person_connection:")||tag.endsWith("_connection")
                 ||tag.endsWith("_details")||tag.endsWith("_name");
     }
     private static String text(View view) {

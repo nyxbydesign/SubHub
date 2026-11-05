@@ -27,7 +27,10 @@ public final class RemoteConnectionActivity extends RemotePage {
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
         long contact=feature.store.lastContactAt(peer);
         boolean online=PeerPresence.online(feature.isConnected(peer),contact,System.currentTimeMillis());
-        String status=getString(peer.state==RemoteStore.State.REVOKED?R.string.role_connection_revoked:peer.state==RemoteStore.State.PENDING?R.string.role_connection_pending:online?R.string.role_connection_connected:R.string.role_connection_offline);
+        com.subhub.app.people.PersonSnapshot.Connection state=peer.state==RemoteStore.State.REVOKED?com.subhub.app.people.PersonSnapshot.Connection.REVOKED:
+                peer.state==RemoteStore.State.PENDING?com.subhub.app.people.PersonSnapshot.Connection.PENDING:
+                online?com.subhub.app.people.PersonSnapshot.Connection.CONNECTED:com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
+        String status=PersonUi.connection(this,state,contact);
         if(codeDialog!=null&&(peer.state!=RemoteStore.State.ACTIVE||peer.localRole!=RemoteProtocol.Role.DOM||codeRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()))codeDialog.dismiss();
         StringBuilder observations=new StringBuilder();
         for(RemoteProtocol.Stream stream:observedStreams(peer))observations.append(':').append(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));
@@ -35,8 +38,7 @@ public final class RemoteConnectionActivity extends RemotePage {
         if(signature.equals(rendered))return;rendered=signature;body.removeAllViews();
         android.widget.LinearLayout card=PersonUi.card(body);text(card,peer.name,true);
         text(card,com.subhub.app.people.ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
-        String lastSeen=getString(R.string.role_last_online,contact<=0 || contact>System.currentTimeMillis()?getString(R.string.remote_unknown):com.subhub.app.people.ProfileViews.formatLastSeen(contact));
-        text(card,status+" · "+lastSeen,false);
+        text(card,status,false).setTag("connection_presence");
         if(peer.localRole==RemoteProtocol.Role.DOM){
             String model=getString(R.string.remote_unknown);
             try{org.json.JSONObject runtime=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");if(RemoteTelemetry.validRuntime(runtime))model=runtime.optString("device",model);}catch(Exception unavailable){/* Keep unavailable source observations distinct from this phone. */}
