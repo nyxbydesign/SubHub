@@ -58,7 +58,7 @@ public final class RemoteConnectionStatusAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
             await(()->row(page,RemoteProtocol.Stream.CONFIGURATION)!=null);
             page.onActivity(a->{
-                assertNotNull(find(a.body,a.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(contact))));
+                assertNotNull(find(a.body,a.getString(R.string.role_connection_offline)));
                 assertTrue(text(a.body.findViewWithTag("connection_stream_CONFIGURATION")).contains(java.text.DateFormat.getDateTimeInstance().format(new Date(contact))));
             });
             assertEquals(completed,store.peer(identity,generation).lastSyncedAt);
@@ -79,15 +79,43 @@ public final class RemoteConnectionStatusAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))){
             await(()->presence(page).equals(context.getString(R.string.role_connection_offline)));
             long contact=System.currentTimeMillis();store.putMetadata(identity,generation,"last_contact",Long.toString(contact));
+            assertEquals(context.getString(R.string.role_connection_offline),presence(page));
+            PeerPresence.receive(store,peer,new org.json.JSONObject().put("version",1).put("sequence",1).put("foreground",true));
+            long seen=PeerPresence.read(store,peer).lastOnlineAt;
             await(()->presence(page).equals(context.getString(R.string.role_connection_connected)));
             page.onActivity(a->assertEquals(a.getString(R.string.role_connection_connected),
                     ((TextView)a.body.findViewWithTag("connection_presence")).getText().toString()));
-            long past=contact-180_000;store.putMetadata(identity,generation,"last_contact",Long.toString(past));
-            await(()->presence(page).equals(context.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(past))));
+            PeerPresence.receive(store,peer,new org.json.JSONObject().put("version",1).put("sequence",2).put("foreground",false));
+            // A delayed online frame cannot undo the newer background observation or advance Last seen.
+            PeerPresence.receive(store,peer,new org.json.JSONObject().put("version",1).put("sequence",1).put("foreground",true));
+            assertEquals(seen,PeerPresence.read(store,peer).lastOnlineAt);
+            await(()->presence(page).equals(context.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(seen))));
             assertEquals(0,store.peer(identity,generation).lastSyncedAt);
-            assertEquals(past,store.lastContactAt(peer));
+            assertEquals(contact,store.lastContactAt(peer));
         }
     }
+    @Test public void foregroundExpiryInvalidatesOnMainWithoutRenewingLastSeen() throws Exception {
+        String identity=repeat('a'),generation=UUID.randomUUID().toString();
+        android.database.sqlite.SQLiteDatabase db=store.getWritableDatabase();db.beginTransaction();try{
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'SUB','ACTIVE')",new Object[]{identity,generation,"Synthetic Dom"});
+            FormalRelationshipStore.mapPeer(db,identity,generation,true);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        RemoteStore.Peer peer=store.peer(identity,generation);
+        PeerPresence.receive(store,peer,new org.json.JSONObject().put("version",1).put("sequence",1).put("foreground",true));
+        org.json.JSONObject saved=new org.json.JSONObject(store.metadata(identity,generation,"foreground_presence_v1",""));
+        saved.put("receivedElapsed",android.os.SystemClock.elapsedRealtime()-PeerPresence.RECENT_CONTACT_MILLIS+500);
+        store.putMetadata(identity,generation,"foreground_presence_v1",saved.toString());
+        long seen=PeerPresence.read(store,peer).lastOnlineAt;
+        CountDownLatch expired=new CountDownLatch(1);AtomicBoolean main=new AtomicBoolean();
+        try(AutoCloseable observer=RemoteUi.observePresence(()->{
+            if(!PeerPresence.read(store,peer).online){main.set(android.os.Looper.myLooper()==android.os.Looper.getMainLooper());expired.countDown();}
+        })){
+            java.lang.reflect.Method received=RemoteFeature.class.getDeclaredMethod("receivedPresence",RemoteStore.Peer.class);received.setAccessible(true);received.invoke(feature,peer);
+            assertTrue("One-shot presence expiry did not invalidate",expired.await(3,TimeUnit.SECONDS));
+            assertTrue(main.get());assertEquals(seen,PeerPresence.read(store,peer).lastOnlineAt);
+        }
+    }
+
     private static String presence(ActivityScenario<RemoteConnectionActivity> page){
         java.util.concurrent.atomic.AtomicReference<String> value=new java.util.concurrent.atomic.AtomicReference<>("");
         page.onActivity(a->{TextView status=a.body.findViewWithTag("connection_presence");if(status!=null)value.set(status.getText().toString());});
@@ -112,7 +140,7 @@ public final class RemoteConnectionStatusAndroidTest {
                 assertNull(find(a.body,identity));
                 String discriminator=ProfileViews.targetDiscriminator(a,RemotePersonRepository.id(peer),"");
                 assertEquals(1,count(a.body,discriminator));
-                String status=a.getString(R.string.role_offline_last_online,ProfileViews.formatLastSeen(contact));
+                String status=a.getString(R.string.role_connection_offline);
                 assertNotNull(find(a.body,status));
                 assertEquals(role==RemoteProtocol.Role.DOM,a.body.findViewWithTag("connection_device_model")!=null);
                 assertNotNull(find(a.body,a.getString(R.string.remote_unpair)));

@@ -275,6 +275,19 @@ public class RemoteSessionAndroidTest {
         assertTrue(sub.peer(dt.localIdentity(),generation).lastSyncedAt>0);
     }
 
+    @Test public void foregroundPresenceUsesAuthenticatedWireAndBackgroundKeepsTransportSeparate() throws Exception {
+        dh.foregroundPresence=true;sh.foregroundPresence=true;
+        exchange(false,false);
+        RemoteStore.Peer domPeer=sub.peer(dt.localIdentity(),generation),subPeer=dom.peer(st.localIdentity(),generation);
+        assertTrue(PeerPresence.read(sub,domPeer).online);assertTrue(PeerPresence.read(dom,subPeer).online);
+        long seen=PeerPresence.read(sub,domPeer).lastOnlineAt;
+        dh.foregroundPresence=false;sh.foregroundPresence=false;
+        exchange(true,false);
+        assertFalse(PeerPresence.read(sub,domPeer).online);assertFalse(PeerPresence.read(dom,subPeer).online);
+        assertEquals(seen,PeerPresence.read(sub,domPeer).lastOnlineAt);
+        assertTrue(sub.lastContactAt(domPeer)>=seen);
+    }
+
     @Test public void contractCheckpointStillRecordsContactWhenLaterCompletionFails() throws Exception {
         String identity=dt.localIdentity();long completed=System.currentTimeMillis()-12*60*60_000L;
         sub.synced(identity,generation,completed);
@@ -286,7 +299,8 @@ public class RemoteSessionAndroidTest {
         assertTrue(Long.parseLong(sub.metadata(identity,generation,"confirmed_CONFIGURATION","0"))>=started);
         assertEquals(1,sub.mirrored(identity,generation,RemoteProtocol.Stream.CONFIGURATION,"active").getInt("revision"));
         assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
-        assertTrue(PeerPresence.online(false,contact,contact+90_000));
+        assertFalse(PeerPresence.read(sub,peer).online);
+        assertEquals(0,PeerPresence.read(sub,peer).lastOnlineAt);
         assertFalse(PeerPresence.online(false,contact,contact+90_001));
         sh.failComplete=false;exchange(false,false);
         assertTrue(sub.peer(identity,generation).lastSyncedAt>=started);
@@ -567,6 +581,13 @@ public class RemoteSessionAndroidTest {
     private static byte[] seed(){byte[] value=new byte[32];new SecureRandom().nextBytes(value);return value;}
 
     private static final class FixtureHooks implements RemoteSession.Hooks {
+        Boolean foregroundPresence;
+        long presenceSequence;
+        @Override public JSONObject presence() throws Exception {
+            return foregroundPresence==null?null:new JSONObject().put("version",1)
+                    .put("sequence",++presenceSequence).put("foreground",foregroundPresence);
+        }
+
         interface CheckedAction { void run() throws Exception; }
         final RemoteStore store;final RemoteAssets assets;int prepares;
         final java.util.List<String> events=new java.util.ArrayList<>();

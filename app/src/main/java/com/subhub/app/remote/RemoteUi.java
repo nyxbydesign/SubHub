@@ -45,6 +45,20 @@ public final class RemoteUi implements ConnectionUi {
         java.util.Objects.requireNonNull(observer);iconObservers.addIfAbsent(observer);
         return ()->iconObservers.remove(observer);
     }
+    private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> presenceObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final java.util.concurrent.atomic.AtomicBoolean presenceNotification=new java.util.concurrent.atomic.AtomicBoolean();
+    /** Memory-only lifecycle subscription; accepted foreground observations and their expiry invalidate it. */
+    public static AutoCloseable observePresence(Runnable observer) {
+        java.util.Objects.requireNonNull(observer);presenceObservers.addIfAbsent(observer);
+        return ()->presenceObservers.remove(observer);
+    }
+    static void presenceChanged() {
+        if(presenceNotification.compareAndSet(false,true))iconMain.post(()->{
+            presenceNotification.set(false);
+            for(Runnable observer:presenceObservers)try{observer.run();}catch(RuntimeException ignored){/* Observer owns its state. */}
+        });
+    }
+
     public static void install(Application app) {
         application = app;
         ControllerPinManager.initialize(app);
