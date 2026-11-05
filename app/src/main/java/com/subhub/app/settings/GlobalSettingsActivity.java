@@ -115,18 +115,26 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
             recreate();
         });
         device.addView(role, new LinearLayout.LayoutParams(-1, -2));
-        action(device, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
+
+        heading(body, R.string.device_settings_connections, "connections");
+        LinearLayout connections = PersonUi.card(body);
+        action(connections, R.string.keyholder_home_title, this::openConnectionOrKeyholder)
                 .setId(R.id.settings_connections_security);
         backgroundSync = PersonUi.column(this);
-        device.addView(backgroundSync, new LinearLayout.LayoutParams(-1, -2));
+        connections.addView(backgroundSync, new LinearLayout.LayoutParams(-1, -2));
 
         heading(body, R.string.device_settings_privacy, "privacy");
         privacy = PersonUi.card(body);
         com.subhub.app.privacy.PrivacyControls.bind(this, privacy, this::applyState);
 
         heading(body, R.string.notification_category, "notifications");
-        notifications = PersonUi.card(body);
+        LinearLayout notificationCard = PersonUi.card(body);
+        notifications = PersonUi.column(this);
+        notificationCard.addView(notifications, new LinearLayout.LayoutParams(-1, -2));
         com.subhub.app.notifications.NotificationControls.bind(this, notifications);
+        action(notificationCard, R.string.settings_notifications,
+                () -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())));
 
         heading(body, R.string.device_settings_permissions, "permissions");
         permissionsHeading = body.findViewWithTag("settings:permissions");
@@ -141,9 +149,6 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
                 this::loadHardcoreReview, false);
         reviewConsent.setTag("hardcore_review_consent");
         permissions = PersonUi.card(body);
-        action(permissions, R.string.settings_notifications,
-                () -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())));
         localPermissions = PersonUi.column(this);
         permissions.addView(localPermissions, new LinearLayout.LayoutParams(-1, -2));
         localPermissions.setId(R.id.android_access_card);
@@ -158,20 +163,23 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         action(localPermissions, R.string.settings_battery,
                 () -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
 
+        heading(body, R.string.device_settings_app, "app");
+        LinearLayout app = PersonUi.card(body);
+        action(app, R.string.settings_language,
+                () -> startActivity(new Intent(this, HelpActivity.class)
+                        .putExtra(HelpActivity.EXTRA_LANGUAGE, true))).setTag("settings_language");
+        action(app, R.string.settings_updates,
+                () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class)));
+
         heading(body, R.string.device_settings_help, "help");
         LinearLayout help = PersonUi.card(body);
         help.setTag("settings_help_actions");
         detach(binding.buttonHelp);
         help.addView(binding.buttonHelp, new LinearLayout.LayoutParams(-1, -2));
         binding.buttonHelp.setOnClickListener(view -> startActivity(new Intent(this, HelpActivity.class)));
-        action(help, R.string.settings_updates,
-                () -> startActivity(new Intent(this, com.subhub.app.update.UpdatesActivity.class)));
         action(help, R.string.tour_replay,
                 () -> startActivity(new Intent(this, com.subhub.app.onboarding.OnboardingActivity.class)
                         .putExtra(com.subhub.app.onboarding.OnboardingActivity.REPLAY, true)));
-        action(help, R.string.settings_language,
-                () -> startActivity(new Intent(this, HelpActivity.class)
-                        .putExtra(HelpActivity.EXTRA_LANGUAGE, true))).setTag("settings_language");
         detach(binding.buttonDiagnostics);
         help.addView(binding.buttonDiagnostics, new LinearLayout.LayoutParams(-1, -2));
         binding.buttonDiagnostics.setOnClickListener(view -> startActivity(new Intent(this, DiagnosticsActivity.class)));
@@ -273,10 +281,12 @@ public final class GlobalSettingsActivity extends AppCompatActivity {
         com.subhub.app.notifications.NotificationControls.bind(this, notifications);
         refreshConnection();
         boolean local = DeviceRolePreferences.supportsSub(this);
+        permissionsHeading.setVisibility(local ? View.VISIBLE : View.GONE);
+        permissions.setVisibility(local ? View.VISIBLE : View.GONE);
         localPermissions.setVisibility(local ? View.VISIBLE : View.GONE);
         detach(binding.hardcoreCard);
         if (local && !DeviceRolePreferences.isDomWorkspace(this)) {
-            int position = binding.settingsSections.indexOfChild(permissionsHeading);
+            int position = binding.settingsSections.indexOfChild(privacy) + 1;
             binding.settingsSections.addView(binding.hardcoreCard, position, new LinearLayout.LayoutParams(-1, -2));
             refreshHardcoreState();
         }
