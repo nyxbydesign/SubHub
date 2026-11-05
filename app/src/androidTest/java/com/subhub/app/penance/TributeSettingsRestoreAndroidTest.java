@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,7 +30,12 @@ import com.subhub.app.NativeUiActions;
 import com.subhub.app.configuration.FeatureEditorSession;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
+import com.subhub.app.people.People;
+import com.subhub.app.remote.RemoteFeature;
+import com.subhub.app.security.ControllerAuthenticator;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.KeyholderProvider;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
 
 import org.junit.After;
@@ -49,23 +55,60 @@ public final class TributeSettingsRestoreAndroidTest {
     private static final String CENTS = "rule_extra_time_request_cents";
     private SharedPreferences preferences;
     private Map<String, ?> original;
+    private SharedPreferences settings, authentication;
+    private Map<String, ?> originalSettings, originalAuthentication;
     private boolean originalDom;
 
     @Before public void snapshot() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        originalDom = ControllerPinManager.isDomModeActive();
         preferences = context.getSharedPreferences(PenanceManager.PREFS_NAME, 0);
         original = new LinkedHashMap<>(preferences.getAll());
-        originalDom = ControllerPinManager.isDomModeActive();
+        settings = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
+        originalSettings = new LinkedHashMap<>(settings.getAll());
+        authentication = context.getSharedPreferences("subhub_controller_auth", 0);
+        originalAuthentication = new LinkedHashMap<>(authentication.getAll());
+        assertEquals("Owned fresh UI fixture only", "true", InstrumentationRegistry.getArguments()
+                .getString("extra_time_ui_fixture"));
+        assertTrue("Owned emulator only", Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"));
+        assertFalse(com.subhub.app.service.ScreenCaptureService.isRunning());
+        assertFalse(com.subhub.app.service.ScreenshotAccessibilityService.isRunning());
+        assertFalse("Protection must remain idle", new com.subhub.app.appmode.AppModeManager(context).isArmed());
+        assertFalse("Observe recovery off the main thread", android.os.Looper.myLooper() == android.os.Looper.getMainLooper());
+        RemoteFeature feature = RemoteFeature.get(context);
+        long recoveryDeadline = android.os.SystemClock.uptimeMillis() + 10_000L;
+        while (!feature.recoveryReady() && android.os.SystemClock.uptimeMillis() < recoveryDeadline) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            if (!feature.recoveryReady()) android.os.SystemClock.sleep(20L);
+        }
+        assertTrue("Do not override unavailable authority", feature.recoveryReady());
+        assertEquals("Do not override a remote keyholder", KeyholderProvider.State.NONE, People.keyholder().state());
+        assertFalse("Do not replace paired credentials", new ControllerAuthenticator(context).isPaired());
+        // Prepare the owned local credential instead of assuming runner setup.
+        if (!ControllerPinManager.isConfigured(context))
+            assertTrue("Owned local PIN setup must be acknowledged", ControllerPinManager.setPin(context, "2468"));
+        assertTrue("Do not overwrite an unknown configured PIN", ControllerPinManager.verify(context, "2468"));
         assertTrue("Use the declared controller-fixture runner", ControllerPinManager.hasCredentials(context));
         ControllerPinManager.enterDomMode();
+        InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     @After public void restore() {
         try {
             if (original != null) SharedPreferenceTestRestore.restore(preferences, original);
         } finally {
-            if (originalDom) ControllerPinManager.enterDomMode();
-            else ControllerPinManager.enterSubMode();
+            try {
+                if (originalAuthentication != null)
+                    SharedPreferenceTestRestore.restore(authentication, originalAuthentication);
+            } finally {
+                try {
+                    if (originalSettings != null) SharedPreferenceTestRestore.restore(settings, originalSettings);
+                } finally {
+                    if (originalDom) ControllerPinManager.enterDomMode();
+                    else ControllerPinManager.enterSubMode();
+                }
+            }
         }
     }
 
