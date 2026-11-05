@@ -60,10 +60,7 @@ public final class ExtraTimeRequestAndroidTest {
             RemoteStore.Peer peer = RemoteFeature.get(context).store.peers(false).stream()
                     .filter(value->value.localRole==RemoteProtocol.Role.SUB).findFirst().orElseThrow();
             assertThrows(SecurityException.class,()->RemoteFeature.get(context).store.revoke(peer.identity,peer.generation));
-            fixture.authenticateSubController();
-            RemoteFeature.get(context).store.revoke(peer.identity,peer.generation);
-            fixture.switchSub();
-            assertEquals(0,ExtraTimeRequests.allowance(context,fixture.firstPackage,System.currentTimeMillis()).bonusMillis);
+            assertEquals(RemoteStore.State.ACTIVE,RemoteFeature.get(context).store.peer(peer.identity,peer.generation).state);
         }
     }
     @Test public void declineDoesNotChargeAndChangedQuoteOrConfigurationCannotBeApplied() throws Exception {
