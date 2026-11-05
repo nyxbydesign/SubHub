@@ -1,6 +1,7 @@
 package com.subhub.app.configuration;
 
 import com.subhub.app.R;
+import com.subhub.app.subliminal.SubliminalSettings;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.math.BigDecimal;
@@ -109,7 +110,7 @@ public final class ConfigurationSettingCatalog {
         add("wallet", "paid_pause_duration_minutes", R.string.pack_field_paid_pause_duration_minutes, R.string.pack_group_paid_pause, Kind.INTEGER, 15, 1, 1440, 0, List.of());
         add("subliminal", "subliminal_preset", R.string.pack_field_subliminal_preset, R.string.pack_group_messages, Kind.CHOICE, "normal", 0, 0, 0, List.of("gentle", "normal", "strict", "ultra"));
         add("subliminal", "subliminal_advanced", R.string.pack_field_subliminal_advanced, R.string.pack_group_timing, Kind.BOOLEAN, Boolean.FALSE, 0, 0, 0, List.of());
-        add("subliminal", "subliminal_opacity_percent", R.string.pack_field_subliminal_opacity_percent, R.string.pack_group_timing, Kind.INTEGER, 5, 1, 15, 0, List.of());
+        add("subliminal", "subliminal_opacity_percent", R.string.pack_field_subliminal_opacity_percent, R.string.pack_group_timing, Kind.INTEGER, 5, 1, SubliminalSettings.MAX_OPACITY_PERCENT, 0, List.of());
         add("subliminal", "subliminal_visible_ms", R.string.pack_field_subliminal_visible_ms, R.string.pack_group_timing, Kind.LONG, 2000, 800, 4000, 0, List.of());
         add("subliminal", "subliminal_min_interval_ms", R.string.pack_field_subliminal_min_interval_ms, R.string.pack_group_timing, Kind.LONG, 25000, 5000, 300000, 0, List.of());
         add("subliminal", "subliminal_max_interval_ms", R.string.pack_field_subliminal_max_interval_ms, R.string.pack_group_timing, Kind.LONG, 60000, 5000, 300000, 0, List.of());

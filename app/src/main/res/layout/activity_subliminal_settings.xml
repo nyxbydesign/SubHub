@@ -60,7 +60,7 @@
                 android:layout_height="wrap_content" android:orientation="vertical">
                 <TextView android:id="@+id/opacity_label" style="@style/Widget.SubHub.FieldLabel" />
                 <SeekBar android:id="@+id/opacity" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:max="14" />
+                    android:layout_height="wrap_content" android:max="34" />
                 <TextView android:id="@+id/duration_label" style="@style/Widget.SubHub.FieldLabel" />
                 <SeekBar android:id="@+id/duration" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:max="32" />

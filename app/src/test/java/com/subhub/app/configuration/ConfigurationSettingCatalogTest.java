@@ -48,6 +48,27 @@ public final class ConfigurationSettingCatalogTest {
         assertTrue(ConfigurationSettingCatalog.field("popup", "popup_storm_spawn_rate").normalize(2) instanceof Float);
     }
 
+    @Test public void whisperOpacityAcceptsThirtyFiveAndRejectsAboveWithoutChangingDefaults() throws Exception {
+        String key = "subliminal_opacity_percent";
+        ConfigurationSettingCatalog.Field opacity = ConfigurationSettingCatalog.field("subliminal", key);
+        assertEquals(1d, opacity.minimum, 0d);
+        assertEquals(35d, opacity.maximum, 0d);
+        assertEquals(5, opacity.defaultValue());
+        assertEquals(35, opacity.normalize(35));
+        assertEquals(35, opacity.parseText("35"));
+        for (int selected = 1; selected <= 15; selected++) {
+            assertEquals(selected, opacity.normalize(selected));
+        }
+        JSONObject clean = ConfigurationSettingCatalog.sanitize("subliminal", new JSONObject().put(key, 35));
+        assertEquals(35, clean.getInt(key));
+        assertEquals(35, ConfigurationSchema.sanitizeSection("subliminal",
+                new JSONObject(clean.toString())).getInt(key));
+        assertThrows(IllegalArgumentException.class, () -> opacity.normalize(36));
+        assertThrows(IllegalArgumentException.class, () -> opacity.normalize(0));
+        assertThrows(IllegalArgumentException.class, () -> ConfigurationSettingCatalog.sanitize(
+                "subliminal", new JSONObject().put(key, 36)));
+    }
+
     @Test public void invalidKnownValuesFailRatherThanSilentlyChangingConfiguration() throws Exception {
         for (Object invalid : new Object[] {"true", 1, JSONObject.NULL}) {
             JSONObject value = new JSONObject().put("show_border", invalid);

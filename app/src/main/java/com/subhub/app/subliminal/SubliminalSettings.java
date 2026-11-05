@@ -6,6 +6,8 @@ import java.util.Set;
 
 /** Immutable, local-only configuration for faint foreground messages. */
 public final class SubliminalSettings {
+    public static final int MAX_OPACITY_PERCENT = 35;
+
     public enum Preset { GENTLE, NORMAL, STRICT, ULTRA }
 
     private final Preset preset;

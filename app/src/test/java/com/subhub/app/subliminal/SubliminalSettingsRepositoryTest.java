@@ -12,6 +12,19 @@ import java.util.List;
 import java.util.Set;
 
 public final class SubliminalSettingsRepositoryTest {
+    @Test public void raisingOpacityCeilingPreservesPresetDefaults() {
+        assertEquals(35, SubliminalSettings.MAX_OPACITY_PERCENT);
+        assertEquals(3, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.GENTLE).opacity);
+        assertEquals(5, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.NORMAL).opacity);
+        assertEquals(7, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.STRICT).opacity);
+        assertEquals(10, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.ULTRA).opacity);
+        assertEquals(5, SubliminalSettingsRepository.valuesFor(null).opacity);
+    }
+
     @Test public void presetsStayWithinFaintSafeBounds() {
         for (SubliminalSettings.Preset preset : SubliminalSettings.Preset.values()) {
             SubliminalSettingsRepository.Values values =

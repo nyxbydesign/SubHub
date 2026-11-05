@@ -48,7 +48,8 @@ public final class SubliminalSettingsRepository {
         SubliminalSettings.Preset preset = parsePreset(preferences.getString(KEY_PRESET, "normal"));
         Values defaults = valuesFor(preset);
         boolean advanced = preferences.getBoolean(KEY_ADVANCED, false);
-        int opacity = advanced ? clamp(preferences.getInt(KEY_OPACITY, defaults.opacity), 1, 15)
+        int opacity = advanced ? clamp(preferences.getInt(KEY_OPACITY, defaults.opacity),
+                1, SubliminalSettings.MAX_OPACITY_PERCENT)
                 : defaults.opacity;
         long visible = advanced ? clamp(preferences.getLong(KEY_VISIBLE_MS, defaults.visible),
                 800L, 4_000L) : defaults.visible;
@@ -73,7 +74,7 @@ public final class SubliminalSettingsRepository {
             long maximum, int textSize) {
         long cleanMinimum = clamp(minimum, 5_000L, 300_000L);
         preferences.edit().putBoolean(KEY_ADVANCED, enabled)
-                .putInt(KEY_OPACITY, clamp(opacity, 1, 15))
+                .putInt(KEY_OPACITY, clamp(opacity, 1, SubliminalSettings.MAX_OPACITY_PERCENT))
                 .putLong(KEY_VISIBLE_MS, clamp(visible, 800L, 4_000L))
                 .putLong(KEY_MIN_INTERVAL_MS, cleanMinimum)
                 .putLong(KEY_MAX_INTERVAL_MS, clamp(maximum, cleanMinimum, 300_000L))

@@ -45,6 +45,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
             return;
         }
         binding = ActivitySubliminalSettingsBinding.inflate(getLayoutInflater());
+        binding.opacity.setMax(SubliminalSettings.MAX_OPACITY_PERCENT - 1);
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.subliminal_title, false);
         repository = new SubliminalSettingsRepository(FeatureEditorSession.context(this));
