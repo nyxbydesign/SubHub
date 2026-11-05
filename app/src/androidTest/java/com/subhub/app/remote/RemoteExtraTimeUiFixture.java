@@ -51,7 +51,8 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
     private final Map<String, Map<String, ?>> preferences = new LinkedHashMap<>();
     private final Map<Field, Object> peopleHooks = new LinkedHashMap<>();
     private final Map<Field, Object> controllerState = new LinkedHashMap<>();
-    private final List<String> databases = new ArrayList<>();
+    private final Map<RemoteStore, String> databases = new LinkedHashMap<>();
+    private final Map<RemoteStore, LinkingWitness> witnesses = new LinkedHashMap<>();
     private final List<String> secretPreferences = new ArrayList<>();
     private final List<String> secretAliases = new ArrayList<>();
     private final List<RemoteFeature> owned = new ArrayList<>();
@@ -134,6 +135,7 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         ds.activate(subIdentity, generation); ss.activate(domIdentity, generation);
         ds.putMetadata(subIdentity, generation, "extra_time_version", "1");
         ss.putMetadata(domIdentity, generation, "extra_time_version", "1");
+        bindContinuity(ds); bindContinuity(ss);
         dom = feature(ds, domIdentity, "dom"); sub = feature(ss, subIdentity, "sub");
         subPerson = RemotePersonRepository.id(ds.peer(subIdentity, generation));
         switchSub();
@@ -188,9 +190,25 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         assertTrue(context.getSharedPreferences(BackgroundSyncPreferences.STORE, 0).edit().putBoolean("enabled", false).commit());
     }
 
-    private RemoteStore store(String side) {
-        String name = prefix + "-" + side + ".db"; databases.add(name);
-        RemoteStore value = new RemoteStore(context, name); ownedStores.add(value); return value;
+    private RemoteStore store(String side) throws Exception {
+        RemoteStore value = FormalRelationshipCoordinator.createOwnedFixture(context);
+        ownedStores.add(value); databases.put(value, value.getDatabaseName());
+        FormalRelationshipCoordinator.requireOwnedFixture(value);
+        assertFalse("The " + side + " fixture must not own the application database", value.isApplicationDatabase());
+        assertEquals(DeviceRolePreferences.Mode.BOTH, DeviceRolePreferences.get(context));
+        return value;
+    }
+
+    private void bindContinuity(RemoteStore store) {
+        LinkingWitness.outside(store);
+        assertFalse(Thread.holdsLock(ExtraTimeStore.LOCK));
+        FormalRelationshipCoordinator.requireOwnedFixture(store);
+        LinkingWitness witness = LinkingWitness.attach(context, store);
+        witnesses.put(store, witness);
+        assertSame(witness, LinkingWitness.registered(store));
+        assertEquals("verified", witness.readCurrent(store, () -> "verified"));
+        assertTrue(FormalRelationshipCoordinator.application(context, store, witness)
+                .recoverySnapshot().snapshot.supported);
     }
 
     private RemoteFeature feature(RemoteStore store, String identity, String side) throws Exception {
@@ -299,9 +317,26 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         });
         for (RemoteStore store : ownedStores) if (owned.stream().noneMatch(feature -> feature.store == store))
             clean(failures, () -> { store.close(); closedStores.add(store); });
-        // A shutdown failure retains its owned files for recovery instead of deleting a live store.
-        if (closedStores.containsAll(ownedStores)) {
-            for (String name : databases) clean(failures, () -> { if (context.getDatabasePath(name).exists()) assertTrue(context.deleteDatabase(name)); });
+        // Release only this fixture's verified continuity assets after its endpoint has stopped.
+        // A failed shutdown or witness cleanup retains that database for recovery.
+        Set<RemoteStore> releasedStores = new java.util.HashSet<>();
+        for (RemoteStore store : ownedStores) if (closedStores.contains(store)) clean(failures, () -> {
+            FormalRelationshipCoordinator.requireOwnedFixture(store);
+            LinkingWitness witness = witnesses.get(store);
+            if (witness != null) {
+                assertSame(witness, LinkingWitness.registered(store));
+                witness.cleanupOwnedFixture(store);
+            }
+            FormalRelationshipCoordinator.releaseOwnedFixture(store);
+            releasedStores.add(store);
+        });
+        Set<RemoteStore> disposedStores = new java.util.HashSet<>();
+        for (RemoteStore store : ownedStores) if (releasedStores.contains(store)) clean(failures, () -> {
+            String name = databases.get(store);
+            if (context.getDatabasePath(name).exists()) assertTrue(context.deleteDatabase(name));
+            disposedStores.add(store);
+        });
+        if (disposedStores.containsAll(ownedStores)) {
             for (String name : secretPreferences) clean(failures, () -> context.deleteSharedPreferences(name));
             for (String alias : secretAliases) clean(failures, () -> {
                 java.security.KeyStore keys = java.security.KeyStore.getInstance("AndroidKeyStore"); keys.load(null);
