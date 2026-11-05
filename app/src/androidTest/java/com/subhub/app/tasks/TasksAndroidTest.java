@@ -680,6 +680,187 @@ public final class TasksAndroidTest {
         }
     }
 
+    @Test public void historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation() throws Exception {
+        long at = System.currentTimeMillis() - 600_000L;
+        ZoneId zone = ZoneId.of("Asia/Kathmandu");
+        TaskDefinition approved, declined, cancelled, refused, skipped;
+        TaskAction approvedProof, declinedProof;
+        synchronized (SubFeaturePolicy.LOCK) {
+            approved = historyTask("old schedule approved", at - 8 * 3_600_000L, zone, 86_400_000L);
+            declined = historyTask("new schedule declined", at - 3_600_000L, zone, 86_400_000L);
+            cancelled = historyTask("cancelled pending request", at - 4 * 3_600_000L, zone, 86_400_000L);
+            refused = historyTask("refused without completion", at - 2 * 3_600_000L, zone, 86_400_000L);
+            skipped = historyTask("skipped without completion", at - 3 * 3_600_000L, zone, 60_000L);
+            approvedProof = historyAction(approved, TaskAction.Kind.SUBMIT,
+                    approved.start(approved.firstStart.toLocalDate()).toEpochMilli() + 60_000L, "");
+            declinedProof = historyAction(declined, TaskAction.Kind.OUTSIDE,
+                    declined.start(declined.firstStart.toLocalDate()).toEpochMilli() + 120_000L, "");
+            store.append(scope, approvedProof, false, false);
+            store.append(scope, declinedProof, false, false);
+            store.append(scope, historyAction(declined, TaskAction.Kind.DENY, at + 10_000L, declinedProof.id), true, false);
+            store.append(scope, historyAction(cancelled, TaskAction.Kind.OUTSIDE, at - 300_000L, ""), false, false);
+            store.append(scope, historyAction(cancelled, TaskAction.Kind.CANCEL_ONCE, at, ""), true, false);
+            store.append(scope, historyAction(refused, TaskAction.Kind.REFUSE_ONCE, at - 10_000L, ""), false, false);
+            store.append(scope, historyAction(skipped, TaskAction.Kind.SKIP, at - 10_000L, ""), false, false);
+        }
+        String requested = completionRequestText(approved, approvedProof.at);
+        List<String> expected = new ArrayList<>(List.of(occurrenceId(approved), occurrenceId(declined), occurrenceId(cancelled)));
+        List<String> tied = new ArrayList<>(List.of(occurrenceId(refused), occurrenceId(skipped)));
+        java.util.Collections.sort(tied); expected.addAll(tied);
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            openTask(page, approved);
+            assertCompletionText(page, approved, requested);
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(page, "tasks_history"); tap("tasks_history");
+            onView(withTagValue(is("task_completion_time:" + occurrenceId(approved)))).check(doesNotExist());
+            // A live review moves a pending card into History; its earlier request time stays unchanged.
+            store.append(scope, historyAction(approved, TaskAction.Kind.ACCEPT, at + 20_000L, approvedProof.id), true, false);
+            assertCompletionText(page, approved, requested);
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            captureHistoryView(page, "history-dom", null);
+            page.recreate();
+            assertCompletionText(page, approved, requested);
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            try (TaskStore reopened = new TaskStore(context)) {
+                TaskEngine.Occurrence saved = reopened.load(scope).occurrence(approved.id,
+                        approved.firstStart.toLocalDate(), System.currentTimeMillis());
+                assertEquals(approvedProof.at, saved.submission.at);
+                assertEquals(at + 20_000L, saved.historyEnteredAt);
+            }
+            TaskDefinition unrelated = seed("unrelated refresh", false);
+            awaitTag(page, "task:" + occurrenceId(unrelated));
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            assertCompletionText(page, approved, requested);
+            openTask(page, approved);
+            assertCompletionText(page, approved, requested);
+            assertSubmissionVerdict(page, occurrenceId(approved), approvedProof.id, R.string.tasks_accepted);
+            page.recreate();
+            assertCompletionText(page, approved, requested);
+            captureHistoryView(page, "approved-detail", "task_detail:" + occurrenceId(approved));
+            androidx.test.espresso.Espresso.pressBack();
+            awaitTag(page, "tasks_history");
+            openTask(page, declined);
+            assertCompletionText(page, declined, completionRequestText(declined, declinedProof.at));
+            captureHistoryView(page, "declined-detail", "task_detail:" + occurrenceId(declined));
+            androidx.test.espresso.Espresso.pressBack();
+            for (TaskDefinition noRequest : List.of(cancelled, refused, skipped)) {
+                openTask(page, noRequest);
+                onView(withTagValue(is("task_completion_time:" + occurrenceId(noRequest)))).check(doesNotExist());
+                androidx.test.espresso.Espresso.pressBack();
+            }
+            switchRole(page, false);
+            awaitTag(page, "tasks_history");
+            assertHistoryPreviews(page, expected, approved, declined, cancelled, refused, skipped);
+            assertCompletionText(page, approved, requested);
+            captureHistoryView(page, "history-sub", null);
+        }
+    }
+
+    private TaskDefinition historyTask(String suffix, long at, ZoneId zone, long duration) throws Exception {
+        LocalDateTime start = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(at), zone).withSecond(0).withNano(0);
+        TaskDefinition task = new TaskDefinition(UUID.randomUUID().toString(), titlePrefix + suffix,
+                "Synthetic History instructions", start, zone, duration, Set.of(), true, false, null);
+        store.append(scope, new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.CREATE, null,
+                task.start(start.toLocalDate()).toEpochMilli() - 60_000L, "", "", List.of(), task), true, false);
+        return task;
+    }
+
+    private TaskAction historyAction(TaskDefinition task, TaskAction.Kind kind, long at, String submission) {
+        return new TaskAction(UUID.randomUUID().toString(), task.id, kind, task.firstStart.toLocalDate(),
+                at, kind == TaskAction.Kind.SUBMIT ? "Synthetic completion proof" : "", submission, List.of(), null);
+    }
+
+    private String completionRequestText(TaskDefinition task, long at) {
+        return context.getString(R.string.tasks_completion_requested_at,
+                java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.SHORT)
+                        .withZone(task.zone).format(java.time.Instant.ofEpochMilli(at)), task.zone.getId());
+    }
+
+    private void assertCompletionText(ActivityScenario<TasksActivity> page, TaskDefinition task, String expected) throws Exception {
+        String tag = "task_completion_time:" + occurrenceId(task);
+        awaitTag(page, tag);
+        onView(withTagValue(is(tag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
+        assertLayoutText(page, tag, expected);
+    }
+
+    private void assertHistoryPreviews(ActivityScenario<TasksActivity> page, List<String> expected,
+            TaskDefinition approved, TaskDefinition declined, TaskDefinition cancelled,
+            TaskDefinition refused, TaskDefinition skipped) throws Exception {
+        for (TaskDefinition task : List.of(approved, declined, cancelled, refused, skipped))
+            awaitTag(page, "task:" + occurrenceId(task));
+        page.onActivity(activity -> {
+            ViewGroup body = activity.findViewById(R.id.role_page_body);
+            List<String> actual = new ArrayList<>();
+            for (int i = 0; i < body.getChildCount(); i++) {
+                Object tag = body.getChildAt(i).getTag();
+                if (tag instanceof String && ((String) tag).startsWith("task:")) {
+                    String id = ((String) tag).substring(5);
+                    if (expected.contains(id)) actual.add(id);
+                }
+            }
+            assertEquals("History must follow transition time, with stable identity ties", expected, actual);
+            for (TaskDefinition task : List.of(cancelled, refused, skipped))
+                assertNull(body.findViewWithTag("task_completion_time:" + occurrenceId(task)));
+        });
+        String approvedTag = "task_preview_status:" + occurrenceId(approved);
+        String declinedTag = "task_preview_status:" + occurrenceId(declined);
+        onView(withTagValue(is(approvedTag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
+        assertLayoutText(page, approvedTag, "Approved");
+        onView(withTagValue(is(declinedTag))).perform(NativeUiActions.revealAboveNavigation()).check(matches(isDisplayed()));
+        assertLayoutText(page, declinedTag, "Declined");
+        assertLayoutText(page, "task_preview_status:" + occurrenceId(cancelled), context.getString(R.string.tasks_cancelled));
+        assertCompletionText(page, declined, completionRequestText(declined, row(declined).submission.at));
+    }
+
+    private void assertLayoutText(ActivityScenario<TasksActivity> page, String tag, String expected) throws Exception {
+        await(() -> {
+            AtomicBoolean laidOut = new AtomicBoolean();
+            page.onActivity(activity -> {
+                android.widget.TextView text = activity.findViewById(android.R.id.content).findViewWithTag(tag);
+                laidOut.set(text != null && text.getLayout() != null && !text.isLayoutRequested()
+                        && expected.contentEquals(text.getText()));
+            });
+            return laidOut.get();
+        });
+        page.onActivity(activity -> {
+            android.widget.TextView text = activity.findViewById(android.R.id.content).findViewWithTag(tag);
+            assertEquals(expected, text.getText().toString());
+            android.text.Layout layout = text.getLayout();
+            assertNotNull(layout);
+            int width = text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight();
+            for (int line = 0; line < layout.getLineCount(); line++) {
+                assertEquals("No ellipsis in " + tag, 0, layout.getEllipsisCount(line));
+                assertTrue("Text fits " + tag, layout.getLineMax(line) <= width + 1);
+            }
+            assertTrue("Full text height " + tag, layout.getHeight()
+                    <= text.getHeight() - text.getCompoundPaddingTop() - text.getCompoundPaddingBottom());
+        });
+    }
+
+    /** View.draw captures laid-out synthetic content, including History rows outside the viewport. */
+    private void captureHistoryView(ActivityScenario<TasksActivity> page, String name, String tag) throws Exception {
+        instrumentation.waitForIdleSync();
+        AtomicReference<android.graphics.Bitmap> capture = new AtomicReference<>();
+        page.onActivity(activity -> {
+            View view = tag == null ? activity.findViewById(R.id.role_page_body)
+                    : activity.findViewById(android.R.id.content).findViewWithTag(tag);
+            assertNotNull(view); assertFalse(view.isLayoutRequested());
+            assertTrue(view.getWidth() > 0 && view.getHeight() > 0);
+            android.graphics.Bitmap pixels = android.graphics.Bitmap.createBitmap(view.getWidth(), view.getHeight(),
+                    android.graphics.Bitmap.Config.ARGB_8888);
+            view.draw(new android.graphics.Canvas(pixels)); capture.set(pixels);
+        });
+        android.graphics.Bitmap pixels = capture.get();
+        File output = new File(context.getCacheDir(), "tasks-history-outcomes-17217f18-" + name + "-" + UUID.randomUUID() + ".png");
+        try {
+            assertTrue("Unique test-owned cache capture", output.createNewFile());
+            try (java.io.FileOutputStream stream = new java.io.FileOutputStream(output)) {
+                assertTrue(pixels.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream));
+            }
+            android.util.Log.i("TasksHistoryFixture", "View.draw capture: " + output.getAbsolutePath());
+        } finally { pixels.recycle(); }
+    }
+
     @Test public void visibleImageClosesOnRoleOrOptOutChangeWithoutPausing() throws Exception {
         byte[] bytes = Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", Base64.DEFAULT);
         StringBuilder hash = new StringBuilder();

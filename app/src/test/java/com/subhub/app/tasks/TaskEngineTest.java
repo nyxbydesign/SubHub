@@ -553,4 +553,144 @@ public class TaskEngineTest {
         assertEquals(CANCELLED, replay(engine).occurrence(task.id, DATE, cancel.at).status);
     }
 
+    @Test public void historyUsesTheFirstEffectiveOutcomeNotRetriesSweepsOrLaterCancellation() throws Exception {
+        for (TaskAction.Kind kind : Arrays.asList(ACCEPT, DENY, REFUSE_ONCE, REFUSE_SERIES,
+                TIMEOUT, SKIP, CANCEL_ONCE, CANCEL_SERIES)) {
+            TaskDefinition task = definition(true, false);
+            TaskEngine engine = engine(task);
+            long start = task.start(DATE).toEpochMilli(), end = task.end(DATE).toEpochMilli();
+            assertEquals(0, engine.occurrence(task.id, DATE, end + 1000).historyEnteredAt);
+            boolean review = kind == ACCEPT || kind == DENY;
+            if (review) {
+                engine.apply(action("proof", task, OUTSIDE, start), false);
+                engine.apply(action("ignored-pending-timeout", task, TIMEOUT, end + 50), false);
+                assertEquals(0, engine.occurrence(task.id, DATE, end + 1000).historyEnteredAt);
+            }
+            long entered = kind == TIMEOUT || kind == SKIP ? end + 100 : start + 100;
+            TaskAction outcome = action("outcome", task, kind, DATE, entered, review ? "proof" : "");
+            engine.apply(outcome, outcome.domAction());
+            assertFalse(engine.apply(outcome, outcome.domAction()));
+            engine.apply(action("ignored-timeout", task, TIMEOUT, end + 200), false);
+            assertEquals(kind.name(), entered, replay(engine).occurrence(task.id, DATE, end + 1000).historyEnteredAt);
+            // Cancellation may change the outcome, but a backdated action must not rewrite its first entry.
+            engine.apply(action("cancel-after-outcome", task, CANCEL_ONCE, start + 1), true);
+            engine.apply(action("ignored-offline-proof", task, OUTSIDE, start + 2), false);
+            TaskEngine.Occurrence restored = replay(engine).occurrence(task.id, DATE, end + 1000);
+            assertEquals(CANCELLED, restored.status);
+            assertEquals(entered, restored.historyEnteredAt);
+            assertNull(restored.submission);
+            assertEquals(1, engine.json().length());
+        }
+    }
+
+    @Test public void historyOrderIgnoresScheduleRequestCreationAndIndependentLedgerArrivalOrder() throws Exception {
+        long start = definition(true, false).start(DATE).toEpochMilli();
+        for (boolean reverse : new boolean[]{false, true}) {
+            TaskEngine engine = new TaskEngine();
+            java.util.List<String> names = new java.util.ArrayList<>(Arrays.asList("a-tie", "b-tie", "old-schedule"));
+            if (reverse) Collections.reverse(names);
+            for (String name : names) {
+                boolean older = name.equals("old-schedule");
+                TaskDefinition task = new TaskDefinition(name, name, "", DATE.atTime(older ? 8 : 9, 0),
+                        ZoneId.of("Europe/Berlin"), 86_400_000, Collections.emptySet(), true, false, null);
+                engine.apply(new TaskAction("create-" + name, task.id, CREATE, null,
+                        start + (older ? 500 : 1000), "", "", Collections.emptyList(), task), true);
+                if (older) {
+                    engine.apply(action("proof", task, SUBMIT, start - 1000), false);
+                    engine.apply(action("review", task, ACCEPT, DATE, start + 3000, "proof"), true);
+                } else engine.apply(action("cancel-" + name, task, CANCEL_ONCE, start + 2000), true);
+            }
+            TaskEngine restored = replay(engine);
+            java.util.List<TaskEngine.Occurrence> rows = restored.recorded(start + 20_000);
+            rows.sort(TaskEngine.LIST_ORDER);
+            assertEquals(Arrays.asList("old-schedule", "a-tie", "b-tie"), Arrays.asList(
+                    rows.get(0).task.id, rows.get(1).task.id, rows.get(2).task.id));
+            assertEquals(start - 1000, rows.get(0).submission.at);
+            assertEquals(start + 3000, rows.get(0).historyEnteredAt);
+        }
+    }
+
+    @Test public void seriesCancellationArchivesRecordedPendingWorkWithoutMovingFinishedEntries() throws Exception {
+        TaskDefinition task = definition(true, false);
+        TaskEngine engine = engine(task);
+        long start = task.start(DATE).toEpochMilli();
+        LocalDate pending = DATE.plusDays(1), cancelDate = DATE.plusDays(2);
+        engine.apply(action("finished-proof", task, OUTSIDE, start), false);
+        engine.apply(action("finished-review", task, ACCEPT, DATE, start + 10, "finished-proof"), true);
+        engine.apply(action("pending-proof", task, SUBMIT, pending, task.start(pending).toEpochMilli(), ""), false);
+        long cancelled = task.start(cancelDate).toEpochMilli();
+        engine.apply(action("cancel-series", task, CANCEL_SERIES, cancelDate, cancelled, ""), true);
+        engine.apply(action("repeat-series", task, CANCEL_SERIES, cancelDate, cancelled + 100, ""), true);
+        TaskEngine restored = replay(engine);
+        assertEquals(3, restored.recorded(cancelled + 1000).size());
+        assertEquals(start + 10, restored.occurrence(task.id, DATE, cancelled).historyEnteredAt);
+        for (LocalDate date : Arrays.asList(pending, cancelDate)) {
+            TaskEngine.Occurrence row = restored.occurrence(task.id, date, cancelled);
+            assertEquals(CANCELLED, row.status);
+            assertEquals(cancelled, row.historyEnteredAt);
+            assertNull(row.submission);
+        }
+        // A suppressed future date has no History card until an action actually records that date.
+        LocalDate unrecorded = cancelDate.plusDays(1);
+        assertEquals(0, restored.occurrence(task.id, unrecorded, cancelled).historyEnteredAt);
+        restored.apply(action("record-another-date", task, CANCEL_ONCE, unrecorded, cancelled + 200, ""), true);
+        assertEquals(cancelled + 200, replay(restored).occurrence(task.id, unrecorded, cancelled).historyEnteredAt);
+    }
+
+    @Test public void seriesRefusalLeavesPendingWorkOutOfHistoryUntilItsOwnReview() throws Exception {
+        TaskDefinition task = definition(true, false);
+        TaskEngine engine = engine(task);
+        long start = task.start(DATE).toEpochMilli();
+        LocalDate next = DATE.plusDays(1);
+        long refused = task.start(next).toEpochMilli();
+        engine.apply(action("pending-proof", task, SUBMIT, start), false);
+        engine.apply(action("refuse-series", task, REFUSE_SERIES, next, refused, ""), false);
+        engine = replay(engine);
+        assertEquals(PENDING, engine.occurrence(task.id, DATE, refused).status);
+        assertEquals(0, engine.occurrence(task.id, DATE, refused).historyEnteredAt);
+        assertEquals(refused, engine.occurrence(task.id, next, refused).historyEnteredAt);
+        engine.apply(action("review-pending", task, DENY, DATE, refused + 1000, "pending-proof"), true);
+        TaskEngine restored = replay(engine);
+        java.util.List<TaskEngine.Occurrence> rows = restored.recorded(refused + 2000);
+        rows.sort(TaskEngine.LIST_ORDER);
+        assertEquals(DATE, rows.get(0).date);
+        assertEquals(refused + 1000, rows.get(0).historyEnteredAt);
+        assertEquals(start, rows.get(0).submission.at);
+        assertEquals(next, rows.get(1).date);
+        assertEquals(2, rows.size());
+    }
+
+    @Test public void ignoredReviewAfterCancellationDoesNotInventAnEarlierHistoryEntry() throws Exception {
+        TaskDefinition task = definition(true, false);
+        TaskEngine engine = engine(task);
+        long start = task.start(DATE).toEpochMilli();
+        engine.apply(action("cancel", task, CANCEL_ONCE, start + 100), true);
+        engine.apply(action("late-proof", task, OUTSIDE, start), false);
+        engine.apply(action("late-review", task, ACCEPT, DATE, start + 10, "late-proof"), true);
+        TaskEngine.Occurrence row = replay(engine).occurrence(task.id, DATE, start + 1000);
+        assertEquals(start + 100, row.historyEnteredAt);
+        assertNull(row.submission);
+        assertNull(row.review);
+    }
+
+    @Test public void offlineReviewCancellationRaceRetainsEachLedgersActualFirstHistoryTransition() throws Exception {
+        TaskDefinition task = definition(true, false);
+        long start = task.start(DATE).toEpochMilli();
+        TaskAction proof = action("proof", task, OUTSIDE, start);
+        TaskAction review = action("review", task, ACCEPT, DATE, start + 10, proof.id);
+        TaskAction cancel = action("cancel", task, CANCEL_SERIES, start + 100);
+        for (boolean reviewFirst : new boolean[]{false, true}) {
+            TaskEngine engine = engine(task);
+            engine.apply(proof, false);
+            engine.apply(reviewFirst ? review : cancel, true);
+            engine.apply(reviewFirst ? cancel : review, true);
+            TaskEngine restored = replay(engine);
+            TaskEngine.Occurrence row = restored.occurrence(task.id, DATE, start + 1000);
+            assertEquals(CANCELLED, row.status);
+            assertNull(row.submission);
+            assertEquals(reviewFirst ? review.at : cancel.at, row.historyEnteredAt);
+            assertEquals(RemoteProtocol.canonical(engine.json()), RemoteProtocol.canonical(restored.json()));
+        }
+    }
+
 }

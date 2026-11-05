@@ -38,5 +38,8 @@
     <string name="tasks_keep_task">Keep task</string>
     <string name="tasks_cancel_confirm">Cancel “%1$s”?</string>
     <string name="tasks_cancelled">Cancelled</string>
+    <string name="tasks_approved">Approved</string>
+    <string name="tasks_declined">Declined</string>
+    <string name="tasks_completion_requested_at">Completion requested %1$s · %2$s</string>
     <string name="tasks_cancel_update">Update both devices to cancel tasks.</string>
 </resources>

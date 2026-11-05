@@ -216,6 +216,46 @@ public class TaskPeerAndroidTest {
         assertEquals(0, TaskEngine.activeCount(runtime.store.load(domScope).recorded(System.currentTimeMillis())));
     }
 
+    @Test public void reviewedHistoryRetainsRequestAndEntryTimesAcrossPeerReconnect() throws Exception {
+        create();
+        TaskDefinition older = new TaskDefinition(UUID.randomUUID().toString(), "Older synthetic task", "Read",
+                task.firstStart.minusMinutes(30), task.zone, task.durationMillis, Set.of(), true, false, null);
+        long olderStart = older.start(older.firstStart.toLocalDate()).toEpochMilli();
+        runtime.store.append(domScope, new TaskAction("create-older", older.id, TaskAction.Kind.CREATE, null,
+                olderStart - 1000, "", "", List.of(), older), true, false);
+        session(true, new AtomicInteger());
+        TaskAction first = new TaskAction("outside", task.id, TaskAction.Kind.OUTSIDE, task.firstStart.toLocalDate(),
+                start + 1000, "", "", List.of(), null);
+        TaskAction second = new TaskAction("older-proof", older.id, TaskAction.Kind.SUBMIT, older.firstStart.toLocalDate(),
+                olderStart + 1000, "Synthetic proof", "", List.of(), null);
+        runtime.store.append(subScope, first, false, false);
+        runtime.store.append(subScope, second, false, false);
+        session(true, new AtomicInteger());
+        TaskAction approved = new TaskAction("approve-older", older.id, TaskAction.Kind.ACCEPT, second.date,
+                start + 40_000, "", second.id, List.of(), null);
+        TaskAction declined = new TaskAction("decline-newer", task.id, TaskAction.Kind.DENY, first.date,
+                start + 30_000, "", first.id, List.of(), null);
+        runtime.store.append(domScope, approved, true, false);
+        runtime.store.append(domScope, declined, true, false);
+        session(true, new AtomicInteger());
+        session(true, new AtomicInteger());
+        try (TaskStore reopened = new TaskStore(context)) {
+            for (String scope : List.of(domScope, subScope)) {
+                List<TaskEngine.Occurrence> rows = reopened.load(scope).recorded(System.currentTimeMillis());
+                rows.sort(TaskEngine.LIST_ORDER);
+                assertEquals(2, rows.size());
+                assertEquals(older.id, rows.get(0).task.id);
+                assertEquals(TaskEngine.Status.ACCEPTED, rows.get(0).status);
+                assertEquals(approved.at, rows.get(0).historyEnteredAt);
+                assertEquals(second.at, rows.get(0).submission.at);
+                assertEquals(task.id, rows.get(1).task.id);
+                assertEquals(TaskEngine.Status.DENIED, rows.get(1).status);
+                assertEquals(declined.at, rows.get(1).historyEnteredAt);
+                assertEquals(first.at, rows.get(1).submission.at);
+            }
+        }
+    }
+
     @Test public void localOptoutStopsActionAndAssetTrafficWithoutAdvancingReceiptThenResumes() throws Exception {
         create(); context.getSharedPreferences(SubFeaturePolicy.STORE, 0).edit().putBoolean("tasks", false).commit();
         session(true, new AtomicInteger());

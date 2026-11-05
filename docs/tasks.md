@@ -16,6 +16,12 @@ Task detail shows the description and status, the instruction attachment, then t
 
 During an active task, the Sub can request completion with text and up to five media attachments, or request review outside the app without proof. Both requests remain pending until the Dom explicitly accepts or denies them. A timely pending request does not expire while awaiting review. Denial ends that occurrence.
 
+History lists finished occurrences newest first by their first recorded transition into History, independently of their creation, schedule or completion-request time. Equal entry times use stable occurrence identities. Existing history is reconstructed from the action journal in its recorded order, without assigning a new time on reload. Later cancellation changes an already finished outcome without moving it; cancelling pending work enters it into History at cancellation time.
+
+Entry times use the original action timestamps from the paired devices. Clock differences can affect their relative order. If an offline review or timeout races with cancellation, both devices retain the cancelled outcome, but their History position can differ: a device that recorded the earlier outcome keeps that entry time, while a device that received cancellation first ignores the stale outcome and uses cancellation time. Reloading preserves each device's recorded transitions.
+
+Reviewed preview cards show **Approved** or **Declined**. Finished previews and task details show **Completion requested** with the recorded submission time in the task's timezone, including requests for review outside the app. This is the Sub's request time, separate from the Dom's later review and History ordering. Refused, skipped and expired tasks have no completion request time. Cancelled tasks continue hiding their completion request and its time.
+
 If the author enables refusal, the Sub can refuse an occurrence before its deadline. A recurring task also offers refusal of the entire series. A refusal does not count as failure or create a tribute. Refusing a series stops future occurrences and survives reconnects; previously submitted work still receives its explicit review.
 
 ## Cancellation

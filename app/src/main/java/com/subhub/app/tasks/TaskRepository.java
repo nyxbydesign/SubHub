@@ -97,7 +97,7 @@ public final class TaskRepository {
                 if (task.start(date).toEpochMilli() > now) break;
             }
         }
-        result.sort(Comparator.comparingLong((TaskEngine.Occurrence row) -> row.task.start(row.date).toEpochMilli()).reversed());
+        result.sort(TaskEngine.LIST_ORDER);
         return result;
     }
     public ZoneId schedulingZone() {

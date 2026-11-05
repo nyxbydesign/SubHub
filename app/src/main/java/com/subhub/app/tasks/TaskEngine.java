@@ -14,15 +14,25 @@ public final class TaskEngine {
         public final String id;
         public final Status status;
         public final TaskAction submission, review;
-        Occurrence(TaskDefinition task, LocalDate date, Status status, TaskAction submission, TaskAction review) {
+        /** First recorded transition into History, or zero while not recorded there. */
+        public final long historyEnteredAt;
+        Occurrence(TaskDefinition task, LocalDate date, Status status, TaskAction submission, TaskAction review,
+                long historyEnteredAt) {
             this.task = task; this.date = date; id = task.occurrenceId(date); this.status = status;
             this.submission = submission; this.review = review;
+            this.historyEnteredAt = historyEnteredAt;
         }
         public boolean failed() { return status == Status.DENIED || status == Status.TIMED_OUT; }
+        public boolean inHistory() { return status != Status.SCHEDULED && status != Status.ACTIVE && status != Status.PENDING; }
     }
+    /** Each section keeps its own order: History by entry time, open tasks by schedule. */
+    public static final Comparator<Occurrence> LIST_ORDER = Comparator.comparingLong((Occurrence row) ->
+            row.inHistory() ? row.historyEnteredAt : row.task.start(row.date).toEpochMilli())
+            .reversed().thenComparing(row -> row.id);
     private final Map<String, TaskDefinition> tasks = new LinkedHashMap<>();
     private final Map<String, TaskAction> seen = new LinkedHashMap<>();
     private final Map<String, Status> states = new HashMap<>();
+    private final Map<String, Long> historyEntries = new HashMap<>();
     private final Map<String, TaskAction> submissions = new HashMap<>();
     private final Map<String, TaskAction> reviews = new HashMap<>();
     private final Set<String> refusedSeries = new HashSet<>();
@@ -54,7 +64,11 @@ public final class TaskEngine {
                 : now < task.start(date).toEpochMilli() ? Status.SCHEDULED : Status.ACTIVE;
         TaskAction submission = state == Status.CANCELLED ? null : submissions.get(key);
         return new Occurrence(task, date, state, submission,
-                submission == null ? null : reviews.get(submission.id));
+                submission == null ? null : reviews.get(submission.id), historyEntries.getOrDefault(key, 0L));
+    }
+    private void recordState(String key, Status status, long at) {
+        states.put(key, status);
+        if (status != Status.PENDING) historyEntries.putIfAbsent(key, at);
     }
     /** A duplicate exact action is acknowledged without repeating its state transition or effects. */
     public boolean apply(TaskAction action, boolean actorDom) throws JSONException {
@@ -82,26 +96,31 @@ public final class TaskEngine {
             TaskDefinition task = occurrence.task;
             String key = occurrence.id;
             if (action.cancellation()) {
-                if (action.kind == TaskAction.Kind.CANCEL_SERIES) cancelledSeries.add(task.id);
+                if (action.kind == TaskAction.Kind.CANCEL_SERIES) {
+                    cancelledSeries.add(task.id);
+                    // Pending work on other dates enters History too; finished entries keep their place.
+                    for (String recorded : states.keySet()) if (recorded.startsWith(task.id + ":"))
+                        historyEntries.putIfAbsent(recorded, action.at);
+                }
                 else cancelledOccurrences.add(key);
-                states.put(key, Status.CANCELLED);
+                recordState(key, Status.CANCELLED, action.at);
             } else if (!cancelled(task.id, action.date)) switch (action.kind) {
                 case SUBMIT: case OUTSIDE:
                     if (occurrence.status != Status.ACTIVE || action.at >= task.end(action.date).toEpochMilli())
                         throw new IllegalStateException("Task is not accepting completion requests");
-                    states.put(key, Status.PENDING); submissions.put(key, action); break;
+                    recordState(key, Status.PENDING, action.at); submissions.put(key, action); break;
                 case ACCEPT: case DENY:
                     if (occurrence.status != Status.PENDING || occurrence.submission == null
                             || !occurrence.submission.id.equals(action.submissionId))
                         throw new IllegalStateException("Completion request is no longer pending");
-                    states.put(key, action.kind == TaskAction.Kind.ACCEPT ? Status.ACCEPTED : Status.DENIED);
+                    recordState(key, action.kind == TaskAction.Kind.ACCEPT ? Status.ACCEPTED : Status.DENIED, action.at);
                     reviews.put(action.submissionId, action); break;
                 case REFUSE_ONCE: case REFUSE_SERIES:
                     if (!task.allowRefusal) throw new SecurityException("Task refusal is not enabled");
                     if (occurrence.status != Status.ACTIVE && occurrence.status != Status.SCHEDULED)
                         throw new IllegalStateException("Task can no longer be refused");
                     if (action.at >= task.end(action.date).toEpochMilli()) throw new IllegalStateException("Task has expired");
-                    states.put(key, Status.REFUSED);
+                    recordState(key, Status.REFUSED, action.at);
                     if (action.kind == TaskAction.Kind.REFUSE_SERIES) {
                         refusedSeries.add(task.id);
                         // Already submitted work still gets its explicit review; future days cannot reopen.
@@ -110,8 +129,8 @@ public final class TaskEngine {
                 case TIMEOUT: case SKIP:
                     if (action.at < task.end(action.date).toEpochMilli()) throw new IllegalStateException("Deadline has not passed");
                     // An offline refusal or timely proof wins over a later deadline sweep.
-                    if (occurrence.status == Status.ACTIVE) states.put(key,
-                            action.kind == TaskAction.Kind.SKIP ? Status.SKIPPED : Status.TIMED_OUT);
+                    if (occurrence.status == Status.ACTIVE) recordState(key,
+                            action.kind == TaskAction.Kind.SKIP ? Status.SKIPPED : Status.TIMED_OUT, action.at);
                     break;
                 default: throw new IllegalArgumentException("Invalid task action");
             }

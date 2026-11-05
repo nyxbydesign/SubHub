@@ -135,6 +135,53 @@ public class TaskPersistenceAndroidTest {
         assertTrue(store.pending(sub).isEmpty());
     }
 
+    @Test public void historyEntryAndRequestTimesSurviveReviewReplayAndDatabaseReopen() throws Exception {
+        definitionDelivered();
+        LocalDate next = date.plusDays(1);
+        long nextStart = task.start(next).toEpochMilli();
+        TaskAction first = action("first-proof", TaskAction.Kind.SUBMIT, "Synthetic proof", "");
+        TaskAction second = new TaskAction("second-proof", task.id, TaskAction.Kind.OUTSIDE, next,
+                nextStart + 1000, "", "", List.of(), null);
+        store.append(sub, first, false, false); store.append(sub, second, false, false);
+        store.receive(dom, store.outgoing(sub, 0), false, false);
+        TaskAction approved = new TaskAction("approve-first", task.id, TaskAction.Kind.ACCEPT, date,
+                nextStart + 3000, "", first.id, List.of(), null);
+        TaskAction declined = new TaskAction("decline-second", task.id, TaskAction.Kind.DENY, next,
+                nextStart + 2000, "", second.id, List.of(), null);
+        store.append(dom, approved, true, false); store.append(dom, declined, true, false);
+        JSONArray decisions = store.outgoing(dom, 1);
+        store.receive(sub, decisions, true, false);
+        store.receive(sub, decisions, true, false);
+        store.append(sub, new TaskAction("ignored-timeout", task.id, TaskAction.Kind.TIMEOUT, date,
+                nextStart + 4000, "", "", List.of(), null), false, false);
+        store.close(); store = new TaskStore(context);
+        for (String scope : List.of(dom, sub)) {
+            TaskEngine engine = store.load(scope);
+            List<TaskEngine.Occurrence> rows = engine.recorded(nextStart + 5000);
+            rows.sort(TaskEngine.LIST_ORDER);
+            assertEquals(2, rows.size());
+            assertEquals(date, rows.get(0).date); // Earlier request/schedule, later History entry.
+            assertEquals(approved.at, rows.get(0).historyEnteredAt);
+            assertEquals(first.at, rows.get(0).submission.at);
+            assertEquals(declined.at, rows.get(1).historyEnteredAt);
+            assertEquals(second.at, rows.get(1).submission.at);
+            assertEquals(TaskEngine.Status.ACCEPTED, rows.get(0).status);
+            assertEquals(TaskEngine.Status.DENIED, rows.get(1).status);
+        }
+        TaskAction cancel = new TaskAction("cancel-series", task.id, TaskAction.Kind.CANCEL_SERIES, next,
+                nextStart + 6000, "", "", List.of(), null);
+        store.append(dom, cancel, true, false);
+        store.receive(sub, store.outgoing(dom, 3), true, false);
+        store.close(); store = new TaskStore(context);
+        for (String scope : List.of(dom, sub)) {
+            TaskEngine engine = store.load(scope);
+            assertEquals(approved.at, engine.occurrence(task.id, date, nextStart + 7000).historyEnteredAt);
+            assertEquals(declined.at, engine.occurrence(task.id, next, nextStart + 7000).historyEnteredAt);
+            assertNull(engine.occurrence(task.id, date, nextStart + 7000).submission);
+            assertNull(engine.occurrence(task.id, next, nextStart + 7000).submission);
+        }
+    }
+
     @Test public void conflictingReplayGapAndWrongWriterLeaveCursorAndProjectionUnchanged() throws Exception {
         definitionDelivered();
         TaskAction request = action("proof", TaskAction.Kind.SUBMIT, "Finished", "");
