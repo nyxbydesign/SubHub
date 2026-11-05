@@ -9,7 +9,7 @@ import com.subhub.app.util.SubHubNavigation;
 import java.util.List;
 
 /** The Dom's people list, backed by actual local or paired identities. */
-public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
+public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity implements SubHubNavigation.SectionHome {
     private LinearLayout body;
     private android.widget.ScrollView rosterScroll;
     private com.subhub.app.util.AsyncUiScope data;
@@ -35,6 +35,13 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
         }
     };
     private FavoriteSubStore favorites;
+
+    @Override public void showSectionHome() {
+        rosterPosition = 0;
+        restoreRosterPosition = false;
+        SubHubNavigation.scrollToTop(findViewById(android.R.id.content));
+    }
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         favorites = new FavoriteSubStore(this);
@@ -76,7 +83,9 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity {
                 restoreRosterPosition = false;
                 if (rosterPosition > 0) {
                     int restored = rosterPosition;
-                    rosterScroll.post(() -> { if (resumed) rosterScroll.scrollTo(0, restored); });
+                    rosterScroll.post(() -> {
+                        if (resumed && rosterPosition == restored) rosterScroll.scrollTo(0, restored);
+                    });
                 }
             }
         }, failure -> {

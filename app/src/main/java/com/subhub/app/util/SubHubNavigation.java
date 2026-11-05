@@ -20,7 +20,6 @@ import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
-import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsActivity;
@@ -33,6 +32,11 @@ public final class SubHubNavigation {
     public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
     public enum Screen { HOME, PEOPLE, CONTRACT, TASKS, ACTIVITY, STATS, PROFILE, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
 
+    /** Resets presentation within an already selected primary destination. */
+    public interface SectionHome {
+        void showSectionHome();
+    }
+
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
                 @Override public void onInitializeAccessibilityNodeInfo(View host,
@@ -44,6 +48,23 @@ public final class SubHubNavigation {
             };
 
     private SubHubNavigation() {}
+
+    /** Use an immediate offset so an in-flight fling cannot undo a tab reselection. */
+    public static void scrollToTop(View root) {
+        if (root == null || root.getVisibility() != View.VISIBLE) return;
+        if (root instanceof ScrollView) {
+            ScrollView scroll = (ScrollView) root;
+            scroll.scrollTo(0, 0);
+            scroll.smoothScrollTo(0, 0);
+        } else if (root instanceof android.widget.ListView) {
+            ((android.widget.ListView) root).setSelection(0);
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int index = 0; index < group.getChildCount(); index++)
+                scrollToTop(group.getChildAt(index));
+        }
+    }
 
     /** Promotes an existing read-only detail page into a primary role destination. */
     public static void attachToPage(Activity activity, android.widget.LinearLayout content, Screen active) {
@@ -379,14 +400,8 @@ public final class SubHubNavigation {
             if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
             if (selected && target.isInstance(activity)) {
-                if (activity instanceof com.subhub.app.stats.StatsActivity)
-                    ((com.subhub.app.stats.StatsActivity) activity).showProfile();
-                if (activity instanceof com.subhub.app.tasks.TasksActivity)
-                    ((com.subhub.app.tasks.TasksActivity) activity).showSectionHome();
-                return;
-            }
-            if (selected && activity instanceof PenanceActivity) {
-                ((PenanceActivity) activity).showSectionHome();
+                if (activity instanceof SectionHome) ((SectionHome) activity).showSectionHome();
+                else scrollToTop(activity.findViewById(android.R.id.content));
                 return;
             }
             activity.startActivity(new Intent(activity, target)

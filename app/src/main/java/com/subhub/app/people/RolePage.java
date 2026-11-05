@@ -16,7 +16,7 @@ import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
 /** Role-aware primary page; asynchronous requests belong to the page lifecycle. */
-public abstract class RolePage extends AppCompatActivity {
+public abstract class RolePage extends AppCompatActivity implements SubHubNavigation.SectionHome {
     protected LinearLayout body;
     protected AsyncUiScope data;
     private int pageTitle;
@@ -64,6 +64,10 @@ public abstract class RolePage extends AppCompatActivity {
     }
 
     protected abstract void refresh();
+
+    @Override public void showSectionHome() {
+        SubHubNavigation.scrollToTop(findViewById(android.R.id.content));
+    }
 
     protected final void loading() {
         body.removeAllViews();

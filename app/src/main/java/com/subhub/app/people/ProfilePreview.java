@@ -119,6 +119,8 @@ public final class ProfilePreview extends LinearLayout {
         super.onDetachedFromWindow();
     }
 
+    public void collapse() { setExpanded(false); }
+
     private void setExpanded(boolean value) {
         expanded = value;
         if (state != null) state.values.put(stateKey, value);

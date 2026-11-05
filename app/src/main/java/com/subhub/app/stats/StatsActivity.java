@@ -13,7 +13,7 @@ import java.text.DateFormat;
 import java.util.*;
 
 /** Current service, lifetime totals, dated activity and recorded sessions share one page. */
-public class StatsActivity extends PreferencePage {
+public class StatsActivity extends PreferencePage implements com.subhub.app.util.SubHubNavigation.SectionHome {
     private LinearLayout shell;
     private ScrollView scroll;
     private AchievementsPane catalog;
@@ -176,6 +176,18 @@ public class StatsActivity extends PreferencePage {
         profileSelected = true; catalogSelected = false;
         renderSection();
         if (resumed) resumeSection();
+    }
+
+    @Override public final void showSectionHome() {
+        showProfile();
+        profileScroll = 0;
+        if (profile != null) {
+            com.subhub.app.people.ProfilePreview preview = profile.view().findViewById(R.id.profile_preview);
+            if (preview != null) preview.collapse();
+        }
+        com.subhub.app.util.SubHubNavigation.scrollToTop(scroll);
+        // renderSection posts its restored offset when changing from a secondary section.
+        scroll.post(() -> com.subhub.app.util.SubHubNavigation.scrollToTop(scroll));
     }
 
     public final void showAchievements(boolean selected) {

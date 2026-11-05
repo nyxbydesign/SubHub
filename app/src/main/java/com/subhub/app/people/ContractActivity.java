@@ -24,6 +24,14 @@ public final class ContractActivity extends RolePage {
     private final Map<String, View> details = new LinkedHashMap<>();
     private final Map<String, ImageView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
+    @Override public void showSectionHome() {
+        expandedSection = "";
+        expandedAbout = false;
+        ProfilePreview preview = body.findViewById(R.id.profile_preview);
+        if (preview != null) preview.collapse();
+        updateDetails();
+        super.showSectionHome();
+    }
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
