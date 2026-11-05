@@ -34,9 +34,8 @@ public final class RemotePersonRepository implements PersonRepository {
         PersonSnapshot.Freshness contract=freshness(peer,RemoteProtocol.Stream.BASELINE,configuration!=null,30*60_000),statistics=freshness(peer,RemoteProtocol.Stream.STATS,stats!=null,30*60_000),live=freshness(peer,RemoteProtocol.Stream.RUNTIME,runtime!=null,90_000);
         long contact=store.lastContactAt(peer);
         PeerPresence.Observation presence=PeerPresence.read(store,peer);
-        PersonSnapshot.Connection connection=peer.state==RemoteStore.State.REVOKED?PersonSnapshot.Connection.REVOKED:peer.state==RemoteStore.State.PENDING?PersonSnapshot.Connection.PENDING:
-                presence.online?PersonSnapshot.Connection.CONNECTED:
-                contact==0 && store.metadata(peer.identity,peer.generation,"connection_error","").isEmpty()?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
+        PersonSnapshot.Connection connection=connection(peer.state,presence,contact,
+                store.metadata(peer.identity,peer.generation,"connection_error",""));
         EnumSet<PersonSnapshot.Capability> capabilities=EnumSet.of(PersonSnapshot.Capability.MANAGE_CONNECTION,PersonSnapshot.Capability.VIEW_STATS);
         if(configuration!=null)capabilities.add(PersonSnapshot.Capability.VIEW_CONTRACT);
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
@@ -54,6 +53,16 @@ public final class RemotePersonRepository implements PersonRepository {
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
                 .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
     }
+    static PersonSnapshot.Connection connection(RemoteStore.State state,PeerPresence.Observation presence,
+            long contact,String error) {
+        if(state==RemoteStore.State.REVOKED)return PersonSnapshot.Connection.REVOKED;
+        if(state==RemoteStore.State.PENDING)return PersonSnapshot.Connection.PENDING;
+        if(presence.online)return PersonSnapshot.Connection.CONNECTED;
+        // A foreground hello can precede the first completed transport checkpoint.
+        return contact==0 && presence.lastOnlineAt==0 && error.isEmpty()
+                ?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
+    }
+
     public PersonSnapshot localProjection(PersonSnapshot local) {
         if(!local.id.isLocal())throw new IllegalArgumentException("Not this device");
         RemoteProfiles.ContractOwner contractOwner = RemoteProfiles.contractOwner(context, store, feature.contracts);
