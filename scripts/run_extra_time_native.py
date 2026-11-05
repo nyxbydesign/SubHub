@@ -36,6 +36,9 @@ MEMORY_AVAILABLE = (2560 + 2048) * MIB
 MAX_LOG = 16 * MIB
 MAX_ARCHIVE = 64 * MIB
 MAX_MEMBER = 16 * MIB
+# Ubuntu 24.04's client-library package supplies the missing emulator SONAME.
+# Never infer arbitrary apt package names from loader output.
+EMULATOR_RUNTIME_PACKAGES = {"libpulse.so.0": "libpulse0"}
 NATIVE = {
     "com.subhub.app.remote.ExtraTimeRequestAndroidTest": [
         "submissionChargesOnceAndApprovalAppliesOnlyItsTemporaryAppCredit",
@@ -84,6 +87,17 @@ def digest(path):
         for chunk in iter(lambda: source.read(MIB), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def missing_loader_libraries(output):
+    return set(re.findall(r"^\s*([A-Za-z0-9_+.-]+)\s+=>\s+not found\s*$", output, re.MULTILINE))
+
+
+def runtime_packages(missing):
+    unknown = missing - EMULATOR_RUNTIME_PACKAGES.keys()
+    if unknown:
+        raise RuntimeError("Unreviewed emulator host dependencies: " + ", ".join(sorted(unknown)))
+    return sorted({EMULATOR_RUNTIME_PACKAGES[name] for name in missing})
 
 
 def source_inventory():
@@ -370,8 +384,57 @@ class Producer:
             self.record.setdefault("sdkPackages", {})[relative] = path.read_text(encoding="utf-8")
         if not os.access("/dev/kvm", os.R_OK | os.W_OK):
             raise RuntimeError("KVM device access unavailable; software-emulation fallback is not permitted")
+        self.emulator_runtime()
         self.command([self.sdk / "emulator/emulator", "-accel-check"], label="kvm-check")
         self.command([self.sdk / "emulator/emulator", "-version"], label="emulator-version")
+        self.save()
+
+    def emulator_runtime(self):
+        root = self.sdk / "emulator"
+        binaries = [root / "emulator", root / "qemu/linux-x86_64/qemu-system-x86_64"]
+        if not shutil.which("ldd") or not all(path.is_file() for path in binaries):
+            raise RuntimeError("The installed emulator ELF loader inventory is unavailable")
+        # The launcher supplies SDK-bundled libraries to QEMU. Include their actual
+        # directories in this loader observation, without changing emulator startup.
+        directories = {path.parent.resolve() for path in (root / "lib64").rglob("*.so*") if path.is_file()}
+        if len(directories) > 128 or any(not path.is_relative_to(root.resolve()) for path in directories):
+            raise RuntimeError("Unexpected emulator bundled-library directory inventory")
+        self.record["emulatorRuntime"] = {"binaries": [str(path.relative_to(root)) for path in binaries],
+                                          "bundledLibraryDirectories": [str(path.relative_to(root)) for path in sorted(directories)]}
+
+        def probe(stage):
+            missing = set()
+            previous = self.env.get("LD_LIBRARY_PATH")
+            self.env["LD_LIBRARY_PATH"] = ":".join([str(path) for path in sorted(directories)] + ([previous] if previous else []))
+            try:
+                for index, binary in enumerate(binaries):
+                    output, code = self.command(["ldd", binary], check=False, label=f"emulator-ldd-{stage}-{index}")
+                    absent = missing_loader_libraries(output)
+                    if code and not absent:
+                        raise RuntimeError("Emulator loader inspection failed; see its retained ldd log")
+                    missing.update(absent)
+            finally:
+                if previous is None:
+                    self.env.pop("LD_LIBRARY_PATH", None)
+                else:
+                    self.env["LD_LIBRARY_PATH"] = previous
+            self.record["emulatorRuntime"]["missing" + stage.capitalize()] = sorted(missing)
+            self.save()
+            return missing
+
+        missing = probe("before")
+        packages = runtime_packages(missing)  # Unknown dependencies fail before any apt mutation.
+        self.record["emulatorRuntime"]["packagesRequested"] = packages
+        self.save()
+        if packages:
+            self.command(["sudo", "apt-get", "update"], timeout=180, label="emulator-runtime-package-index")
+            self.command(["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes",
+                          "--no-install-recommends", *packages], timeout=300, label="emulator-runtime-package-install")
+            versions, _ = self.command(["dpkg-query", "--show", "--showformat=${Package} ${Version}\\n", *packages],
+                                       label="emulator-runtime-package-versions")
+            self.record["emulatorRuntime"]["installedPackageVersions"] = versions.strip()
+            if probe("after"):
+                raise RuntimeError("Installed emulator host dependencies remain unresolved; no install retry")
         self.save()
 
     def build(self):

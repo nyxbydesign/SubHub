@@ -29,7 +29,9 @@ public final class ConfigurationSettingCatalogTest {
             }
 
         }
-        assertEquals(113, keys.size());
+        assertEquals(115, keys.size());
+        assertEquals(Boolean.FALSE, ConfigurationSettingCatalog.field("wallet", "rule_extra_time_request_enabled").defaultValue());
+        assertEquals(100, ConfigurationSettingCatalog.field("wallet", "rule_extra_time_request_cents").defaultValue());
         assertNull(ConfigurationSettingCatalog.field("censor", "app_mode_kind"));
         assertTrue(ConfigurationSchema.isSecretOrRuntimeKey("app_included_packages_v1"));
     }
