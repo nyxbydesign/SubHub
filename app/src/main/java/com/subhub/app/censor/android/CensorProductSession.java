@@ -78,6 +78,9 @@ public final class CensorProductSession implements AutoCloseable {
         }
     }
     private final AccessibilityService service;
+    private final CensorScreenState screen;
+    private boolean screenSuspended;
+    private long observedScreenGeneration;
     private final SharedPreferences preferences;
     private final AppModeManager mode;
     private final CensorTapTracker taps;
@@ -132,6 +135,8 @@ public final class CensorProductSession implements AutoCloseable {
             AccessibilityCensorHost.WorkerFactory models, Runnable selectionObserved, Function<Context, StatsRepository> statistics,
             Function<Context, PenanceManager> ledgers, Runnable nativeReadSelected) {
         onMain(); this.service = Objects.requireNonNull(service); this.taps = Objects.requireNonNull(taps);
+        screen = new CensorScreenState(service);
+        observedScreenGeneration = screen.generation();
         this.selectionObserved = Objects.requireNonNull(selectionObserved);
         this.statistics = Objects.requireNonNull(statistics);
         this.ledgers = Objects.requireNonNull(ledgers);
@@ -187,10 +192,30 @@ public final class CensorProductSession implements AutoCloseable {
                     }
                     @Override public void drained() { observer.drained(); }
                     @Override public void executorsTerminated(boolean disposed) { observer.executorsTerminated(disposed); }
-                }, models, () -> { }, nativeReadSelected);
+                }, models, () -> { }, nativeReadSelected, screen);
         reconciliation = new LatestReconciliation<>(lookup, main::post, this::read, this::commit, this::fail);
     }
-    public void request() { onMain(); if (!closed && !failed) reconciliation.request(); }
+    public void request() {
+        onMain(); if (closed || failed) return;
+        screen.refresh(null);
+        if (observedScreenGeneration != screen.generation()) suspendForScreen();
+        observedScreenGeneration = screen.generation();
+        if (!screen.eligible()) { suspendForScreen(); return; }
+        if (screenSuspended) { screenSuspended = false; preferredPackage = ""; }
+        reconciliation.request();
+    }
+    public void screenStateChanged(String action) {
+        onMain(); if (closed || failed) return;
+        screen.refresh(action);
+        if (!screen.eligible()) suspendForScreen(); else request();
+    }
+    private void suspendForScreen() {
+        if (screenSuspended) return;
+        screenSuspended = true;
+        preferredPackage = "";
+        stop();
+        controller.suspendForScreen();
+    }
     /** Accepted real foreground changes withdraw old geometry before waiting for a Binder lookup. */
     public void foregroundEvent(String packageName, String className, int windowId, boolean windowStateChange) {
         onMain(); if (closed || failed) return;
@@ -255,7 +280,7 @@ public final class CensorProductSession implements AutoCloseable {
         controller.stop();
         if (previous) observer.activeChanged(false);
     }
-    public boolean isActive() { return active && !closed && !failed; }
+    public boolean isActive() { return active && !closed && !failed && screen.eligible(); }
     public AccessibilityWindowReader.Window window() { Desired value = selected; return value == null ? null : value.window; }
     @Override public void close() {
         onMain(); if (closed) return;
@@ -275,6 +300,7 @@ public final class CensorProductSession implements AutoCloseable {
     AccessibilityService service() { return service; }
 
     private Desired read() {
+        long screenGeneration = screen.generation();
         if (stats == null) stats = Objects.requireNonNull(statistics.apply(service));
         if (penance == null) penance = Objects.requireNonNull(ledgers.apply(service));
         StatsRepository.SessionStamp session = stats.sessionStamp();
@@ -282,27 +308,30 @@ public final class CensorProductSession implements AutoCloseable {
         CensorLabCensorSession.Stamp lab = CensorLabCensorSession.stamp();
         String ime = mode.inputMethodPackage();
         inputMethodPackage = ime;
-        AccessibilityWindowReader.Window window = controller.observeForeground(ime, preferredPackage);
+        AccessibilityWindowReader.Window window = screen.isCurrent(screenGeneration)
+                ? controller.observeForeground(ime, preferredPackage) : null;
         SettingsRepository settings = SettingsRepository.forPreferences(snapshot);
         DetectorConfig detector = settings.loadDetectorConfig(); TextSmutConfig text = settings.loadTextSmutConfig();
         boolean enabled = lab.active || (snapshot.getBoolean(AppModeManager.KEY_ARMED, false)
                 && snapshot.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true)
                 && settings.loadCaptureMethod() == CaptureMethod.APP_MODE);
-        boolean eligible = window != null && AppModePolicy.shouldRecognize(enabled, snapshot.included(),
+        boolean eligible = screen.isCurrent(screenGeneration) && window != null && AppModePolicy.shouldRecognize(enabled, snapshot.included(),
                 window.packageName, service.getPackageName(), ime);
         SnapshotPaintPolicy paint = SnapshotPaintPolicy.from(settings.loadDetectionPreset());
         CensorAppearance appearance = settings.loadAppearance();
         long revision = snapshot.getLong(CustomImageManager.REVISION_KEY, 0);
-        Desired result = new Desired(snapshot, lab, session, window, detector, text, appearance, paint, revision, eligible);
+        Desired result = new Desired(snapshot, lab, session, window, detector, text, appearance, paint, revision, eligible, screenGeneration);
         selectionObserved.run(); // Adverse delivery control after all actual platform handles were released.
         return result;
     }
     private void commit(Desired value) {
         onMain(); if (closed || failed) return;
+        if (!screen.isCurrent(value.screenGeneration)) { request(); return; }
         long generation = reconciliation.generation();
         if (!value.lab.isCurrent() || value.session != StatsRepository.currentSessionStamp()
                 || !value.settings.same(new ProductCensorSettings(preferences))) { request(); return; }
         observer.foreground(value.window);
+        if (!screen.isCurrent(value.screenGeneration)) { request(); return; }
         if (!reconciliation.isCurrent(generation) || closed || failed) return;
         if (!value.lab.isCurrent() || value.session != StatsRepository.currentSessionStamp()
                 || !value.settings.same(new ProductCensorSettings(preferences))) { request(); return; }
@@ -311,13 +340,13 @@ public final class CensorProductSession implements AutoCloseable {
         unavailableInference = null;
         preferredPackage = value.window.packageName;
         ProtectionScope desiredProtection = value.lab.active ? ProtectionScope.lab(taps.scope()) : ProtectionScope.normal(taps.scope());
-        if (active && selected != null && selected.window.same(value.window) && selected.lab == value.lab
+        if (active && selected != null && selected.screenGeneration == value.screenGeneration && selected.window.same(value.window) && selected.lab == value.lab
                 && selected.session == value.session && selected.settings.sameParticipation(value.settings)
                 && selected.inference.equals(value.inference) && desiredProtection.equals(protection)) {
             if (!selected.appearanceKey.equals(value.appearanceKey)) {
                 controller.appearanceChanged(value.appearance, value.paint, value.artworkRevision);
             }
-            if (reconciliation.isCurrent(generation) && !closed && !failed && active) selected = value;
+            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) selected = value;
             return;
         }
         dwellAccounting.invalidate(); dwellEpisode.reset();
@@ -328,7 +357,7 @@ public final class CensorProductSession implements AutoCloseable {
             controller.start(new AccessibilityCensorController.Configuration(++scopeToken, value.window, value.detector,
                     threads >= 3 && value.detector.getInferenceResolution() > 320, value.text,
                     threads >= 3, threads >= 4, desiredProtection, value.appearance, value.paint, value.artworkRevision));
-            if (reconciliation.isCurrent(generation) && !closed && !failed && active) observer.activeChanged(true);
+            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) observer.activeChanged(true);
         } catch (RuntimeException | Error error) { fail(error); }
     }
     private void fail(Throwable failure) {
@@ -367,7 +396,7 @@ public final class CensorProductSession implements AutoCloseable {
     }
     private boolean participationCurrent(Desired origin) {
         Desired current = selected;
-        if (closed || failed || !active || current == null || origin.lab.active
+        if (closed || failed || !active || !screen.isCurrent(origin.screenGeneration) || current == null || origin.lab.active
                 || !origin.lab.isCurrent() || current.lab != origin.lab
                 || !current.window.same(origin.window) || !current.inference.equals(origin.inference)
                 || !origin.settings.sameParticipation(current.settings)) return false;
@@ -494,14 +523,15 @@ public final class CensorProductSession implements AutoCloseable {
         final DetectorConfig detector; final TextSmutConfig text;
         final CensorAppearance appearance; final SnapshotPaintPolicy paint;
         final List<Object> inference, appearanceKey;
-        final long artworkRevision; final boolean eligible;
+        final long artworkRevision, screenGeneration; final boolean eligible;
         Desired(ProductCensorSettings settings, CensorLabCensorSession.Stamp lab, StatsRepository.SessionStamp session,
                 AccessibilityWindowReader.Window window,
                 DetectorConfig detector, TextSmutConfig text, CensorAppearance appearance, SnapshotPaintPolicy paint,
-                long revision, boolean eligible) {
+                long revision, boolean eligible, long screenGeneration) {
             this.settings = settings; this.lab = lab; this.session = session;
             this.window = window; this.detector = detector; this.text = text;
             this.appearance = appearance; this.paint = paint; artworkRevision = revision; this.eligible = eligible;
+            this.screenGeneration = screenGeneration;
             inference = CensorConfigurationKey.inference(detector, text);
             appearanceKey = CensorConfigurationKey.appearance(appearance, paint, revision);
         }

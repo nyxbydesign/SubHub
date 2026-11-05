@@ -92,6 +92,39 @@ public final class AccessibilityCensorHostAndroidTest {
         }
     }
 
+    @Test public void screenSuspensionRetiresHeldHighInferenceBeforeRapidWakeCanReuseIt() throws Exception {
+        try (Harness h = new Harness()) {
+            h.blockInference = true;
+            h.start(10, config(4, .3f)); Bitmap oldPixels = h.next().deliver();
+            assertTrue(h.inferenceEntered.await(5, TimeUnit.SECONDS)); Model original = h.models.get(0);
+            main(h.host::suspendForScreen); h.failUndelivered(); h.requests.clear();
+            assertNull(h.host.activeScope()); assertEquals(0, original.closes.get()); assertFalse(oldPixels.isRecycled());
+            h.start(11, config(4, .3f));
+            assertEquals("Native owner remains alive until executing inference returns", 0, original.closes.get());
+            h.blockInference = false; h.inferenceRelease.countDown();
+            h.next().deliver(); h.awaitView(11);
+            assertEquals(1, original.closes.get()); assertFalse(original.closedOnMain.get());
+            assertEquals(2, h.fastInitializations.get()); assertNotSame(original, h.models.get(1));
+            assertEquals("Only the resumed source may be accepted", 1, h.acceptedFast.get());
+        }
+    }
+
+    @Test public void screenSuspensionFencesHeldInitializationAndRetiresItBeforeResume() throws Exception {
+        try (Harness h = new Harness()) {
+            h.blockInitialization = true;
+            h.start(10, config(4, .3f)); h.next();
+            assertTrue(h.initializationEntered.await(5, TimeUnit.SECONDS));
+            main(h.host::suspendForScreen); h.failUndelivered(); h.requests.clear();
+            assertEquals(0, h.fastReadyNotifications.get());
+            h.start(11, config(4, .3f));
+            h.blockInitialization = false; h.initializationRelease.countDown();
+            h.next().deliver(); h.awaitView(11);
+            assertEquals(2, h.fastInitializations.get()); assertEquals(1, h.models.get(0).closes.get());
+            assertFalse(h.models.get(0).closedOnMain.get());
+            assertEquals(1, h.fastReadyNotifications.get()); assertEquals(1, h.acceptedFast.get());
+        }
+    }
+
     @Test public void captureDispatchAndOwnedPixelsSurviveHeldFastReadiness() throws Exception {
         try (Harness h = new Harness()) {
             h.blockInitialization = true;

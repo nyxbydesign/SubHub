@@ -9,24 +9,28 @@ import android.hardware.display.VirtualDisplay;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
+import android.view.Surface;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 
 /** Captures scaled RGBA frames from a user-approved MediaProjection session. */
 public final class ScreenCaptureManager implements AutoCloseable {
-    private final MediaProjection projection;
+    interface DisplaySession { void surface(Surface surface); void release(); }
+    interface DisplayFactory { DisplaySession create(int width, int height, int densityDpi, Surface surface); }
+    private final DisplayFactory displays;
     private final int densityDpi;
     private final int captureWidth;
     private final int captureHeight;
     private ImageReader imageReader;
-    private VirtualDisplay virtualDisplay;
+    private DisplaySession virtualDisplay;
     private Bitmap paddedBitmap;
     private final Canvas cropCanvas = new Canvas();
     private final Rect cropSource = new Rect();
     private final Rect cropDestination = new Rect();
     private final ArrayDeque<Bitmap> framePool = new ArrayDeque<>();
     private boolean closed;
+    private boolean paused;
 
     public ScreenCaptureManager(
             MediaProjection projection,
@@ -35,7 +39,20 @@ public final class ScreenCaptureManager implements AutoCloseable {
             int densityDpi,
             int inferenceResolution,
             float captureScale) {
-        this.projection = projection;
+        this(screenWidth, screenHeight, densityDpi, inferenceResolution, captureScale, (width, height, density, surface) -> {
+            VirtualDisplay display = projection.createVirtualDisplay("SubHubCapture", width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null);
+            return new DisplaySession() {
+                @Override public void surface(Surface value) { display.setSurface(value); }
+                @Override public void release() { display.release(); }
+            };
+        });
+    }
+
+    /** Native ImageReader with an explicit display boundary for lifecycle contract fixtures. */
+    ScreenCaptureManager(int screenWidth, int screenHeight, int densityDpi, int inferenceResolution,
+            float captureScale, DisplayFactory displays) {
+        this.displays = java.util.Objects.requireNonNull(displays);
         this.densityDpi = densityDpi;
         int maximum = Math.max(screenWidth, screenHeight);
         int targetMaximum = Math.min(
@@ -46,24 +63,44 @@ public final class ScreenCaptureManager implements AutoCloseable {
         captureHeight = Math.max(32, (int) (screenHeight * scale));
     }
 
-    public void start() {
+    public void start() { start(false); }
+
+    public synchronized void start(boolean initiallyPaused) {
         if (virtualDisplay != null) return;
+        if (closed) throw new IllegalStateException("Capture display is closed");
         closed = false;
-        imageReader = ImageReader.newInstance(
-                captureWidth, captureHeight, PixelFormat.RGBA_8888, 2);
-        virtualDisplay = projection.createVirtualDisplay(
-                "SubHubCapture",
-                captureWidth,
-                captureHeight,
-                densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader.getSurface(),
-                null,
-                null);
+        paused = initiallyPaused;
+        if (!paused) imageReader = newReader();
+        virtualDisplay = displays.create(captureWidth, captureHeight, densityDpi, paused ? null : imageReader.getSurface());
     }
 
-    public Bitmap acquireLatestFrame() {
-        if (imageReader == null) return null;
+    /** Retain the single projection/display grant while removing its active output surface. */
+    public synchronized void pauseSurface(boolean value) {
+        if (closed || virtualDisplay == null || paused == value) return;
+        paused = value;
+        if (value) {
+            try { virtualDisplay.surface(null); }
+            finally {
+                // A late GPU buffer belongs to the old queue, which must never enter the resumed scope.
+                if (imageReader != null) imageReader.close();
+                imageReader = null;
+            }
+        } else {
+            imageReader = newReader();
+            try { virtualDisplay.surface(imageReader.getSurface()); }
+            catch (RuntimeException failure) {
+                paused = true; imageReader.close(); imageReader = null;
+                throw failure;
+            }
+        }
+    }
+
+    private ImageReader newReader() {
+        return ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2);
+    }
+
+    public synchronized Bitmap acquireLatestFrame() {
+        if (imageReader == null || paused || closed) return null;
         try (Image image = imageReader.acquireLatestImage()) {
             if (image == null) return null;
             Image.Plane plane = image.getPlanes()[0];
@@ -115,7 +152,7 @@ public final class ScreenCaptureManager implements AutoCloseable {
     public int getCaptureHeight() { return captureHeight; }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         closed = true;
         if (virtualDisplay != null) virtualDisplay.release();
         virtualDisplay = null;

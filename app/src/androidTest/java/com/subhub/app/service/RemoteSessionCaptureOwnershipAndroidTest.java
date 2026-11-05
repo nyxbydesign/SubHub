@@ -78,6 +78,11 @@ public class RemoteSessionCaptureOwnershipAndroidTest {
                 new Intent(context, ScreenCaptureService.class).setAction("com.subhub.app.action.OWNERSHIP_PROBE")));
         await(() -> liveUnchecked() != null);
         service = live(); registry = (CaptureRunOwnership) field(null, "ownership");
+        // This fixture supplies synthetic frame participation; it never starts a real grant pipeline.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            try { ((android.os.Handler) field(service, "mainHandler")).removeCallbacks((Runnable) field(service, "screenTick")); }
+            catch (Exception failure) { throw new AssertionError(failure); }
+        });
         executor = (ExecutorService) field(service, "executor"); inference = (ExecutorService) field(service, "inferenceExecutor");
         assertFalse(executor.isShutdown()); assertFalse(inference.isShutdown());
     }
@@ -124,6 +129,7 @@ public class RemoteSessionCaptureOwnershipAndroidTest {
             owner = registry.activate((String) field(service, "instanceIdentity"), (Integer) field(service, "lastStartId"),
                     new CaptureRunOwnership.Components(stats.activeSessionIdentity(), main().getString("commitment_session_identity", ""), ""));
             put(service, "captureOwner", owner);
+            put(service, "pipelineActive", true);
         }
         assertNotNull(ScreenCaptureService.observedStopTarget(context)); return owner;
     }
@@ -329,6 +335,51 @@ public class RemoteSessionCaptureOwnershipAndroidTest {
         } finally { release.countDown(); }
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         assertFalse(scope.isCurrent()); assertEquals(0, renders.get()); assertEquals(1, releases.get());
+    }
+    @Test public void queuedFrameRejectsInjectedScreenOffAndRapidWakeWithUnchangedSession() throws Exception {
+        admitSyntheticCapture(); ScreenCaptureService.FrameScope scope = frameScope();
+        String identity = stats.activeSessionIdentity();
+        com.subhub.app.censor.android.CensorScreenState screen =
+                (com.subhub.app.censor.android.CensorScreenState) field(service, "censorScreen");
+        AtomicInteger renders = new AtomicInteger(), releases = new AtomicInteger();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(holdMain(entered, release));
+        assertTrue(entered.await(3, TimeUnit.SECONDS));
+        try {
+            service.postFramePublication(scope, renders::incrementAndGet, releases::incrementAndGet);
+            screen.refresh(Intent.ACTION_SCREEN_OFF); assertFalse(scope.isCurrent());
+            screen.refresh(Intent.ACTION_SCREEN_ON); assertTrue(screen.eligible());
+            assertFalse("Old pixels cannot revive after a fast wake", scope.isCurrent());
+            assertEquals(identity, stats.activeSessionIdentity()); assertTrue(ScreenCaptureService.isRunning());
+        } finally { release.countDown(); }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertEquals(0, renders.get()); assertEquals(1, releases.get());
+        assertTrue("A fresh synthetic frame scope remains possible", frameScope().isCurrent());
+    }
+
+    @Test public void screenSuspensionCancelsCaptureTicksAndRevocationRejectsHeldPublication() throws Exception {
+        CaptureRunOwnership.Token owner = admitSyntheticCapture(); ScreenCaptureService.FrameScope old = frameScope();
+        java.util.concurrent.ScheduledFuture<?> schedule = ((java.util.concurrent.ScheduledExecutorService) executor)
+                .scheduleWithFixedDelay(() -> { }, 60000, 16, TimeUnit.MILLISECONDS);
+        put(service, "captureSchedule", schedule); String identity = stats.activeSessionIdentity();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            try {
+                Method suspend = ScreenCaptureService.class.getDeclaredMethod("suspendCensorPipeline"); suspend.setAccessible(true); suspend.invoke(service);
+            } catch (Exception failure) { throw new AssertionError(failure); }
+        });
+        assertTrue(schedule.isCancelled()); assertNull(field(service, "captureSchedule")); assertFalse(old.isCurrent());
+        assertSame(owner, registry.current()); assertEquals(identity, stats.activeSessionIdentity());
+        put(service, "pipelineActive", true); ScreenCaptureService.FrameScope resumed = frameScope();
+        AtomicInteger renders = new AtomicInteger(), releases = new AtomicInteger();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(holdMain(entered, release)); assertTrue(entered.await(3, TimeUnit.SECONDS));
+        try {
+            service.postFramePublication(resumed, renders::incrementAndGet, releases::incrementAndGet);
+            put(service, "projectionRevoked", true);
+            assertFalse(resumed.isCurrent());
+        } finally { release.countDown(); }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        assertEquals(0, renders.get()); assertEquals(1, releases.get()); assertSame(owner, registry.current());
     }
     @Test public void corruptCurrentComponentAllowsOnlyOldResourceRetirement() throws Exception {
         admitSyntheticCapture(); ScreenCaptureService.StopTarget old = ScreenCaptureService.observedStopTarget(context);

@@ -276,6 +276,20 @@ public final class AccessibilityCensorHost implements AutoCloseable {
         active = false; engine.stop(); retireNativeReader(previous, previousEpoch);
         scheduleIdleRetirement();
     }
+    /** Screen suspension retires native owners even if an eligible app returns before they drain. */
+    public void suspendForScreen() {
+        onMain(); if (closed) return;
+        stop();
+        configuration = null;
+        idleGeneration++;
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        fast.retireForScreen(); quality.retireForScreen();
+        imageText.executor.execute(() -> {
+            try { if (imageText.worker != null) imageText.worker.close(); }
+            catch (RuntimeException | Error failure) { disposalFailed.set(true); post(engine::nativeResourceFailure); }
+            finally { imageText.worker = null; }
+        });
+    }
     public void powerPolicyChanged() {
         onMain(); if (closed) return;
         scheduleIdleRetirement();
@@ -463,13 +477,13 @@ public final class AccessibilityCensorHost implements AutoCloseable {
 
     /** Optional context initialization must not occupy a quality inference job and stall FAST. */
     private void initializeQuality(Configuration value) {
-        if (!value.quality || value.detector.getEnabledCategories().isEmpty() || qualityInitializing
+        if (!active || closed || configuration != value || !value.quality || value.detector.getEnabledCategories().isEmpty() || qualityInitializing
                 || qualityInitializationFailed == value || quality.sessionMatches(value.detector)) return;
         qualityInitializing = true;
         quality.executor.execute(() -> {
             long began = SystemClock.uptimeMillis();
             boolean failed = false, resourceFailed = false;
-            try { if (!closed && configuration == value) quality.prepare(value); }
+            try { if (active && !closed && configuration == value) quality.prepare(value); }
             catch (Exception | Error failure) {
                 failed = true; resourceFailed = failure instanceof Error || cleanupFailure(failure);
                 if (resourceFailed) disposalFailed.set(true);
@@ -513,6 +527,7 @@ public final class AccessibilityCensorHost implements AutoCloseable {
         private Configuration advertisedConfiguration; // A reused session needs current-scope admission too.
         private volatile DetectorConfig sessionConfig;
         private volatile String provider = "";
+        private volatile long retirementVersion, retiredVersion;
         Slot(SceneEngine.Lane lane) {
             this.lane = lane;
             executor = executor("Censor-" + lane.name(), lane == SceneEngine.Lane.FAST
@@ -524,7 +539,7 @@ public final class AccessibilityCensorHost implements AutoCloseable {
                     ? VisualInferencePolicy.fast(candidate) : VisualInferencePolicy.quality(candidate);
             DetectorConfig current = sessionConfig;
             VisualDetectorWorker currentWorker = worker;
-            return current != null && currentWorker != null && currentWorker.powerPolicyMatches(powerSaveEnabled()) && selected.getModelFilename().equals(current.getModelFilename())
+            return retirementVersion == retiredVersion && current != null && currentWorker != null && currentWorker.powerPolicyMatches(powerSaveEnabled()) && selected.getModelFilename().equals(current.getModelFilename())
                     && selected.getInferenceResolution() == current.getInferenceResolution()
                     && selected.getInferenceThreads() == current.getInferenceThreads();
         }
@@ -596,6 +611,18 @@ public final class AccessibilityCensorHost implements AutoCloseable {
             sessionConfig = lane == SceneEngine.Lane.FAST
                     ? VisualInferencePolicy.fast(value.detector) : VisualInferencePolicy.quality(value.detector);
             return true;
+        }
+
+        void retireForScreen() {
+            long version = ++retirementVersion;
+            executor.execute(() -> {
+                try { if (worker != null) worker.close(); }
+                catch (RuntimeException | Error failure) { disposalFailed.set(true); post(engine::nativeResourceFailure); }
+                finally {
+                    worker = null; provider = ""; sessionConfig = null; advertisedConfiguration = null;
+                    retiredVersion = version;
+                }
+            });
         }
 
         void retireIdle(long generation) {

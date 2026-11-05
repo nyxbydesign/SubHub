@@ -94,6 +94,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
     private final AccessibilityWindowReader windows;
     private final WindowManager manager;
     private final Observer observer;
+    private final CensorScreenState screen;
     private final AccessibilityCensorHost host;
     private final AccessibilityScrollReader scrollReader;
     private final SnapshotCensorSurface surface;
@@ -114,9 +115,10 @@ public final class AccessibilityCensorController implements AutoCloseable {
     private long appearanceGeneration;
     private static final class Transition {
         final Configuration configuration;
+        final long screenGeneration;
         volatile boolean qualified, invalid;
         volatile CensorEngine.ActiveScope scope;
-        Transition(Configuration configuration) { this.configuration = configuration; }
+        Transition(Configuration configuration, long screenGeneration) { this.configuration = configuration; this.screenGeneration = screenGeneration; }
     }
 
     public AccessibilityCensorController(AccessibilityService service, SceneEngine.Policy scenePolicy,
@@ -145,7 +147,20 @@ public final class AccessibilityCensorController implements AutoCloseable {
     AccessibilityCensorController(AccessibilityService service, SceneEngine.Policy scenePolicy,
             CensorTapTracker taps, Observer observer, AccessibilityCensorHost.WorkerFactory models,
             Runnable rootAcquired, Runnable nativeReadSelected, NativeBoundaryControl nativeBoundaryControl) {
+        this(service, scenePolicy, taps, observer, models, rootAcquired, nativeReadSelected,
+                nativeBoundaryControl, new CensorScreenState(service));
+    }
+    AccessibilityCensorController(AccessibilityService service, SceneEngine.Policy scenePolicy,
+            CensorTapTracker taps, Observer observer, AccessibilityCensorHost.WorkerFactory models,
+            Runnable rootAcquired, Runnable nativeReadSelected, CensorScreenState screen) {
+        this(service, scenePolicy, taps, observer, models, rootAcquired, nativeReadSelected, (input, boundary) -> { }, screen);
+    }
+    private AccessibilityCensorController(AccessibilityService service, SceneEngine.Policy scenePolicy,
+            CensorTapTracker taps, Observer observer, AccessibilityCensorHost.WorkerFactory models,
+            Runnable rootAcquired, Runnable nativeReadSelected, NativeBoundaryControl nativeBoundaryControl,
+            CensorScreenState screen) {
         onMain(); Objects.requireNonNull(service); this.observer = Objects.requireNonNull(observer);
+        this.screen = Objects.requireNonNull(screen);
         displayDensity = service.getResources().getDisplayMetrics().density;
         this.nativeReadSelected = Objects.requireNonNull(nativeReadSelected);
         this.nativeBoundaryControl = Objects.requireNonNull(nativeBoundaryControl);
@@ -251,13 +266,16 @@ public final class AccessibilityCensorController implements AutoCloseable {
     /** One existing host survives window/settings changes and stop/start. Tokens must change. */
     public void powerPolicyChanged() { onMain(); if (!closed) host.powerPolicyChanged(); }
     public void idleSettingsChanged(DetectorConfig detector) { onMain(); if (!closed) host.idleSettingsChanged(detector); }
+    public void suspendForScreen() { onMain(); if (!closed) { stop(); host.suspendForScreen(); } }
 
     public void start(Configuration selected) {
         onMain(); if (closed) throw new IllegalStateException("Closed controller"); Objects.requireNonNull(selected);
+        screen.refresh(null);
+        if (!screen.eligible()) { suspendForScreen(); return; }
         if (Build.VERSION.SDK_INT < 34) throw new IllegalStateException("Window capture qualification requires API34");
         Configuration previous = configuration;
         if (active && previous != null && previous.token == selected.token) throw new IllegalArgumentException("Scope token must change");
-        Transition next = new Transition(selected);
+        Transition next = new Transition(selected, screen.generation());
         appearanceGeneration++;
         transition = next; configuration = selected; active = true; contentGeneration.incrementAndGet();
         scrollPresentation.reset(selected.token, selected.window.id);
@@ -447,7 +465,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
 
     private boolean current(Transition selected) {
         return selected != null && transition == selected && configuration == selected.configuration
-                && active && !closed && !selected.invalid;
+                && active && !closed && !selected.invalid && screen.isCurrent(selected.screenGeneration);
     }
     private boolean paintEligible(CensorEngine.ActiveScope scope) {
         Transition selected = transition;

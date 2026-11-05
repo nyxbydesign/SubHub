@@ -262,6 +262,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private Runnable idleRetirement;
     private volatile long idleGeneration;
     private boolean powerReceiverRegistered;
+    private static volatile ScreenshotAccessibilityService censorInstance;
+    private com.subhub.app.censor.android.CensorScreenState censorScreen;
+    private boolean screenSuspended;
+    private long censorScreenGeneration;
+    private volatile boolean screenRetirementFailed;
     private final android.content.BroadcastReceiver powerReceiver = new android.content.BroadcastReceiver() {
         @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
             if (android.content.Intent.ACTION_SCREEN_OFF.equals(intent.getAction())
@@ -269,6 +274,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     || android.content.Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
                 usageSession.reset();
                 usageForegroundPackage = "";
+                refreshCensorScreen(intent.getAction());
+                if (running) {
+                    if (!productQualificationRoute && censorScreen.eligible()) syncForegroundFromActiveRoot(System.currentTimeMillis());
+                    reevaluateRecognition();
+                }
                 return;
             }
             if (!android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED.equals(intent.getAction()) || !running) return;
@@ -451,6 +461,78 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     public static boolean isRunning() { return running; }
     public static boolean isRecognitionActive() { return recognitionActive; }
+    public static boolean isCensorRuntimeActive() {
+        ScreenshotAccessibilityService service = censorInstance;
+        return service != null && running && recognitionActive && !service.screenRetirementFailed
+                && service.censorScreen != null && service.censorScreen.eligible();
+    }
+    static String observedCensorForeground() {
+        ScreenshotAccessibilityService service = censorInstance;
+        if (service == null || !running || service.censorScreen == null || !service.censorScreen.eligible()) return "";
+        try {
+            ForegroundWindowResolver.Candidate observed = service.resolveLiveApplicationWindow();
+            return observed == null ? "" : observed.packageName;
+        } catch (RuntimeException unavailable) { return ""; }
+    }
+
+    private void refreshCensorScreen(String action) {
+        if (censorScreen == null) return;
+        censorScreen.refresh(action);
+        boolean eligible = censorScreen.eligible();
+        long generation = censorScreen.generation();
+        boolean changed = censorScreenGeneration != generation;
+        censorScreenGeneration = generation;
+        // Capture the observed boundary before cancellation or native retirement can delay it.
+        if (changed || action != null) durationChanged();
+        if (!eligible) {
+            PopupStormManager.get().syncServiceParticipation(this, false);
+            if (subliminalOverlay != null) subliminalOverlay.setEligible(false);
+        }
+        if (productQualificationRoute && Build.VERSION.SDK_INT >= 34 && productSession != null) productSession.screenStateChanged(action);
+        if ((!eligible || changed) && !screenSuspended) {
+            screenSuspended = true;
+            deactivateRecognition();
+            retireScreenWorkers();
+        }
+        if (eligible) screenSuspended = false;
+    }
+    private void durationChanged() {
+        com.subhub.app.stats.DailyDurationRecorder.changed(System.currentTimeMillis(), SystemClock.elapsedRealtime());
+    }
+
+    private void schedulePipelineInitialization() {
+        long generation = censorScreen.generation();
+        worker.execute(() -> inferenceWorker.execute(() -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && censorScreen.isCurrent(generation)) initializePipeline();
+        }));
+    }
+
+    private void retireScreenWorkers() {
+        if (productQualificationRoute || worker == null || worker.isShutdown()) return;
+        idleGeneration++;
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        OcrTextSmutDetector retiredText = screenshotText; screenshotText = null;
+        if (retiredText != null) retiredText.close(); // Its lease defers SDK close until callbacks release pixels.
+        // The capture barrier precedes each lane's retirement and any later wake initialization.
+        worker.execute(() -> {
+            inferenceWorker.execute(() -> {
+                DetectionEngine retired = fastDetector; fastDetector = null;
+                closeScreenDetector(retired);
+            });
+            qualityInferenceWorker.execute(() -> {
+                DetectionEngine retired = detector; detector = null;
+                closeScreenDetector(retired);
+            });
+        });
+    }
+    private void closeScreenDetector(DetectionEngine retired) {
+        try { if (retired != null) retired.close(); }
+        catch (RuntimeException | Error failure) {
+            screenRetirementFailed = true;
+            DiagnosticsRepository.fail(DIAGNOSTICS_MODE, failure);
+            main.post(this::deactivateRecognition);
+        }
+    }
 
     @Override
     protected void onServiceConnected() {
@@ -462,6 +544,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             return;
         }
         settings = new SettingsRepository(this);
+        censorScreen = new com.subhub.app.censor.android.CensorScreenState(this);
+        censorScreenGeneration = censorScreen.generation();
+        censorInstance = this;
         android.content.IntentFilter powerFilter = new android.content.IntentFilter(
                 android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         powerFilter.addAction(android.content.Intent.ACTION_SCREEN_OFF);
@@ -482,15 +567,17 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             settings.preferences().registerOnSharedPreferenceChangeListener(listener);
             running = true;
             connectProductQualification();
+            durationChanged();
             main.post(timerTick);
             return; // No legacy model, text, motion, capture or lookup worker is initialized.
         }
         smutTextClassifier = new SmutTextClassifier(this);
         accessibilityText = new AccessibilityTextSmutDetector(smutTextClassifier);
-        screenshotText = new OcrTextSmutDetector(smutTextClassifier);
+        screenshotText = censorScreen.eligible() ? new OcrTextSmutDetector(smutTextClassifier) : null;
         motionEstimator = new ScrollFrameMotionEstimator();
         settings.preferences().registerOnSharedPreferenceChangeListener(listener);
         running = true;
+        durationChanged();
 
         worker = newScheduledWorker("SubHub-capture", Process.THREAD_PRIORITY_DISPLAY);
         rowMotionShadow = BuildConfig.DEBUG && getSharedPreferences("row_motion_experiment", MODE_PRIVATE)
@@ -530,7 +617,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     traceScrollLookup(pending, "released", 0L);
                     pending.event.recycle();
                 }, (pending, error) -> main.post(() -> recoverScrollLookupGap(pending, "lookup-failure")));
-        worker.execute(this::initializePipeline);
+        if (censorScreen.eligible()) schedulePipelineInitialization();
         main.post(this::reevaluateRecognition);
         main.post(this::scheduleIdleRetirement);
         main.post(this::reevaluateSubliminals);
@@ -595,6 +682,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     return;
                 }
                 recognitionActive = active;
+                durationChanged();
                 if (active) DiagnosticsRepository.begin(DIAGNOSTICS_MODE, settings.loadDetectorConfig().getInferenceResolution());
                 else DiagnosticsRepository.stop(DIAGNOSTICS_MODE);
             }
@@ -634,7 +722,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private void syncProductParticipation() {
         AppModeManager mode = new AppModeManager(this);
         PopupStormManager.get().syncServiceParticipation(this,
-                foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage) && mode.shouldShowPopups(foregroundPackage));
+                foregroundEffectsEligible() && foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage) && mode.shouldShowPopups(foregroundPackage));
     }
 
     /** Read-only native qualification assertion; field construction does not mean a legacy runtime started. */
@@ -649,7 +737,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private void initializePipeline() {
-        if (!running || !initializing.compareAndSet(false, true)) return;
+        if (!running || screenRetirementFailed || !censorScreen.eligible() || !initializing.compareAndSet(false, true)) return;
+        long screenGeneration = censorScreen.generation();
         try {
             DetectorConfig config = settings.loadDetectorConfig();
             if (!recognitionActive && (config.getInferenceThreads() < 4 || powerSaveEnabled())) return;
@@ -681,6 +770,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 fastDetector.setConfig(fastConfig);
             }
             fastDetector.refreshPowerPolicy();
+            if (!censorScreen.isCurrent(screenGeneration)) return;
             qualityConcurrencyGovernor.reset();
             Log.i(TAG, "STARTUP session=" + startupSession
                     + " phase=fast-init-end durationMs="
@@ -696,10 +786,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 Log.i(TAG, "Fast detector prewarmed; capture remains asleep");
                 return;
             }
-            DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution());
-            DiagnosticsRepository.ready(DIAGNOSTICS_MODE, fastDetector.getActiveProvider(),
-                    fastDetector.getActiveModel(), fastConfig.getInferenceResolution());
-            screenshotScheduler.start();
+            String provider = fastDetector.getActiveProvider(), model = fastDetector.getActiveModel();
+            main.post(() -> {
+                if (!running || !recognitionActive || !censorScreen.isCurrent(screenGeneration)) return;
+                DiagnosticsRepository.begin(DIAGNOSTICS_MODE, config.getInferenceResolution());
+                DiagnosticsRepository.ready(DIAGNOSTICS_MODE, provider, model, fastConfig.getInferenceResolution());
+                screenshotScheduler.start();
+            });
         } catch (Exception error) {
             if (detector != null) detector.close();
             detector = null;
@@ -716,12 +809,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     private void scheduleQualityDetectorInitialization(DetectorConfig requestedConfig) {
         ScheduledExecutorService qualityWorker = qualityInferenceWorker;
-        if (!running || requestedConfig == null || !usesAtomicScenePipeline(requestedConfig)
+        if (!running || screenRetirementFailed || !censorScreen.eligible() || requestedConfig == null || !usesAtomicScenePipeline(requestedConfig)
                 || qualityWorker == null
                 || qualityWorker.isShutdown()
                 || !qualityInitializing.compareAndSet(false, true)) return;
         try {
-            qualityWorker.execute(() -> initializeQualityDetector(requestedConfig));
+            long generation = censorScreen.generation();
+            worker.execute(() -> qualityWorker.execute(() -> {
+                if (censorScreen.isCurrent(generation)) initializeQualityDetector(requestedConfig);
+                else qualityInitializing.set(false);
+            }));
         } catch (RejectedExecutionException rejected) {
             qualityInitializing.set(false);
             Log.i(TAG, "QUALITY_ENGINE_SKIP reason=executor-shutdown");
@@ -730,6 +827,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     /** Warms optional refinement without holding time-to-first-censor behind provider setup. */
     private void initializeQualityDetector(DetectorConfig requestedConfig) {
+        if (!censorScreen.eligible()) { qualityInitializing.set(false); return; }
+        long screenGeneration = censorScreen.generation();
         optionalInferenceLock.lock();
         DetectionEngine candidate = null;
         long startupSession = activeStartupSession;
@@ -750,7 +849,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             DetectionEngine realtime = fastDetector;
             candidate.initializeWithoutBenchmark(
                     realtime == null ? "CPU" : realtime.getActiveProvider());
-            if (!running) return;
+            if (!running || !censorScreen.isCurrent(screenGeneration)) return;
             DetectorConfig latestConfig = detectorConfig;
             if (latestConfig != null) candidate.setConfig(qualityDetectorConfig(latestConfig));
             detector = candidate;
@@ -779,7 +878,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private void requestScreenshot() {
-        if (!running || !recognitionActive) return;
+        if (!running || !recognitionActive || !censorScreen.eligible()) return;
         long requestUptime = SystemClock.uptimeMillis();
         if (captureGapProbe != null) {
             boolean armed = captureGapProbe.awaitingArm() && !screenshotScheduler.inFlight()
@@ -5093,7 +5192,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private boolean isCurrentCapture(long requestedEpoch) {
-        return captureEpoch.accepts(requestedEpoch, running, recognitionActive);
+        return censorScreen != null && censorScreen.eligible() && captureEpoch.accepts(requestedEpoch, running, recognitionActive);
     }
 
     private void reloadSettings() {
@@ -5143,19 +5242,23 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             reevaluateRecognition();
             reevaluateSubliminals();
             scheduleIdleRetirement();
+            durationChanged();
         });
     }
 
     private void warmTextModels(DetectorConfig config) {
+        if (censorScreen == null || !censorScreen.eligible()) return;
+        long generation = censorScreen.generation();
         ScheduledExecutorService accessibilityExecutor = textWorker;
         if (accessibilityExecutor != null && !accessibilityExecutor.isShutdown()
                 && usesSemanticTextModel(config) && smutTextClassifier != null) {
-            accessibilityExecutor.execute(smutTextClassifier::warmSemanticModel);
+            accessibilityExecutor.execute(() -> { if (censorScreen.isCurrent(generation)) smutTextClassifier.warmSemanticModel(); });
         }
         ScheduledExecutorService currentOcrWorker = ocrWorker;
         if (currentOcrWorker != null && !currentOcrWorker.isShutdown()
                 && usesScreenshotOcr(config) && screenshotText != null) {
-            screenshotText.warmUp(currentOcrWorker);
+            OcrTextSmutDetector selected = screenshotText;
+            currentOcrWorker.execute(() -> { if (censorScreen.isCurrent(generation)) selected.warmUp(currentOcrWorker); });
         }
     }
 
@@ -5167,12 +5270,14 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             PopupStormManager.get().reloadSettings(this);
             if (subliminalOverlay != null) subliminalOverlay.updateSettings();
             syncProductParticipation(); reevaluateSubliminals();
+            durationChanged();
         });
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         try {
+            refreshCensorScreen(null);
             handleAccessibilityEvent(event);
         } catch (RuntimeException error) {
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
@@ -5687,6 +5792,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private ForegroundWindowResolver.Candidate resolveLiveApplicationWindow() {
+        if (censorScreen == null || !censorScreen.eligible()) return null;
         List<ForegroundWindowResolver.Candidate> candidates = new ArrayList<>();
         List<AccessibilityWindowInfo> windows = getWindows();
         if (windows != null) {
@@ -5737,6 +5843,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         String activityPreviousPackage = foregroundPackage;
         foregroundPackage = packageName;
         com.subhub.app.appmode.ForegroundAppState.update(packageName);
+        durationChanged();
         if (!productQualificationRoute) resetTextSnapshots();
         AppModeManager mode = new AppModeManager(this);
         boolean selectedActivityApp = mode.getIncludedPackages().contains(packageName);
@@ -5956,6 +6063,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     private void reevaluateRecognition() {
         if (!running || settings == null) return;
+        refreshCensorScreen(null);
+        if (!censorScreen.eligible()) {
+            PopupStormManager.get().syncServiceParticipation(this, false);
+            if (subliminalOverlay != null) subliminalOverlay.setEligible(false);
+            return;
+        }
         if (productQualificationRoute) {
             if (Build.VERSION.SDK_INT >= 34 && productSession != null) {
                 if (foregroundLimitHandoff.effectsAllowed()) productSession.request(); else productSession.stop();
@@ -5968,7 +6081,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         boolean settingsPackage = HardcoreSettingsGuard.isSettingsPackage(foregroundPackage);
         AppModeManager appMode = new AppModeManager(this);
         FeatureModuleManager modules = new FeatureModuleManager(this);
-        boolean shouldRun = foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldRecognize(foregroundPackage);
+        ForegroundWindowResolver.Candidate live = resolveLiveApplicationWindow();
+        boolean shouldRun = live != null && live.packageName.equals(foregroundPackage)
+                && foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldRecognize(foregroundPackage);
         Log.i(TAG, "RECOGNITION_DECISION package=" + foregroundPackage
                 + " active=" + recognitionActive
                 + " shouldRun=" + shouldRun
@@ -5981,12 +6096,18 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (shouldRun && !recognitionActive) activateRecognition();
         else if (!shouldRun && recognitionActive) deactivateRecognition();
         PopupStormManager.get().syncServiceParticipation(this,
-                foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldShowPopups(foregroundPackage));
+                live != null && live.packageName.equals(foregroundPackage) && censorScreen.eligible()
+                        && foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldShowPopups(foregroundPackage));
+    }
+
+    private boolean foregroundEffectsEligible() {
+        return censorScreen != null && censorScreen.eligible() && !foregroundPackage.isEmpty()
+                && foregroundPackage.equals(observedCensorForeground());
     }
 
     private void reevaluateSubliminals() {
         if (!running || subliminalOverlay == null) return;
-        boolean shouldRun = foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage)
+        boolean shouldRun = foregroundEffectsEligible() && foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage)
                 && new AppModeManager(this).shouldShowSubliminal(foregroundPackage);
         subliminalOverlay.setEligible(shouldRun);
     }
@@ -6176,7 +6297,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     private void activateRecognition() {
-        if (recognitionActive || !running || worker == null) return;
+        if (recognitionActive || !running || screenRetirementFailed || worker == null || !censorScreen.eligible()) return;
         captureEpoch.invalidate();
         activeStartupSession = startupSessionSequence.incrementAndGet();
         Log.i(TAG, "STARTUP session=" + activeStartupSession
@@ -6202,10 +6323,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             // Publish active only after every synchronous authority surface exists. A failed
             // overlay/window setup must remain retryable on the next foreground window event.
             recognitionActive = true;
+            if (screenshotText == null) screenshotText = new OcrTextSmutDetector(smutTextClassifier);
+            durationChanged();
             scheduleIdleRetirement();
             Log.i(TAG, "Recognition activated for foreground package " + foregroundPackage);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                worker.execute(this::initializePipeline);
+                schedulePipelineInitialization();
             }
             try {
                 startExperimentalAnchorSampler();
@@ -6216,6 +6339,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         } catch (RuntimeException failure) {
             recognitionActive = false;
             captureEpoch.invalidate();
+            durationChanged();
             LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter;
             scenePresenter = null;
             if (presenter != null) presenter.close();
@@ -6231,12 +6355,14 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (Build.VERSION.SDK_INT >= 34 && productSession != null) productSession.stop();
             recognitionActive = false;
             PopupStormManager.get().updateDetections(Collections.emptyList());
+            durationChanged();
             dwellTracker.clear(); tapTracker.clear();
             return;
         }
         if (!recognitionActive && overlay == null) return;
         recognitionActive = false;
         stopExperimentalAnchorSampler();
+        durationChanged();
         captureEpoch.invalidate();
         invalidateCurrentScene("recognition-deactivated");
         Log.i(TAG, "Recognition suspended for foreground package " + foregroundPackage);
@@ -6278,7 +6404,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (idleRetirement != null) main.removeCallbacks(idleRetirement);
         long generation = ++idleGeneration;
         if (!running || productQualificationRoute || settings == null) return;
-        long delay = idlePolicy.delayMillis(recognitionActive, settings.loadDetectorConfig().getInferenceThreads() >= 4,
+        long delay = idlePolicy.delayMillis(recognitionActive, censorScreen.eligible() && settings.loadDetectorConfig().getInferenceThreads() >= 4,
                 powerSaveEnabled(), SystemClock.uptimeMillis());
         if (delay < 0) return;
         idleRetirement = () -> {
@@ -6937,6 +7063,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        if (censorInstance == this) censorInstance = null;
         idleGeneration++;
         if (idleRetirement != null) main.removeCallbacks(idleRetirement);
         if (powerReceiverRegistered) { unregisterReceiver(powerReceiver); powerReceiverRegistered = false; }
@@ -6947,6 +7074,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         com.subhub.app.appmode.ForegroundAppState.clear();
         accountForegroundUsage(System.currentTimeMillis());
         running = false;
+        durationChanged();
         if (scrollLookup != null) scrollLookup.close();
         if (scrollLookupWorker != null) scrollLookupWorker.shutdown();
         main.removeCallbacks(timerTick);

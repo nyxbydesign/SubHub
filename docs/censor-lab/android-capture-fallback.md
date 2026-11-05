@@ -26,6 +26,8 @@ On 8 September, a 24-second/30fps window recording produced719 frames with245 co
 
 ## Instrumentation taps and floating navigation
 
+Bound Accessibility fixtures that also use UiAutomator must preserve non-suppressing automation flags for every actor. `UiDevice` obtains its handle through [`Configurator`](https://developer.android.com/reference/androidx/test/uiautomator/Configurator#setUiAutomationFlags(int)); its default flags can suppress the service even when setup acquired a non-suppressing `UiAutomation`. Save the exact Configurator flags before the first UiDevice operation, enable `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, clear `FLAG_DONT_USE_ACCESSIBILITY`, and restore the saved flags in an outer `finally` after wake, keyguard and input cleanup. If a helper explicitly changes the automation flags, reacquire the non-suppressing handle before rebinding the service. Verify actual automation registration flags and enabled/bound service state before attributing a missing connection to screen-off behavior.
+
 For a guarded disposable emulator, pass an explicit virtual RAM and CPU budget rather than
 inheriting the AVD's stored configuration. For example, `-memory 2048 -cores 2` fits the UI-test
 workload under the established 8-GiB host job guard; an inherited 8-GiB guest configuration can

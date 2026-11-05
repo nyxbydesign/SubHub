@@ -2107,6 +2107,427 @@ public final class ProductCensorSessionAndroidTest {
         assertTrue(preferences.edit().putBoolean(AppModeManager.KEY_ARMED, true).commit()); awaitPaint();
         assertEquals(1, models.get()); assertSpacing();
     }
+    @Test public void injectedScreenOffRejectsHeldSelectionAndLockedWakeUntilFreshForeground() throws Exception {
+        connect(); awaitPaint(); AccessibilityCensorController original = session.controller();
+        CensorEngine.ActiveScope oldScope = original.activeScope();
+        AtomicBoolean usable = injectedScreenSample();
+        Hold held = hold(); readHold.set(held); main(session::request);
+        assertTrue(held.entered.await(8, TimeUnit.SECONDS));
+        try {
+            usable.set(false); main(() -> session.screenStateChanged(Intent.ACTION_SCREEN_OFF));
+            assertFalse(session.isActive()); assertNull(original.activeScope()); assertFalse(tapsCenter());
+            held.release.countDown();
+            main(() -> session.screenStateChanged(Intent.ACTION_SCREEN_ON));
+            main(() -> session.screenStateChanged(Intent.ACTION_USER_PRESENT));
+            barrier(); assertFalse("A broadcast alone cannot grant unlocked eligibility", session.isActive());
+            assertNull(original.activeScope());
+            usable.set(true); main(() -> session.screenStateChanged(Intent.ACTION_USER_PRESENT));
+            awaitPaint(); assertSame(original, session.controller());
+            assertFalse("Held old selection cannot restore its old scope", oldScope.same(original.activeScope()));
+            assertEquals(TARGET, session.window().packageName); assertSpacing();
+        } finally { held.release.countDown(); }
+    }
+
+    @Test public void injectedScreenOffFencesHeldInferenceAndRetiresOnlyAfterItsReturn() throws Exception {
+        Hold held = hold(); modelHold.set(held); connect();
+        assertTrue(held.entered.await(8, TimeUnit.SECONDS));
+        AccessibilityCensorController original = session.controller(); AtomicBoolean usable = injectedScreenSample();
+        try {
+            usable.set(false); main(() -> session.screenStateChanged(Intent.ACTION_SCREEN_OFF));
+            assertFalse(session.isActive()); assertNull(original.activeScope()); assertEquals(0, closes.get());
+            assertTrue(inferRunning.get()); assertFalse(earlyClose.get());
+            main(() -> session.screenStateChanged(Intent.ACTION_SCREEN_ON)); assertFalse(session.isActive());
+            held.release.countDown(); await("Suspended native inference drains before its owner closes", () -> closes.get() == models.get());
+            assertTrue(batches.isEmpty()); assertFalse(earlyClose.get()); assertFalse(session.isActive());
+            usable.set(true); main(() -> session.screenStateChanged(Intent.ACTION_USER_PRESENT));
+            awaitPaint(); assertSame(original, session.controller()); assertFalse(earlyClose.get()); assertSpacing();
+        } finally { held.release.countDown(); }
+    }
+
+    /** Replaces only the screen sampler; the production session/window/capture/controller stay real. */
+    private AtomicBoolean injectedScreenSample() throws Exception {
+        java.lang.reflect.Field field = CensorProductSession.class.getDeclaredField("screen"); field.setAccessible(true);
+        CensorScreenState state = (CensorScreenState) field.get(session);
+        java.lang.reflect.Field sampler = CensorScreenState.class.getDeclaredField("sample"); sampler.setAccessible(true);
+        AtomicBoolean usable = new AtomicBoolean(true); sampler.set(state, (BooleanSupplier) usable::get);
+        return usable;
+    }
+
+    @Test public void actualScreenOffPreventsLegacyHighStartupAndRebindThenResumesSameForeground() throws Exception {
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        org.junit.Assume.assumeFalse("Owned guest must have no secure credential", keyguard.isDeviceSecure());
+        assertTrue("Start from the owned guest's unlocked display", CensorScreenState.interactiveUnlocked(context));
+        assertTrue(qualification.edit().putBoolean("enabled", false)
+                .putBoolean(ProductCensorQualification.CANDIDATE_SELECTION, false).commit());
+        assertTrue(preferences.edit().putString(SettingsRepository.KEY_DETECTION_PRESET, "high").commit());
+        assertTrue(preferences.edit().putBoolean(FeatureModuleManager.KEY_SUBLIMINAL_ENABLED, true)
+                .putStringSet(com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_PACKS,
+                        Collections.singleton(com.subhub.app.subliminal.SubliminalSettingsRepository.PACK_CUSTOM))
+                .putString(com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_CUSTOM, "Synthetic focus phrase")
+                .putBoolean(com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_ADVANCED, true)
+                .putLong(com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_MIN_INTERVAL_MS, 300000L)
+                .putLong(com.subhub.app.subliminal.SubliminalSettingsRepository.KEY_MAX_INTERVAL_MS, 300000L).commit());
+        StatsRepository ownedStats = new StatsRepository(context); ownedStats.startSession();
+        String ownedIdentity = ownedStats.activeSessionIdentity(); assertFalse(ownedIdentity.isEmpty());
+        long ownedStart = context.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE).getLong("active_session_start_ms", 0);
+        assertTrue(ownedStart > 0);
+        android.os.PowerManager.WakeLock cpu = context.getSystemService(android.os.PowerManager.class)
+                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "SubHub:test-censor-screen");
+        androidx.test.uiautomator.Configurator automation = androidx.test.uiautomator.Configurator.getInstance();
+        int previousAutomationFlags = automation.getUiAutomationFlags();
+        try {
+            automation.setUiAutomationFlags((previousAutomationFlags | UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                    & ~UiAutomation.FLAG_DONT_USE_ACCESSIBILITY);
+            androidx.test.uiautomator.UiDevice device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation);
+            cpu.acquire(120000);
+            try (NonsecureKeyguard ignored = enableOwnedNonsecureKeyguard()) {
+                device.sleep(); awaitElapsed("Actual display becomes noninteractive", () -> !context.getSystemService(android.os.PowerManager.class).isInteractive());
+                ComponentName component = new ComponentName(context, ScreenshotAccessibilityService.class);
+                String owned = previousServices == null || previousServices.isEmpty() ? component.flattenToString()
+                        : previousServices + ":" + component.flattenToString();
+                secure(owned, 1); awaitElapsed("Legacy service binds with display off", ScreenshotAccessibilityService::isRunning);
+                barrier(); Object first = boundCensorService(); assertLegacyOff(first);
+                assertEquals(Boolean.FALSE, censorField(first, "productQualificationRoute")); assertFalse(whispersEligible(first));
+                assertEquals("Actual noninteractive sampler excludes a bound, positive session", 0, capturedDurationSession());
+                assertEquals(ownedIdentity, ownedStats.activeSessionIdentity());
+                secure(previousServices, previousEnabled); awaitElapsed("Only the owned legacy service unbinds", () -> !ScreenshotAccessibilityService.isRunning());
+                secure(owned, 1); awaitElapsed("Legacy service rebinds with display still off", ScreenshotAccessibilityService::isRunning);
+                barrier(); Object rebound = boundCensorService(); assertNotSame(first, rebound); assertLegacyOff(rebound);
+                assertEquals(Boolean.FALSE, censorField(rebound, "productQualificationRoute")); assertFalse(whispersEligible(rebound));
+                assertEquals(0, capturedDurationSession()); assertEquals(ownedIdentity, ownedStats.activeSessionIdentity());
+                try (IsolatedScreenLimits limits = installIsolatedScreenLimits(rebound)) {
+                    assertEquals(0, limits.observe().usedMillis);
+                    device.wakeUp();
+                    awaitElapsed("Actual wake is interactive with nonsecure keyguard still locked", () -> context.getSystemService(android.os.PowerManager.class).isInteractive()
+                            && keyguard.isKeyguardLocked());
+                    barrier(); assertFalse("Interactive keyguard cannot resume Censor", ScreenshotAccessibilityService.isCensorRuntimeActive());
+                    assertFalse("Whispers stays suspended on the actual keyguard", whispersEligible(rebound));
+                    assertEquals("Actual keyguard sampler excludes the still-bound session", 0, capturedDurationSession());
+                    long firstUnlockAt = SystemClock.elapsedRealtime(); shellScreenUnlock();
+                    awaitElapsed("Unlocked unchanged foreground resumes real legacy capture", () -> ScreenshotAccessibilityService.isCensorRuntimeActive()
+                            && legacyHasCapture(rebound) && whispersEligible(rebound));
+                    LimitsObservation firstCharge = limits.awaitCharge(0);
+                    assertTrue("Actual Limits qualification takes at least five elapsed seconds", firstCharge.elapsed - firstUnlockAt >= 5000);
+                    assertTrue("The real foreground session qualified", firstCharge.qualified); assertTrue(firstCharge.usedMillis >= 5000);
+                    assertSame(rebound, boundCensorService());
+                    assertEquals("Awake service preserves the original active-session denominator", ownedStart, capturedDurationSession());
+                    assertEquals(ownedIdentity, ownedStats.activeSessionIdentity());
+                    device.sleep(); awaitElapsed("Active legacy capture suspends without its High grace", () -> !ScreenshotAccessibilityService.isCensorRuntimeActive()
+                            && legacyOff(rebound) && !whispersEligible(rebound));
+                    assertTrue("Suspension preserves the service authority", ScreenshotAccessibilityService.isRunning());
+                    assertEquals(0, capturedDurationSession()); assertEquals(ownedIdentity, ownedStats.activeSessionIdentity());
+                    // Sample after actual OFF, so a legitimate final awake boundary cannot look like off usage.
+                    long offBaseline = limits.observe().usedMillis;
+                    limits.holdUnchanged(offBaseline, 3200, false);
+                    device.wakeUp();
+                    awaitElapsed("Second actual wake retains the nonsecure keyguard", () -> context.getSystemService(android.os.PowerManager.class).isInteractive()
+                            && keyguard.isKeyguardLocked());
+                    limits.holdUnchanged(offBaseline, 3200, true);
+                    assertEquals(ownedIdentity, ownedStats.activeSessionIdentity()); assertTrue(ScreenshotAccessibilityService.isRunning());
+                    long resumeAt = SystemClock.elapsedRealtime(); shellScreenUnlock();
+                    limits.holdFreshQualification(offBaseline, 2000);
+                    LimitsObservation resumed = limits.awaitCharge(offBaseline);
+                    assertTrue("Same-app unlock needs a fresh five-second qualification", resumed.elapsed - resumeAt >= 5000);
+                    assertTrue(resumed.qualified); assertTrue(resumed.usedMillis - offBaseline >= 5000);
+                    assertTrue("No screen-off or locked interval is backfilled", resumed.usedMillis - offBaseline <= resumed.elapsed - resumeAt);
+                    assertSame(rebound, boundCensorService()); assertEquals(TARGET, censorField(rebound, "foregroundPackage"));
+                    assertEquals(ownedIdentity, ownedStats.activeSessionIdentity()); assertTrue(preferences.getBoolean(AppModeManager.KEY_ARMED, false));
+                    limits.history.flush();
+                    assertTrue("Owned daily app history retains the real measured charge", limits.history.entries().stream()
+                            .anyMatch(entry -> TARGET.equals(entry.packageName) && entry.millis >= resumed.usedMillis));
+                }
+            } finally {
+                try { device.wakeUp(); shellScreenUnlock(); }
+                finally { if (cpu.isHeld()) cpu.release(); }
+            }
+        } finally {
+            automation.setUiAutomationFlags(previousAutomationFlags);
+            assertEquals("Restore the exact UiAutomator flag baseline", previousAutomationFlags, automation.getUiAutomationFlags());
+        }
+    }
+
+    @Test public void actualScreenOffPreventsReplacementHighStartupAndRebindThenResumesSameForeground() throws Exception {
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        org.junit.Assume.assumeFalse("Owned guest must have no secure credential", keyguard.isDeviceSecure());
+        assertTrue("Start from the owned guest's unlocked display", CensorScreenState.interactiveUnlocked(context));
+        assertTrue(preferences.edit().putString(SettingsRepository.KEY_DETECTION_PRESET, "high").commit());
+        android.os.PowerManager.WakeLock cpu = context.getSystemService(android.os.PowerManager.class)
+                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "SubHub:test-product-screen");
+        androidx.test.uiautomator.Configurator automation = androidx.test.uiautomator.Configurator.getInstance();
+        int previousAutomationFlags = automation.getUiAutomationFlags();
+        try {
+            automation.setUiAutomationFlags((previousAutomationFlags | UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                    & ~UiAutomation.FLAG_DONT_USE_ACCESSIBILITY);
+            androidx.test.uiautomator.UiDevice device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation);
+            cpu.acquire(60000);
+            try (NonsecureKeyguard ignored = enableOwnedNonsecureKeyguard()) {
+                device.sleep(); awaitElapsed("Actual display becomes noninteractive", () -> !context.getSystemService(android.os.PowerManager.class).isInteractive());
+                connect(); assertFalse(session.isActive()); assertEquals(0, models.get()); assertEquals(0, readCount.get());
+                CensorProductSession first = session; disconnectCandidate(first);
+                ui = instrumentation.getUiAutomation(automation.getUiAutomationFlags());
+                connect(); assertNotSame(first, session); assertFalse(session.isActive());
+                assertEquals(0, models.get()); assertEquals(0, readCount.get());
+                device.wakeUp();
+                awaitElapsed("Actual replacement wake is interactive with nonsecure keyguard locked", () -> context.getSystemService(android.os.PowerManager.class).isInteractive()
+                        && keyguard.isKeyguardLocked());
+                barrier(); assertFalse("Interactive keyguard cannot resume product Censor", session.isActive()); assertEquals(0, models.get());
+                shellScreenUnlock(); awaitPaint(); CensorProductSession rebound = session;
+                assertTrue(ScreenshotAccessibilityService.isCensorRuntimeActive());
+                device.sleep(); awaitElapsed("Screen off bypasses replacement High retention", () -> !session.isActive() && closes.get() == models.get());
+                assertSame(rebound, ProductCensorQualification.current()); assertTrue(ScreenshotAccessibilityService.isRunning());
+                assertTrue(preferences.getBoolean(AppModeManager.KEY_ARMED, false)); assertFalse(earlyClose.get());
+            } finally {
+                try { device.wakeUp(); shellScreenUnlock(); }
+                finally { if (cpu.isHeld()) cpu.release(); }
+            }
+        } finally {
+            automation.setUiAutomationFlags(previousAutomationFlags);
+            assertEquals("Restore the exact UiAutomator flag baseline", previousAutomationFlags, automation.getUiAutomationFlags());
+        }
+    }
+
+    private IsolatedScreenLimits installIsolatedScreenLimits(Object actualService) throws Exception {
+        return new IsolatedScreenLimits(actualService);
+    }
+
+    /** Real manager/session/timer, with only its per-app ledger redirected to new fixture-owned storage. */
+    private final class IsolatedScreenLimits implements AutoCloseable {
+        final Object actualService;
+        final AppTimerManager original;
+        final java.lang.reflect.Field timersField;
+        final String usageName = "censor_screen_limits_" + UUID.randomUUID().toString().replace("-", "") + "_usage";
+        final String databaseName = usageName + ".db";
+        final com.subhub.app.stats.DailyAppUsageStore history;
+        AppTimerManager timers;
+        boolean attached, closed, cleanupQuarantined;
+
+        IsolatedScreenLimits(Object actualService) throws Exception {
+            this.actualService = actualService;
+            assertFalse("Fixture setup leaves ordinary budgets disabled", preferences.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false));
+            assertFalse(preferences.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false));
+            original = (AppTimerManager) censorField(actualService, "timers");
+            timersField = ScreenshotAccessibilityService.class.getDeclaredField("timers"); timersField.setAccessible(true);
+            assertTrue(usageName.matches("censor_screen_limits_[a-f0-9]{32}_usage"));
+            assertFalse("Never borrow an existing usage database", context.getDatabasePath(databaseName).exists());
+            assertTrue("Never borrow existing usage preferences", context.getSharedPreferences(usageName, Context.MODE_PRIVATE).getAll().isEmpty());
+            history = new com.subhub.app.stats.DailyAppUsageStore(context, databaseName);
+            try {
+                Context scoped = new ContextWrapper(context) {
+                    @Override public Context getApplicationContext() { return this; }
+                    @Override public SharedPreferences getSharedPreferences(String name, int mode) {
+                        return super.getSharedPreferences("subhub_app_timer_usage".equals(name) ? usageName : name, mode);
+                    }
+                };
+                java.lang.reflect.Constructor<AppTimerManager> constructor = AppTimerManager.class.getDeclaredConstructor(
+                        Context.class, com.subhub.app.stats.DailyAppUsageStore.class); constructor.setAccessible(true);
+                timers = constructor.newInstance(scoped, history);
+                assertSame(context.getSharedPreferences(usageName, Context.MODE_PRIVATE), censorField(timers, "usagePreferences"));
+                assertSame(history, censorField(timers, "suppliedHistory"));
+                main(() -> {
+                    try { timersField.set(actualService, timers); attached = true; resetUsageObservation(actualService); }
+                    catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                timers.updateAllowances(Collections.singletonMap(TARGET, 37));
+                assertTrue(preferences.edit().putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, true)
+                        .putInt(AppTimerManager.KEY_PER_APP_MINUTES, 37).putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false).commit());
+                assertTrue("Normal role policy must permit the real selected-app budget", timers.loadSettings().perAppEnabled);
+                assertEquals(37, timers.allowanceMinutes(TARGET)); assertEquals(0, observe().usedMillis);
+            } catch (Exception | Error failure) {
+                try { close(); } catch (Exception | Error cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+                throw failure;
+            }
+        }
+
+        LimitsObservation observe() {
+            assertTrue(attached && !closed); AtomicReference<LimitsObservation> observed = new AtomicReference<>();
+            main(() -> {
+                try {
+                    Object usage = censorField(actualService, "usageSession");
+                    observed.set(new LimitsObservation(timers.snapshot(TARGET, System.currentTimeMillis()).appUsedMillis,
+                            SystemClock.elapsedRealtime(), (Long) censorField(usage, "lastObserved"),
+                            (Long) censorField(usage, "pendingMillis"), (Boolean) censorField(usage, "qualified")));
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            return observed.get();
+        }
+
+        LimitsObservation awaitCharge(long baseline) throws Exception {
+            long until = SystemClock.elapsedRealtime() + 15000; LimitsObservation value = observe();
+            while (value.usedMillis <= baseline) {
+                assertTrue("Actual one-second Limits observations must qualify and charge TARGET: " + value, SystemClock.elapsedRealtime() < until);
+                Thread.sleep(100); value = observe();
+            }
+            return value;
+        }
+
+        void holdUnchanged(long baseline, long duration, boolean lockedWake) throws Exception {
+            long until = SystemClock.elapsedRealtime() + duration;
+            do {
+                android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+                android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+                if (lockedWake) { assertTrue(power.isInteractive()); assertTrue(keyguard.isKeyguardLocked()); }
+                else assertFalse(power.isInteractive());
+                LimitsObservation value = observe();
+                assertEquals("Multiple natural one-second timer deadlines cannot charge off/locked usage: " + value, baseline, value.usedMillis);
+                assertFalse(value.qualified); assertEquals(-1, value.lastObserved); assertEquals(0, value.pendingMillis);
+                Thread.sleep(100);
+            } while (SystemClock.elapsedRealtime() < until);
+            assertEquals(baseline, observe().usedMillis);
+        }
+
+        void holdFreshQualification(long baseline, long duration) throws Exception {
+            long until = SystemClock.elapsedRealtime() + duration;
+            do {
+                assertTrue(CensorScreenState.interactiveUnlocked(context)); LimitsObservation value = observe();
+                assertEquals("Unlock must not immediately backfill off/locked time: " + value, baseline, value.usedMillis);
+                assertFalse("Unlock must start a fresh foreground qualification: " + value, value.qualified);
+                assertTrue(value.pendingMillis >= 0 && value.pendingMillis < 5000);
+                Thread.sleep(100);
+            } while (SystemClock.elapsedRealtime() < until);
+        }
+
+        @Override public void close() throws Exception {
+            if (cleanupQuarantined) throw new IllegalStateException("Preserve quarantined Limits fixture: " + usageName + ", " + databaseName);
+            if (closed) return;
+            closed = true;
+            try {
+                if (attached) main(() -> {
+                    try {
+                        assertTrue(preferences.edit().putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
+                                .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false).commit());
+                    } finally {
+                        try {
+                            timersField.set(actualService, original);
+                            assertSame(original, timersField.get(actualService));
+                            resetUsageObservation(actualService); attached = false;
+                        }
+                        catch (Exception failure) { throw new AssertionError(failure); }
+                    }
+                });
+                main(() -> {
+                    assertFalse("Never close a ledger still attached to the service", attached);
+                    try { assertSame("Verify the exact original producer before ledger shutdown", original, timersField.get(actualService)); }
+                    catch (Exception failure) { throw new AssertionError(failure); }
+                });
+                history.flush();
+                ScheduledExecutorService ledgerWorker = (ScheduledExecutorService) censorField(history, "worker");
+                ledgerWorker.shutdown();
+                try { assertTrue("Owned usage worker must terminate before helper close", ledgerWorker.awaitTermination(10, TimeUnit.SECONDS)); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw interrupted; }
+                synchronized (history) {
+                    assertTrue("Never discard an unflushed owned checkpoint", ((Map<?, ?>) censorField(history, "pending")).isEmpty());
+                }
+                history.close();
+                // No producer or worker retains this lease. Delete only its validated new UUID names.
+                File database = context.getDatabasePath(databaseName);
+                assertEquals(context.getDatabasePath("fixture-path-anchor.db").getCanonicalFile().getParentFile(), database.getCanonicalFile().getParentFile());
+                if (database.exists()) assertTrue("Remove only the fixture-owned Limits database", context.deleteDatabase(databaseName));
+                SharedPreferences owned = context.getSharedPreferences(usageName, Context.MODE_PRIVATE);
+                assertTrue(owned.edit().putBoolean("fixture_closed", true).commit());
+                assertTrue("Remove only the fixture-owned Limits preferences", context.deleteSharedPreferences(usageName));
+                assertFalse(database.exists());
+            } catch (Exception | Error failure) {
+                cleanupQuarantined = true;
+                throw new AssertionError("Preserve owned Limits resources after cleanup failure: " + usageName + ", " + databaseName, failure);
+            }
+        }
+    }
+
+    private static void resetUsageObservation(Object service) throws Exception {
+        Object usage = censorField(service, "usageSession");
+        java.lang.reflect.Method reset = usage.getClass().getDeclaredMethod("reset"); reset.setAccessible(true); reset.invoke(usage);
+    }
+    private static final class LimitsObservation {
+        final long usedMillis, elapsed, lastObserved, pendingMillis;
+        final boolean qualified;
+        LimitsObservation(long used, long elapsed, long last, long pending, boolean qualified) {
+            usedMillis = used; this.elapsed = elapsed; lastObserved = last; pendingMillis = pending; this.qualified = qualified;
+        }
+        @Override public String toString() {
+            return "used=" + usedMillis + ",elapsed=" + elapsed + ",last=" + lastObserved + ",pending=" + pendingMillis + ",qualified=" + qualified;
+        }
+    }
+
+    private NonsecureKeyguard enableOwnedNonsecureKeyguard() throws Exception {
+        assertFalse("Never change a guest with a secure credential", context.getSystemService(android.app.KeyguardManager.class).isDeviceSecure());
+        String user = screenShell("am get-current-user").trim(); assertEquals("Only the owned primary guest user", "0", user);
+        String baseline = screenShell("locksettings get-disabled --user 0").trim();
+        assertTrue("Unknown keyguard baseline: " + baseline, baseline.equals("true") || baseline.equals("false"));
+        NonsecureKeyguard restore = new NonsecureKeyguard(baseline);
+        try {
+            if (baseline.equals("true")) screenShell("locksettings set-disabled false --user 0");
+            assertEquals("Nonsecure keyguard must be enabled by the actual OS", "false", screenShell("locksettings get-disabled --user 0").trim());
+            return restore;
+        } catch (Exception | Error failure) {
+            try { restore.close(); } catch (Exception | Error restoreFailure) { failure.addSuppressed(restoreFailure); }
+            throw failure;
+        }
+    }
+    private final class NonsecureKeyguard implements AutoCloseable {
+        private final String disabled;
+        NonsecureKeyguard(String disabled) { this.disabled = disabled; }
+        @Override public void close() throws Exception {
+            String observed = screenShell("locksettings get-disabled --user 0").trim();
+            assertTrue("Unknown restore keyguard state: " + observed, observed.equals("true") || observed.equals("false"));
+            if (!disabled.equals(observed)) screenShell("locksettings set-disabled " + disabled + " --user 0");
+            assertEquals("Restore the exact owned nonsecure keyguard setting", disabled, screenShell("locksettings get-disabled --user 0").trim());
+        }
+    }
+    private String screenShell(String command) throws Exception {
+        try (android.os.ParcelFileDescriptor descriptor = ui.executeShellCommand(command);
+                java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor);
+                java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] bytes = new byte[256]; int count;
+            while ((count = input.read(bytes)) != -1) {
+                assertTrue("Bounded screen-state shell observation", output.size() + count <= 4096); output.write(bytes, 0, count);
+            }
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
+    }
+
+    private void shellScreenUnlock() throws Exception {
+        try (android.os.ParcelFileDescriptor descriptor = ui.executeShellCommand("wm dismiss-keyguard");
+                java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
+            byte[] bytes = new byte[256]; while (input.read(bytes) != -1) { }
+        }
+        awaitElapsed("Restore the owned guest's unlocked display", () -> CensorScreenState.interactiveUnlocked(context));
+    }
+    private static Object boundCensorService() throws Exception {
+        java.lang.reflect.Field field = ScreenshotAccessibilityService.class.getDeclaredField("censorInstance"); field.setAccessible(true);
+        Object service = field.get(null); assertNotNull(service); return service;
+    }
+    /** Read-only observation of the real recorder sampler; never substitutes its source or sink. */
+    private static long capturedDurationSession() throws Exception {
+        java.lang.reflect.Method capture = com.subhub.app.stats.DailyDurationRecorder.class.getDeclaredMethod("capture", long.class, long.class);
+        capture.setAccessible(true); Object snapshot = capture.invoke(null, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+        java.lang.reflect.Field session = snapshot.getClass().getDeclaredField("session"); session.setAccessible(true);
+        return session.getLong(snapshot);
+    }
+    private static Object censorField(Object instance, String name) throws Exception {
+        java.lang.reflect.Field field = instance.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(instance);
+    }
+    private static boolean legacyOff(Object service) {
+        try {
+            Object scheduler = censorField(service, "screenshotScheduler");
+            return !ScreenshotAccessibilityService.isRecognitionActive() && censorField(service, "fastDetector") == null
+                    && censorField(service, "detector") == null && !((Boolean) censorField(scheduler, "active"));
+        } catch (Exception failure) { throw new AssertionError(failure); }
+    }
+    private static boolean legacyHasCapture(Object service) {
+        try { return ((Long) censorField(censorField(service, "screenshotScheduler"), "lastDispatchMillis")) >= 0; }
+        catch (Exception failure) { throw new AssertionError(failure); }
+    }
+    private static boolean whispersEligible(Object service) {
+        try {
+            Object whispers = censorField(service, "subliminalOverlay");
+            return whispers != null && (Boolean) censorField(whispers, "eligible");
+        } catch (Exception failure) { throw new AssertionError(failure); }
+    }
+    private static void assertLegacyOff(Object service) { assertTrue("No legacy warm model or active capture while off", legacyOff(service)); }
+    private static void awaitElapsed(String label, BooleanSupplier condition) throws Exception {
+        long until = SystemClock.elapsedRealtime() + 15000;
+        while (!condition.getAsBoolean()) { assertTrue(label, SystemClock.elapsedRealtime() < until); Thread.sleep(10); }
+    }
     @Test public void staleLabAbaCannotUseOldNormalScopeOrPersistArmingAndCapture() throws Exception {
         connect(); awaitPaint();
         assertTrue(preferences.edit().putBoolean(AppModeManager.KEY_ARMED, false)
