@@ -43,9 +43,10 @@ public final class HardcoreReadinessNotificationManager {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         notifications.notify(NOTIFICATION_ID,
                 com.subhub.app.privacy.PrivacyNotifications.present(app, NOTIFICATION_ID, new NotificationCompat.Builder(app, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
+                        .setSmallIcon(R.drawable.ic_notification_subhub).setColor(app.getColor(R.color.accent))
                         .setContentTitle(app.getString(R.string.hardcore_repair_title))
                         .setContentText(app.getString(R.string.hardcore_repair_body))
+                        .setStyle(new NotificationCompat.BigTextStyle().bigText(app.getString(R.string.hardcore_repair_body)))
                         .setContentIntent(open)
                         .setOngoing(true)
                         .setSilent(true)

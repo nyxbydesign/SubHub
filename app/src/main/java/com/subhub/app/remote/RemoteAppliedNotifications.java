@@ -23,7 +23,7 @@ final class RemoteAppliedNotifications {
                     RemoteProtocol.canonical(b.getJSONObject("contract").opt(key)))) return true;
         return false;
     }
-    private static JSONObject normalized(JSONObject document) throws JSONException {
+    static JSONObject normalized(JSONObject document) throws JSONException {
         JSONObject result = RemoteConfiguration.active(document);
         JSONObject sections = result.getJSONObject("contract").getJSONObject("sections");
         for (String section : com.subhub.app.configuration.ConfigurationSchema.SECTIONS)
@@ -46,7 +46,7 @@ final class RemoteAppliedNotifications {
             JSONObject before, JSONObject after) {
         if (peer.localRole != RemoteProtocol.Role.SUB) return;
         try {
-            if (changed(before, after)) PeerNotifications.applied(context, role(peer), Event.CONTRACT_CHANGED, scope(peer), revision);
+            if (changed(before, after)) PeerNotifications.applied(context, role(peer), Event.CONTRACT_CHANGED, scope(peer), revision, ContractChangeDetails.lines(context, before, after));
         } catch (JSONException | RuntimeException malformed) { /* Presentation cannot fail committed application. */ }
     }
     static void configuration(Context context, RemoteStore.Peer peer, long revision, String before, JSONObject after) {

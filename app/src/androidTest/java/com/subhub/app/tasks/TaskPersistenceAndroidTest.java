@@ -38,6 +38,38 @@ public class TaskPersistenceAndroidTest {
         assertTrue(store.append(dom, create(), true, false));
         assertEquals(1, store.receive(sub, store.outgoing(dom, 0), true, false));
     }
+    @Test public void subNoticesCommitOnceAndTimelyProofCannotProduceOverdue() throws Exception {
+        definitionDelivered();
+        assertEquals(1, store.pendingNotices(sub).size());
+        TaskStore.Effect created = store.pendingNotices(sub).get(0);
+        store.done(sub, created);
+        store.receive(sub, store.outgoing(dom, 0), true, false);
+        assertTrue(store.pendingNotices(sub).isEmpty());
+        TaskEngine engine = store.load(sub);
+        store.started(sub, engine.occurrence(task.id, date, start + 100), start + 100);
+        store.started(sub, engine.occurrence(task.id, date, start + 200), start + 200);
+        assertEquals(1, store.pendingNotices(sub).size());
+        assertEquals("sub_started", store.pendingNotices(sub).get(0).kind);
+        store.done(sub, store.pendingNotices(sub).get(0));
+        store.close(); store = new TaskStore(context);
+        store.started(sub, store.load(sub).occurrence(task.id, date, start + 300), start + 300);
+        assertTrue(store.pendingNotices(sub).isEmpty());
+        store.append(sub, action("proof-on-time", TaskAction.Kind.SUBMIT, "Complete", ""), false, false);
+        TaskAction late = new TaskAction("late-sweep", task.id, TaskAction.Kind.TIMEOUT, date,
+                start + 3_600_001, "", "", List.of(), null);
+        store.append(sub, late, false, false);
+        assertEquals(TaskEngine.Status.PENDING, store.load(sub).occurrence(task.id, date, late.at).status);
+        assertTrue(store.pendingNotices(sub).isEmpty());
+        TaskAction accepted = action("approved", TaskAction.Kind.ACCEPT, "", "proof-on-time");
+        store.append(sub, accepted, true, false);
+        assertEquals(1, store.pendingNotices(sub).size());
+        assertEquals(TaskAction.Kind.ACCEPT, store.pendingNotices(sub).get(0).action.kind);
+        assertEquals(com.subhub.app.R.string.notification_task_approved, TaskNotifications.title(store.pendingNotices(sub).get(0)));
+        TaskAction cancelled = action("cancelled", TaskAction.Kind.CANCEL_SERIES, "", "");
+        store.append(sub, cancelled, true, false);
+        assertEquals(1, store.pendingNotices(sub).size());
+        assertEquals(TaskAction.Kind.CANCEL_SERIES, store.pendingNotices(sub).get(0).action.kind);
+    }
     @Test public void observersPublishCommittedDataAndIgnoreReplayRollbackAndClosedSubscriptions() throws Exception {
         android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         java.util.concurrent.atomic.AtomicInteger changes = new java.util.concurrent.atomic.AtomicInteger();

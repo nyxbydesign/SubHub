@@ -94,7 +94,10 @@ public final class TaskRuntime {
                         LocalDate today = Instant.ofEpochMilli(now).atZone(task.zone).toLocalDate();
                         for (LocalDate date = task.nextDate(task.firstStart.toLocalDate()); date != null && !date.isAfter(today);
                                 date = task.nextDate(date.plusDays(1))) {
-                            if (task.end(date).toEpochMilli() > now) continue;
+                            if (task.end(date).toEpochMilli() > now) {
+                                store.started(target.scope, engine.occurrence(task.id, date, now), now);
+                                continue;
+                            }
                             TaskEngine.Occurrence row = engine.occurrence(task.id, date, now);
                             if (row.status != TaskEngine.Status.ACTIVE) continue;
                             requireActive(target);
@@ -118,10 +121,16 @@ public final class TaskRuntime {
                 TaskEngine engine = store.load(target.scope);
                 cancelNotifications(target, engine);
                 if (!enabled(target)) return;
-                for (TaskStore.Effect effect : store.pending(target.scope)) {
-                    if (engine.cancelled(effect.action.taskId, effect.action.date)) { store.done(target.scope, effect); continue; }
+                List<TaskStore.Effect> effects = new ArrayList<>(store.pending(target.scope));
+                effects.addAll(store.pendingNotices(target.scope));
+                for (TaskStore.Effect effect : effects) {
+                    if (engine.cancelled(effect.action.taskId, effect.action.date) && !effect.action.cancellation()) { store.done(target.scope, effect); continue; }
                     requireActive(target);
-                    if ("notification".equals(effect.kind)) {
+                    if (effect.kind.startsWith("sub_")) {
+                        if (target.peer == null || target.peer.localRole == RemoteProtocol.Role.SUB) {
+                            TaskNotifications.deliver(context, target, effect, engine);
+                        }
+                    } else if ("notification".equals(effect.kind)) {
                         if (target.peer == null || target.peer.localRole != RemoteProtocol.Role.DOM) { store.done(target.scope, effect); continue; }
                         if (!notifyDom(target, effect)) continue;
                     } else {
@@ -152,6 +161,10 @@ public final class TaskRuntime {
         return target.peer != null && target.peer.localRole == RemoteProtocol.Role.DOM
                 || SubFeaturePolicy.allowed(context, "tasks");
     }
+    private String engineTitle(TaskRepository.Target target, TaskStore.Effect effect) {
+        try { return com.subhub.app.notifications.NotificationText.clean(store.load(target.scope).occurrence(effect.action.taskId, effect.action.date, effect.action.at).task.title); }
+        catch (org.json.JSONException unavailable) { return context.getString(R.string.tasks_review_notification); }
+    }
     private boolean notifyDom(TaskRepository.Target target, TaskStore.Effect effect) {
         synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
             return notifyDomLocked(target, effect);
@@ -178,7 +191,13 @@ public final class TaskRuntime {
                 com.subhub.app.notifications.OptionalNotificationPresentation.present(context,
                         new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_nav_contract)
                                 .setContentTitle(context.getString(R.string.tasks_completion_notification))
-                                .setContentText(context.getString(R.string.tasks_review_notification))
+                                .setContentText(engineTitle(target, effect))
+                                .setStyle(new NotificationCompat.BigTextStyle().bigText(context.getString(R.string.notification_task_review_detail,
+                                        target.peer == null ? context.getString(R.string.role_sub) : com.subhub.app.notifications.NotificationText.clean(target.peer.name), engineTitle(target, effect))))
+                                .setColor(context.getColor(R.color.accent)).setShowWhen(true).setWhen(effect.action.at)
+                                .setGroup("subhub.tasks:" + target.scope).setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                                .setPublicVersion(new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_notification_subhub)
+                                        .setContentTitle(context.getString(R.string.app_name)).setContentText(context.getString(R.string.privacy_notification_body)).build())
                                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).setAutoCancel(true)
                                 .setContentIntent(pending).build()));
         return true;

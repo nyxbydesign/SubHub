@@ -151,6 +151,20 @@ public final class SubSessionNotificationsAndroidTest {
         assertEquals(1, context.getSharedPreferences("local_notification_receipts", 0)
                 .getLong("SUB:SESSION_STOPPED:local-pact-expiry", 0));
     }
+    @Test public void disablingSessionsRetiresPendingExpiryEvenAfterReenable() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.CountDownLatch observed = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CompletableFuture<Void> done = deferredExpiry(false, () -> {
+            observed.countDown(); return closed.get();
+        });
+        try {
+            assertTrue(observed.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue(NotificationPreferences.set(context, NotificationPreferences.Role.SUB, NotificationPreferences.Event.SESSIONS, false));
+            assertTrue(NotificationPreferences.set(context, NotificationPreferences.Role.SUB, NotificationPreferences.Event.SESSIONS, true));
+        } finally { closed.set(true); done.get(5, java.util.concurrent.TimeUnit.SECONDS); }
+        assertFalse(com.subhub.app.notifications.PeerNotifications.consume(context, NotificationPreferences.Role.SUB,
+                NotificationPreferences.Event.SESSION_STOPPED, "local-pact-expiry", 1));
+    }
     private void delayedExpiryRejectsReplacement(boolean nativeStart) throws Exception {
         java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
         java.util.concurrent.CountDownLatch observedPending = new java.util.concurrent.CountDownLatch(1);
