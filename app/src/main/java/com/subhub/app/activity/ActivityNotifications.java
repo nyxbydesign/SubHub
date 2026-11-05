@@ -62,8 +62,11 @@ public final class ActivityNotifications {
                 com.subhub.app.notifications.NotificationPreferences.activityEvent(entry.event.kind)));
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification_subhub)
-                .setContentTitle(context.getString(R.string.app_name))
-                .setContentText(copy)
+                .setContentTitle(entry.personName + " · " + ActivityText.title(context, entry))
+                .setContentText(ActivityText.detail(context, entry).isEmpty() ? ActivityText.title(context, entry) : ActivityText.detail(context, entry))
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(entry.personName + "\n" + ActivityText.title(context, entry)
+                        + (ActivityText.detail(context, entry).isEmpty() ? "" : "\n" + ActivityText.detail(context, entry))))
+                .setColor(context.getColor(R.color.accent))
                 .setWhen(entry.event.observedAt).setShowWhen(true).setContentIntent(destination)
                 .setAutoCancel(true).setOnlyAlertOnce(true).setGroup(peerPrefix(entry.personId))
                 .setCategory(NotificationCompat.CATEGORY_SOCIAL).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)

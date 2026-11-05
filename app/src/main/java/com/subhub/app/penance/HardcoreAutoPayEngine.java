@@ -123,9 +123,14 @@ final class HardcoreAutoPayEngine {
         notifications.createNotificationChannel(new NotificationChannel(
                 CHANNEL, "Hardcore Wallet", NotificationManager.IMPORTANCE_DEFAULT));
         notifications.notify(9062, com.subhub.app.privacy.PrivacyNotifications.present(context, 9062, new NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_notification_subhub).setColor(context.getColor(R.color.accent))
                 .setContentTitle(success ? "SubHub Wallet" : "SubHub Wallet needs attention")
                 .setContentText(text)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
+                .setContentIntent(android.app.PendingIntent.getActivity(context, 0,
+                        new android.content.Intent(context, PenanceActivity.class)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE))
                 .setAutoCancel(true)
                 .build()));
     }

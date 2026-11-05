@@ -74,6 +74,23 @@ public final class NotificationPreferencesAndroidTest {
         assertFalse(enabled(context, Role.DOM, Event.TRIBUTE_PAID));
         assertTrue(enabled(context, Role.DOM, Event.TRIBUTE_TRIGGERED));
     }
+    @Test public void sessionsCombineLegacyOptOutsAndTasksRemainIndependent() {
+        SharedPreferences choices = context.getSharedPreferences(STORE, 0);
+        assertTrue(choices.edit().putBoolean(key(Role.SUB, Event.SESSION_STOPPED), false).commit());
+        assertFalse(enabled(context, Role.SUB, Event.SESSIONS));
+        assertFalse(enabled(context, Role.SUB, Event.SESSION_STARTED));
+        assertFalse(enabled(context, Role.SUB, Event.SESSION_STOPPED));
+        assertTrue(enabled(context, Role.SUB, Event.TASKS));
+        assertTrue(set(context, Role.SUB, Event.SESSIONS, true));
+        assertTrue(enabled(context, Role.SUB, Event.SESSION_STARTED));
+        assertTrue(enabled(context, Role.SUB, Event.SESSION_STOPPED));
+        assertTrue(set(context, Role.SUB, Event.TASKS, false));
+        assertTrue(enabled(context, Role.SUB, Event.SESSIONS));
+        assertFalse(enabled(context, Role.DOM, Event.TASKS));
+        assertFalse(PeerNotifications.consume(context, Role.SUB, Event.TASKS, "one-task", 1));
+        assertTrue(set(context, Role.SUB, Event.TASKS, true));
+        assertFalse(PeerNotifications.consume(context, Role.SUB, Event.TASKS, "one-task", 1));
+    }
     @Test public void durableSequencesRejectReplaysAndConsumeDisabledEventsWithoutBacklog() {
         assertTrue(PeerNotifications.consume(context, Role.SUB, Event.SESSION_STARTED, "peer:generation", 3));
         assertFalse(PeerNotifications.consume(context, Role.SUB, Event.SESSION_STARTED, "peer:generation", 3));

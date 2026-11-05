@@ -127,6 +127,10 @@ public final class TaskStore extends SQLiteOpenHelper {
             if (current.status == TaskEngine.Status.PENDING && current.submission != null && current.submission.id.equals(action.id))
                 effect(db, scope, action.id, "notification", action.json());
         }
+        if (!notifyDom && (action.kind == TaskAction.Kind.CREATE || action.cancellation()
+                || action.kind == TaskAction.Kind.ACCEPT || action.kind == TaskAction.Kind.DENY
+                || action.kind == TaskAction.Kind.TIMEOUT && engine.occurrence(action.taskId, action.date, action.at).status == TaskEngine.Status.TIMED_OUT))
+            effect(db, scope, action.id, "sub_notification", action.json());
         if (action.date != null) {
             TaskEngine.Occurrence occurrence = engine.occurrence(action.taskId, action.date, action.at);
             if (occurrence.failed() && occurrence.task.failureTribute)
@@ -137,6 +141,15 @@ public final class TaskStore extends SQLiteOpenHelper {
         ContentValues row = new ContentValues(); row.put("scope", scope); row.put("id", id);
         row.put("kind", kind); row.put("body", body.toString());
         db.insertWithOnConflict("effects", null, row, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+    /** A started occurrence has one durable local effect, independent of refreshes and repeated sweeps. */
+    public void started(String scope, TaskEngine.Occurrence row, long now) throws JSONException {
+        synchronized (LOCK) {
+            if (row.status != TaskEngine.Status.ACTIVE || now >= row.task.end(row.date).toEpochMilli()) return;
+            TaskAction marker = new TaskAction("start_" + UUID.nameUUIDFromBytes(row.id.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    row.task.id, TaskAction.Kind.TIMEOUT, row.date, now, "", "", Collections.emptyList(), null);
+            effect(getWritableDatabase(), scope, row.id, "sub_started", marker.json());
+        }
     }
     public JSONArray outgoing(String scope, long remoteThrough) throws JSONException {
         synchronized (LOCK) {
@@ -180,10 +193,12 @@ public final class TaskStore extends SQLiteOpenHelper {
         public final TaskAction action;
         Effect(String id, String kind, TaskAction action) { this.id = id; this.kind = kind; this.action = action; }
     }
-    public List<Effect> pending(String scope) throws JSONException {
+    public List<Effect> pending(String scope) throws JSONException { return pending(scope, false); }
+    public List<Effect> pendingNotices(String scope) throws JSONException { return pending(scope, true); }
+    private List<Effect> pending(String scope, boolean notices) throws JSONException {
         synchronized (LOCK) {
             List<Effect> result = new ArrayList<>();
-            try (Cursor c = getReadableDatabase().rawQuery("SELECT id,kind,body FROM effects WHERE scope=? AND done=0 ORDER BY rowid", new String[]{scope})) {
+            try (Cursor c = getReadableDatabase().rawQuery("SELECT id,kind,body FROM effects WHERE scope=? AND done=0 AND kind " + (notices ? "LIKE" : "NOT LIKE") + " 'sub_%' ORDER BY rowid", new String[]{scope})) {
                 while (c.moveToNext()) result.add(new Effect(c.getString(0), c.getString(1), TaskAction.parse(new JSONObject(c.getString(2)))));
             }
             return result;

@@ -28,8 +28,8 @@ public final class NotificationControls {
             return;
         }
         toggle(context, container, role, Event.CONTRACT_CHANGED, R.string.notification_contract_changes);
-        toggle(context, container, role, Event.SESSION_STARTED, R.string.notification_session_starts);
-        toggle(context, container, role, Event.SESSION_STOPPED, R.string.notification_session_stops);
+        toggle(context, container, role, Event.SESSIONS, R.string.notification_sessions);
+        toggle(context, container, role, Event.TASKS, R.string.notification_tasks);
     }
     private static void toggle(Context context, LinearLayout container, Role role, Event event, int label) {
         StateToggle control = new StateToggle(context);

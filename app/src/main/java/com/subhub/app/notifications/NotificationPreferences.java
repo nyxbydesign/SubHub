@@ -8,7 +8,7 @@ import com.subhub.app.security.DeviceRolePreferences;
 public final class NotificationPreferences {
     public enum Role { DOM, SUB }
     public enum Event { ACTIVITY, TASK_REVIEW, CONTRACT_CHANGED, SESSION_STARTED, SESSION_STOPPED,
-        TRACKED_APP_OPENED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED, TRIBUTE_TRIGGERED, TRIBUTE_PAID }
+        TRACKED_APP_OPENED, APP_LIMIT_REACHED, SHARED_LIMIT_REACHED, TRIBUTE_TRIGGERED, TRIBUTE_PAID, SESSIONS, TASKS }
     /** Acquire after store/runtime locks. Code holding this lock never enters those subsystems. */
     public static final Object DELIVERY_LOCK = new Object();
     public static final String STORE = "local_notification_choices";
@@ -18,6 +18,11 @@ public final class NotificationPreferences {
         if (role == Role.DOM ? !DeviceRolePreferences.supportsDom(context) : !DeviceRolePreferences.supportsSub(context)) return false;
         SharedPreferences choices = preferences(context);
         boolean fallback = role == Role.DOM && isActivity(event) ? choices.getBoolean(key(Role.DOM, Event.ACTIVITY), true) : true;
+        if (role == Role.SUB && session(event)) {
+            return choices.getBoolean(key(role, Event.SESSIONS),
+                    choices.getBoolean(key(role, Event.SESSION_STARTED), true)
+                    && choices.getBoolean(key(role, Event.SESSION_STOPPED), true));
+        }
         return choices.getBoolean(key(role, event), fallback);
     }
     public static boolean set(Context context, Role role, Event event, boolean enabled) {
@@ -26,7 +31,10 @@ public final class NotificationPreferences {
     static boolean setWithCancellation(Context context, Role role, Event event, boolean enabled, Runnable cancel) {
         synchronized (DELIVERY_LOCK) {
             if (!supported(role, event)) return false;
-            boolean saved = preferences(context).edit().putBoolean(key(role, event), enabled).commit();
+            SharedPreferences.Editor change = preferences(context).edit().putBoolean(key(role,
+                    role == Role.SUB && session(event) ? Event.SESSIONS : event), enabled);
+            if (role == Role.SUB && session(event) && !enabled) change.putString("sessions_epoch", java.util.UUID.randomUUID().toString());
+            boolean saved = change.commit();
             if (saved && !enabled) {
                 try { cancel.run(); }
                 catch (RuntimeException unavailable) { return false; }
@@ -36,7 +44,11 @@ public final class NotificationPreferences {
     }
     private static boolean supported(Role role, Event event) {
         return role == Role.DOM ? isActivity(event) || event == Event.TASK_REVIEW
-                : event == Event.CONTRACT_CHANGED || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED;
+                : event == Event.CONTRACT_CHANGED || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED || event == Event.SESSIONS || event == Event.TASKS;
+    }
+    static String sessionEpoch(Context context) { return preferences(context).getString("sessions_epoch", ""); }
+    private static boolean session(Event event) {
+        return event == Event.SESSIONS || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED;
     }
     public static boolean isActivity(Event event) {
         switch (event) {
@@ -67,6 +79,10 @@ public final class NotificationPreferences {
     }
     private static void cancel(Context context, Role role, Event event) {
         OptionalNotificationDispatch.cancelTracked(context, role, event);
+        if (role == Role.SUB && session(event)) {
+            OptionalNotificationDispatch.cancelTracked(context, role, Event.SESSION_STARTED);
+            OptionalNotificationDispatch.cancelTracked(context, role, Event.SESSION_STOPPED);
+        }
         if (role == Role.DOM && isActivity(event)) {
             com.subhub.app.activity.ActivityNotifications.cancelType(context, event); return;
         }
@@ -75,7 +91,9 @@ public final class NotificationPreferences {
         String prefix = role == Role.DOM && event == Event.TASK_REVIEW ? "tasks:"
                 : "subhub.optional:" + key(role, event) + ":";
         for (android.service.notification.StatusBarNotification active : manager.getActiveNotifications())
-            if (active.getTag() != null && active.getTag().startsWith(prefix)) manager.cancel(active.getTag(), active.getId());
+            if (active.getTag() != null && (active.getTag().startsWith(prefix)
+                    || role == Role.SUB && session(event) && (active.getTag().startsWith("subhub.optional:SUB:SESSION_STARTED:")
+                    || active.getTag().startsWith("subhub.optional:SUB:SESSION_STOPPED:")))) manager.cancel(active.getTag(), active.getId());
     }
     public static String key(Role role, Event event) { return role.name() + ":" + event.name(); }
     private static SharedPreferences preferences(Context context) { return context.getSharedPreferences(STORE, 0); }

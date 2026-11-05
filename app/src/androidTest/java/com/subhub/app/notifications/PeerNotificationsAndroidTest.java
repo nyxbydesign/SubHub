@@ -132,8 +132,10 @@ public final class PeerNotificationsAndroidTest {
         assertTrue(notice.getTag().startsWith("subhub.optional:" + key(role, event) + ":"));
         Notification notification = notice.getNotification();
         assertEquals(PeerNotifications.CHANNEL, notification.getChannelId());
-        assertEquals(context.getString(R.string.app_name), notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString());
-        assertEquals(context.getString(copy), notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString());
+        assertEquals(context.getString(copy), notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString());
+        assertEquals(context.getString(event == Event.SESSION_STARTED ? R.string.notification_session_started_detail
+                : event == Event.SESSION_STOPPED ? R.string.notification_session_stopped_detail : copy),
+                notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString());
         assertEquals(R.drawable.ic_notification_subhub, notification.getSmallIcon().getResId());
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility);
         assertNotNull(notification.contentIntent);

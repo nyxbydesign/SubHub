@@ -180,7 +180,7 @@ public final class NotificationControlsAndroidTest {
         int count = 0;
         for (Role candidate : Role.values()) for (Event event : Event.values()) {
             boolean expected = candidate == role && (role == Role.DOM ? isActivity(event) || event == Event.TASK_REVIEW
-                    : event == Event.CONTRACT_CHANGED || event == Event.SESSION_STARTED || event == Event.SESSION_STOPPED);
+                    : event == Event.CONTRACT_CHANGED || event == Event.SESSIONS || event == Event.TASKS);
             android.view.View control = root.findViewWithTag("notification:" + key(candidate, event));
             assertEquals(candidate + ":" + event, expected, control != null);
             if (control != null) count++;

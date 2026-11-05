@@ -33,6 +33,13 @@ public final class LocalPactExpiryNotifications {
     static CompletableFuture<Void> afterCaptureClosure(Context context, BooleanSupplier closed, long sequence) {
         CompletableFuture<Void> done = new CompletableFuture<>();
         try {
+            final String notificationEpoch;
+            final boolean notificationAllowed;
+            synchronized (NotificationPreferences.DELIVERY_LOCK) {
+                notificationEpoch = NotificationPreferences.sessionEpoch(context);
+                notificationAllowed = NotificationPreferences.enabled(context, NotificationPreferences.Role.SUB,
+                        NotificationPreferences.Event.SESSION_STOPPED);
+            }
             final SharedPreferences main = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
             final String receipt, fence;
             final RuntimeSessionIdentity.ComponentObservation scope;
@@ -63,8 +70,16 @@ public final class LocalPactExpiryNotifications {
                                     || RuntimeSessionIdentity.observe(context, RemoteSessionClock.local()).active) {
                                 done.complete(null); return;
                             }
-                            PeerNotifications.applied(context, NotificationPreferences.Role.SUB,
-                                    NotificationPreferences.Event.SESSION_STOPPED, "local-pact-expiry", sequence);
+                            // Keep admission and posting atomic with a local disable/re-enable transition.
+                            synchronized (NotificationPreferences.DELIVERY_LOCK) {
+                                if (!notificationAllowed || !notificationEpoch.equals(NotificationPreferences.sessionEpoch(context))) {
+                                    PeerNotifications.consume(context, NotificationPreferences.Role.SUB,
+                                            NotificationPreferences.Event.SESSION_STOPPED, "local-pact-expiry", sequence);
+                                    done.complete(null); return;
+                                }
+                                PeerNotifications.applied(context, NotificationPreferences.Role.SUB,
+                                        NotificationPreferences.Event.SESSION_STOPPED, "local-pact-expiry", sequence);
+                            }
                         }
                     } catch (RuntimeException unavailable) { /* Optional presentation cannot fail expiry dispatch. */ }
                     done.complete(null);

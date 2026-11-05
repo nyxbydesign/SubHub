@@ -105,10 +105,10 @@ public final class ActivityNotificationsAndroidTest {
             if (item.getTag().endsWith(first.key)) notification = item.getNotification();
         }
         assertNotNull(notification);
-        assertEquals(context.getString(com.subhub.app.R.string.app_name), notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString());
-        assertEquals(context.getString(com.subhub.app.R.string.notification_tracked_app_opened), notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString());
-        assertFalse(notification.extras.toString().contains("Synthetic Alex"));
-        assertFalse(notification.extras.toString().contains("Chrome"));
+        assertEquals(first.personName + " · " + ActivityText.title(context, first), notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString());
+        assertEquals(ActivityText.title(context, first), notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString());
+        assertTrue(notification.extras.toString().contains("Synthetic Alex"));
+        assertTrue(notification.extras.toString().contains("Chrome"));
         if (Build.VERSION.SDK_INT >= 31) assertTrue(notification.contentIntent.isImmutable());
 
         Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(DomActivityActivity.class.getName(), null, false);
@@ -172,7 +172,7 @@ public final class ActivityNotificationsAndroidTest {
             assertEquals(ActivityNotifications.Delivery.POSTED, ActivityNotifications.deliver(notificationContext, entry));
             StatusBarNotification posted = await(entry);
             assertEquals(type.name(), posted.getNotification().extras.getString(ActivityNotifications.EXTRA_TYPE));
-            assertEquals(context.getString(activityLabel(type)), body(posted));
+            assertEquals(ActivityText.detail(context, entry).isEmpty() ? ActivityText.title(context, entry) : ActivityText.detail(context, entry), body(posted));
         }
         assertEquals(5, awaitFixtureCount(5).length);
         ActivityEntry selected = fixtures.get(0);
