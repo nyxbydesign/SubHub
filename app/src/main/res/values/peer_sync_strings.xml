@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="peer_sync_channel">Device connection</string>
+    <string name="peer_sync_notification_title">Device connection</string>
+    <string name="peer_sync_notification_body">Background updates enabled</string>
+</resources>

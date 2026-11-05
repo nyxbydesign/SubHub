@@ -26,6 +26,7 @@ public final class RemoteFeatureSchedulingAndroidTest {
     private AtomicInteger leases;
     private final Set<String> preferenceNames=new HashSet<>();
     private String wrappingAlias;
+    private final AtomicInteger serviceStarts=new AtomicInteger();
     @Before public void setup() throws Exception {
         target=InstrumentationRegistry.getInstrumentation().getTargetContext();
         prefix="scheduling-"+UUID.randomUUID()+"-";directory=new File(target.getCacheDir(),prefix+"owned");
@@ -35,6 +36,9 @@ public final class RemoteFeatureSchedulingAndroidTest {
             @Override public File getFilesDir(){return child("files");}
             @Override public File getNoBackupFilesDir(){return child("no-backup");}
             @Override public File getCacheDir(){return child("cache");}
+            @Override public android.content.ComponentName startForegroundService(android.content.Intent service){
+                assertEquals(PeerSyncForegroundService.class.getName(),service.getComponent().getClassName());serviceStarts.incrementAndGet();return service.getComponent();
+            }
             private File child(String name){File f=new File(directory,name);if(!f.isDirectory()&&!f.mkdirs())throw new IllegalStateException();return f;}
         };
         assertTrue(com.subhub.app.configuration.LegacyPackMigration.recoverAndMigrate(context));
@@ -43,7 +47,10 @@ public final class RemoteFeatureSchedulingAndroidTest {
         for(int i=0;i<87;i++)insert(i,RemoteStore.State.REVOKED);
         for(int i=87;i<90;i++)insert(i,RemoteStore.State.ACTIVE);
         wrappingAlias="subhub.test.scheduling."+UUID.randomUUID();
-        feature=new RemoteFeature(context,store,new RemoteSecrets(context,"secrets",wrappingAlias));assertTrue(feature.recoveryReady());
+        feature=new RemoteFeature(context,store,new RemoteSecrets(context,"secrets",wrappingAlias),PairingLifecycleClock.source(context),new RemoteFeature.BackgroundScheduling(){
+            public void synchronize(Context ignored,boolean needed){}
+            public void kick(Context ignored){}
+        });assertTrue(feature.recoveryReady());
         leases=(AtomicInteger)field("leases");leases.incrementAndGet();
         transport=new BlockingTransport();set("endpoint",transport);
     }
@@ -236,10 +243,49 @@ public final class RemoteFeatureSchedulingAndroidTest {
         invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
         assertFalse(((Map<?,?>)field("consecutiveFailures")).containsKey(key));
     }
+    @Test public void connectedServiceLeaseIsSeparateFromPairingAndOldCloseCannotRetireANewOwner()throws Exception{
+        AtomicInteger empty=new AtomicInteger();
+        RemoteFeature.ConnectedServiceLease first=feature.acquireConnectedService(empty::incrementAndGet).get(5,TimeUnit.SECONDS);
+        assertNotNull(first);assertTrue(feature.hasConnectedService());assertTrue(((Map<?,?>)field("pairingLeases")).isEmpty());
+        first.close();assertFalse(feature.hasConnectedService());
+        RemoteFeature.ConnectedServiceLease second=feature.acquireConnectedService(empty::incrementAndGet).get(5,TimeUnit.SECONDS);
+        assertNotNull(second);assertNotSame(first,second);first.close();assertTrue(feature.hasConnectedService());
+        second.close();assertFalse(feature.hasConnectedService());assertEquals(0,empty.get());
+    }
+    @Test public void connectedServiceRefusesPendingOnlyPeersWithoutBorrowingPairingAuthority()throws Exception{
+        store.getWritableDatabase().execSQL("UPDATE peers SET state='PENDING'");
+        assertNull(feature.acquireConnectedService(()->fail("No active owner was admitted")).get(5,TimeUnit.SECONDS));
+        assertFalse(feature.hasConnectedService());assertTrue(((Map<?,?>)field("pairingLeases")).isEmpty());
+    }
+    @Test public void connectedServiceStartsFromVisibleLifecycleButNotBackgroundNetworkWork()throws Exception{
+        set("installed",true);assertFalse((Boolean)field("foreground"));
+        invoke("requestConnectedServiceStart",new Class<?>[0]);assertEquals(0,serviceStarts.get());
+        set("foreground",true);invoke("requestConnectedServiceStart",new Class<?>[0]);until(()->serviceStarts.get()==1);
+        set("foreground",false);feature.requestAutomaticSync();
+        ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+        assertEquals("Background recovery cannot restart a foreground service",1,serviceStarts.get());
+    }
+    @Test public void connectedServiceBackpressureKeepsOneFutureDueWakeInsteadOfSpinning()throws Exception{
+        RemoteFeature.ConnectedServiceLease owner=feature.acquireConnectedService(()->{}).get(5,TimeUnit.SECONDS);
+        try{
+            assertTrue(transport.revokedEntered.await(5,TimeUnit.SECONDS));assertTrue(transport.activeEntered.await(5,TimeUnit.SECONDS));
+            until(()->{ScheduledFuture<?> wake=(ScheduledFuture<?>)unchecked("connectedServiceWake");return wake!=null&&wake.getDelay(TimeUnit.MILLISECONDS)>500;});
+            assertTrue(((Map<String,Long>)field("nextAttempt")).get(identity(88)+":"+generation(88))>SystemClock.elapsedRealtime());
+            assertEquals(1,transport.activeCalls.get());assertEquals(1,transport.revokedCalls.get());
+        }finally{if(owner!=null)owner.close();}
+    }
     @After public void cleanup()throws Exception{
         release.countDown();
         if(feature!=null){if(leases!=null)leases.decrementAndGet();feature.shutdownForTest();}
         else if(store!=null)store.close();
+        if(feature!=null){
+            for(String name:List.of("timer","acceptor","operations","incomingSessions","sessions","pairingDeadlineTimer")){
+                ExecutorService worker=(ExecutorService)field(name);assertTrue(name+" must shut down",worker.isShutdown());assertTrue(name+" must terminate",worker.awaitTermination(10,TimeUnit.SECONDS));
+            }
+            Field activityWorker=RemoteActivityRepository.class.getDeclaredField("worker");activityWorker.setAccessible(true);
+            ExecutorService reader=(ExecutorService)activityWorker.get(feature.activity);assertTrue(reader.isShutdown());assertTrue(reader.awaitTermination(10,TimeUnit.SECONDS));
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         if(prefix!=null){assertTrue(target.deleteDatabase(prefix+"db"));for(String name:preferenceNames)target.getSharedPreferences(prefix+name,0).edit().clear().commit();}
         if(wrappingAlias!=null){assertTrue(wrappingAlias.startsWith("subhub.test.scheduling."));java.security.KeyStore keys=java.security.KeyStore.getInstance("AndroidKeyStore");keys.load(null);if(keys.containsAlias(wrappingAlias))keys.deleteEntry(wrappingAlias);}
         if(context!=null){Field ready=com.subhub.app.configuration.LegacyPackMigration.class.getDeclaredField("READY");ready.setAccessible(true);synchronized(com.subhub.app.configuration.LegacyPackMigration.class){((Set<?>)ready.get(null)).remove(context.getFilesDir().getAbsoluteFile());}}
