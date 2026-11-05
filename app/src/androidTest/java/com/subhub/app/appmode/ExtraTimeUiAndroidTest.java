@@ -62,6 +62,7 @@ public final class ExtraTimeUiAndroidTest {
             String firstId;
             try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
                 await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null);
+                sub.onActivity(ExtraTimeUiAndroidTest::assertFocusCatcher);
                 capture(sub, text(R.string.extra_time_reached), "extra-time-sub-request");
                 tap("extra_time_submit:" + fixture.firstPackage);
                 await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
@@ -76,13 +77,21 @@ public final class ExtraTimeUiAndroidTest {
             try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
                 String inputTag = "extra_time_minutes:" + firstId;
                 await(dom, a -> tagged(a, inputTag) != null);
-                dom.onActivity(a -> assertFalse(tagged(a, inputTag).hasFocus()));
+                dom.onActivity(a -> {
+                    assertFalse(tagged(a, inputTag).hasFocus());
+                    assertTrue(tagged(a, inputTag).isFocusableInTouchMode());
+                    assertFocusCatcher(a);
+                });
                 tap(inputTag);
+                dom.onActivity(a -> assertTrue("Native tap still focuses the minutes control", tagged(a, inputTag).hasFocus()));
                 onView(withTagValue(equalTo(inputTag))).perform(clearText(), typeText("25"), closeSoftKeyboard());
                 dom.recreate();
                 await(dom, a -> tagged(a, inputTag) instanceof EditText
                         && "25".contentEquals(((EditText) tagged(a, inputTag)).getText()));
-                dom.onActivity(a -> assertFalse("Recreation must not reopen the keyboard", tagged(a, inputTag).hasFocus()));
+                dom.onActivity(a -> {
+                    assertFalse("Recreation must not reopen the keyboard", tagged(a, inputTag).hasFocus());
+                    assertFocusCatcher(a);
+                });
                 capture(dom, text(R.string.extra_time_minutes), "extra-time-dom-review");
                 tap("extra_time_approve:" + firstId);
                 await(dom, a -> hasText(a, a.getString(R.string.extra_time_approved, 25)));
@@ -136,6 +145,7 @@ public final class ExtraTimeUiAndroidTest {
             try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
                 await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null);
                 narrow(sub);
+                sub.onActivity(ExtraTimeUiAndroidTest::assertFocusCatcher);
                 capture(sub, text(R.string.extra_time_total_reached), "extra-time-sub-shared-only-large-font");
                 sub.onActivity(a -> {
                     assertFalse("An inactive per-app allowance is not a daily denominator",
@@ -152,11 +162,16 @@ public final class ExtraTimeUiAndroidTest {
             try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
                 String inputTag = "extra_time_minutes:" + id;
                 await(dom, a -> tagged(a, inputTag) != null);
+                dom.onActivity(a -> {
+                    assertTrue(tagged(a, inputTag).isFocusableInTouchMode());
+                    assertFocusCatcher(a);
+                });
                 narrow(dom);
                 onView(withTagValue(equalTo(inputTag))).perform(reveal());
                 capture(dom, text(R.string.extra_time_minutes), "extra-time-dom-large-font");
                 dom.onActivity(a -> readable(a.findViewById(android.R.id.content)));
                 tap(inputTag);
+                dom.onActivity(a -> assertTrue("Native tap still focuses the minutes control", tagged(a, inputTag).hasFocus()));
                 onView(withTagValue(equalTo(inputTag))).perform(clearText(), typeText("30"), closeSoftKeyboard());
                 dom.recreate();
                 await(dom, a -> tagged(a, inputTag) instanceof EditText
@@ -164,6 +179,7 @@ public final class ExtraTimeUiAndroidTest {
                 narrow(dom);
                 dom.onActivity(a -> {
                     assertFalse(tagged(a, inputTag).hasFocus());
+                    assertFocusCatcher(a);
                     assertFalse("Historical request usage does not infer an active per-app budget",
                             hasText(a, a.getString(R.string.extra_time_daily, 5)));
                     assertFalse(hasProgress(a.findViewById(android.R.id.content)));
@@ -190,6 +206,17 @@ public final class ExtraTimeUiAndroidTest {
 
     private static View tagged(ExtraTimeActivity activity, String tag) {
         return activity.findViewById(android.R.id.content).findViewWithTag(tag);
+    }
+
+    private static void assertFocusCatcher(ExtraTimeActivity activity) {
+        View intro = tagged(activity, "extra_time_intro");
+        assertNotNull("The extra-time page has rendered its content", intro);
+        assertTrue(intro.getParent() instanceof android.widget.LinearLayout);
+        View catcher = (View) intro.getParent();
+        assertFalse("The configured focus catcher is not an action", catcher.isClickable());
+        assertTrue(catcher.isFocusableInTouchMode());
+        assertFalse("The focus catcher does not draw over the app's cards", catcher.getDefaultFocusHighlightEnabled());
+        assertFalse("Launch/recreation must not focus a time editor", activity.getCurrentFocus() instanceof EditText);
     }
 
     private static void tap(String tag) {

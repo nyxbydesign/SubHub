@@ -74,6 +74,8 @@ public final class ExtraTimeActivity extends PreferencePage {
         page(R.string.extra_time_title);
         content = PersonUi.column(this);
         content.setFocusableInTouchMode(true);
+        // This noninteractive focus catcher prevents keyboard restoration without tinting its children.
+        content.setDefaultFocusHighlightEnabled(false);
         page.addView(content, new LinearLayout.LayoutParams(-1, -2));
         data = AsyncUiScope.forPage(this);
         PersonUi.text(content, getString(R.string.role_loading), false);
