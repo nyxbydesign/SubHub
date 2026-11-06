@@ -143,7 +143,7 @@ public final class TributeSettingsRestoreAndroidTest {
                 assertTrue(activity.findViewById(R.id.rule_config_card).isShown());
                 assertFalse(activity.findViewById(R.id.safety_config_card).isShown());
             });
-            onView(withId(R.id.button_back)).perform(click());
+            onView(withId(R.id.button_back)).perform(NativeUiActions.revealAboveNavigation(), click());
             onView(withTagValue(is((Object) "wallet:limits")))
                     .perform(NativeUiActions.revealAboveNavigation(), click());
             page.onActivity(activity -> {
