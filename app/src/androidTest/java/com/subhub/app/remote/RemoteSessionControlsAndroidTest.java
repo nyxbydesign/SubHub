@@ -303,39 +303,103 @@ public class RemoteSessionControlsAndroidTest {
     }
 
     @Test public void actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls() throws Exception {
-        Gateway gateway = new Gateway();
+        RemoteSessionCommands.Duration applied = RemoteSessionCommands.Duration.parse(
+                feature.contracts.current(peer).getJSONObject("service"));
+        assertEquals("The native choice must change the applied baseline", -1L, applied.duration);
+        Gateway gateway = new Gateway(applied);
+        SharedDurationUi ui = new SharedDurationUi(gateway);
+        // Saving advances desiredRevision, so PersonActivity rebuilds its session panel.
+        // Install the fixture at the composition boundary, including every replacement.
+        People.installConnectionUi(ui);
         try (ActivityScenario<PersonActivity> page = open()) {
-            bindSharedDuration(page, gateway);
             await(() -> enabled(page, "remote_session_start"));
+            assertSharedDurationBinding(page, ui, -1L);
+            View originalControls = ui.controls.get();
+            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
             onView(withTagValue(is("duration_choice:3600000"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
 
-            await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
+            awaitPendingDuration(page, ui);
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
             await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
-            page.recreate(); bindSharedDuration(page, gateway);
-            await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
+            RemoteStore.Command queued = feature.store.latestCommand(peer.identity, peer.generation);
+            assertEquals(3_600_000L, new org.json.JSONObject(queued.body)
+                    .getJSONObject("configuration").getJSONObject("service").getLong("duration"));
+            await(() -> ui.controls.get() != originalControls
+                    && Long.toString(queued.revision).equals(ui.desiredRevision));
+            awaitPendingDuration(page, ui);
+            assertSharedDurationBinding(page, ui, 3_600_000L);
+            View refreshedControls = ui.controls.get();
+            page.recreate();
+            await(() -> ui.controls.get() != refreshedControls);
+            awaitPendingDuration(page, ui);
+            assertSharedDurationBinding(page, ui, 3_600_000L);
             page.onActivity(a -> assertEquals(3_600_000L, ((com.subhub.app.commitment.DurationChoicesView) tag(a, "remote_duration_choice")).duration()));
             await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
 
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
-            assertEquals(RemoteStore.CommandState.QUEUED, feature.store.latestCommand(peer.identity, peer.generation).state);
+            RemoteStore.Command retained = feature.store.latestCommand(peer.identity, peer.generation);
+            assertEquals(RemoteStore.CommandState.QUEUED, retained.state);
+            assertEquals("Refresh and recreation must retain the accepted command", queued.id, retained.id);
+            assertEquals(queued.revision, retained.revision);
+            assertEquals(queued.body, retained.body);
+            assertEquals("A local save is not an applied receipt", -1L,
+                    feature.contracts.current(peer).getJSONObject("service").getLong("duration"));
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
         }
     }
 
-    private void bindSharedDuration(ActivityScenario<PersonActivity> page, Gateway gateway) throws Exception {
-        await(() -> hasTag(page, "remote_configuration_save_status") && hasTag(page, "remote_session_controls"));
-        PersonSnapshot person = new RemotePersonRepository(context, feature).load(RemotePersonRepository.id(peer));
-        page.onActivity(a -> {
-            View actions = tag(a, "remote_session_controls"), oldDuration = tag(a, "remote_session_duration");
-            LinearLayout parent = (LinearLayout) actions.getParent();
-            assertSame(parent, oldDuration.getParent()); parent.removeView(actions); parent.removeView(oldDuration);
-            RemoteDurationControls duration = new RemoteDurationControls(a, parent, person); duration.bind();
-            new RemoteSessionControls(a, parent, person, duration::hasUnappliedDraft, gateway).bind();
-        });
-        await(() -> hasTag(page, "remote_configuration_save_status"));
+    private final class SharedDurationUi implements ConnectionUi {
+        final Gateway gateway;
+        final AtomicInteger bindings = new AtomicInteger();
+        final AtomicReference<View> controls = new AtomicReference<>();
+        volatile String desiredRevision;
+        SharedDurationUi(Gateway gateway) { this.gateway = gateway; }
+        public void openPairing(android.app.Activity activity) { throw new AssertionError("Unexpected pairing command"); }
+        public void openConnection(android.app.Activity activity, PersonId person) { throw new AssertionError("Unexpected connection command"); }
+        @Override public boolean bindSessionControls(android.app.Activity activity, LinearLayout parent, PersonSnapshot person) {
+            assertEquals(RemotePersonRepository.id(peer), person.id);
+            RemoteDurationControls duration = new RemoteDurationControls(activity, parent, person);
+            // Match RemoteUi's production composition, changing only the session gateway.
+            new RemoteSessionControls(activity, parent, person, duration::hasUnappliedDraft, gateway).bind();
+            duration.bind();
+            desiredRevision = person.sync.desiredRevision;
+            controls.set(parent.findViewWithTag("remote_session_controls"));
+            android.util.Log.i("SessionDurationFixture", "binding=" + bindings.incrementAndGet()
+                    + " desired=" + desiredRevision + " applied=" + person.sync.appliedRevision);
+            return true;
+        }
+    }
 
+    private void assertSharedDurationBinding(ActivityScenario<PersonActivity> page, SharedDurationUi ui, long selection) {
+        page.onActivity(a -> {
+            assertSame("Visible controls must retain the fixture gateway", ui.controls.get(), tag(a, "remote_session_controls"));
+            assertTrue(ui.controls.get().isAttachedToWindow());
+            assertEquals(1, count(a.findViewById(android.R.id.content), "remote_session_controls"));
+            assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
+            assertEquals(selection, ((com.subhub.app.commitment.DurationChoicesView) tag(a, "remote_duration_choice")).duration());
+            assertEquals(context.getString(R.string.remote_session_applied_duration,
+                    context.getResources().getStringArray(R.array.remote_duration_choices)[0]),
+                    ((TextView) tag(a, "remote_session_applied_duration")).getText().toString());
+        });
+    }
+
+    private void awaitPendingDuration(ActivityScenario<PersonActivity> page, SharedDurationUi ui) throws Exception {
+        try { await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration))
+                && hasTag(page, "remote_configuration_save_status")); }
+        catch (AssertionError failure) {
+            AtomicReference<String> visible = new AtomicReference<>();
+            page.onActivity(a -> {
+                View reason = tag(a, "remote_session_reason");
+                visible.set("owned=" + (ui.controls.get() == tag(a, "remote_session_controls"))
+                        + " reason=" + (reason instanceof TextView ? ((TextView) reason).getText() : "missing"));
+            });
+            RemoteStore.Command command = feature.store.latestCommand(peer.identity, peer.generation);
+            throw new AssertionError("Pending duration fence: bindings=" + ui.bindings.get()
+                    + " gatewayReads=" + ui.gateway.reads.get() + " desired=" + ui.desiredRevision
+                    + " command=" + (command == null ? "missing" : command.state + ":" + command.revision)
+                    + " " + visible.get(), failure);
+        }
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
@@ -442,11 +506,14 @@ public class RemoteSessionControlsAndroidTest {
 
     private final class Gateway implements RemoteSessionControls.Gateway {
         final AtomicInteger reads = new AtomicInteger(), reviews = new AtomicInteger(), confirms = new AtomicInteger();
+        final RemoteSessionCommands.Duration appliedService;
         volatile boolean stopAvailable, failSnapshot, stale;
         volatile String reviewWitness = WITNESS;
         volatile RemoteSessionRuntime.Record record;
         CompletableFuture<RemoteSessionRuntime.Review> reviewed;
         RemoteSessionRuntime.Review confirmed;
+        Gateway() { this(service); }
+        Gateway(RemoteSessionCommands.Duration appliedService) { this.appliedService = appliedService; }
         public CompletableFuture<RemoteSessionRuntime.Snapshot> snapshot() {
             reads.incrementAndGet();
             if (failSnapshot) {
@@ -454,14 +521,14 @@ public class RemoteSessionControlsAndroidTest {
                 failed.completeExceptionally(new IllegalStateException("Fixture snapshot unavailable")); return failed;
             }
             return CompletableFuture.completedFuture(new RemoteSessionRuntime.Snapshot(SUB, peer.generation,
-                    true, !stopAvailable && !stale, stopAvailable && !stale, 1, service, stopAvailable ? "" : IDLE,
+                    true, !stopAvailable && !stale, stopAvailable && !stale, 1, appliedService, stopAvailable ? "" : IDLE,
                     stopAvailable ? repeat('e') : "", RemoteSessionRuntime.Readiness.APP_MODE_READY,
                     stale ? RemoteSessionCommands.Reason.CLOCK_CHANGED : RemoteSessionCommands.Reason.NONE,
                     stale ? "" : WITNESS, record));
         }
         public CompletableFuture<RemoteSessionRuntime.Review> review(RemoteSessionCommands.Action action) {
             reviews.incrementAndGet();
-            try { return reviewed != null ? reviewed : CompletableFuture.completedFuture(RemoteSessionControlsAndroidTest.this.review(action, reviewWitness)); }
+            try { return reviewed != null ? reviewed : CompletableFuture.completedFuture(RemoteSessionControlsAndroidTest.this.review(action, reviewWitness, appliedService)); }
             catch (Exception error) { throw new AssertionError(error); }
         }
         public CompletableFuture<String> confirm(RemoteSessionRuntime.Review value) {
@@ -475,9 +542,13 @@ public class RemoteSessionControlsAndroidTest {
         }
     }
     private RemoteSessionRuntime.Review review(RemoteSessionCommands.Action action, String witness) throws Exception {
+        return review(action, witness, service);
+    }
+    private RemoteSessionRuntime.Review review(RemoteSessionCommands.Action action, String witness,
+            RemoteSessionCommands.Duration appliedService) throws Exception {
         long now = System.currentTimeMillis(); String id = UUID.randomUUID().toString();
         RemoteSessionCommands.Request request = action == RemoteSessionCommands.Action.START
-                ? RemoteSessionCommands.Request.start(id, DOM, SUB, peer.generation, 1, 1, now, now + 120_000, IDLE, service)
+                ? RemoteSessionCommands.Request.start(id, DOM, SUB, peer.generation, 1, 1, now, now + 120_000, IDLE, appliedService)
                 : RemoteSessionCommands.Request.stop(id, DOM, SUB, peer.generation, 1, 1, now, now + 120_000, repeat('e'));
         return new RemoteSessionRuntime.Review(request, witness, now);
     }

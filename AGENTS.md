@@ -118,6 +118,9 @@ endpoint as well. Use an owned unpaired store for no-Dom assertions; the applica
 can have independent pending work. Capture the live original before constructing its replacement,
 publish and restore under the singleton's class monitor, and close only the owned endpoint/database.
 Verify that the restored original endpoint remains live.
+Install synthetic session gateways through `People.connectionUi()` before opening profile fixtures.
+Saving a configuration advances the session panel's revision signature and rebuilds its controls;
+one-shot View replacement loses the fixture gateway. Assert its identity after refresh and recreation.
 Consent UI fixtures must also swap and restore the registered Hardcore authority under the policy
 lock and verify that the original store's consent receipts are unchanged. Replacing the endpoint
 singleton alone does not redirect consent receipt writes.
