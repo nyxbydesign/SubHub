@@ -272,6 +272,13 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         assertSame(sub, selected); return new ExtraTimeRequests(context, PersonId.LOCAL);
     }
 
+    /** Controlled UI state only; wire negotiation itself is exercised in ExtraTimeWireAndroidTest. */
+    public void setSubAppTimeSupport(boolean supported) {
+        assertSame(sub, selected);
+        FormalRelationshipCoordinator.requireOwnedFixture(sub.store);
+        sub.store.putMetadata(domIdentity, generation, "extra_time_version", supported ? "1" : "0");
+    }
+
     public ExtraTimeRequests domRequests() throws Exception {
         assertSame(dom, selected); return new ExtraTimeRequests(context, subPerson);
     }

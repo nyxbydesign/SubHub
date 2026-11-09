@@ -2,6 +2,8 @@
 <resources>
     <string name="extra_time_title">Extra time</string>
     <string name="extra_time_request">Request more time</string>
+    <string name="extra_time_request_unavailable">Request unavailable</string>
+    <string name="extra_time_connection_changed">Your role or connection changed. Reopen this page from the correct profile and check the connection.</string>
     <string name="extra_time_review">Review time requests</string>
     <string name="extra_time_review_count">Review time requests · %1$d pending</string>
     <string name="extra_time_for_person">For %1$s</string>

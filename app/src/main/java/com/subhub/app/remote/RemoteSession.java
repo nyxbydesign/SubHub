@@ -71,7 +71,9 @@ public final class RemoteSession {
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
-        store.putMetadata(peer.identity, peer.generation, "extra_time_version", "0");
+        // App-time metadata is the last negotiated compatibility for this pairing, not liveness.
+        // A failed reconnect must not erase it. The validated hello_ack below still clears it
+        // for a legacy peer, and this exchange uses its own freshly negotiated extraTime flag.
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
         JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
@@ -129,7 +131,7 @@ public final class RemoteSession {
             terminalDrain(connection,"revoked_ack",peer,deadlineNanos);return;
         }
         requirePeer(connection,peer);requireType(connection,hello,"hello",peer);
-        store.putMetadata(peer.identity, peer.generation, "extra_time_version", "0");
+        // Preserve last-known app-time compatibility until this hello can be negotiated.
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(hello) == 1 && hooks.sessionControlVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "session_control_version", controls ? "1" : "0");

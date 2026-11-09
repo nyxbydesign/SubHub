@@ -137,7 +137,8 @@ public final class ExtraTimeRequests {
                     eligible &= mode.isEffectivelyArmed(now) && new com.subhub.app.settings.FeatureModuleManager(context).isLimitsEnabled();
                 }
                 String reason = peer == null ? "Connect to your Dom to request time"
-                        : !supported ? "Both apps need the app-time requests update"
+                        : !supported ? "App-time request support has not been confirmed. Reconnect with your Dom and check that both apps are up to date."
+                        : !dom && !locallyEnabled(context, peer) ? "App limits are not allowed for this Sub"
                         : !eligible ? "App limits must be active to request time" : "";
                 return new Snapshot(dom, supported, !dom && eligible, reason,
                         !dom && peer != null ? peer.name : "", dom && peer != null ? peer.name : "",

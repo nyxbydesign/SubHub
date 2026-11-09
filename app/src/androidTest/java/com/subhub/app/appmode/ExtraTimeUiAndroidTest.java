@@ -133,6 +133,85 @@ public final class ExtraTimeUiAndroidTest {
     }
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission() throws Exception {
+        assertTrue("Normal-font contract", context.getResources().getConfiguration().fontScale < 1.4f);
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+            android.content.SharedPreferences settings = context.getSharedPreferences(
+                    com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0);
+            // Change only this explicitly owned inactive guest's synthetic session setting.
+            assertTrue(settings.edit().putBoolean(AppModeManager.KEY_ARMED, false).commit());
+            String tag = "extra_time_submit:" + fixture.firstPackage;
+            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
+                await(sub, a -> tagged(a, tag) != null);
+                sub.onActivity(a -> {
+                    TextView button = (TextView) tagged(a, tag);
+                    assertFalse(button.isEnabled());
+                    assertEquals(a.getString(R.string.extra_time_request_unavailable), button.getText().toString());
+                    assertEquals(0.5f, button.getAlpha(), 0.01f);
+                    TextView reason = (TextView) tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage);
+                    assertNotNull("Explain the disabled control next to the control", reason);
+                    assertEquals("App limits must be active to request time", reason.getText().toString());
+                });
+                assertTrue("Displaying an unavailable action never submits", fixture.subRequests()
+                        .snapshot(System.currentTimeMillis()).requests.isEmpty());
+                capture(sub, text(R.string.extra_time_request_unavailable), "extra-time-sub-unavailable");
+                sub.recreate();
+                await(sub, a -> tagged(a, tag) != null && !tagged(a, tag).isEnabled());
+                assertTrue(settings.edit().putBoolean(AppModeManager.KEY_ARMED, true).commit());
+                await(sub, a -> tagged(a, tag) != null && tagged(a, tag).isEnabled());
+                sub.onActivity(a -> {
+                    TextView button = (TextView) tagged(a, tag);
+                    assertEquals(a.getString(R.string.extra_time_request), button.getText().toString());
+                    assertEquals(1f, button.getAlpha(), 0.01f);
+                    assertNull(tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage));
+                });
+                tap(tag);
+                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                ExtraTimeRequests.Snapshot result = fixture.subRequests().snapshot(System.currentTimeMillis());
+                assertEquals("One native tap submits exactly one request", 1, result.requests.size());
+                assertEquals(fixture.firstPackage, result.requests.get(0).packageName);
+                assertEquals(5, app(fixture.subRequests(), fixture.firstPackage).dailyMinutes);
+            }
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation() throws Exception {
+        assertTrue("Normal-font contract", context.getResources().getConfiguration().fontScale < 1.4f);
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+            assertTrue(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME, 0)
+                    .edit().putBoolean("rule_extra_time_request_enabled", false).commit());
+            fixture.setSubAppTimeSupport(false);
+            String tag = "extra_time_submit:" + fixture.firstPackage;
+            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
+                await(sub, a -> tagged(a, tag) != null);
+                sub.onActivity(a -> {
+                    TextView button = (TextView) tagged(a, tag);
+                    assertFalse(button.isEnabled());
+                    assertEquals(a.getString(R.string.extra_time_request_unavailable), button.getText().toString());
+                    TextView reason = (TextView) tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage);
+                    assertNotNull(reason);
+                    assertEquals("App-time request support has not been confirmed. Reconnect with your Dom and check that both apps are up to date.",
+                            reason.getText().toString());
+                    assertTrue(hasText(a, a.getString(R.string.extra_time_no_tribute)));
+                });
+                capture(sub, text(R.string.extra_time_request_unavailable), "extra-time-sub-support-unconfirmed");
+                assertTrue(fixture.subRequests().snapshot(System.currentTimeMillis()).requests.isEmpty());
+                // A freshly confirmed supported handshake, not a tap, makes submission available.
+                fixture.setSubAppTimeSupport(true);
+                await(sub, a -> tagged(a, tag) != null && tagged(a, tag).isEnabled());
+                tap(tag);
+                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                ExtraTimeRequests.Snapshot result = fixture.subRequests().snapshot(System.currentTimeMillis());
+                assertEquals(1, result.requests.size());
+                assertEquals(0, result.requests.get(0).tributeCents);
+                assertTrue(new com.subhub.app.penance.PenanceManager(context)
+                        .snapshot(System.currentTimeMillis()).getEvents().isEmpty());
+            }
+        }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void largeFontNarrowReviewKeepsControlsAndReceiptsReadable() throws Exception {
         assertTrue("Set font scale only on the owned fresh guest before this distinct contract",
                 context.getResources().getConfiguration().fontScale >= 1.4f);

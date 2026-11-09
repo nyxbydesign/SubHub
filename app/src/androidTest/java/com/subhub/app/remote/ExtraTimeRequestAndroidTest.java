@@ -24,6 +24,58 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public final class ExtraTimeRequestAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+
+    @Test public void retainedCapabilityCannotBypassConsentWorkspaceOrRevocation() throws Exception {
+        for (String restriction : new String[]{"consent", "workspace", "revocation"}) {
+            // Each restriction owns a fresh pair and ledger; never weaken a guard to reset a pair.
+            try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+                ExtraTimeRequests repository = fixture.subRequests();
+                RemoteStore store = RemoteFeature.get(context).store;
+                FormalRelationshipCoordinator.requireOwnedFixture(store);
+                RemoteStore.Peer peer = store.peers(false).stream()
+                        .filter(value -> value.state == RemoteStore.State.ACTIVE
+                                && value.localRole == RemoteProtocol.Role.SUB).findFirst().orElseThrow();
+                String scope = peer.identity + "_" + peer.generation;
+                assertEquals("1", store.metadata(peer.identity, peer.generation, "extra_time_version", "missing"));
+                assertTrue(repository.snapshot(System.currentTimeMillis()).canRequest);
+                assertTrue(new ExtraTimeStore(context).load(scope).isEmpty());
+                assertTrue(new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
+
+                if (restriction.equals("consent")) {
+                    assertTrue(SubFeaturePolicy.setAllowed(context, "limits", false));
+                    assertFalse(SubFeaturePolicy.allowed(context, "limits"));
+                } else if (restriction.equals("workspace")) {
+                    fixture.switchDom();
+                    assertTrue(com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(context));
+                } else {
+                    // Domain-only authenticated withdrawal. Encrypted transport authentication is
+                    // covered separately by ExtraTimeWireAndroidTest; no network is opened here.
+                    try (PeerTransport.Connection authenticated = new PeerTransport.Connection() {
+                        public String authenticatedPeerIdentity() { return peer.identity; }
+                        public java.io.InputStream input() { throw new AssertionError("No fixture network reads"); }
+                        public java.io.OutputStream output() { throw new AssertionError("No fixture network writes"); }
+                        public void setReadTimeoutMillis(long timeout) { throw new AssertionError("No fixture network deadlines"); }
+                        public boolean isDirect() { return true; }
+                        public void close() { }
+                    }) {
+                        store.revokeAuthenticatedPeer(authenticated, peer);
+                    }
+                    assertEquals(RemoteStore.State.REVOKED, store.peer(peer.identity, peer.generation).state);
+                }
+
+                assertEquals("Restriction must not rely on clearing cached compatibility: " + restriction,
+                        "1", store.metadata(peer.identity, peer.generation, "extra_time_version", "missing"));
+                assertThrows(SecurityException.class,
+                        () -> repository.submit(fixture.firstPackage, 100, "EUR"));
+                assertTrue("No request, including unpublished submissions: " + restriction,
+                        new ExtraTimeStore(context).load(scope).isEmpty());
+                assertTrue("No tribute assessed: " + restriction,
+                        new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
+                if (restriction.equals("workspace")) fixture.switchSub();
+            }
+        }
+    }
+
     @Test public void submissionChargesOnceAndApprovalAppliesOnlyItsTemporaryAppCredit() throws Exception {
         try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
             ExtraTimeRequests sub = fixture.subRequests();

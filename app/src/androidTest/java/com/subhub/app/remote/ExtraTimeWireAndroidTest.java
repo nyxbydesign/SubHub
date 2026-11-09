@@ -38,6 +38,8 @@ public final class ExtraTimeWireAndroidTest {
     private Hooks dh, sh;
     private final List<String> frames = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean dropReceipt, revokeBeforeSubReceive;
+    private volatile String dropHandshake;
+    private volatile boolean malformedHello;
 
     @Before public void setup() throws Exception {
         domDatabase = "extra-time-wire-dom-" + UUID.randomUUID();
@@ -86,6 +88,55 @@ public final class ExtraTimeWireAndroidTest {
             assertEquals(0, dh.calls); assertEquals(0, sh.calls);
             for (String frame : frames) assertFalse(frame.startsWith("extra_time_"));
         }
+    }
+
+    @Test public void failedHandshakePreservesOnlyPreviouslyNegotiatedCapability() throws Exception {
+        // A failed first contact must never invent support for an unknown peer.
+        versions("missing");
+        dropHandshake = "hello";
+        for (boolean domInitiates : new boolean[]{false, true}) {
+            frames.clear();
+            Outcome failed = exchange(domInitiates);
+            assertNotNull(failed.client); assertNotNull(failed.server);
+            versions("missing");
+            for (String frame : frames) assertFalse(frame.startsWith("extra_time_"));
+        }
+        dropHandshake = null;
+        exchange(true).success(); versions("1");
+
+        // Retry failures are connection failures, not evidence that either app lost support.
+        for (String handshake : new String[]{"hello", "hello_ack"}) {
+            dropHandshake = handshake;
+            for (boolean domInitiates : new boolean[]{false, true}) {
+                int previousDomCalls = dh.calls, previousSubCalls = sh.calls;
+                frames.clear();
+                Outcome failed = exchange(domInitiates);
+                assertNotNull(failed.client); assertNotNull(failed.server);
+                versions("1");
+                assertEquals(previousDomCalls, dh.calls); assertEquals(previousSubCalls, sh.calls);
+                for (String frame : frames) assertFalse(frame.startsWith("extra_time_"));
+            }
+        }
+        dropHandshake = null;
+        // A valid authenticated envelope with an invalid capability fails inside incoming()
+        // before assignment. It must not erase compatibility from a prior valid negotiation.
+        malformedHello = true;
+        for (boolean domInitiates : new boolean[]{false, true}) {
+            int previousDomCalls = dh.calls, previousSubCalls = sh.calls;
+            frames.clear();
+            Outcome failed = exchange(domInitiates);
+            assertNotNull(failed.client); assertNotNull(failed.server);
+            versions("1");
+            assertEquals(previousDomCalls, dh.calls); assertEquals(previousSubCalls, sh.calls);
+            for (String frame : frames) assertFalse(frame.startsWith("extra_time_"));
+        }
+        malformedHello = false;
+        dh.version = 0;
+        frames.clear(); exchange(false).success(); versions("0");
+        for (String frame : frames) assertFalse(frame.startsWith("extra_time_"));
+        dh.version = 1;
+        frames.clear(); exchange(true).success(); versions("1");
+        assertTrue(frames.contains("extra_time_state"));
     }
 
     @Test public void lostReceiptReconnectDoesNotRepeatCommittedApplication() throws Exception {
@@ -208,6 +259,11 @@ public final class ExtraTimeWireAndroidTest {
                 public void flush() throws IOException {
                     JSONObject value = RemoteProtocol.read(new ByteArrayInputStream(buffer.toByteArray()));
                     String type = value.optString("type"); frames.add(type);
+                    if (type.equals(dropHandshake)) throw new IOException("Synthetic lost handshake");
+                    if (malformedHello && "hello".equals(type)) {
+                        try { value.put("extraTimeVersion", 0); }
+                        catch (org.json.JSONException invalid) { throw new IOException(invalid); }
+                    }
                     if (dropReceipt && "extra_time_receipt".equals(type)) throw new IOException("Synthetic lost receipt");
                     if (revokeBeforeSubReceive && "extra_time_state".equals(type)) {
                         revokeBeforeSubReceive = false; sub.revoke(dt.localIdentity(), generation);

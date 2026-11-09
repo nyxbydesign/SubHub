@@ -173,12 +173,21 @@ public final class ExtraTimeActivity extends PreferencePage {
                         money(value.tributeCents, value.currency)), false);
                 else if (value.tributeCents == 0) PersonUi.text(card, getString(R.string.extra_time_no_tribute), false);
                 String key = "submit:" + app.packageName;
-                TextView requestButton = PersonUi.action(card, pendingActions.contains(key)
-                        ? R.string.extra_time_saving : R.string.extra_time_request,
+                boolean sending = pendingActions.contains(key);
+                boolean available = value.supported && value.canRequest && knownTribute;
+                TextView requestButton = PersonUi.action(card, sending
+                        ? R.string.extra_time_saving : available ? R.string.extra_time_request
+                        : R.string.extra_time_request_unavailable,
                         () -> submit(app.packageName, value.tributeCents, value.currency), true);
                 requestButton.setTag("extra_time_submit:" + app.packageName);
-                requestButton.setEnabled(value.supported && value.canRequest && knownTribute
-                        && !pendingActions.contains(key));
+                requestButton.setEnabled(available && !sending);
+                requestButton.setAlpha(requestButton.isEnabled() ? 1f : 0.5f);
+                if (!available && !sending) {
+                    TextView reason = PersonUi.text(card, value.unavailableReason == null
+                            || value.unavailableReason.isEmpty() ? getString(R.string.extra_time_unavailable)
+                            : value.unavailableReason, false);
+                    reason.setTag("extra_time_unavailable_reason:" + app.packageName);
+                }
             }
         }
     }
@@ -302,13 +311,21 @@ public final class ExtraTimeActivity extends PreferencePage {
     private void actionFailed(String key, Exception error) {
         pendingActions.remove(key);
         if (snapshot != null) render(snapshot);
-        if (error instanceof SecurityException) { finish(); return; }
+        if (error instanceof SecurityException) {
+            notice(getString(R.string.extra_time_connection_changed));
+            finish();
+            return;
+        }
         notice(getString(R.string.extra_time_action_failed));
         refresh();
     }
 
     private void failed(Exception error) {
-        if (error instanceof SecurityException) { finish(); return; }
+        if (error instanceof SecurityException) {
+            notice(getString(R.string.extra_time_connection_changed));
+            finish();
+            return;
+        }
         if (snapshot != null) return;
         content.removeAllViews();
         LinearLayout card = ExtraTimeViews.card(content, "extra_time_unavailable");
