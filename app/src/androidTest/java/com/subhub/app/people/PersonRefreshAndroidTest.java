@@ -134,6 +134,48 @@ public final class PersonRefreshAndroidTest {
         }
     }
 
+    @Test public void retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft() throws Exception {
+        android.content.SharedPreferences prefs = context.getSharedPreferences("subhub_service_duration_ui", 0);
+        java.util.Map<String, ?> before = new java.util.LinkedHashMap<>(prefs.getAll());
+        assertTrue(new SettingsRepository(context).preferences().edit().putString(DeviceRolePreferences.KEY_MODE,
+                DeviceRolePreferences.Mode.BOTH.name()).commit());
+        assertTrue(prefs.edit().putLong("duration", -2).putLong("minimum", 3_600_000L)
+                .putLong("maximum", 86_400_000L).putBoolean("hidden", false).commit());
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(new Intent(context, PersonActivity.class)
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()))) {
+            AtomicReference<PersonActivity> host = host(scenario); awaitLoaded(host);
+            AtomicReference<com.subhub.app.commitment.ServiceDurationView> retained = new AtomicReference<>();
+            scenario.onActivity(a -> {
+                retained.set((com.subhub.app.commitment.ServiceDurationView) tag(a, "person_duration:local"));
+                assertNotNull(retained.get());
+                ((EditText) retained.get().findViewById(R.id.service_duration_min_hours)).setText("");
+                a.refresh();
+            });
+            awaitLoaded(host);
+            scenario.onActivity(a -> assertEquals("", ((EditText) retained.get()
+                    .findViewById(R.id.service_duration_min_hours)).getText().toString()));
+            // Finish the draft, then change the source while this exact Activity is stopped.
+            scenario.onActivity(a -> ((EditText) retained.get().findViewById(R.id.service_duration_min_hours)).setText("1"));
+            scenario.moveToState(Lifecycle.State.CREATED);
+            assertTrue(prefs.edit().putLong("duration", 86_400_000L).putLong("minimum", 7_200_000L)
+                    .putLong("maximum", 18_000_000L).putBoolean("hidden", true).commit());
+            scenario.moveToState(Lifecycle.State.RESUMED); awaitLoaded(host);
+            scenario.onActivity(a -> {
+                assertSame(retained.get(), tag(a, "person_duration:local"));
+                assertTrue(retained.get().findViewById(R.id.commitment_timer_24h).isSelected());
+                assertEquals("2", ((EditText) retained.get().findViewById(R.id.service_duration_min_hours)).getText().toString());
+                assertEquals("5", ((EditText) retained.get().findViewById(R.id.service_duration_max_hours)).getText().toString());
+                ((com.subhub.app.util.StateToggle) retained.get().findViewById(R.id.service_duration_hide)).setChecked(false);
+                assertEquals(86_400_000L, prefs.getLong("duration", 0));
+                assertEquals(7_200_000L, prefs.getLong("minimum", 0));
+                assertEquals(18_000_000L, prefs.getLong("maximum", 0));
+            });
+        } finally {
+            integration.drainReaders();
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(prefs, before);
+        }
+    }
+
     private static int swipeAndSettle(PersonActivity activity) throws Exception {
         android.graphics.Rect bounds = new android.graphics.Rect();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {

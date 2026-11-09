@@ -154,6 +154,7 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void refresh() {
         if (!guardTarget()) return;
+        refreshLocalDuration();
         observeAppIcons();
         data.cancel("person-observe");
         data.cancel("contract-cover");
@@ -199,6 +200,7 @@ public final class PersonActivity extends RolePage {
                         com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()));
                 if (person.id.isLocal()) session.add(com.subhub.app.commitment.CommitmentManager.isActive(this));
                 reconcile("session", session, parent -> session(parent, person));
+                refreshLocalDuration();
                 TextView label = panels.get("session").findViewWithTag("person_service_label");
                 if (label != null) label.setText(!person.id.isLocal() && person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
                         ? getString(R.string.role_unknown_data) : person.serviceLabel);
@@ -248,6 +250,12 @@ public final class PersonActivity extends RolePage {
                 }
             }
         });
+    }
+
+    private void refreshLocalDuration() {
+        if (personId == null || !personId.isLocal() || body == null) return;
+        ServiceDurationView duration = body.findViewWithTag("person_duration:local");
+        if (duration != null) duration.reloadIfChanged();
     }
 
     private void reconcile(String key, java.util.List<Object> signature,

@@ -62,14 +62,19 @@ public final class ServiceDurationView extends LinearLayout {
             choices[index].setOnClickListener(
                     view -> {
                         if (!canEdit()) return;
+                        reloadIfChanged();
                         selected = duration;
-                        persist();
+                        preferences.edit().putLong("duration", selected).apply();
                         render();
                     });
         }
         hidden.setOnCheckedChangeListener(
                 (button, checked) -> {
-                    if (!updating && canEdit()) persist();
+                    if (!updating && canEdit()) {
+                        // A retained picker must not write stale duration/range values with this toggle.
+                        preferences.edit().putBoolean("hidden", checked).apply();
+                        reloadIfChanged();
+                    }
                 });
         TextWatcher changes =
                 new TextWatcher() {
@@ -82,7 +87,7 @@ public final class ServiceDurationView extends LinearLayout {
 
                     @Override
                     public void afterTextChanged(Editable value) {
-                        if (!updating && canEdit()) persist();
+                        if (!updating && canEdit()) { persistBounds(); reloadIfChanged(); }
                     }
                 };
         minimum.addTextChangedListener(changes);
@@ -116,7 +121,30 @@ public final class ServiceDurationView extends LinearLayout {
         render();
     }
 
-    private void persist() {
+    /** Refresh a retained picker without normalizing or discarding an unfinished range draft. */
+    public void reloadIfChanged() {
+        long mode = preferences.getLong("duration", PERMANENT);
+        long min = preferences.getLong("minimum", HOUR), max = preferences.getLong("maximum", 24 * HOUR);
+        boolean hide = preferences.getBoolean("hidden", false);
+        boolean changedBounds = min != savedMin || max != savedMax;
+        boolean incomplete = false;
+        try {
+            PactDuration.validate(PactDuration.hours(minimum.getText().toString()),
+                    PactDuration.hours(maximum.getText().toString()));
+        } catch (IllegalArgumentException draft) { incomplete = true; }
+        updating = true;
+        try {
+            selected = mode;
+            savedMin = min; savedMax = max;
+            if (changedBounds && !incomplete) {
+                minimum.setText(hours(min)); maximum.setText(hours(max));
+            }
+            if (hidden.isChecked() != hide) hidden.setChecked(hide);
+        } finally { updating = false; }
+        render();
+    }
+
+    private void persistBounds() {
         if (!canEdit()) return;
         try {
             long min = PactDuration.hours(minimum.getText().toString());
@@ -125,16 +153,11 @@ public final class ServiceDurationView extends LinearLayout {
             savedMin = min;
             savedMax = max;
             maximum.setError(null);
+            // Bounds editing never rewrites unrelated duration/visibility settings.
+            preferences.edit().putLong("minimum", min).putLong("maximum", max).apply();
         } catch (IllegalArgumentException incomplete) {
-            // Keep incomplete input visible, but persist only valid bounds.
+            // Keep incomplete input visible and leave every persisted setting unchanged.
         }
-        preferences
-                .edit()
-                .putLong("duration", selected)
-                .putLong("minimum", savedMin)
-                .putLong("maximum", savedMax)
-                .putBoolean("hidden", hidden.isChecked())
-                .apply();
     }
 
     public boolean validateSelection() {
@@ -143,7 +166,7 @@ public final class ServiceDurationView extends LinearLayout {
             PactDuration.validate(
                     PactDuration.hours(minimum.getText().toString()),
                     PactDuration.hours(maximum.getText().toString()));
-            persist();
+            persistBounds();
             return true;
         } catch (IllegalArgumentException invalid) {
             com.subhub.app.util.InputFocusPolicy.showError(maximum,
