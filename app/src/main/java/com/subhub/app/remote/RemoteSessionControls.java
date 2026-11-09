@@ -54,7 +54,8 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     private final Handler clock = new Handler(Looper.getMainLooper());
     private final String key;
     private RemoteSessionRuntime.Snapshot snapshot;
-    private TextView start, stop, status, reason, duration;
+    private TextView action, status, reason, duration;
+    private boolean showingStop;
     private com.subhub.app.commitment.ServiceCountdownView time;
     private boolean reviewing;
     private long observationEpoch;
@@ -103,15 +104,16 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 activity.getResources().getConfiguration().fontScale))); time.setLayoutParams(clockSize);
         duration = controls.findViewById(R.id.remote_session_duration_caption);
         duration.setTag("remote_session_applied_duration");
-        start = controls.findViewById(R.id.remote_session_start_button);
-        start.setTag("remote_session_start");
-        start.setOnClickListener(v -> request(RemoteSessionCommands.Action.START));
-        stop = controls.findViewById(R.id.remote_session_stop_button);
-        stop.setTag("remote_session_stop"); stop.setOnClickListener(v -> stop());
+        action = controls.findViewById(R.id.remote_session_action_button);
+        showAction(observed.serviceActive);
+        action.setOnClickListener(v -> {
+            if (showingStop) stop();
+            else request(RemoteSessionCommands.Action.START);
+        });
         status = PersonUi.text(controls, activity.getString(R.string.role_loading), false);
         status.setTag("remote_session_status");
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
-        start.setEnabled(false); stop.setEnabled(false);
+        action.setEnabled(false);
         lifecycle.addObserver(this);
     }
 
@@ -148,8 +150,15 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
 
     private void render() {
         boolean changedDuration = durationDraft.getAsBoolean();
-        start.setEnabled(snapshot.supported && snapshot.canStart && !busy() && !changedDuration);
-        stop.setEnabled(!busy() && (snapshot.supported ? snapshot.canStop : legacyStopAvailable()));
+        // A stale active report still presents Stop, but never authorizes it. Unknown
+        // state keeps the observed mode instead of advertising an unrelated Start.
+        showAction(snapshot.supported
+                ? snapshot.canStop || !snapshot.sessionIdentity.isEmpty()
+                        || snapshot.idleFence.isEmpty() && observed.serviceActive
+                : observed.serviceActive);
+        action.setEnabled(!busy() && (showingStop
+                ? snapshot.supported ? snapshot.canStop : legacyStopAvailable()
+                : snapshot.supported && snapshot.canStart && !changedDuration));
         duration.setText(snapshot.service == null ? "" : activity.getString(R.string.remote_session_applied_duration,
                 durationLabel(snapshot.service)));
         duration.setVisibility(snapshot.service == null ? View.GONE : View.VISIBLE);
@@ -173,6 +182,12 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 : changedDuration ? R.string.remote_session_apply_duration : reasonLabel(snapshot.reason);
         reason.setText(explanation == 0 ? "" : activity.getString(explanation));
         reason.setVisibility(explanation == 0 ? View.GONE : View.VISIBLE);
+    }
+
+    private void showAction(boolean stop) {
+        showingStop = stop;
+        action.setText(stop ? R.string.remote_session_stop : R.string.remote_session_start_action);
+        action.setTag(stop ? "remote_session_stop" : "remote_session_start");
     }
 
     private String durationLabel(RemoteSessionCommands.Duration service) {
@@ -236,7 +251,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
 
     private void unavailable() {
         observationEpoch++; reviewing = false; work.cancel(key + ":review");
-        snapshot = null; start.setEnabled(false); stop.setEnabled(false); duration.setVisibility(View.GONE);
+        snapshot = null; action.setEnabled(false); duration.setVisibility(View.GONE);
         time.stop(); time.setVisibility(View.GONE);
         status.setText(R.string.remote_unknown); status.setVisibility(View.VISIBLE);
         reason.setText(R.string.remote_session_changed); reason.setVisibility(View.VISIBLE);

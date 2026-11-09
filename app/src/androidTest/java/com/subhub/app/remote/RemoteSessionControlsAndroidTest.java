@@ -180,7 +180,8 @@ public class RemoteSessionControlsAndroidTest {
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_unsupported)));
             page.onActivity(a -> {
                 assertEquals(1, count(a.findViewById(android.R.id.content), "remote_session_controls"));
-                assertFalse(tag(a, "remote_session_start").isEnabled()); assertFalse(tag(a, "remote_session_stop").isEnabled());
+                assertFalse(tag(a, "remote_session_start").isEnabled()); assertNull(tag(a, "remote_session_stop"));
+                assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
                 assertNull(a.findViewById(R.id.person_session_action));
                 assertNull(tag(a, "remote_session_refresh"));
             });
@@ -253,6 +254,54 @@ public class RemoteSessionControlsAndroidTest {
         }
     }
 
+    @Test public void oneActionTracksActiveAndStaleStateWithoutGrantingAuthority() throws Exception {
+        Gateway gateway = new Gateway();
+        try (ActivityScenario<PersonActivity> page = open()) {
+            inject(page, gateway);
+            page.onActivity(a -> {
+                assertTrue(tag(a, "remote_session_start").isEnabled());
+                assertNull(tag(a, "remote_session_stop"));
+                assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
+            });
+            gateway.stopAvailable = true;
+            await(() -> enabled(page, "remote_session_stop"));
+            page.onActivity(a -> {
+                assertNull(tag(a, "remote_session_start"));
+                assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
+            });
+            gateway.stale = true;
+            await(() -> hasTag(page, "remote_session_stop") && !enabled(page, "remote_session_stop"));
+            page.onActivity(a -> tag(a, "remote_session_stop").performClick());
+            assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+            gateway.failSnapshot = true;
+            await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
+            page.onActivity(a -> {
+                assertFalse(tag(a, "remote_session_stop").isEnabled());
+                assertNull(tag(a, "remote_session_start"));
+            });
+            gateway.failSnapshot = false; gateway.stale = false; gateway.stopAvailable = false;
+            await(() -> enabled(page, "remote_session_start"));
+            page.onActivity(a -> assertNull(tag(a, "remote_session_stop")));
+            assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+        }
+    }
+
+    @Test public void repeatedActionClickWhileReviewIsPendingQueuesOnlyOnce() throws Exception {
+        Gateway gateway = new Gateway(); gateway.reviewed = new CompletableFuture<>();
+        try (ActivityScenario<PersonActivity> page = open()) {
+            inject(page, gateway); tap("remote_session_start");
+            await(() -> gateway.reviews.get() == 1);
+            page.onActivity(a -> {
+                assertFalse(tag(a, "remote_session_start").isEnabled());
+                tag(a, "remote_session_start").performClick();
+                assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
+            });
+            assertEquals(1, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
+            gateway.reviewed.complete(review(RemoteSessionCommands.Action.START, WITNESS));
+            await(() -> gateway.confirms.get() == 1);
+        }
+    }
+
     @Test public void actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls() throws Exception {
         Gateway gateway = new Gateway();
         try (ActivityScenario<PersonActivity> page = open()) {
@@ -306,7 +355,8 @@ public class RemoteSessionControlsAndroidTest {
                 assertEquals(tag(a, "remote_session_applied_duration") instanceof TextView
                         ? ((TextView) tag(a, "remote_session_applied_duration")).getText() : "", timer.getContentDescription());
                 assertTrue(tag(a, "remote_session_start") instanceof androidx.appcompat.widget.AppCompatButton);
-                assertTrue(tag(a, "remote_session_stop") instanceof androidx.appcompat.widget.AppCompatButton);
+                assertNull(tag(a, "remote_session_stop"));
+                assertEquals(1, countSessionActions(a.findViewById(android.R.id.content)));
                 assertEquals(1, count(a.findViewById(android.R.id.content), "remote_session_timer_actions"));
             });
             ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(), "remote-session-actions", "remote_session_timer_actions");
@@ -392,7 +442,7 @@ public class RemoteSessionControlsAndroidTest {
 
     private final class Gateway implements RemoteSessionControls.Gateway {
         final AtomicInteger reads = new AtomicInteger(), reviews = new AtomicInteger(), confirms = new AtomicInteger();
-        volatile boolean stopAvailable, failSnapshot;
+        volatile boolean stopAvailable, failSnapshot, stale;
         volatile String reviewWitness = WITNESS;
         volatile RemoteSessionRuntime.Record record;
         CompletableFuture<RemoteSessionRuntime.Review> reviewed;
@@ -404,9 +454,10 @@ public class RemoteSessionControlsAndroidTest {
                 failed.completeExceptionally(new IllegalStateException("Fixture snapshot unavailable")); return failed;
             }
             return CompletableFuture.completedFuture(new RemoteSessionRuntime.Snapshot(SUB, peer.generation,
-                    true, !stopAvailable, stopAvailable, 1, service, stopAvailable ? "" : IDLE,
+                    true, !stopAvailable && !stale, stopAvailable && !stale, 1, service, stopAvailable ? "" : IDLE,
                     stopAvailable ? repeat('e') : "", RemoteSessionRuntime.Readiness.APP_MODE_READY,
-                    RemoteSessionCommands.Reason.NONE, WITNESS, record));
+                    stale ? RemoteSessionCommands.Reason.CLOCK_CHANGED : RemoteSessionCommands.Reason.NONE,
+                    stale ? "" : WITNESS, record));
         }
         public CompletableFuture<RemoteSessionRuntime.Review> review(RemoteSessionCommands.Action action) {
             reviews.incrementAndGet();
@@ -457,6 +508,12 @@ public class RemoteSessionControlsAndroidTest {
         }); return found.get();
     }
     private static void tap(String tag) { onView(withTagValue(is(tag))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click()); }
+    private static int countSessionActions(View view) {
+        int value = view.getId() == R.id.remote_session_action_button ? 1 : 0;
+        if (view instanceof android.view.ViewGroup) for (int i = 0; i < ((android.view.ViewGroup) view).getChildCount(); i++)
+            value += countSessionActions(((android.view.ViewGroup) view).getChildAt(i));
+        return value;
+    }
     private static int count(View view, String tag) {
         int value = tag.equals(view.getTag()) ? 1 : 0;
         if (view instanceof android.view.ViewGroup) for (int i = 0; i < ((android.view.ViewGroup) view).getChildCount(); i++)
