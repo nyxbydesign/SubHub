@@ -14,10 +14,12 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
     private final Map<String, Map<String,Long>> cachedTotals=new HashMap<>();
     private String importedHistory;
     private static final java.util.concurrent.ExecutorService counterWriter = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-daily-counters"));
-    public void queueStats(SharedPreferences prefs) {
+    public void queueStats(SharedPreferences prefs) { queueStats(prefs, System.currentTimeMillis(), false); }
+    void queueStats(SharedPreferences prefs, long observedAt) { queueStats(prefs, observedAt, true); }
+    private void queueStats(SharedPreferences prefs, long observedAt, boolean durations) {
         Map<String, ?> snapshot = prefs.getAll();
         counterWriter.execute(() -> {
-            try { syncStatsSnapshot(snapshot); }
+            try { syncStatsSnapshot(snapshot, observedAt, durations); }
             catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Counter checkpoint pending"); }
         });
     }
@@ -78,8 +80,9 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
         cachedTotals.put(source,new LinkedHashMap<>(totals));
     }
-    public void syncStats(SharedPreferences prefs) { syncStatsSnapshot(prefs.getAll()); }
-    private void syncStatsSnapshot(Map<String, ?> raw) {
+    public void syncStats(SharedPreferences prefs) { syncStatsSnapshot(prefs.getAll(), System.currentTimeMillis()); }
+    synchronized void syncStatsSnapshot(Map<String, ?> raw, long observedAt) { syncStatsSnapshot(raw, observedAt, true); }
+    private synchronized void syncStatsSnapshot(Map<String, ?> raw, long observedAt, boolean durations) {
         Map<String, Long> totals = new LinkedHashMap<>();
         String[][] keys = {{"censors","total_blocks_all_time"},{"limits_ms","limited_app_millis"},{"limit_stops","limit_interventions"},
                 {"whispers","subliminal_impressions"},{"popups","popup_impressions"},{"assessed_EUR","tribute_cents"},
@@ -89,8 +92,97 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         String recordedZone = zone instanceof String ? (String) zone : ZoneId.systemDefault().getId();
         Object history = raw.get("session_history");
         if (history instanceof String) backfillSessions((String) history, recordedZone);
-        checkpoint("stats", totals, stamp instanceof Long ? (Long) stamp : System.currentTimeMillis(), recordedZone);
+        checkpoint("stats", totals, stamp instanceof Long ? (Long) stamp : observedAt, recordedZone);
+        if (durations) reconcileSessionDurations(raw, observedAt, recordedZone);
     }
+    /** Reconcile persisted start/end facts on reads and transitions, never by running a clock. */
+    private void reconcileSessionDurations(Map<String, ?> raw, long observedAt, String fallbackZone) {
+        List<StatsRepository.SessionEntry> history = StatsRepository.parseSessionHistory(
+                raw.get("session_history") instanceof String ? (String) raw.get("session_history") : "");
+        List<StatsRepository.SessionEntry> identified = new ArrayList<>();
+        Map<String, Long> legacy = new TreeMap<>(), known = new TreeMap<>();
+        Set<String> legacySeen = new HashSet<>();
+        for (StatsRepository.SessionEntry entry : history) {
+            Map<String, Long> parts = SessionDurationProjection.slices(entry.getStartMillis(),
+                    entry.getDurationSeconds(), observedAt, entry.zone().isEmpty() ? fallbackZone : entry.zone());
+            if (!entry.identity().isEmpty()) identified.add(entry);
+            else if (legacySeen.add(entry.getStartMillis() + ":" + entry.getDurationSeconds() + ":" + entry.getBlocks()))
+                mergeDurations(legacy, parts);
+        }
+        String activeId = raw.get("active_session_identity") instanceof String ? (String) raw.get("active_session_identity") : "";
+        long start = raw.get("active_session_start_ms") instanceof Number ? ((Number) raw.get("active_session_start_ms")).longValue() : 0;
+        String activeZone = raw.get(StatsRepository.ACTIVE_SESSION_ZONE) instanceof String
+                ? (String) raw.get(StatsRepository.ACTIVE_SESSION_ZONE) : fallbackZone;
+        StatsRepository.SessionEntry active = null;
+        if (activeId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
+            try { active = new StatsRepository.SessionEntry(start,
+                    SessionDurationProjection.activeSeconds(start, observedAt), 0).identified(activeId, activeZone); }
+            catch (RuntimeException invalid) { /* Invalid retained clocks do not acquire authority. */ }
+        }
+        Set<String> knownIds = new HashSet<>();
+        for (StatsRepository.SessionEntry entry : identified) if (knownIds.add(entry.identity()))
+            mergeDurations(known, SessionDurationProjection.slices(entry.getStartMillis(), entry.getDurationSeconds(),
+                    observedAt, entry.zone().isEmpty() ? fallbackZone : entry.zone()));
+        if (active != null && knownIds.add(active.identity())) mergeDurations(known,
+                SessionDurationProjection.slices(start, active.getDurationSeconds(), observedAt, activeZone));
+        SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
+        try {
+            if (metadata(db, "session_duration_v1") == null) {
+                Map<String, Long> recorded = new TreeMap<>();
+                try (Cursor c = db.rawQuery("SELECT day,value FROM daily WHERE metric='service_ms'", null)) {
+                    while (c.moveToNext()) recorded.put(c.getString(0), c.getLong(1));
+                }
+                Set<String> days = new TreeSet<>(recorded.keySet()); days.addAll(legacy.keySet()); days.addAll(known.keySet());
+                for (String day : days) {
+                    long baseline = SessionDurationProjection.legacyBaseline(recorded.getOrDefault(day, 0L),
+                            legacy.getOrDefault(day, 0L), known.getOrDefault(day, 0L));
+                    db.execSQL("INSERT OR REPLACE INTO daily VALUES(?,'service_ms',?)", new Object[]{day, baseline});
+                }
+                db.execSQL("INSERT INTO metadata VALUES('session_duration_v1','1')");
+            }
+            for (StatsRepository.SessionEntry entry : identified)
+                sessionDuration(db, entry, observedAt, fallbackZone, true);
+            if (active != null) sessionDuration(db, active, observedAt, fallbackZone, false);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    private static void mergeDurations(Map<String, Long> target, Map<String, Long> values) {
+        for (Map.Entry<String, Long> part : values.entrySet())
+            target.merge(part.getKey(), part.getValue(), DomStatsSnapshot::add);
+    }
+
+    private void sessionDuration(SQLiteDatabase db, StatsRepository.SessionEntry entry, long observedAt,
+            String fallbackZone, boolean closed) {
+        String key = "session-duration:" + entry.identity();
+        if (metadata(db, key + ":closed") != null) return; // A delayed active snapshot cannot reopen a stopped session.
+        String zone = entry.zone().isEmpty() ? fallbackZone : entry.zone();
+        String origin = metadata(db, key);
+        if (origin != null) {
+            String prefix = entry.getStartMillis() + ";";
+            if (!origin.startsWith(prefix)) return;
+            zone = origin.substring(prefix.length()); // Keep the first observed zone across travel.
+        }
+        Map<String, Long> parts = SessionDurationProjection.slices(entry.getStartMillis(), entry.getDurationSeconds(), observedAt, zone);
+        if (parts.isEmpty() && entry.getDurationSeconds() != 0) return;
+        if (entry.getStartMillis() <= 0 || entry.getStartMillis() > observedAt) return;
+        if (origin == null) db.execSQL("INSERT INTO metadata VALUES(?,?)", new Object[]{key, entry.getStartMillis() + ";" + zone});
+        Map<String, Long> previous = new TreeMap<>();
+        try (Cursor c = db.rawQuery("SELECT name,value FROM checkpoint WHERE name LIKE ?", new String[]{key + ":%"})) {
+            while (c.moveToNext()) previous.put(c.getString(0).substring(key.length() + 1), c.getLong(1));
+        }
+        Set<String> days = new TreeSet<>(previous.keySet()); days.addAll(parts.keySet());
+        for (String day : days) {
+            long old = previous.getOrDefault(day, 0L), value = parts.getOrDefault(day, 0L);
+            if (!closed) value = Math.max(old, value); // Ignore queued older observations and backward wall changes.
+            if (value == old) continue;
+            if (value > old) add(db, day, "service_ms", value - old);
+            else db.execSQL("UPDATE daily SET value=MAX(0,value-?) WHERE day=? AND metric='service_ms'", new Object[]{old - value, day});
+            db.execSQL("INSERT OR REPLACE INTO checkpoint VALUES(?,?)", new Object[]{key + ":" + day, value});
+        }
+        if (closed) db.execSQL("INSERT INTO metadata VALUES(?,'1')", new Object[]{key + ":closed"});
+    }
+
     /** Import only the saved portion before daily collection, never replaying live aggregates. */
     synchronized void backfillSessions(String history, String zone) {
         if (history.equals(importedHistory)) return;
@@ -121,6 +213,8 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
             ZoneId localZone = ZoneId.of(importZone);
             for (StatsRepository.SessionEntry session :
                     StatsRepository.parseSessionHistory(history)) {
+                // Identified sessions use the replay-safe interval ledger, not legacy import.
+                if (!session.identity().isEmpty()) continue;
                 long start = session.getStartMillis(), seconds = session.getDurationSeconds();
                 if (start >= cutoff || seconds > (Long.MAX_VALUE - start) / 1000) continue;
                 long end = start + seconds * 1000;

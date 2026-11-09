@@ -27,10 +27,12 @@ final class LocalRetainedStatistics {
     final Map<String, Long> paid, assessed;
     final Set<String> activityCopies;
     final String collectionStarted, since;
+    final long observedAt;
 
     private LocalRetainedStatistics(StatsRepository repository, StatsSnapshot stats, RetainedStatistics history,
             Map<String, Long> paid, Map<String, Long> assessed, Set<String> ids,
-            String collectionStarted, String since) {
+            String collectionStarted, String since, long observedAt) {
+        this.observedAt = observedAt;
         this.repository = repository; this.stats = stats; this.history = history;
         this.paid = Collections.unmodifiableMap(paid); this.assessed = Collections.unmodifiableMap(assessed);
         activityCopies = Collections.unmodifiableSet(ids); this.collectionStarted = collectionStarted; this.since = since;
@@ -44,6 +46,7 @@ final class LocalRetainedStatistics {
         StatsSnapshot original = repository.retainedSnapshot();
         DailyStatsStore.awaitWrites();
         DailyStatsStore daily = DailyStatsStore.get(context);
+        daily.syncStats(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0));
         RetainedStatistics history = new RetainedStatistics(ZoneId.systemDefault(), now,
                 daily.days("0000-01-01", "9999-12-31"));
         history.activeDates(original.getActiveDates());
@@ -124,7 +127,7 @@ final class LocalRetainedStatistics {
         for (String day : history.days().keySet()) if (day.compareTo(since) < 0) since = day;
         if (!DeviceRolePreferences.supportsSub(context)) throw new SecurityException("Local Sub unavailable");
         return new LocalRetainedStatistics(repository, recovered, history, paid, assessed,
-                activityIds, daily.collectionStartedDay(), since);
+                activityIds, daily.collectionStartedDay(), since, now);
     }
 
     DomStatsSnapshot.Sub aggregate(Context context, long now) {

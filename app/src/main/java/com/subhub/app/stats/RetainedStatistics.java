@@ -51,7 +51,7 @@ final class RetainedStatistics {
         if (start <= 0 || start > now || seconds < 0 || seconds > (Long.MAX_VALUE - start) / 1000
                 || start + seconds * 1000 > now) return;
         // Legacy history has no UUID. Use the original immutable tuple, not its timestamp alone.
-        String key = start + ":" + seconds + ":" + entry.getBlocks();
+        String key = entry.identity().isEmpty() ? start + ":" + seconds + ":" + entry.getBlocks() : entry.identity();
         StatsRepository.SessionEntry previous = sessions.get(key);
         if (previous == null) sessions.put(key, entry);
         else sessions.put(key, new StatsRepository.SessionEntry(start, seconds, entry.getBlocks(),
@@ -61,7 +61,7 @@ final class RetainedStatistics {
                 Math.max(previous.getTributeCents(), entry.getTributeCents()),
                 Math.max(previous.getSubliminals(), entry.getSubliminals()),
                 Math.max(previous.getPopupImpressions(), entry.getPopupImpressions()),
-                Math.max(previous.getTamperEvents(), entry.getTamperEvents())));
+                Math.max(previous.getTamperEvents(), entry.getTamperEvents())).identified(entry.identity(), entry.zone()));
     }
 
     void event(String family, String id, String day, String metric, long amount) {
@@ -88,7 +88,7 @@ final class RetainedStatistics {
             String date = day(entry.getStartMillis());
             add(sessionDays, date, "sessions", 1);
             for (Map.Entry<String, Long> slice : DailyTimeSlices.split(entry.getStartMillis(),
-                    entry.getDurationSeconds() * 1000, zone).entrySet())
+                    entry.getDurationSeconds() * 1000, entry.zone().isEmpty() ? zone : ZoneId.of(entry.zone())).entrySet())
                 add(sessionDays, slice.getKey(), "service_ms", slice.getValue());
             // A session-wide count has no event clock within a session crossing midnight.
             long lastObserved = entry.getStartMillis() + entry.getDurationSeconds() * 1000;

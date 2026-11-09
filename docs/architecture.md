@@ -220,3 +220,23 @@ The maintained design therefore separates restartable intent from non-restartabl
 ## Recommended next phase
 
 Use the clean source tree for maintained changes. Complete broad emulator and physical Android 15/16 validation, including private visual corpora and long-running performance, before treating the reconstruction as release-ready.
+
+## Session duration statistics
+
+Session elapsed time follows the explicitly started session until its recorded stop, including
+screen-off time and periods when the process or peer synchronization is inactive. It is not proof
+of device uptime, screen use, capture activity or remote connectivity. Limits usage and all feature
+event counters retain their separate observation rules.
+
+`DailyDurationRecorder` has no periodic job. Session transitions queue a snapshot and statistics
+reads reconcile elapsed time from the saved start. Counter-only writes do not checkpoint duration.
+The daily store records per-session UUID/day amounts and closed receipts transactionally; replayed
+or older snapshots cannot add the same interval twice or reopen a stopped session. A recorded stop
+can shorten a previously projected interval. New history entries retain the UUID and original zone
+(version 3), while version 1 and 2 histories remain readable.
+
+Migration preserves old screen-duration aggregates and retained legacy history as a lower bound,
+subtracting overlap with identified session intervals before adding those intervals. It does not
+guess missing screen/app activity. Invalid clocks and unsupported intervals remain uncounted.
+Local statistics show their observation time, and remote statistics remain last-received facts;
+no peer duration or runtime status is extrapolated into a live observation.

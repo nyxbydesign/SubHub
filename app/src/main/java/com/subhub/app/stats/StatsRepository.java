@@ -43,6 +43,7 @@ public final class StatsRepository {
     private static final String KEY_SESSIONS_COUNT = "sessions_count";
     private static final String KEY_SESSION_HISTORY = "session_history";
     private static final String KEY_ACTIVE_SESSION_START = "active_session_start_ms";
+    static final String ACTIVE_SESSION_ZONE = "active_session_zone_v1";
     private static final String KEY_ACTIVE_SESSION_BLOCKS = "active_session_blocks";
     private static final String KEY_TOTAL_BLOCKS = "total_blocks_all_time";
     private static final String KEY_TOTAL_PROTECTED_TIME = "total_protected_time";
@@ -128,6 +129,7 @@ public final class StatsRepository {
             SEEN_TRACK_IDS.clear();
             writeDaily(preferences.edit()
                     .putLong(KEY_ACTIVE_SESSION_START, sessionStartMs)
+                    .putString(ACTIVE_SESSION_ZONE, java.time.ZoneId.systemDefault().getId())
                     .putString("active_session_identity",java.util.UUID.randomUUID().toString())
                     .putInt(KEY_ACTIVE_SESSION_BLOCKS, 0)
                     .putLong(KEY_ACTIVE_SESSION_SUBLIMINALS, 0L)
@@ -178,6 +180,7 @@ public final class StatsRepository {
                 SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
                         .putString("active_session_identity", session.identity)
                         .putLong(KEY_ACTIVE_SESSION_START, session.startedAt)
+                        .putString(ACTIVE_SESSION_ZONE, session.zone)
                         .putInt(KEY_ACTIVE_SESSION_BLOCKS, 0)
                         .putInt(KEY_SESSIONS_COUNT, (int) Math.min(Integer.MAX_VALUE,
                                 Math.max(0L, preferences.getInt(KEY_SESSIONS_COUNT, 0)) + 1))
@@ -210,7 +213,8 @@ public final class StatsRepository {
                 if (!preferences.getString("active_session_identity", "").isEmpty()
                         || preferences.getLong(KEY_ACTIVE_SESSION_START, 0) != 0
                         || session.identity.equals(preferences.getString(NATIVE_ENDED, ""))) return false;
-                SessionEntry entry = new SessionEntry(session.startedAt, durationSeconds, 0);
+                SessionEntry entry = new SessionEntry(session.startedAt, durationSeconds, 0)
+                        .identified(session.identity, session.zone);
                 SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
                         .putInt(KEY_SESSIONS_COUNT, (int) Math.min(Integer.MAX_VALUE,
                                 Math.max(0L, preferences.getInt(KEY_SESSIONS_COUNT, 0)) + 1))
@@ -280,7 +284,7 @@ public final class StatsRepository {
                         activeLong(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS), activeLong(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS),
                         activeLong(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS), activeLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS),
                         activeLong(KEY_ACTIVE_SESSION_SUBLIMINALS), activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS),
-                        activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS));
+                        activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS)).identified(expected, activeSessionZone());
                 SharedPreferences.Editor edit = clearActiveSession(preferences.edit())
                         .putLong(KEY_TOTAL_SESSION_TIME, safeAdd(preferences.getLong(KEY_TOTAL_SESSION_TIME, 0), durationSeconds))
                         .putLong(KEY_TOTAL_PROTECTED_TIME, safeAdd(preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0), durationSeconds))
@@ -324,7 +328,7 @@ public final class StatsRepository {
     }
 
     private SharedPreferences.Editor clearActiveSession(SharedPreferences.Editor edit) {
-        return edit.remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START).remove(KEY_ACTIVE_SESSION_BLOCKS)
+        return edit.remove("active_session_identity").remove(ACTIVE_SESSION_ZONE).remove(KEY_ACTIVE_SESSION_START).remove(KEY_ACTIVE_SESSION_BLOCKS)
                 .remove(KEY_ACTIVE_SESSION_SUBLIMINALS).remove(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS)
                 .remove(KEY_ACTIVE_SESSION_LIMIT_INTERVENTIONS).remove(KEY_ACTIVE_SESSION_TRIBUTE_EVENTS)
                 .remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS).remove(KEY_ACTIVE_SESSION_TRIBUTE_CENTS + "_USD")
@@ -463,8 +467,9 @@ public final class StatsRepository {
                     activeLong(KEY_ACTIVE_SESSION_TRIBUTE_CENTS),
                     activeLong(KEY_ACTIVE_SESSION_SUBLIMINALS),
                     activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS),
-                    activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS)));
-            preferences.edit().remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START)
+                    activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS)).identified(
+                            preferences.getString("active_session_identity", ""), activeSessionZone()));
+            preferences.edit().remove("active_session_identity").remove(ACTIVE_SESSION_ZONE).remove(KEY_ACTIVE_SESSION_START)
                     .remove(KEY_ACTIVE_SESSION_BLOCKS)
                     .remove(KEY_ACTIVE_SESSION_SUBLIMINALS)
                     .remove(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS)
@@ -554,7 +559,7 @@ public final class StatsRepository {
         boolean nativeKnown = !identity.isEmpty() && identity.equals(preferences.getString(NATIVE_STARTED, ""));
         if (stored <= 0 || !nativeKnown && (stored > now
                 || now - stored > 366L * 24L * 60L * 60L * 1000L)) {
-            if (stored != 0) preferences.edit().remove("active_session_identity").remove(KEY_ACTIVE_SESSION_START)
+            if (stored != 0) preferences.edit().remove("active_session_identity").remove(ACTIVE_SESSION_ZONE).remove(KEY_ACTIVE_SESSION_START)
                     .remove(KEY_ACTIVE_SESSION_BLOCKS).apply();
             sessionStartMs = 0; sessionBlocks = 0; activeStamp = null; memoryIdentity = ""; SEEN_TRACK_IDS.clear();
             return;
@@ -575,22 +580,25 @@ public final class StatsRepository {
         for (String encoded : raw.split(";")) {
             String[] parts = encoded.split(",", -1);
             try {
+                boolean versionThree = parts.length == 13 && "3".equals(parts[0]);
                 boolean versionTwo = parts.length == 11 && "2".equals(parts[0]);
-                if (!versionTwo && parts.length != 3) continue;
-                int offset = versionTwo ? 1 : 0;
+                boolean detailed = versionTwo || versionThree;
+                if (!detailed && parts.length != 3) continue;
+                int offset = detailed ? 1 : 0;
                 long start = Long.parseLong(parts[offset]);
                 long duration = Long.parseLong(parts[offset + 1]);
                 int blocks = Integer.parseInt(parts[offset + 2]);
                 if (start > 0 && duration >= 0 && blocks >= 0) {
-                    result.add(versionTwo
+                    SessionEntry entry = detailed
                             ? new SessionEntry(start, duration, blocks,
                             Long.parseLong(parts[4]), Long.parseLong(parts[5]),
                             Long.parseLong(parts[6]), Long.parseLong(parts[7]),
                             Long.parseLong(parts[8]), Long.parseLong(parts[9]),
                             Long.parseLong(parts[10]))
-                            : new SessionEntry(start, duration, blocks));
+                            : new SessionEntry(start, duration, blocks);
+                    result.add(versionThree ? entry.identified(parts[11], parts[12]) : entry);
                 }
-            } catch (NumberFormatException ignored) {
+            } catch (IllegalArgumentException | java.time.DateTimeException ignored) {
                 // Ignore malformed legacy entries without discarding the remaining history.
             }
         }
@@ -693,6 +701,10 @@ public final class StatsRepository {
                 .putString(KEY_LAST_SESSION_DATE, today).apply();
     }
 
+    private String activeSessionZone() {
+        return preferences.getString(ACTIVE_SESSION_ZONE, java.time.ZoneId.systemDefault().getId());
+    }
+
     private void appendSessionHistory(SessionEntry entry) {
         preferences.edit().putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry)).apply();
     }
@@ -703,13 +715,13 @@ public final class StatsRepository {
         if (raw != null) for (String item : raw.split(";")) {
             if (!item.trim().isEmpty()) entries.add(item);
         }
-        entries.add(String.join(",", "2", Long.toString(entry.startMillis),
+        entries.add(String.join(",", "3", Long.toString(entry.startMillis),
                 Long.toString(entry.durationSeconds), Integer.toString(entry.blocks),
                 Long.toString(entry.limitedAppMillis),
                 Long.toString(entry.limitInterventions),
                 Long.toString(entry.tributeEvents), Long.toString(entry.tributeCents),
                 Long.toString(entry.subliminals), Long.toString(entry.popupImpressions),
-                Long.toString(entry.tamperEvents)));
+                Long.toString(entry.tamperEvents), entry.identity, entry.zone));
         while (entries.size() > SESSION_HISTORY_MAX) entries.remove(0);
         return String.join(";", entries);
     }
@@ -847,6 +859,14 @@ public final class StatsRepository {
         private final long subliminals;
         private final long popupImpressions;
         private final long tamperEvents;
+        private String identity = "", zone = "";
+        SessionEntry identified(String identity, String zone) {
+            if (!identity.isEmpty()) requireSessionIdentity(identity);
+            if (!zone.isEmpty()) java.time.ZoneId.of(zone);
+            this.identity = identity; this.zone = zone; return this;
+        }
+        String identity() { return identity; }
+        String zone() { return zone; }
         public SessionEntry(long startMillis, long durationSeconds, int blocks) {
             this(startMillis, durationSeconds, blocks, 0L, 0L, 0L, 0L, 0L, 0L, 0L);
         }

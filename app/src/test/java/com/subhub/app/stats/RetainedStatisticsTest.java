@@ -42,6 +42,15 @@ public final class RetainedStatisticsTest {
         assertEquals(2, history.sessions().size()); assertEquals(5400, history.sessionSeconds());
     }
 
+    @Test public void identifiedSessionsWithTheSameLegacyTupleRemainDistinct() {
+        RetainedStatistics history = empty(); long start = time("2026-08-01T10:00:00Z");
+        history.session(new StatsRepository.SessionEntry(start, 60, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "UTC"));
+        history.session(new StatsRepository.SessionEntry(start, 60, 0)
+                .identified("22345678-1234-1234-1234-123456789abc", "UTC"));
+        assertEquals(2, history.sessions().size()); assertEquals(120, history.sessionSeconds());
+    }
+
     @Test public void realIntervalsSplitAtMidnightWithoutInventingCrossDayEventClocks() {
         RetainedStatistics history = empty();
         history.session(new StatsRepository.SessionEntry(time("2026-08-01T23:30:00Z"), 3600, 5));

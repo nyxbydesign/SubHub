@@ -2,7 +2,8 @@ package com.subhub.app.stats;
 
 import java.util.concurrent.Executor;
 
-/** Captures state before queueing so a delayed writer cannot move a screen boundary. */
+/** Legacy screen-checkpoint representation retained for migration compatibility tests.
+ * Production duration accounting uses persisted session facts, not this dispatcher. */
 final class DurationCheckpointDispatcher {
     interface Clock { long wall(); long elapsed(); }
     interface Source { Snapshot capture(long wall, long elapsed); }
