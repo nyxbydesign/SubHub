@@ -151,8 +151,8 @@ public final class ExtraTimeActivity extends PreferencePage {
         String focusTag = previousFocus instanceof EditText && previousFocus.getTag() instanceof String
                 ? (String) previousFocus.getTag() : null;
         int selection = previousFocus instanceof EditText ? ((EditText) previousFocus).getSelectionStart() : 0;
-        android.widget.ScrollView scroll = (android.widget.ScrollView) page.getParent();
-        int scrollY = scroll.getScrollY();
+        com.subhub.app.util.PageScrollView scroll = (com.subhub.app.util.PageScrollView) page.getParent();
+        int scrollY = scroll.position();
         content.removeAllViews();
         LinearLayout intro = ExtraTimeViews.card(content, "extra_time_intro");
         PersonUi.text(intro, getString(value.dom ? R.string.extra_time_dom_intro : R.string.extra_time_sub_intro), false);
@@ -172,11 +172,11 @@ public final class ExtraTimeActivity extends PreferencePage {
                 field.setSelection(Math.min(Math.max(0, selection), field.length()));
             }
         }
-        scroll.post(() -> { if (!isFinishing() && content.isAttachedToWindow()) scroll.scrollTo(0, scrollY); });
         if (!focused) {
             focused = true;
             content.requestFocus();
         }
+        scroll.restorePosition(scrollY);
     }
 
     private void renderSub(ExtraTimeRequests.Snapshot value) {
