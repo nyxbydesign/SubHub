@@ -385,22 +385,23 @@ public final class ExtraTimeUiAndroidTest {
             // Key injection plus recreation can leave the focusable content's framework highlight
             // above its children. Capture ordinary touch presentation without weakening pixel proof.
             instrumentation.setInTouchMode(true);
-            instrumentation.waitForIdleSync();
-            AtomicReference<org.json.JSONObject> after = new AtomicReference<>();
-            instrumentation.runOnMainSync(() -> after.set(focusState(target.get())));
-            evidence.put("after", after.get());
-            assertTrue("Capture uses the actual target's touch mode", after.get().getBoolean("targetInTouchMode"));
+            org.json.JSONObject after = awaitTouchMode(target.get(), true, evidence, "captureModeObservations");
+            evidence.put("after", after);
+            assertTrue("Capture uses the actual target's touch mode", after.getBoolean("targetInTouchMode"));
+            assertTrue("Capture target remains attached and focused",
+                    after.getBoolean("targetAttached") && after.getBoolean("windowFocused"));
             TextFrameWitness.capture(target.get(), UiRefreshWitness.scroll(target.get()), run, name);
             scenario.onActivity(a -> readable(a.findViewById(android.R.id.content)));
         } finally {
             try {
                 instrumentation.setInTouchMode(initialTouchMode);
-                instrumentation.waitForIdleSync();
-                AtomicReference<org.json.JSONObject> restored = new AtomicReference<>();
-                instrumentation.runOnMainSync(() -> restored.set(focusState(target.get())));
-                evidence.put("restored", restored.get());
+                org.json.JSONObject restored = awaitTouchMode(target.get(), initialTouchMode,
+                        evidence, "restoreModeObservations");
+                evidence.put("restored", restored);
                 assertEquals("Restore the fixture's previous input modality", initialTouchMode,
-                        restored.get().getBoolean("targetInTouchMode"));
+                        restored.getBoolean("targetInTouchMode"));
+                assertTrue("Restored target remains attached and focused",
+                        restored.getBoolean("targetAttached") && restored.getBoolean("windowFocused"));
             } finally {
                 java.nio.file.Files.write(diagnostic.toPath(), evidence.toString(2).getBytes(
                         java.nio.charset.StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE_NEW);
@@ -408,10 +409,33 @@ public final class ExtraTimeUiAndroidTest {
         }
     }
 
+    private static org.json.JSONObject awaitTouchMode(View target, boolean expected,
+            org.json.JSONObject evidence, String observationsKey) throws Exception {
+        // setInTouchMode crosses into WindowManager. An idle application queue does not
+        // establish that the resulting input-mode notification has reached this ViewRoot.
+        // Observe the actual target without reinjecting input or changing its focus.
+        org.json.JSONArray observations = new org.json.JSONArray();
+        evidence.put(observationsKey, observations);
+        long started = SystemClock.uptimeMillis();
+        org.json.JSONObject observed;
+        do {
+            AtomicReference<org.json.JSONObject> sample = new AtomicReference<>();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> sample.set(focusState(target)));
+            observed = sample.get();
+            observed.put("elapsedMillis", SystemClock.uptimeMillis() - started);
+            observations.put(observed);
+            if (observed.getBoolean("targetAttached") && observed.getBoolean("windowFocused")
+                    && observed.getBoolean("targetInTouchMode") == expected) return observed;
+            if (SystemClock.uptimeMillis() - started >= 8_000L) return observed;
+            SystemClock.sleep(40);
+        } while (true);
+    }
+
     private static org.json.JSONObject focusState(View target) {
         try {
             View focus = target.getRootView().findFocus();
             org.json.JSONObject value = new org.json.JSONObject().put("targetInTouchMode", target.isInTouchMode())
+                    .put("targetAttached", target.isAttachedToWindow())
                     .put("windowFocused", target.getRootView().hasWindowFocus())
                     .put("targetTag", String.valueOf(target.getTag()));
             if (focus == null) return value.put("focusedClass", org.json.JSONObject.NULL);
