@@ -1,0 +1,307 @@
+"""Offline native suite admission/selection fixtures; no SDK, guest, or network."""
+import contextlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+from scripts import run_extra_time_native as native
+
+
+class NativeSuiteInventoryTest(unittest.TestCase):
+    def test_default_inventory_stays_at_the_original_21(self):
+        self.assertEqual(native.selectors(""), native.ALL_SELECTORS)
+        self.assertEqual(21, len(native.selectors("")))
+        self.assertEqual({
+            "ExtraTimeRequestAndroidTest": 4, "ExtraTimeTributeAndroidTest": 2,
+            "ExtraTimeWireAndroidTest": 7, "ExtraTimeUiAndroidTest": 5,
+            "TributeSettingsRestoreAndroidTest": 3,
+        }, {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.NATIVE.items()})
+        self.assertEqual(native.LARGE_FONT, native.selectors("")[-1])
+
+    def test_pass_adds_31_exact_methods_without_repeating_the_new_extra_time_case(self):
+        selected = native.selectors("", "subhub-pass")
+        self.assertEqual(52, len(selected))
+        self.assertEqual(52, len(set(selected)))
+        self.assertTrue(set(native.ALL_SELECTORS) < set(selected))
+        self.assertEqual({
+            "DurationChoicesAndroidTest": 2, "ServiceDurationRetentionAndroidTest": 3,
+            "PersonRefreshAndroidTest": 3, "RemoteAppIconPresentationAndroidTest": 1,
+            "RemoteConfigurationAndroidTest": 5, "RemoteDurationAndroidTest": 1,
+            "RemoteEditorAndroidTest": 5, "RemoteSessionControlsAndroidTest": 3,
+            "LazySessionDurationAndroidTest": 5, "PageScrollViewAndroidTest": 3,
+        }, {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.SUBHUB_PASS_NATIVE.items()})
+        already_selected = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt"
+        self.assertEqual(1, selected.count(already_selected))
+        self.assertEqual(native.ALL_SELECTORS[:-1], selected[:20])
+        self.assertEqual(native.LARGE_FONT, selected[-1])
+
+    def test_subsets_follow_suite_order_not_user_order(self):
+        selected = native.suite_selectors("subhub-pass")
+        raw = f" {selected[-1]} ,\n{selected[20]}\n{selected[0]}, "
+        self.assertEqual([selected[0], selected[20], selected[-1]], native.selectors(raw, "subhub-pass"))
+
+    def test_default_rejects_an_integration_method(self):
+        with self.assertRaisesRegex(ValueError, "unique subset"):
+            native.selectors(native.SUBHUB_PASS_SELECTORS[20])
+
+    def test_manual_subsets_cannot_admit_classes_wildcards_or_unknown_methods(self):
+        for suite in native.SUITES:
+            for value in ("*", "com.subhub.app.remote.RemoteEditorAndroidTest", "class#*",
+                          "class#method", "com.subhub.app.remote.RemoteFlowAndroidTest#domPairsEditsAppliesEndsAndQueuesWhileSubIsOffline"):
+                with self.subTest(suite=suite, selector=value), self.assertRaisesRegex(ValueError, "unique subset"):
+                    native.selectors(value, suite)
+
+    def test_source_only_methods_are_not_supported_manual_selectors(self):
+        for cls, methods in native.SUBHUB_PASS_SOURCE_ONLY.items():
+            for method in methods:
+                with self.subTest(selector=f"{cls}#{method}"), self.assertRaisesRegex(ValueError, "unique subset"):
+                    native.selectors(f"{cls}#{method}", "subhub-pass")
+
+    def test_duplicate_manual_selectors_fail_closed(self):
+        value = native.SUBHUB_PASS_SELECTORS[20]
+        with self.assertRaisesRegex(ValueError, "unique subset"):
+            native.selectors(f"{value}, {value}", "subhub-pass")
+
+    def test_unknown_suite_fails_closed(self):
+        for suite in ("", "all", "SubHub-pass"):
+            with self.subTest(suite=suite), self.assertRaisesRegex(ValueError, "Unknown native suite"):
+                native.selectors("", suite)
+
+    def test_missing_or_duplicate_suite_members_fail_admission(self):
+        values = native.SUITES["subhub-pass"]
+        for changed in (values[:-1], values[:-2] + [values[0], values[-1]]):
+            with mock.patch.dict(native.SUITES, {"subhub-pass": changed}), self.assertRaisesRegex(ValueError, "52 unique"):
+                native.suite_selectors("subhub-pass")
+
+    def test_global_font_case_cannot_precede_other_cases(self):
+        values = native.SUITES["subhub-pass"]
+        with mock.patch.dict(native.SUITES, {"subhub-pass": values[-1:] + values[:-1]}):
+            with self.assertRaisesRegex(ValueError, "large-font contract must run last"):
+                native.suite_selectors("subhub-pass")
+
+    def test_current_sources_reconcile_exactly_with_both_suites(self):
+        for suite, count in native.SUITE_COUNTS.items():
+            with self.subTest(suite=suite):
+                inventory = native.source_inventory(suite)
+                selected = set()
+                for cls, item in inventory.items():
+                    self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
+                    self.assertEqual(set(item["methods"]), set(item["selectedMethods"] + item["sourceOnlyMethods"]))
+                    selected.update(f"{cls}#{name}" for name in item["selectedMethods"])
+                    for details in item["methods"].values():
+                        self.assertGreater(details["line"], 0)
+                self.assertEqual(count, len(selected))
+                self.assertEqual(set(native.suite_selectors(suite)), selected)
+
+    @contextlib.contextmanager
+    def source_copy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for cls in (*native.NATIVE, *native.SUBHUB_PASS_NATIVE):
+                relative = Path("app/src/androidTest/java") / (cls.replace(".", "/") + ".java")
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(native.ROOT / relative, path)
+            with mock.patch.object(native, "ROOT", root):
+                yield root
+
+    def edit_source(self, root, cls, before, after):
+        path = root / "app/src/androidTest/java" / (cls.replace(".", "/") + ".java")
+        source = path.read_text()
+        self.assertIn(before, source)
+        path.write_text(source.replace(before, after, 1))
+
+    def test_missing_selected_method_fails_source_admission(self):
+        cls = "com.subhub.app.commitment.DurationChoicesAndroidTest"
+        method = native.SUBHUB_PASS_NATIVE[cls][0]
+        with self.source_copy() as root:
+            self.edit_source(root, cls, method, "renamedSelectedMethod")
+            with self.assertRaisesRegex(ValueError, "Native inventory changed"):
+                native.source_inventory("subhub-pass")
+
+    def test_unreviewed_older_method_change_still_fails_source_admission(self):
+        cls = "com.subhub.app.remote.RemoteDurationAndroidTest"
+        method = native.SUBHUB_PASS_SOURCE_ONLY[cls][0]
+        with self.source_copy() as root:
+            self.edit_source(root, cls, method, "renamedSourceOnlyMethod")
+            with self.assertRaisesRegex(ValueError, "Native inventory changed"):
+                native.source_inventory("subhub-pass")
+
+    def test_default_class_drift_guard_remains_strict(self):
+        cls = next(iter(native.NATIVE))
+        with self.source_copy() as root:
+            self.edit_source(root, cls, native.NATIVE[cls][0], "renamedDefaultMethod")
+            with self.assertRaisesRegex(ValueError, "Native inventory changed"):
+                native.source_inventory()
+
+    def test_duplicate_source_method_fails_admission(self):
+        cls = "com.subhub.app.commitment.DurationChoicesAndroidTest"
+        first, second = native.SUBHUB_PASS_NATIVE[cls]
+        with self.source_copy() as root:
+            self.edit_source(root, cls, second, first)
+            with self.assertRaisesRegex(ValueError, "Duplicate native method"):
+                native.source_inventory("subhub-pass")
+
+    def test_wrong_source_package_fails_admission(self):
+        cls = "com.subhub.app.commitment.DurationChoicesAndroidTest"
+        with self.source_copy() as root:
+            self.edit_source(root, cls, "package com.subhub.app.commitment;", "package wrong.package;")
+            with self.assertRaisesRegex(ValueError, "Wrong selected native class"):
+                native.source_inventory("subhub-pass")
+
+    def test_selected_eligibility_and_fully_qualified_sdk_annotations(self):
+        cls = "com.subhub.app.commitment.DurationChoicesAndroidTest"
+        for annotation, accepted in (
+            ("@androidx.test.filters.SdkSuppress(minSdkVersion = 29)", True),
+            ("@SdkSuppress(minSdkVersion = 36)", False),
+            ("@androidx.test.filters.SdkSuppress(maxSdkVersion = 34)", False),
+            ("@RequiresApi(29)", False), ("@org.junit.Ignore", False),
+        ):
+            with self.subTest(annotation=annotation), self.source_copy() as root:
+                self.edit_source(root, cls, "@Test public void", f"@Test {annotation} public void")
+                if accepted:
+                    self.assertIn(cls, native.source_inventory("subhub-pass"))
+                else:
+                    with self.assertRaisesRegex(ValueError, "not eligible at API 35"):
+                        native.source_inventory("subhub-pass")
+
+    def test_receipt_retains_suite_complete_selection_and_remaining_subset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            selected = [native.SUBHUB_PASS_SELECTORS[20], native.LARGE_FONT]
+            env = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "RUNNER_TEMP": folder, "ANDROID_HOME": str(root / "sdk"),
+                   "EXTRA_TIME_SELECTORS": ",".join(reversed(selected))}
+            with mock.patch.dict(os.environ, env), mock.patch.object(native, "ROOT", root), mock.patch.object(sys, "platform", "linux"):
+                producer = native.Producer("subhub-pass")
+            receipt = json.loads((producer.out / "receipt.json").read_text())
+            self.assertEqual("subhub-pass", receipt["suite"])
+            self.assertEqual(native.SUBHUB_PASS_SELECTORS, receipt["suiteSelectors"])
+            self.assertEqual(selected, receipt["selected"])
+            self.assertEqual(selected, receipt["remaining"])
+            self.assertEqual(50, len(receipt["notSelected"]))
+            self.assertEqual(35 * 60, receipt["producerSoftTimeoutSeconds"])
+            self.assertTrue(receipt["hostedFreshGuest"])
+
+    def test_one_pass_invokes_each_selected_method_once_with_large_font_last(self):
+        producer = native.Producer.__new__(native.Producer)
+        producer.selected = native.suite_selectors("subhub-pass")
+        producer.record = {}
+        events = []
+        producer.save = mock.Mock()
+        producer.settings = lambda *args: events.append(("settings", *args))
+        producer.method = lambda selector, index: events.append(("method", selector, index))
+        producer.run_tests()
+        methods = [value[1] for value in events if value[0] == "method"]
+        self.assertEqual(producer.selected, methods)
+        self.assertEqual(("settings", "system", "font_scale", "1.0"), events[0])
+        self.assertEqual(("settings", "system", "font_scale", "1.5"), events[-2])
+        self.assertEqual(("method", native.LARGE_FONT, 52), events[-1])
+        self.assertEqual("selected_native_passed", producer.record["state"])
+
+    def test_failed_method_is_not_retried_and_remaining_work_does_not_run(self):
+        producer = native.Producer.__new__(native.Producer)
+        producer.selected = native.suite_selectors("subhub-pass")
+        producer.record = {}
+        producer.save = mock.Mock()
+        producer.settings = mock.Mock()
+        producer.method = mock.Mock(side_effect=[None, RuntimeError("preserved failure")])
+        with self.assertRaisesRegex(RuntimeError, "preserved failure"):
+            producer.run_tests()
+        self.assertEqual(2, producer.method.call_count)
+        self.assertEqual("selected_native_running", producer.record["state"])
+
+    def test_cli_check_uses_dispatch_environment_and_honors_exact_subset(self):
+        selected = native.SUBHUB_PASS_SELECTORS[20]
+        with mock.patch.dict(os.environ, {"EXTRA_TIME_SUITE": "subhub-pass", "EXTRA_TIME_SELECTORS": selected}), \
+                mock.patch.object(sys, "argv", ["run_extra_time_native.py", "--check-inventory"]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            native.main()
+        value = json.loads(output.getvalue())
+        self.assertEqual("subhub-pass", value["suite"])
+        self.assertEqual([selected], value["selectors"])
+        self.assertEqual(52, len(value["suiteSelectors"]))
+
+    def test_cli_suite_argument_overrides_environment(self):
+        with mock.patch.dict(os.environ, {"EXTRA_TIME_SUITE": "subhub-pass", "EXTRA_TIME_SELECTORS": ""}), \
+                mock.patch.object(sys, "argv", ["run_extra_time_native.py", "--check-inventory", "--suite", "extra-time"]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            native.main()
+        self.assertEqual(21, len(json.loads(output.getvalue())["selectors"]))
+
+
+class NativeWorkflowSelectionTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (native.ROOT / ".github/workflows/extra-time-native.yml").read_text()
+
+    def expression(self, name):
+        match = re.search(r"^      " + name + r": \$\{\{ (.+) \}\}$", self.workflow, re.MULTILINE)
+        self.assertIsNotNone(match)
+        return match[1]
+
+    def evaluate(self, expression, event="pull_request", labels=(), suite="", selectors=""):
+        # The workflow's small supported expression vocabulary, exercised directly
+        # from YAML so label precedence cannot silently diverge from these fixtures.
+        replacements = {
+            "github.event.pull_request.labels.*.name": "labels",
+            "github.event_name": "event", "inputs.suite": "suite", "inputs.selectors": "selectors",
+            "&&": " and ", "||": " or ", "!": " not ",
+        }
+        for before, after in replacements.items():
+            expression = expression.replace(before, after)
+        return eval(expression, {"__builtins__": {}}, {
+            "contains": lambda values, item: item in values,
+            "event": event, "labels": labels, "suite": suite, "selectors": selectors,
+        })
+
+    def test_plain_pr_preserves_default_full_21(self):
+        suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"))
+        raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"))
+        self.assertEqual("extra-time", suite)
+        self.assertEqual(21, len(native.selectors(raw, suite)))
+
+    def test_integration_label_runs_52_even_with_both_legacy_labels(self):
+        for labels in (("native-subhub-pass",), ("native-subhub-pass", "native-extra-time-ui", "native-extra-time-tribute-large")):
+            with self.subTest(labels=labels):
+                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
+                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
+                self.assertEqual("subhub-pass", suite)
+                self.assertEqual("", raw)
+                self.assertEqual(52, len(native.selectors(raw, suite)))
+
+    def test_legacy_subset_labels_keep_original_counts(self):
+        for label, count in (("native-extra-time-ui", 10), ("native-extra-time-tribute-large", 2)):
+            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=(label,))
+            raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=(label,))
+            self.assertEqual("extra-time", suite)
+            self.assertEqual(count, len(native.selectors(raw, suite)))
+
+    def test_dispatch_pass_supports_full_suite_and_exact_subset(self):
+        for raw, count in (("", 52), (native.SUBHUB_PASS_SELECTORS[20], 1)):
+            args = dict(event="workflow_dispatch", suite="subhub-pass", selectors=raw)
+            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
+            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
+            self.assertEqual(count, len(native.selectors(selected, suite)))
+
+    def test_only_one_job_and_no_label_push_schedule_or_dispatch_side_effect(self):
+        self.assertEqual(["native"], re.findall(r"^  ([a-zA-Z_-]+):$", self.workflow.split("jobs:\n", 1)[1], re.MULTILINE))
+        self.assertNotIn("matrix:", self.workflow)
+        trigger = self.workflow.split("on:\n", 1)[1].split("permissions:\n", 1)[0]
+        self.assertNotIn("labeled", trigger)
+        self.assertNotIn("types:", trigger)  # Retain the original PR default event set.
+        self.assertNotRegex(trigger, r"(?m)^  (push|schedule|workflow_run|pull_request_target):")
+        self.assertIn("options: [extra-time, subhub-pass]", trigger)
+        self.assertIn("timeout-minutes: 45", self.workflow)
+        self.assertEqual(1, self.workflow.count("run: python3 scripts/run_extra_time_native.py"))
+        self.assertRegex(self.workflow, r"run: python3 -m unittest [^\n]*\bscripts\.test_extra_time_native_inventory\b")
+
+
+if __name__ == "__main__":
+    unittest.main()

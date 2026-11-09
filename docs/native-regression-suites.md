@@ -1,0 +1,64 @@
+# Fixed native regression suites
+
+The `Extra-time native regression` workflow has **one** job, one paired APK build,
+and one fresh, owned API 35 x86_64 emulator. Its default `extra-time` suite remains
+21 exact ExtraTime/Tribute methods. Opting into `subhub-pass` runs those same 21
+methods plus 31 reviewed integration methods, **52 unique methods total**. The
+`remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt` method is already one
+of the default 21 and is not duplicated in the integration suite.
+
+## Select the suite without duplicate jobs
+
+- For a PR, add `native-subhub-pass` **before** pushing its combined candidate head.
+  The existing PR opened/synchronize/reopened events use that label. Adding a label
+  alone does not trigger a run. It takes precedence over the older
+  `native-extra-time-ui` and `native-extra-time-tribute-large` subset labels.
+- For an explicit later rerun, choose `subhub-pass` in `workflow_dispatch`'s `suite`
+  input. An empty `selectors` input selects all 52. Otherwise supply only the exact
+  `Class#method` selectors from that suite, separated by commas or newlines.
+  Duplicates, class-wide selectors, wildcards, unknown methods, and the older
+  source-only methods are rejected. Do not dispatch while the same candidate's
+  automatic native job is already in flight.
+- A manual dispatch does not depend on PR labels. The default remains `extra-time`.
+  Neither suite qualifies a release in place of canonical exact-source Android CI.
+
+Inspect the exact inventory locally without a build or emulator:
+
+```sh
+python3 scripts/run_extra_time_native.py --check-inventory
+python3 scripts/run_extra_time_native.py --suite subhub-pass --check-inventory
+python3 -m unittest scripts.test_extra_time_native_inventory
+```
+
+The receipt records the suite, its complete selector set, the actual requested
+subset, remaining/not-passed methods, and the class source hashes and annotations.
+Every class retains an exact source method inventory, including explicitly listed
+older methods that are **not** admitted as selectors. An unreviewed source change
+fails before building/launching the guest. Each method still needs one exact
+instrumentation start and pass; ignored tests and assumptions are not passes.
+
+## Integration suite coverage and fixture requirements
+
+| Class | Additional methods selected | Requirements and isolation |
+| --- | ---: | --- |
+| `DurationChoicesAndroidTest` | 2 | Main-thread native Views only. The label-layout test creates scoped 1.0/1.5/2.0 font contexts; it does not mutate global font settings. |
+| `ServiceDurationRetentionAndroidTest` | 3 | Owned UUID SharedPreferences, deleted in `finally`; covers refresh and stale visibility/duration/bounds writes. |
+| `PersonRefreshAndroidTest` | 3 | Owned UI integration, unpaired endpoint, drained Activity readers, restored presentation hooks/preferences, UiAutomation restoration. Tests deferred refresh/swipe, recreation/back/role loss, and retained local duration. |
+| `RemoteAppIconPresentationAndroidTest` | 1 | `sharedNativeLimitsAndAppSelectorKeepRemoteIconScope` uses owned recorded pairing/cache data and bounded synthetic PNG delivery. API 29+ frame/pixel assertions are eligible on API 35. Both native pages are exercised; screenshots are retained on failure, not manufactured as success witnesses. |
+| `RemoteConfigurationAndroidTest` | 5 | Two local stores in an isolated Context with migrated, prefixed preferences and private files. No remote device: coalescing/restart/receipt, rejection/discard, identical snapshot, conflict revision, stale workspace. |
+| `RemoteDurationAndroidTest` | 1 | `staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation` uses synthetic local pairing, role/preferences restoration and owned endpoint/store cleanup. |
+| `RemoteEditorAndroidTest` | 5 | Synthetic local pairing and catalog, actual editor Activity/UiAutomator, integration and UiAutomation restoration, owned databases/assets cleanup. Covers native choice autosave, recreation without writes, coalescing/close, pending edits, focus/cursor. |
+| `RemoteSessionControlsAndroidTest` | 3 | Synthetic endpoint plus controlled review gateway. Drains owned readers and endpoint workers before restoring the application endpoint and role/preferences. Covers single-action state, repeated pending review, actual duration autosave/pending receipt fence. |
+| `LazySessionDurationAndroidTest` | 5 | UUID SQLite stores closed/deleted in `finally`; explicit timestamps/time zones. No clock changes, background service, real transport, or global background-sync preference changes. |
+| `PageScrollViewAndroidTest` | 3 | Main-thread native View measurement/layout and synthetic MotionEvent, without Activity or global state changes. |
+
+All 31 additional selectors fit this single-guest producer. The two-device `RemoteFlowAndroidTest` and
+`RemoteActivityFlowAndroidTest`, all other source-only methods, and unbounded
+whole-app suites remain out of scope. This inventory review establishes eligibility,
+not runtime success: CI must execute each selected method and its teardown.
+
+The existing large-font ExtraTime UI method remains **last**, so no added test
+inherits its global font change. The API, controller fixture, method timeout,
+overall soft deadline/cleanup reserve, disk/RAM admission, strict APK/source/run
+identity checks, required original UI witnesses, evidence export bounds, exact
+external-state restoration, and failure-preserving shutdown are unchanged.

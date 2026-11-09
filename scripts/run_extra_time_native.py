@@ -1,4 +1,4 @@
-"""Run the fixed extra-time native contracts on one fresh, owned Linux emulator.
+"""Run a fixed, explicitly selected native suite on one fresh, owned Linux emulator.
 
 This producer is separate from canonical unit/lint CI and never signs or publishes a
 release. Each selected method runs once; a failure retains its log and the remaining
@@ -73,10 +73,140 @@ NATIVE = {
         "rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation",
     ],
 }
+# Reviewed single-guest integration contracts. These do not include the two-device
+# RemoteFlow/RemoteActivityFlow suites or every method of their shared test classes.
+SUBHUB_PASS_NATIVE = {
+    "com.subhub.app.commitment.DurationChoicesAndroidTest": [
+        "sixOriginalChoicesBindSilentlyAndDispatchOnlyChangedEditableSelections",
+        "nativeChoiceLabelsFitNarrowAndLargeFontLayouts"
+    ],
+    "com.subhub.app.commitment.ServiceDurationRetentionAndroidTest": [
+        "refreshedPickerAdoptsExternalSettingsAndKeepsIncompleteInput",
+        "hiddenToggleCannotRestoreStaleDurationOrBoundsEvenBeforeRefresh",
+        "durationChoiceCannotRestoreStaleVisibilityOrBounds"
+    ],
+    "com.subhub.app.people.PersonRefreshAndroidTest": [
+        "telemetryAndDeferredRefreshKeepTheProfileDraftAndDeliveryTimeScroll",
+        "changedIdentityRecreationAndBackRetainPositionButRoleRevocationClosesPage",
+        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft"
+    ],
+    "com.subhub.app.remote.RemoteAppIconPresentationAndroidTest": [
+        "sharedNativeLimitsAndAppSelectorKeepRemoteIconScope"
+    ],
+    "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
+        "autoEditsCoalesceAcrossRestartAndWaitForAppliedReceipt",
+        "rejectedAutoEditStopsUntilExplicitDiscardAndNeverErasesPendingCommand",
+        "identicalPendingSnapshotDoesNotAllocateAnotherRevisionAfterAck",
+        "explicitConflictReloadKeepsNextRevisionAboveTheReceiver",
+        "staleWorkspaceRevisionCannotSaveOrDiscardConfigurationEdits"
+    ],
+    "com.subhub.app.remote.RemoteDurationAndroidTest": [
+        "staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation"
+    ],
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
+        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
+        "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
+        "automaticSaveRetainsTheFocusedEditorAndCursor"
+    ],
+    "com.subhub.app.remote.RemoteSessionControlsAndroidTest": [
+        "oneActionTracksActiveAndStaleStateWithoutGrantingAuthority",
+        "repeatedActionClickWhileReviewIsPendingQueuesOnlyOnce",
+        "actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls"
+    ],
+    "com.subhub.app.stats.LazySessionDurationAndroidTest": [
+        "backgroundSyncOffUnchangedSessionSurvivesReopenAndStopsExactlyOnce",
+        "existingScreenTimeMigratesWithoutOverlapAndNewSessionsAddNormally",
+        "legacyHistoryAndUnknownOlderDailyEvidenceRemainALowerBound",
+        "sameTimestampDifferentIdentitiesAndZoneChangesDoNotReplaceHistory",
+        "failedLedgerWriteRollsBackMigrationAndCanRetry"
+    ],
+    "com.subhub.app.util.PageScrollViewAndroidTest": [
+        "replacementRestoresAfterLayoutAndUsesTheLatestPosition",
+        "newerNavigationAndGestureCancelRestorationAndShortPagesClamp",
+        "pendingPositionSurvivesMultipleReplacementsBeforeTheFirstFrame"
+    ]
+}
+# Retain exact class-wide source drift checks without admitting these older methods
+# as runnable selectors. Adding/renaming a test requires an explicit inventory review.
+SUBHUB_PASS_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteAppIconPresentationAndroidTest": [
+        "actualActivityPreviewOpensFullHistoryAndUsesArrivingRemotePixels",
+        "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
+        "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
+        "actualRemoteStatsReprojectsVisibleAllowanceAfterDescriptorArrival",
+        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons"
+    ],
+    "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
+        "appliedReceiptIsSeparateFromTransportAckAndReplay",
+        "waitingConfigurationWriterLeavesAuthorityAvailableForActualTaskSweep",
+        "failedSecondStoreRestoresTypedValuesAndRetainedSettings",
+        "processDeathRollsBackBeforeRetryAndRecoverySurvivesRevocation",
+        "staleRevisionUnavailableAppAndRevocationDoNotApply",
+        "assetsMustFinishAndCommandIdentityCannotChange",
+        "protocolRejectsSecretsCoercionsIncompleteActiveAndConcurrentDraft",
+        "validatedCheckpointRecordsContactWithoutCompletingSyncAndRejectsInvalidOrRevokedHeads",
+        "legacyContactUsesOnlyLocalRoleCorrectPastCheckpointsUntilExplicitObservationExists",
+        "unchangedHeadsRefreshOnlyCaughtUpStreams",
+        "terminalReceiptCannotRegressAndCommittedJournalKeepsAppliedSettings",
+        "removedArtworkDoesNotReactivateLocalSelectionsAndMetadataSurvivesUnpair",
+        "queuedFeatureChangeIsRejectedWhenSubOptsOutBeforeDeliveryAndReplayStaysRejected",
+        "optedOutRuntimeFeaturesStayOffWithoutReplacingSavedRulesOrCredentials",
+        "hardcoreStateCannotOverrideAnySavedFeatureChoice",
+        "hardcoreStateCannotBypassQueuedFeatureRefusal",
+        "remoteSnapshotsCannotContainLocalConsentOrHardcoreAuthority",
+        "optingOutOfOneFeatureStillAllowsAnUnrelatedDurationChange",
+        "disabledLimitsAlsoRefuseChangesToIndividualAllowances",
+        "contractDomProfileFollowsAppliedOwnerDespiteOtherRelationshipsAndUpdates",
+        "rePairingCannotAttributeRetainedContractToTheNextDomOrGeneration",
+        "optionalNotificationChoicesDoNotChangeAppliedWriterReceiptsOrReplay",
+        "incompletePriorNotificationDocumentCannotFailCommittedConfiguration"
+    ],
+    "com.subhub.app.remote.RemoteDurationAndroidTest": [
+        "nativeInlineChoiceSurvivesRecreationAndQueuesOnlyTheSelectedPeersDuration",
+        "inlineRemoteProfileFitsTheRequestedNativeFontAndShowsRandomBoundsInPlace"
+    ],
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        "draftAndInvalidRawBudgetSurviveRecreation",
+        "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
+        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
+        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
+        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "pairedScreensFitCurrentDisplayAndFontConfiguration",
+        "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
+        "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
+        "sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals",
+        "sharedWhispersEnableIsQueuedWithoutChangingTheDomModule",
+        "sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime",
+        "sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials",
+        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets",
+        "peerNameChangesKeepRelationshipAndPersonIdentitiesStable"
+    ],
+    "com.subhub.app.remote.RemoteSessionControlsAndroidTest": [
+        "unsupportedPeerHasOneDisabledStartAndRecreationQueuesNothing",
+        "delayedReviewCannotConfirmAfterRecreationOrControllerLock",
+        "failedSnapshotInvalidatesAnOutstandingReviewBeforeItCanConfirm",
+        "dirtyDurationBlocksStartAndReceiptRemainsSeparateFromAppliedProof",
+        "changedSourceReviewCannotQueueAndStopDoesNotDependOnDurationDraftOrHardcore",
+        "nativeStartStopControlsFitAndKeepTheirAppliedDurationVisible",
+        "snapshotFailureRecoversAutomaticallyAndObservationResumesWithoutCommands"
+    ]
+}
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
 ALL_SELECTORS = [f"{cls}#{method}" for cls, methods in NATIVE.items() for method in methods]
 ALL_SELECTORS.remove(LARGE_FONT)
 ALL_SELECTORS.append(LARGE_FONT)
+# Keep the global font-scale mutation last in both suites. New rendering fixtures
+# otherwise run at 1.0; DurationChoices tests supply their own scoped font contexts.
+SUBHUB_PASS_SELECTORS = ALL_SELECTORS[:-1] + [
+    f"{cls}#{method}" for cls, methods in SUBHUB_PASS_NATIVE.items() for method in methods
+] + [LARGE_FONT]
+SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52}
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
         "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
@@ -177,14 +307,31 @@ def runtime_packages(missing):
     return sorted({EMULATOR_RUNTIME_PACKAGES[name] for name in missing})
 
 
-def source_inventory():
-    """Accept runtime eligibility annotations between @Test and the method."""
+def suite_selectors(suite):
+    if suite not in SUITES:
+        raise ValueError("Unknown native suite: " + suite)
+    values = SUITES[suite]
+    if len(values) != SUITE_COUNTS[suite] or len(set(values)) != SUITE_COUNTS[suite]:
+        raise ValueError(f"The {suite} native inventory must contain exactly {SUITE_COUNTS[suite]} unique methods")
+    if values[-1] != LARGE_FONT:
+        raise ValueError("The global large-font contract must run last")
+    return list(values)
+
+
+def source_inventory(suite="extra-time"):
+    """Reconcile exact class sources, including reviewed but non-selected methods."""
+    eligible = set(suite_selectors(suite))
+    native = dict(NATIVE)
+    source_only = {}
+    if suite == "subhub-pass":
+        native.update(SUBHUB_PASS_NATIVE)
+        source_only = SUBHUB_PASS_SOURCE_ONLY
     inventory = {}
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"
         r"(?P<annotations>(?:\s*@[A-Za-z0-9_.]+(?:\([^)]*\))?)*)"
         r"\s+public\s+void\s+(?P<method>[A-Za-z0-9_]+)\s*\(", re.MULTILINE)
-    for cls, expected in NATIVE.items():
+    for cls, selected_methods in native.items():
         path = ROOT / "app/src/androidTest/java" / (cls.replace(".", "/") + ".java")
         text = path.read_text(encoding="utf-8")
         package = re.search(r"^package\s+([\w.]+)\s*;", text, re.MULTILINE)
@@ -198,24 +345,29 @@ def source_inventory():
             annotation = match["annotations"]
             minimum = re.findall(r"(?:minSdkVersion\s*=\s*)(\d+)", annotation)
             maximum = re.findall(r"(?:maxSdkVersion\s*=\s*)(\d+)", annotation)
-            if "RequiresApi" in annotation or any(int(v) > API for v in minimum) or any(int(v) < API for v in maximum):
+            if f"{cls}#{name}" in eligible and ("RequiresApi" in annotation or "Ignore" in annotation
+                    or any(int(v) > API for v in minimum) or any(int(v) < API for v in maximum)):
                 raise ValueError(f"Selected native method is not eligible at API {API}: {cls}#{name}")
             found[name] = {"annotations": annotation.strip(), "line": text.count("\n", 0, match.start()) + 1}
-        if set(found) != set(expected):
+        excluded = source_only.get(cls, [])
+        expected = selected_methods + excluded
+        if len(set(expected)) != len(expected) or set(found) != set(expected):
             raise ValueError(f"Native inventory changed for {cls}: expected {expected}, found {list(found)}")
-        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found}
-    if len(ALL_SELECTORS) != 21 or len(set(ALL_SELECTORS)) != 21:
-        raise ValueError("The complete native inventory must contain exactly 21 methods")
+        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found,
+                          "selectedMethods": selected_methods, "sourceOnlyMethods": excluded}
+    if {f"{cls}#{method}" for cls, methods in native.items() for method in methods} != eligible:
+        raise ValueError("Native source inventory differs from the selected suite")
     return inventory
 
 
-def selectors(raw):
+def selectors(raw, suite="extra-time"):
+    known = suite_selectors(suite)
     requested = [value.strip() for value in re.split(r"[,\n]", raw) if value.strip()]
     if not requested:
-        return list(ALL_SELECTORS)
-    if len(set(requested)) != len(requested) or not set(requested).issubset(ALL_SELECTORS):
-        raise ValueError("Selectors must be a unique subset of the fixed native inventory")
-    return [value for value in ALL_SELECTORS if value in requested]
+        return known
+    if len(set(requested)) != len(requested) or not set(requested).issubset(known):
+        raise ValueError("Selectors must be a unique subset of the selected suite's fixed native inventory")
+    return [value for value in known if value in requested]
 
 
 def properties(path):
@@ -309,7 +461,7 @@ def instrumentation_result(text, selector, exit_code):
 
 
 class Producer:
-    def __init__(self):
+    def __init__(self, suite="extra-time"):
         if sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true":
             raise ValueError("Native production requires an ephemeral GitHub Linux runner")
         self.run_id = os.environ["GITHUB_RUN_ID"]
@@ -334,14 +486,16 @@ class Producer:
                         ANDROID_AVD_HOME=str(self.host / "avd-index"))
         self.serial = "emulator-5554"
         self.avd = "subhub_extra_time_api35"
-        self.selected = selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""))
+        self.suite = suite
+        self.selected = selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""), self.suite)
         self.soft_deadline = time.monotonic() + 35 * 60
         self.record = {"schema": 1, "workflowPath": ".github/workflows/extra-time-native.yml",
                        "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
                        "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
                        "producerSoftTimeoutSeconds": 35 * 60,
+                       "suite": self.suite, "suiteSelectors": suite_selectors(self.suite),
                        "selected": self.selected, "methods": {}, "remaining": list(self.selected), "notSelected": [
-                           value for value in ALL_SELECTORS if value not in self.selected], "hostedFreshGuest": True}
+                           value for value in suite_selectors(self.suite) if value not in self.selected], "hostedFreshGuest": True}
         self.index = 0
         self.emulator = None
         self.emulator_log = None
@@ -430,7 +584,7 @@ class Producer:
         code, name = properties(ROOT / "version.properties")
         self.record.update(sourceCommit=expected, sourceTree=self.git("rev-parse", "HEAD^{tree}"),
                            appTree=self.git("rev-parse", "HEAD:app"), sourceVersionCode=code, sourceVersionName=name,
-                           inventory=source_inventory())
+                           inventory=source_inventory(self.suite))
         self.save()
 
     def discover(self, name):
@@ -883,11 +1037,14 @@ class Producer:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-inventory", action="store_true", help="Parse the fixed tracked selectors without a build or emulator")
+    parser.add_argument("--suite", choices=tuple(SUITES), default=os.environ.get("EXTRA_TIME_SUITE", "extra-time"),
+                        help="Fixed native suite (default: extra-time, or EXTRA_TIME_SUITE)")
     args = parser.parse_args()
     if args.check_inventory:
-        print(json.dumps({"selectors": ALL_SELECTORS, "inventory": source_inventory()}, indent=2))
+        print(json.dumps({"suite": args.suite, "selectors": selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""), args.suite),
+                          "suiteSelectors": suite_selectors(args.suite), "inventory": source_inventory(args.suite)}, indent=2))
         return
-    producer = Producer()
+    producer = Producer(args.suite)
     try:
         producer.source()
         producer.prepare_sdk()
