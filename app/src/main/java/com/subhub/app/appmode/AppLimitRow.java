@@ -19,13 +19,16 @@ import com.subhub.app.R;
 final class AppLimitRow extends LinearLayout {
     final EditText allowance;
     final String appLabel;
+    private final String packageName;
+    private final Drawable localIcon;
+    private final ImageView image;
     private final TextView usage;
     private final ProgressBar progress;
     private String receipt = "";
 
     AppLimitRow(Context context, String packageName, String name, Drawable icon, String minutes) {
         super(context);
-        appLabel = name;
+        appLabel = name; this.packageName = packageName; localIcon = icon;
         setOrientation(VERTICAL);
         setPadding(0, dp(8), 0, dp(8));
         boolean large = getResources().getConfiguration().fontScale >= 1.5f
@@ -33,9 +36,9 @@ final class AppLimitRow extends LinearLayout {
         LinearLayout header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
         addView(header, new LayoutParams(-1, -2));
-        ImageView image = new ImageView(context);
+        image = new ImageView(context);
         image.setTag("app_icon:" + packageName);
-        com.subhub.app.util.AppIcons.bind(image, packageName, R.drawable.ic_settings_apps, icon);
+        refreshAppIcon();
         image.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         header.addView(image, new LayoutParams(dp(28), dp(28)));
         LinearLayout labels = new LinearLayout(context);
@@ -81,6 +84,8 @@ final class AppLimitRow extends LinearLayout {
         progressParams.topMargin = dp(4);
         labels.addView(progress, progressParams);
     }
+
+    void refreshAppIcon() { com.subhub.app.configuration.FeatureEditorAppIcons.bind(image, packageName, localIcon); }
 
     void renderUsage(String description, int percent, boolean limited) {
         String next = description + "|" + percent + "|" + limited;

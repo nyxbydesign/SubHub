@@ -323,6 +323,31 @@ public final class RemoteAppIconPresentationAndroidTest {
     }
 
     @Test @SdkSuppress(minSdkVersion = 29)
+    public void sharedNativeLimitsAndAppSelectorKeepRemoteIconScope() throws Exception {
+        for (Class<? extends Activity> screen : Arrays.<Class<? extends Activity>>asList(com.subhub.app.appmode.AppModeActivity.class,
+                com.subhub.app.people.LocalAppsActivity.class)) {
+            try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
+                fixture.enablePages();
+                page(route(screen, fixture), (scenario, host) -> {
+                    String name = "app_icon:" + fixture.packageName();
+                    await(() -> tagged(host.get(), name) instanceof ImageView);
+                    main(() -> assertGeneric((ImageView) tagged(host.get(), name)));
+                    fixture.offer();
+                    await(() -> magenta((ImageView) tagged(host.get(), name)));
+                    ImageView displayed = image(host.get(), name);
+                    assertComposedPixel(host.get(), displayed, "shared-native-" + screen.getSimpleName());
+                    scenario.recreate(); scenario.onActivity(host::set);
+                    await(() -> magenta((ImageView) tagged(host.get(), name)));
+                    displayed = image(host.get(), name);
+                    AtomicReference<ImageView> retained = new AtomicReference<>(displayed);
+                    fixture.retire();
+                    await(() -> retained.get().getImageTintList() != null);
+                });
+            }
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
     public void realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons() throws Exception {
         try (RemoteAppIconIntegrationAndroidTest.Fixture fixture = new RemoteAppIconIntegrationAndroidTest.Fixture()) {
             fixture.enablePages(); fixture.offer(); RemoteAppIcon complete = fixture.identity();

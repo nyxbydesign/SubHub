@@ -446,6 +446,7 @@ public final class AppModeActivity extends AppCompatActivity {
         if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);
         Map<String, Double> order = new LinkedHashMap<>();
         for (java.util.Map.Entry<String,AppLimitRow> row : appRows.entrySet()) {
+            row.getValue().refreshAppIcon();
             com.subhub.app.people.PersonSnapshot.Allowance value = values.get(row.getKey());
             String usage = value == null || value.usedMillis < 0 ? getString(R.string.role_unknown_data) : getString(R.string.limits_usage_only, formatUsage(value.usedMillis));
             row.getValue().renderUsage(usage, 0, false);

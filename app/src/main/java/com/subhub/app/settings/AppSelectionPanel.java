@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /** One shared selector for setup and Settings, including the optional dynamic All Apps scope. */
-public final class AppSelectionPanel extends LinearLayout {
+public final class AppSelectionPanel extends LinearLayout implements androidx.lifecycle.DefaultLifecycleObserver {
     private final StateToggle all;
     private final TextView count, allHelp;
     private final ProgressBar loading;
@@ -32,6 +32,9 @@ public final class AppSelectionPanel extends LinearLayout {
     private BooleanSupplier editable;
     private Runnable changed;
     private boolean rendering, countOnlyForOverride;
+    private AppCompatActivity host;
+    private AutoCloseable iconObserver;
+    private long iconEpoch;
 
     public AppSelectionPanel(Context context) { this(context, null); }
 
@@ -87,6 +90,8 @@ public final class AppSelectionPanel extends LinearLayout {
         bind(activity, activity.getApplicationContext(), editable, changed);
     }
     public void bind(AppCompatActivity activity, Context source, BooleanSupplier editable, Runnable changed) {
+        if (host != null) host.getLifecycle().removeObserver(this);
+        stopIcons(); host = activity; host.getLifecycle().addObserver(this);
         this.source = source.getApplicationContext();
         this.editable = editable;
         this.changed = changed;
@@ -160,7 +165,31 @@ public final class AppSelectionPanel extends LinearLayout {
                 : getResources().getQuantityString(R.plurals.apps_selected_count, included.size(), included.size());
     }
 
+    private void observeIcons() {
+        com.subhub.app.configuration.FeatureEditorSession scope = com.subhub.app.configuration.FeatureEditorSession.scope(getContext());
+        if (iconObserver != null || scope == null || host == null || !isAttachedToWindow()
+                || !host.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return;
+        long epoch = ++iconEpoch;
+        iconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (epoch != iconEpoch || !isAttachedToWindow() || host == null
+                    || !host.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    || scope != com.subhub.app.configuration.FeatureEditorSession.scope(getContext())) return;
+            if (adapter != null) adapter.notifyDataSetChanged();
+        });
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+    private void stopIcons() {
+        ++iconEpoch; AutoCloseable old = iconObserver; iconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* Epoch fences callbacks. */ }
+    }
+    @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeIcons(); }
+    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopIcons(); }
+    @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
+        stopIcons(); owner.getLifecycle().removeObserver(this); host = null;
+    }
+    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); observeIcons(); }
     @Override protected void onDetachedFromWindow() {
+        stopIcons();
         if (jobs != null) jobs.cancel("included-app-selector");
         super.onDetachedFromWindow();
     }
