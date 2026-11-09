@@ -62,6 +62,7 @@ NATIVE = {
     ],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest": [
         "requestApproveAndDeclineRetainAllowanceAndInputDrafts",
+        "remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt",
         "unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission",
         "unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation",
         "largeFontNarrowReviewKeepsControlsAndReceiptsReadable",
@@ -79,12 +80,14 @@ ALL_SELECTORS.append(LARGE_FONT)
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
         "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
-        "extra-time-sub-approved", "extra-time-sub-declined"],
+        "extra-time-sub-approved", "extra-time-sub-declined", "extra-time-sub-repeated-request"],
+    "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt": [
+        "extra-time-dom-remote-icon"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission": [
         "extra-time-sub-unavailable"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation": [
         "extra-time-sub-support-unconfirmed"],
-    LARGE_FONT: ["extra-time-sub-shared-only-large-font", "extra-time-dom-large-font"],
+    LARGE_FONT: ["extra-time-sub-large-font", "extra-time-sub-shared-only-large-font", "extra-time-dom-large-font"],
     "com.subhub.app.penance.TributeSettingsRestoreAndroidTest#rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation": [
         "tribute-rules-grouping", "tribute-spending-limits"],
 }
@@ -136,8 +139,8 @@ def source_inventory():
         if set(found) != set(expected):
             raise ValueError(f"Native inventory changed for {cls}: expected {expected}, found {list(found)}")
         inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found}
-    if len(ALL_SELECTORS) != 20 or len(set(ALL_SELECTORS)) != 20:
-        raise ValueError("The complete native inventory must contain exactly 20 methods")
+    if len(ALL_SELECTORS) != 21 or len(set(ALL_SELECTORS)) != 21:
+        raise ValueError("The complete native inventory must contain exactly 21 methods")
     return inventory
 
 

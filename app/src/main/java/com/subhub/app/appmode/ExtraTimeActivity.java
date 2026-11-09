@@ -41,6 +41,9 @@ public final class ExtraTimeActivity extends PreferencePage {
     private final Set<String> pendingActions = new HashSet<>();
     private final Handler clock = new Handler(Looper.getMainLooper());
     private boolean resumed, focused;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private boolean appIconsDirty;
     private String rendered = "";
     private final Runnable refreshTick = new Runnable() {
         @Override public void run() {
@@ -85,14 +88,41 @@ public final class ExtraTimeActivity extends PreferencePage {
         super.onResume();
         if (data == null) return;
         resumed = true;
+        observeAppIcons();
         clock.removeCallbacks(refreshTick);
         clock.post(refreshTick);
     }
 
     @Override protected void onPause() {
         resumed = false;
+        stopAppIcons();
         clock.removeCallbacks(refreshTick);
         super.onPause();
+    }
+
+    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+
+    private void observeAppIcons() {
+        if (person.isLocal() || appIconObserver != null) return;
+        long epoch = ++appIconEpoch;
+        long revision = com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+        String route = getIntent().getStringExtra(PersonRoutes.EXTRA_PERSON_ID);
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (epoch != appIconEpoch || !resumed || isFinishing() || isDestroyed()
+                    || !content.isAttachedToWindow()
+                    || revision != com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()
+                    || !java.util.Objects.equals(route, getIntent().getStringExtra(PersonRoutes.EXTRA_PERSON_ID))
+                    || !com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()) return;
+            // Reload through the facade: a cached image never substitutes for current peer authority.
+            appIconsDirty = true;
+            refresh();
+        });
+    }
+
+    private void stopAppIcons() {
+        ++appIconEpoch;
+        AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* Epoch fences queued callbacks. */ }
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
@@ -104,8 +134,12 @@ public final class ExtraTimeActivity extends PreferencePage {
         if (data.isPending("extra-time-snapshot") || !pendingActions.isEmpty()) return;
         Context application = getApplicationContext();
         PersonId target = person;
+        appIconsDirty = false;
         data.load("extra-time-snapshot", () -> new ExtraTimeRequests(application, target)
-                .snapshot(System.currentTimeMillis()), this::render, this::failed);
+                .snapshot(System.currentTimeMillis()), value -> {
+                    render(value);
+                    if (appIconsDirty && resumed) refresh();
+                }, this::failed);
     }
 
     private void render(ExtraTimeRequests.Snapshot value) {
@@ -156,17 +190,15 @@ public final class ExtraTimeActivity extends PreferencePage {
         for (ExtraTimeRequests.App app : value.apps) {
             if (selectedExists && !selected.equals(app.packageName)) continue;
             LinearLayout card = ExtraTimeViews.card(content, "extra_time_app:" + app.packageName);
-            ExtraTimeViews.app(card, app.packageName, app.label, true);
-            ExtraTimeViews.usage(card, app.usedMillis, app.dailyMinutes, app.bonusMinutes);
-            ExtraTimeRequests.Request request = app.pending != null ? app.pending : app.latest;
-            if (request != null) receipt(card, request);
-            if (app.exhausted) ExtraTimeViews.status(card, getString(app.combinedLimitReached
-                    ? R.string.extra_time_total_reached : R.string.extra_time_reached), true);
-            else if (app.dailyMinutes > 0 || app.remainingMillis > 0) {
-                long remaining = Math.max(0L, app.remainingMillis);
-                ExtraTimeViews.status(card, getString(R.string.extra_time_remaining,
-                        (remaining + 59_999L) / 60_000L), false);
-            }
+            ExtraTimeViews.app(card, app.packageName, app.label, true, null);
+            String state = app.exhausted ? getString(app.combinedLimitReached
+                    ? R.string.extra_time_total_reached : R.string.extra_time_reached)
+                    : app.dailyMinutes > 0 || app.remainingMillis > 0 ? getString(R.string.extra_time_remaining,
+                            (Math.max(0L, app.remainingMillis) + 59_999L) / 60_000L) : "";
+            ExtraTimeViews.usage(card, app.usedMillis, app.dailyMinutes, app.bonusMinutes, state, app.exhausted);
+            // Keep every receipt with its own outcome, rather than replacing it on the next request.
+            for (ExtraTimeRequests.Request request : value.requests) if (app.packageName.equals(request.packageName))
+                receipt(ExtraTimeViews.receipt(card, request.id), request);
             if (app.pending == null && app.exhausted) {
                 boolean knownTribute = value.tributeCents >= 0;
                 if (value.tributeCents > 0) PersonUi.text(card, getString(R.string.extra_time_request_tribute,
@@ -201,7 +233,7 @@ public final class ExtraTimeActivity extends PreferencePage {
         }
         for (ExtraTimeRequests.Request request : value.requests) {
             LinearLayout card = ExtraTimeViews.card(content, "extra_time_request:" + request.id);
-            ExtraTimeViews.app(card, request.packageName, request.appLabel, false);
+            ExtraTimeViews.app(card, request.packageName, request.appLabel, false, request.appIcon);
             PersonUi.text(card, getString(R.string.extra_time_at_request), false);
             ExtraTimeViews.requestUsage(card, request.usedMillis);
             receipt(card, request);
@@ -249,9 +281,9 @@ public final class ExtraTimeActivity extends PreferencePage {
             case DECLINED: status = getString(R.string.extra_time_declined); break;
             default: status = getString(R.string.extra_time_expired); break;
         }
-        ExtraTimeViews.status(card, status, request.status == ExtraTimeRequests.Status.APPROVED);
         PersonUi.text(card, getString(R.string.extra_time_requested_at,
                 DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(request.requestedAt))), false);
+        ExtraTimeViews.status(card, status, request.status == ExtraTimeRequests.Status.APPROVED);
         if (request.tributeCents > 0) PersonUi.text(card, getString(R.string.extra_time_tribute_receipt,
                 money(request.tributeCents, request.currency)), false);
         if (!snapshot.dom && request.status == ExtraTimeRequests.Status.PENDING)
@@ -306,6 +338,7 @@ public final class ExtraTimeActivity extends PreferencePage {
     private void completed(String key, ExtraTimeRequests.Snapshot result) {
         pendingActions.remove(key);
         render(result);
+        if (appIconsDirty && resumed) refresh();
     }
 
     private void actionFailed(String key, Exception error) {
@@ -349,8 +382,13 @@ public final class ExtraTimeActivity extends PreferencePage {
                 .append('|').append(app.remainingMillis).append('|').append(app.combinedLimitReached)
                 .append('|').append(app.exhausted).append('|').append(app.pending == null ? "" : app.pending.id)
                 .append('|').append(app.latest == null ? "" : app.latest.id + app.latest.status + app.latest.approvedMinutes);
-        for (ExtraTimeRequests.Request request : value.requests) out.append('|').append(request.id).append('|')
-                .append(request.status).append('|').append(request.approvedMinutes).append('|').append(request.requestedAt);
+        for (ExtraTimeRequests.Request request : value.requests) {
+            out.append('|').append(request.id).append('|').append(request.status).append('|')
+                    .append(request.approvedMinutes).append('|').append(request.requestedAt);
+            com.subhub.app.util.RemoteAppIcon icon = request.appIcon;
+            if (icon != null) out.append('|').append(icon.peer).append('|').append(icon.generation).append('|')
+                    .append(icon.packageName).append('|').append(icon.descriptor == null ? "" : icon.descriptor.sha256);
+        }
         return out.toString();
     }
 }

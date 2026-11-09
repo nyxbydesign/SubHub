@@ -61,8 +61,18 @@ public final class ExtraTimeUiAndroidTest {
         try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
             String firstId;
             try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
-                await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null);
-                sub.onActivity(ExtraTimeUiAndroidTest::assertFocusCatcher);
+                await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null
+                        && tagged(a, "extra_time_usage_progress") != null && tagged(a, "extra_time_usage_progress").getHeight() > 0);
+                sub.onActivity(a -> {
+                    assertFocusCatcher(a);
+                    View header = tagged(a, "extra_time_usage_header"), progress = tagged(a, "extra_time_usage_progress");
+                    assertNotNull(header); assertNotNull(progress);
+                    assertTrue(header.getHeight() > 0); assertTrue(progress.getHeight() > 0);
+                    assertSame(header.getParent(), progress.getParent());
+                    assertTrue("Usage and limit state stay above the bar", header.getBottom() <= progress.getTop());
+                    assertTrue(hasText(header, a.getString(R.string.extra_time_reached)));
+                    assertTrue(hasText(header, a.getString(R.string.extra_time_usage_summary, 5, 5L, 5)));
+                });
                 capture(sub, text(R.string.extra_time_reached), "extra-time-sub-request");
                 tap("extra_time_submit:" + fixture.firstPackage);
                 await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
@@ -128,8 +138,94 @@ public final class ExtraTimeUiAndroidTest {
                 assertEquals(0, app(fixture.subRequests(), fixture.secondPackage).bonusMinutes);
                 assertEquals(10, app(fixture.subRequests(), fixture.secondPackage).dailyMinutes);
                 capture(sub, text(R.string.extra_time_declined), "extra-time-sub-declined");
+                tap("extra_time_submit:" + fixture.secondPackage);
+                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                String nextId = request(fixture.subRequests(), fixture.secondPackage).id;
+                assertNotEquals(secondId, nextId);
+                sub.recreate();
+                await(sub, a -> tagged(a, "extra_time_receipt:" + nextId) != null
+                        && tagged(a, "extra_time_receipt:" + nextId).getHeight() > 0);
+                sub.onActivity(a -> {
+                    View declined = tagged(a, "extra_time_receipt:" + secondId);
+                    View pending = tagged(a, "extra_time_receipt:" + nextId);
+                    assertNotNull(declined); assertNotNull(pending); assertNotSame(declined, pending);
+                    assertTrue(hasText(declined, a.getString(R.string.extra_time_declined)));
+                    assertFalse(hasText(declined, a.getString(R.string.extra_time_pending)));
+                    assertTrue(hasText(pending, a.getString(R.string.extra_time_pending)));
+                    assertFalse(hasText(pending, a.getString(R.string.extra_time_declined)));
+                    assertTrue("Newest receipt stays separate above its predecessor", pending.getBottom() <= declined.getTop());
+                    assertNull(tagged(a, "extra_time_submit:" + fixture.secondPackage));
+                });
+                capture(sub, text(R.string.extra_time_pending), "extra-time-sub-repeated-request");
             }
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt() throws Exception {
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+            ExtraTimeRequests.Snapshot before = fixture.subRequests().snapshot(System.currentTimeMillis());
+            ExtraTimeRequests.Request sent = fixture.subRequests().submit(fixture.firstPackage, before.tributeCents, before.currency);
+            fixture.transfer(); fixture.switchDom(); fixture.installRemoteIcons();
+            ExtraTimeRequests.Request received = request(fixture.domRequests(), fixture.firstPackage);
+            assertNotNull(received.appIcon); assertEquals(fixture.firstPackage, received.appIcon.packageName);
+            assertNull(received.appIcon.descriptor);
+            AtomicReference<android.widget.ImageView> displayed = new AtomicReference<>();
+            try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
+                String iconTag = "extra_time_app_icon:" + fixture.firstPackage;
+                String inputTag = "extra_time_minutes:" + sent.id;
+                await(dom, a -> tagged(a, inputTag) != null);
+                dom.onActivity(a -> {
+                    android.widget.ImageView icon = (android.widget.ImageView) tagged(a, iconTag);
+                    assertNotNull(icon); assertNotNull("Do not use this device's same-package icon", icon.getImageTintList());
+                    try {
+                        java.lang.reflect.Field clock = ExtraTimeActivity.class.getDeclaredField("clock"); clock.setAccessible(true);
+                        java.lang.reflect.Field tick = ExtraTimeActivity.class.getDeclaredField("refreshTick"); tick.setAccessible(true);
+                        ((android.os.Handler) clock.get(a)).removeCallbacks((Runnable) tick.get(a));
+                    } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+                });
+                onView(withTagValue(equalTo(inputTag))).perform(reveal(), replaceText("23"), closeSoftKeyboard());
+                fixture.offerRemoteIcon();
+                await(dom, a -> remotePixel((android.widget.ImageView) tagged(a, iconTag)));
+                dom.onActivity(a -> {
+                    assertEquals("23", ((EditText) tagged(a, inputTag)).getText().toString());
+                    displayed.set((android.widget.ImageView) tagged(a, iconTag));
+                });
+                capture(dom, textWithValue(received.appLabel), "extra-time-dom-remote-icon");
+                int[] origin = new int[2];
+                dom.onActivity(a -> {
+                    android.widget.ImageView icon = displayed.get(); icon.getLocationOnScreen(origin);
+                    Rect full = new Rect(origin[0], origin[1], origin[0] + icon.getWidth(), origin[1] + icon.getHeight());
+                    assertTrue("Remote icon is fully visible in the captured frame", TextFrameWitness.screenClip(icon).contains(full));
+                    origin[0] += icon.getWidth() / 2; origin[1] += icon.getHeight() / 2;
+                });
+                String run = InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui");
+                android.graphics.Bitmap pixels = android.graphics.BitmapFactory.decodeFile(new java.io.File(context.getFilesDir(),
+                        "ui-v3/" + run + "/extra-time-dom-remote-icon.png").getAbsolutePath());
+                assertNotNull(pixels);
+                try { assertEquals("Captured remote artwork is not a local same-package icon",
+                        android.graphics.Color.MAGENTA, pixels.getPixel(origin[0], origin[1])); }
+                finally { pixels.recycle(); }
+                dom.recreate();
+                await(dom, a -> remotePixel((android.widget.ImageView) tagged(a, iconTag)));
+                dom.onActivity(a -> displayed.set((android.widget.ImageView) tagged(a, iconTag)));
+                fixture.revokeRemoteIconPeer();
+                long until = SystemClock.uptimeMillis() + 5_000L;
+                java.util.concurrent.atomic.AtomicBoolean cleared = new java.util.concurrent.atomic.AtomicBoolean();
+                do {
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> cleared.set(displayed.get().getImageTintList() != null));
+                    if (!cleared.get()) SystemClock.sleep(40);
+                } while (!cleared.get() && SystemClock.uptimeMillis() < until);
+                assertTrue("Revoked remote pixels cannot remain in the bound view", cleared.get());
+            }
+        }
+    }
+
+    private static boolean remotePixel(android.widget.ImageView icon) {
+        if (icon == null || icon.getImageTintList() != null
+                || !(icon.getDrawable() instanceof android.graphics.drawable.BitmapDrawable)) return false;
+        android.graphics.Bitmap bitmap = ((android.graphics.drawable.BitmapDrawable) icon.getDrawable()).getBitmap();
+        return bitmap.getPixel(bitmap.getWidth() / 2, bitmap.getHeight() / 2) == android.graphics.Color.MAGENTA;
     }
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
@@ -218,6 +314,17 @@ public final class ExtraTimeUiAndroidTest {
         assertTrue("Set font scale only on the owned fresh guest before this distinct contract",
                 context.getResources().getConfiguration().fontScale >= 1.4f);
         try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
+                await(sub, a -> tagged(a, "extra_time_usage_progress") != null);
+                narrow(sub);
+                capture(sub, text(R.string.extra_time_reached), "extra-time-sub-large-font");
+                sub.onActivity(a -> {
+                    View header = tagged(a, "extra_time_usage_header"), progress = tagged(a, "extra_time_usage_progress");
+                    assertTrue(header.getHeight() > 0);
+                    assertTrue(header.getBottom() <= progress.getTop());
+                    readable(header);
+                });
+            }
             assertTrue(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
                     .edit().putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
                     .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true)

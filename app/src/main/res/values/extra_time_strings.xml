@@ -12,6 +12,8 @@
     <string name="extra_time_today_only">Additional time applies today only. The daily limit stays the same.</string>
     <string name="extra_time_daily">%1$d min daily</string>
     <string name="extra_time_daily_bonus">%1$d min daily · +%2$d min today</string>
+    <string name="extra_time_usage_summary">%1$d min daily · %2$d/%3$d min used</string>
+    <string name="extra_time_usage_with_bonus">%1$s · %2$s</string>
     <string name="extra_time_usage">%1$d of %2$d min used</string>
     <string name="extra_time_app_usage_today">App usage today</string>
     <string name="extra_time_app_used">%1$d min used in this app</string>

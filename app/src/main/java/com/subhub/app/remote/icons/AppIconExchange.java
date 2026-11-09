@@ -28,7 +28,7 @@ public final class AppIconExchange {
     public interface Authority {
         /** Recheck actual active backend peer/generation/role, never just the captured Peer.state. */
         boolean current(RemoteStore.Peer peer);
-        /** Current peer-authorized, already published APP_CATALOG/EVENTS/APP_USAGE package reference. */
+        /** Current peer-authorized, already published catalog, usage, event or app-time request package reference. */
         boolean published(RemoteStore.Peer peer, String packageName);
         /** Current authorized mirror reference; retained history/hash/cache alone is insufficient. */
         boolean mirrored(RemoteStore.Peer peer, String packageName);

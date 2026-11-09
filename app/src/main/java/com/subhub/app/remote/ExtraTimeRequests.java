@@ -29,7 +29,10 @@ public final class ExtraTimeRequests {
         public final long requestedAt, usedMillis;
         public final int approvedMinutes, dailyMinutes, tributeCents;
         public final Status status;
-        private Request(ExtraTimeStore.Row row, long now) {
+        public final com.subhub.app.util.RemoteAppIcon appIcon;
+        private Request(ExtraTimeStore.Row row, long now) { this(row, now, null); }
+        private Request(ExtraTimeStore.Row row, long now, com.subhub.app.util.RemoteAppIcon appIcon) {
+            this.appIcon = appIcon;
             id = row.id; packageName = row.packageName; appLabel = row.label;
             day = row.day; zone = row.zone; requestedAt = row.at; usedMillis = row.appUsed;
             dailyMinutes = row.dailyMinutes; tributeCents = row.tributeCents; currency = row.currency;
@@ -109,7 +112,9 @@ public final class ExtraTimeRequests {
                     journal.save(scope(peer),rows); changed[0] = true;
                 }
                 List<Request> requests = new ArrayList<>();
-                for (ExtraTimeStore.Row row : rows) if (!row.state.equals("SUBMITTING")) requests.add(new Request(row, now));
+                for (ExtraTimeStore.Row row : rows) if (!row.state.equals("SUBMITTING"))
+                    requests.add(new Request(row, now, dom
+                            ? feature.appIcons.identity(peer.identity, peer.generation, row.packageName) : null));
                 requests.sort((left, right) -> Long.compare(right.requestedAt, left.requestedAt));
                 PenanceManager tribute = new PenanceManager(context);
                 int quote = dom ? 0 : tribute.quoteExtraTimeRequest(now);
@@ -379,7 +384,7 @@ public final class ExtraTimeRequests {
         if (live == null || live.state != RemoteStore.State.ACTIVE || live.localRole != peer.localRole)
             throw new SecurityException("This relationship is no longer active");
     }
-    private static String scope(RemoteStore.Peer peer) { return peer.identity + "_" + peer.generation; }
+    static String scope(RemoteStore.Peer peer) { return peer.identity + "_" + peer.generation; }
     private static String configuration(Context context, String packageName) throws Exception {
         AppTimerManager timers = new AppTimerManager(context); AppTimerManager.Settings settings = timers.loadSettings();
         JSONObject value = new JSONObject().put("package",packageName)

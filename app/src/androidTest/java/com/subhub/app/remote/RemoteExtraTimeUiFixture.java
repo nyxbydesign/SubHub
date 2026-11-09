@@ -64,6 +64,8 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
     private String domIdentity, subIdentity, generation;
     private Map<String, String> originalAcknowledgements;
     private boolean closed;
+    private AutoCloseable iconInstallation;
+    private java.io.File iconCacheRoot;
 
     private RemoteExtraTimeUiFixture(Context context) { this.context = context.getApplicationContext(); }
 
@@ -283,6 +285,65 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         assertSame(dom, selected); return new ExtraTimeRequests(context, subPerson);
     }
 
+    /** Install only this owned peer's image projection; its request is the sole package reference. */
+    public void installRemoteIcons() throws Exception {
+        assertSame(dom, selected);
+        assertNull(iconInstallation);
+        assertTrue(dom.store.mirror(subIdentity, generation, RemoteProtocol.Stream.APP_CATALOG).isEmpty());
+        // No image exchange or Activity is active yet. Give the fixture one isolated cache owner.
+        dom.appIcons.close();
+        iconCacheRoot = new java.io.File(context.getCacheDir(), prefix + "-icons");
+        Context iconContext = new android.content.ContextWrapper(context) {
+            @Override public Context getApplicationContext() { return this; }
+            @Override public java.io.File getCacheDir() { return iconCacheRoot; }
+        };
+        RemoteAppIconIntegration icons = new RemoteAppIconIntegration(iconContext, dom.store, Runnable::run, () -> { });
+        Field integration = RemoteFeature.class.getDeclaredField("appIcons"); integration.setAccessible(true);
+        integration.set(dom, icons); assertSame(icons, dom.appIcons);
+        dom.appIcons.refresh();
+        iconInstallation = RemoteAppIconIntegrationAndroidTest.installIconProvider(dom.appIcons);
+    }
+
+    public void offerRemoteIcon() throws Exception {
+        assertSame(dom, selected);
+        byte[] png = RemoteAppIconIntegrationAndroidTest.png();
+        java.io.ByteArrayOutputStream frames = new java.io.ByteArrayOutputStream();
+        for (String type : new String[]{"icon_offer", "icon_chunk", "icon_end", "icons_complete"}) {
+            org.json.JSONObject frame = new org.json.JSONObject().put("version", 1).put("type", type)
+                    .put("generation", generation).put("appIconsVersion", 1);
+            if (!type.equals("icons_complete")) frame.put("package", firstPackage).put("format", "png")
+                    .put("hash", RemoteProtocol.sha256(png)).put("length", png.length).put("width", 32).put("height", 32);
+            if (type.equals("icon_chunk")) frame.put("offset", 0).put("data", java.util.Base64.getEncoder().encodeToString(png));
+            if (type.equals("icon_end")) frame.put("offset", png.length);
+            RemoteProtocol.write(frames, frame);
+        }
+        java.io.ByteArrayInputStream input = new java.io.ByteArrayInputStream(frames.toByteArray());
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        dom.appIcons.exchange(new PeerTransport.Connection() {
+            public String authenticatedPeerIdentity() { return subIdentity; }
+            public java.io.InputStream input() { return input; }
+            public java.io.OutputStream output() { return output; }
+            public void setReadTimeoutMillis(long timeout) { }
+            public boolean isDirect() { return true; }
+            public void close() { }
+        }, dom.store.peer(subIdentity, generation), System.nanoTime() + TimeUnit.SECONDS.toNanos(20));
+        java.io.ByteArrayInputStream sent = new java.io.ByteArrayInputStream(output.toByteArray());
+        org.json.JSONObject wanted = RemoteProtocol.read(sent);
+        assertEquals("icon_wants", wanted.getString("type"));
+        assertEquals(1, wanted.getJSONArray("packages").length());
+        assertEquals(firstPackage, wanted.getJSONArray("packages").getString(0));
+        assertEquals("icon_resume", RemoteProtocol.read(sent).getString("type"));
+        assertEquals("icon_ack", RemoteProtocol.read(sent).getString("type"));
+        assertEquals("icon_ack", RemoteProtocol.read(sent).getString("type"));
+        assertEquals("icons_ack", RemoteProtocol.read(sent).getString("type"));
+        assertEquals(0, sent.available());
+    }
+
+    public void revokeRemoteIconPeer() {
+        assertSame(dom, selected);
+        dom.store.revoke(subIdentity, generation);
+    }
+
     /** Production serialization/validation and durable domain application, deliberately without transport. */
     public void transfer() throws Exception {
         ExtraTimePeer.Endpoint domEndpoint = ExtraTimeRequests.endpoint(context, dom.store, domIdentity,
@@ -297,6 +358,7 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
     @Override public void close() throws Exception {
         if (closed) return; closed = true;
         List<Throwable> failures = new ArrayList<>();
+        clean(failures, () -> { if (iconInstallation != null) iconInstallation.close(); });
         clean(failures, () -> {
             if (singleton != null) synchronized (RemoteFeature.class) {
                 Object current = singleton.get(null);
@@ -321,6 +383,19 @@ public final class RemoteExtraTimeUiFixture implements AutoCloseable {
         Set<RemoteStore> closedStores = new java.util.HashSet<>();
         for (RemoteFeature feature : owned) clean(failures, () -> {
             feature.shutdownForTest(); closedStores.add(feature.store);
+        });
+        clean(failures, () -> {
+            if (iconCacheRoot != null && iconCacheRoot.exists() && closedStores.contains(dom.store)) {
+                java.nio.file.Path root = iconCacheRoot.getCanonicalFile().toPath();
+                assertTrue(root.startsWith(context.getCacheDir().getCanonicalFile().toPath()));
+                assertEquals(prefix + "-icons", root.getFileName().toString());
+                try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+                    for (java.nio.file.Path path : (Iterable<java.nio.file.Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator) {
+                        assertFalse(java.nio.file.Files.isSymbolicLink(path));
+                        assertTrue(path.toRealPath().startsWith(root)); java.nio.file.Files.delete(path);
+                    }
+                }
+            }
         });
         for (RemoteStore store : ownedStores) if (owned.stream().noneMatch(feature -> feature.store == store))
             clean(failures, () -> { store.close(); closedStores.add(store); });

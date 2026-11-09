@@ -204,6 +204,10 @@ final class RemoteAppIconIntegration implements RemoteAppIcons.Provider, AppIcon
                 }
             }
         }
+        // A retained request is itself an exact peer-scoped app reference, including when
+        // the app is no longer in the current catalog or today's usage projection.
+        for (ExtraTimeStore.Row row : new ExtraTimeStore(context).load(ExtraTimeRequests.scope(peer)))
+            if (!row.state.equals("SUBMITTING")) add(result, peer, row.packageName);
         return result;
     }
     private static void add(Set<String> names,RemoteStore.Peer peer,String name) {
