@@ -15,6 +15,12 @@ from scripts import run_extra_time_native as native
 
 
 class NativeSuiteInventoryTest(unittest.TestCase):
+    def setUp(self):
+        # Unit fixtures must not consume the real Actions PR event/subset.
+        event = mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""})
+        event.start()
+        self.addCleanup(event.stop)
+
     def test_default_inventory_stays_at_the_original_21(self):
         self.assertEqual(native.selectors(""), native.ALL_SELECTORS)
         self.assertEqual(21, len(native.selectors("")))
@@ -237,6 +243,160 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual(21, len(json.loads(output.getvalue())["selectors"]))
 
 
+class NativePrSubsetTest(unittest.TestCase):
+    def setUp(self):
+        event = mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": "", "EXTRA_TIME_SELECTORS": ""})
+        event.start()
+        self.addCleanup(event.stop)
+        self.chosen = [native.SUBHUB_PASS_SELECTORS[20], native.LARGE_FONT]
+
+    def block(self, values=None):
+        return native.PR_SUBSET_START + "\n" + json.dumps(self.chosen if values is None else values) + "\n" + native.PR_SUBSET_END
+
+    @contextlib.contextmanager
+    def event(self, body=None, labels=None, payload=None, raw=None, extra_selectors=""):
+        if payload is None:
+            payload = {"pull_request": {
+                "body": self.block() if body is None else body,
+                "labels": [{"name": name} for name in ([native.PR_SUBSET_LABEL] if labels is None else labels)],
+            }}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "event.json"
+            path.write_bytes(json.dumps(payload).encode() if raw is None else raw)
+            with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(path),
+                                             "EXTRA_TIME_SELECTORS": extra_selectors}):
+                yield
+
+    def test_valid_block_keeps_suite_order_and_ignores_surrounding_prose(self):
+        body = "Description with `$(untrusted-command)`\n" + self.block(list(reversed(self.chosen))) + "\nMore notes"
+        with self.event(body=body):
+            selected, source = native.selected_methods("subhub-pass")
+        self.assertEqual(self.chosen, selected)
+        self.assertEqual("pull_request_body", source)
+
+    def test_subset_requires_the_exact_opt_in_label(self):
+        for labels in ([], ["native-subset-typo"], ["Native-subset"], ["native-subhub-pass"]):
+            with self.subTest(labels=labels), self.event(body="malformed selector block", labels=labels):
+                selected, source = native.selected_methods("subhub-pass")
+                self.assertEqual(native.SUBHUB_PASS_SELECTORS, selected)
+                self.assertEqual("suite_default", source)
+
+    def test_opt_in_body_overrides_legacy_environment_subset_only_when_labelled(self):
+        legacy = native.ALL_SELECTORS[0]
+        with self.event(labels=[native.PR_SUBSET_LABEL, "native-subhub-pass", "native-extra-time-ui"], extra_selectors=legacy):
+            self.assertEqual((self.chosen, "pull_request_body"), native.selected_methods("subhub-pass"))
+        with self.event(labels=["native-extra-time-ui"], extra_selectors=legacy):
+            self.assertEqual(([legacy], "workflow_selectors"), native.selected_methods("subhub-pass"))
+
+    def test_missing_duplicate_reversed_and_lookalike_markers_fail_closed(self):
+        block = self.block()
+        invalid = ["", "[]", native.PR_SUBSET_START, native.PR_SUBSET_END,
+                   block + block, block + native.PR_SUBSET_START, block + native.PR_SUBSET_END,
+                   native.PR_SUBSET_END + json.dumps(self.chosen) + native.PR_SUBSET_START,
+                   block.replace("native-selectors:start", "native-selectors:begin"),
+                   block.replace("<!-- native-selectors:start -->", "<!--native-selectors:start-->"),
+                   block + "<!-- Native-selectors:extra -->"]
+        for body in invalid:
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                native.pr_subset(body, "subhub-pass")
+
+    def test_only_a_nonempty_json_array_of_strings_is_accepted(self):
+        for value in ([], {}, None, True, 12, "method", [1], [None], [{}], [[]]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "nonempty JSON array"):
+                native.pr_subset(native.PR_SUBSET_START + json.dumps(value) + native.PR_SUBSET_END, "subhub-pass")
+        for raw in ("```json\n[]\n```", "['single-quotes']", '["trailing-comma",]', '[] []'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, "JSON array"):
+                native.pr_subset(native.PR_SUBSET_START + raw + native.PR_SUBSET_END, "subhub-pass")
+
+    def test_duplicate_noncanonical_and_unknown_strings_cannot_expand_selection(self):
+        for values in ([self.chosen[0], self.chosen[0]], [" " + self.chosen[0]],
+                       [self.chosen[0] + "\n"], [",".join(self.chosen)],
+                       ["com.subhub.app.remote.RemoteSessionControlsAndroidTest"], ["*"],
+                       ["com.subhub.app.remote.RemoteFlowAndroidTest#domPairsEditsAppliesEndsAndQueuesWhileSubIsOffline"]):
+            with self.subTest(values=values), self.assertRaisesRegex(ValueError, "unique exact selectors"):
+                native.pr_subset(self.block(values), "subhub-pass")
+
+    def test_command_expression_and_path_strings_are_only_rejected_data(self):
+        with mock.patch.object(native.subprocess, "Popen") as spawn:
+            for value in ("$(touch /tmp/invalid)", "${{ github.token }}", "../file", "method; echo unsafe", "method\u0000"):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    native.pr_subset(self.block([value]), "subhub-pass")
+            spawn.assert_not_called()
+
+    def test_default_suite_cannot_admit_an_integration_only_method(self):
+        with self.event(), self.assertRaisesRegex(ValueError, "selected suite"):
+            native.selected_methods("extra-time")
+
+    def test_source_only_methods_remain_outside_pr_allowlist(self):
+        cls = next(iter(native.SUBHUB_PASS_SOURCE_ONLY))
+        value = f"{cls}#{native.SUBHUB_PASS_SOURCE_ONLY[cls][0]}"
+        with self.assertRaisesRegex(ValueError, "unique exact selectors"):
+            native.pr_subset(self.block([value]), "subhub-pass")
+
+    def test_selector_and_body_size_bounds_fail_closed(self):
+        with self.assertRaisesRegex(ValueError, "nonempty JSON array"):
+            native.pr_subset(self.block([self.chosen[0]] * 53), "subhub-pass")
+        for body in (None, 12, self.block() + "x" * native.MAX_PR_BODY_BYTES,
+                     self.block() + "é" * (native.MAX_PR_BODY_BYTES // 2)):
+            with self.subTest(type=type(body)), self.assertRaisesRegex(ValueError, "bounded PR body"):
+                native.pr_subset(body, "subhub-pass")
+
+    def test_invalid_missing_or_oversize_event_is_rejected(self):
+        for raw in (b"{", b"\xff", b"x" * (native.MAX_EVENT_BYTES + 1)):
+            with self.subTest(size=len(raw)), self.event(raw=raw), self.assertRaises(ValueError):
+                native.selected_methods("subhub-pass")
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": ""}):
+            with self.assertRaisesRegex(ValueError, "GITHUB_EVENT_PATH"):
+                native.selected_methods("subhub-pass")
+        for payload in ([], {}, {"pull_request": []}, {"pull_request": {"labels": "native-subset"}},
+                        {"pull_request": {"labels": ["native-subset"]}}, {"pull_request": {"labels": [{}]}}):
+            with self.subTest(payload=payload), self.event(payload=payload), self.assertRaisesRegex(ValueError, "label list"):
+                native.selected_methods("subhub-pass")
+
+    def test_dispatch_does_not_read_pr_body_or_change_its_existing_inputs(self):
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_EVENT_PATH": "/must-not-open",
+                                         "EXTRA_TIME_SELECTORS": self.chosen[0]}), mock.patch.object(Path, "open") as reader:
+            self.assertEqual(([self.chosen[0]], "workflow_selectors"), native.selected_methods("subhub-pass"))
+            reader.assert_not_called()
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch", "EXTRA_TIME_SELECTORS": ""}):
+            self.assertEqual((native.ALL_SELECTORS, "suite_default"), native.selected_methods("extra-time"))
+
+    def test_invalid_labelled_subset_is_rejected_before_producer_output_or_build(self):
+        with tempfile.TemporaryDirectory() as folder, self.event(body="malformed"):
+            root = Path(folder)
+            with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), mock.patch.object(sys, "platform", "linux"), \
+                    mock.patch.object(native, "ROOT", root), mock.patch.object(native.Producer, "build") as build:
+                with self.assertRaises(ValueError):
+                    native.Producer("subhub-pass")
+                self.assertEqual([], list(root.iterdir()))
+                build.assert_not_called()
+
+    def test_subset_receipt_is_explicit_and_does_not_claim_the_whole_suite_passed(self):
+        with tempfile.TemporaryDirectory() as folder, self.event():
+            root = Path(folder)
+            env = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "RUNNER_TEMP": folder, "ANDROID_HOME": str(root / "sdk")}
+            with mock.patch.dict(os.environ, env), mock.patch.object(native, "ROOT", root), mock.patch.object(sys, "platform", "linux"):
+                producer = native.Producer("subhub-pass")
+            receipt = json.loads((producer.out / "receipt.json").read_text())
+            self.assertEqual("pull_request_body", receipt["selectionSource"])
+            self.assertEqual("subhub-pass", receipt["suite"])
+            self.assertEqual(self.chosen, receipt["selected"])
+            self.assertEqual(self.chosen, receipt["remaining"])
+            self.assertEqual(50, len(receipt["notSelected"]))
+            self.assertEqual(52, len(receipt["suiteSelectors"]))
+            self.assertEqual("admission", receipt["state"])
+            self.assertEqual({}, receipt["methods"])
+
+    def test_cli_inventory_check_previews_the_same_labelled_selection(self):
+        with self.event(), mock.patch.object(sys, "argv", ["run_extra_time_native.py", "--suite", "subhub-pass", "--check-inventory"]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            native.main()
+        receipt = json.loads(output.getvalue())
+        self.assertEqual(self.chosen, receipt["selectors"])
+        self.assertEqual("pull_request_body", receipt["selectionSource"])
+
+
 class NativeWorkflowSelectionTest(unittest.TestCase):
     def setUp(self):
         self.workflow = (native.ROOT / ".github/workflows/extra-time-native.yml").read_text()
@@ -293,6 +453,9 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
     def test_only_one_job_and_no_label_push_schedule_or_dispatch_side_effect(self):
         self.assertEqual(["native"], re.findall(r"^  ([a-zA-Z_-]+):$", self.workflow.split("jobs:\n", 1)[1], re.MULTILINE))
         self.assertNotIn("matrix:", self.workflow)
+        self.assertNotIn("github.event.pull_request.body", self.workflow)
+        self.assertNotIn("native-manual-only", self.workflow)
+        self.assertNotRegex(self.workflow, r"(?m)^    if:")  # No job gate silently skips native qualification.
         trigger = self.workflow.split("on:\n", 1)[1].split("permissions:\n", 1)[0]
         self.assertNotIn("labeled", trigger)
         self.assertNotIn("types:", trigger)  # Retain the original PR default event set.

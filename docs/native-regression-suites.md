@@ -37,6 +37,53 @@ older methods that are **not** admitted as selectors. An unreviewed source chang
 fails before building/launching the guest. Each method still needs one exact
 instrumentation start and pass; ignored tests and assumptions are not passes.
 
+## Select a bounded PR recovery subset
+
+For one automatic PR job that runs only reviewed unfinished methods, add the
+`native-subset` label and exactly one block like this to the PR body **before**
+pushing the combined candidate head:
+
+```text
+<!-- native-selectors:start -->
+[
+  "com.subhub.app.remote.ExtraTimeRequestAndroidTest#retainedCapabilityCannotBypassConsentWorkspaceOrRevocation"
+]
+<!-- native-selectors:end -->
+```
+
+Keep `native-subhub-pass` as well when selecting methods from the 52-method suite.
+The producer reads the PR event JSON directly from `GITHUB_EVENT_PATH`; body text
+is never interpolated into a shell command or workflow expression. With
+`native-subset`, the block overrides the legacy subset labels. Without that exact
+label, the block is ignored and existing selection behavior is unchanged. Manual
+`workflow_dispatch` continues to use only its own suite/selectors inputs.
+
+The block must contain a nonempty JSON array of unique, exact `Class#method`
+strings from the chosen suite. No code fences belong **inside** the marker pair.
+Missing, reordered, malformed, duplicate or additional marker comments, empty
+arrays, class-wide selectors, wildcards, non-string values, unknown methods, and
+oversized input fail before producer setup/build. Markers are case-sensitive.
+Execution follows the fixed suite order, retaining the large-font case last.
+
+For recovery, inspect the preserved receipt first: `notPassed` includes the
+failed method plus unstarted methods; `remaining` alone omits the attempted
+failure. Review that set against the fix and the preserved passing cases. Publish
+the exact JSON list and label before the next head push. Label/body edits alone do
+not start a run because the workflow retains its existing PR event types. Wait
+for any existing candidate run to finish; do not also dispatch or rerun a job.
+
+The new receipt records `selectionSource=pull_request_body`, the complete suite
+inventory, actual `selected` subset, `notSelected`, method outcomes and retained
+source/APK identities. A passing subset does **not** claim that all suite methods
+ran on that head. Inspect its exact-head receipt, required UI witnesses,
+restoration and shutdown. Prior receipts remain evidence for their original
+heads; reconcile relevant production/test/helper/build changes separately before
+reusing any passing result. Canonical exact-source Android CI is unaffected.
+
+Remove `native-subset` when a later PR event should run the normal suite again.
+Leaving the label and block in place keeps selecting that subset on future heads.
+Neither a label nor native subset evidence permits a merge or release.
+
 ## Integration suite coverage and fixture requirements
 
 | Class | Additional methods selected | Requirements and isolation |

@@ -207,6 +207,11 @@ SUBHUB_PASS_SELECTORS = ALL_SELECTORS[:-1] + [
 ] + [LARGE_FONT]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS}
 SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52}
+PR_SUBSET_LABEL = "native-subset"
+PR_SUBSET_START = "<!-- native-selectors:start -->"
+PR_SUBSET_END = "<!-- native-selectors:end -->"
+MAX_EVENT_BYTES = 2 * MIB
+MAX_PR_BODY_BYTES = 64 * 1024
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
         "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
@@ -370,6 +375,56 @@ def selectors(raw, suite="extra-time"):
     return [value for value in known if value in requested]
 
 
+def pr_subset(body, suite):
+    """Treat the PR body as bounded data, never as shell or workflow expressions."""
+    if not isinstance(body, str) or len(body.encode("utf-8")) > MAX_PR_BODY_BYTES:
+        raise ValueError("Native subset requires a bounded PR body")
+    # Reject duplicate, misspelled, reordered, or extra lookalike marker comments.
+    markers = re.findall(r"<!--\s*native-selectors\b", body, re.IGNORECASE)
+    if len(markers) != 2 or body.count(PR_SUBSET_START) != 1 or body.count(PR_SUBSET_END) != 1:
+        raise ValueError("Native subset requires exactly one correctly delimited selector block")
+    start = body.index(PR_SUBSET_START) + len(PR_SUBSET_START)
+    end = body.index(PR_SUBSET_END)
+    if end < start:
+        raise ValueError("Native subset selector markers are out of order")
+    try:
+        requested = json.loads(body[start:end])
+    except (ValueError, RecursionError) as failure:
+        raise ValueError("Native subset selector block must be a JSON array") from failure
+    known = suite_selectors(suite)
+    if not isinstance(requested, list) or not requested or len(requested) > len(known) \
+            or any(not isinstance(value, str) for value in requested):
+        raise ValueError("Native subset must be a nonempty JSON array of exact method strings")
+    if len(set(requested)) != len(requested) or not set(requested).issubset(known):
+        raise ValueError("Native subset must contain unique exact selectors from the selected suite")
+    return [value for value in known if value in requested]
+
+
+def selected_methods(suite):
+    """Read opt-in PR subsets before producer directories, builds, or guest work."""
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        path = os.environ.get("GITHUB_EVENT_PATH")
+        if not path:
+            raise ValueError("PR native selection requires GITHUB_EVENT_PATH")
+        with Path(path).open("rb") as source:
+            raw = source.read(MAX_EVENT_BYTES + 1)
+        if len(raw) > MAX_EVENT_BYTES:
+            raise ValueError("PR event exceeds the native selection size bound")
+        try:
+            event = json.loads(raw)
+        except (ValueError, RecursionError) as failure:
+            raise ValueError("Native selection requires valid PR event JSON") from failure
+        pr = event.get("pull_request") if isinstance(event, dict) else None
+        labels = pr.get("labels") if isinstance(pr, dict) else None
+        if not isinstance(labels, list) or any(not isinstance(label, dict) or not isinstance(label.get("name"), str)
+                                              for label in labels):
+            raise ValueError("Native selection requires the PR event's label list")
+        if any(label["name"] == PR_SUBSET_LABEL for label in labels):
+            return pr_subset(pr.get("body"), suite), "pull_request_body"
+    raw = os.environ.get("EXTRA_TIME_SELECTORS", "")
+    return selectors(raw, suite), "workflow_selectors" if raw.strip() else "suite_default"
+
+
 def properties(path):
     values = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -464,6 +519,8 @@ class Producer:
     def __init__(self, suite="extra-time"):
         if sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true":
             raise ValueError("Native production requires an ephemeral GitHub Linux runner")
+        self.suite = suite
+        self.selected, self.selection_source = selected_methods(suite)
         self.run_id = os.environ["GITHUB_RUN_ID"]
         self.attempt = os.environ["GITHUB_RUN_ATTEMPT"]
         if not self.run_id.isdigit() or not self.attempt.isdigit():
@@ -486,14 +543,13 @@ class Producer:
                         ANDROID_AVD_HOME=str(self.host / "avd-index"))
         self.serial = "emulator-5554"
         self.avd = "subhub_extra_time_api35"
-        self.suite = suite
-        self.selected = selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""), self.suite)
         self.soft_deadline = time.monotonic() + 35 * 60
         self.record = {"schema": 1, "workflowPath": ".github/workflows/extra-time-native.yml",
                        "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
                        "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
                        "producerSoftTimeoutSeconds": 35 * 60,
                        "suite": self.suite, "suiteSelectors": suite_selectors(self.suite),
+                       "selectionSource": self.selection_source,
                        "selected": self.selected, "methods": {}, "remaining": list(self.selected), "notSelected": [
                            value for value in suite_selectors(self.suite) if value not in self.selected], "hostedFreshGuest": True}
         self.index = 0
@@ -1041,7 +1097,8 @@ def main():
                         help="Fixed native suite (default: extra-time, or EXTRA_TIME_SUITE)")
     args = parser.parse_args()
     if args.check_inventory:
-        print(json.dumps({"suite": args.suite, "selectors": selectors(os.environ.get("EXTRA_TIME_SELECTORS", ""), args.suite),
+        selected, selection_source = selected_methods(args.suite)
+        print(json.dumps({"suite": args.suite, "selectors": selected, "selectionSource": selection_source,
                           "suiteSelectors": suite_selectors(args.suite), "inventory": source_inventory(args.suite)}, indent=2))
         return
     producer = Producer(args.suite)
