@@ -41,23 +41,27 @@ public final class LocalPersonRepository implements PersonRepository {
         AppTimerManager timers = new AppTimerManager(context);
         AppTimerManager.Settings limits = timers.loadSettings();
         Set<String> packages = apps.getIncludedPackages();
-        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, System.currentTimeMillis());
+        long usageAt = System.currentTimeMillis();
+        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(packages, usageAt);
         List<PersonSnapshot.Allowance> allowances = new ArrayList<>();
         for (String packageName : packages) {
             String label = appLabel(packageName);
             if (limits.perAppEnabled) {
                 AppTimerManager.UsageSnapshot used = usage.get(packageName);
                 allowances.add(new PersonSnapshot.Allowance(packageName, label,
-                        used == null ? 0 : used.appUsedMillis, timers.allowanceMinutes(packageName)));
+                        used == null ? 0 : used.appUsedMillis, timers.allowanceMinutes(packageName), null,
+                        com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, usageAt)
+                                .individualBudget(timers.allowanceMinutes(packageName) * 60_000L)));
             }
         }
-        allowances.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
+
         if (limits.totalEnabled && !packages.isEmpty()) {
             long total = usage.isEmpty() ? 0 : usage.values().iterator().next().totalUsedMillis;
             allowances.add(new PersonSnapshot.Allowance("", context.getString(R.string.role_shared_allowance),
                     total, limits.totalMinutes));
         }
 
+        allowances = PersonSnapshot.Allowance.ordered(allowances);
         List<PersonSnapshot.Section> sections = new ArrayList<>();
         Set<String> imageCategories = settings.loadDetectorConfig().getEnabledCategories();
         com.subhub.app.detection.text.TextSmutConfig text = settings.loadTextSmutConfig();

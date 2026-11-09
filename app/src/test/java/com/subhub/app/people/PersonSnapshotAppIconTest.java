@@ -19,6 +19,16 @@ public final class PersonSnapshotAppIconTest {
         assertEquals("", shared.packageName); assertNull(shared.appIcon);
     }
 
+    @Test public void allowanceOrderingUsesAppliedBudgetWithoutMutatingSourceOrder() {
+        PersonSnapshot.Allowance low = new PersonSnapshot.Allowance("low", "Zulu", 58*60_000L, 60);
+        PersonSnapshot.Allowance higher = new PersonSnapshot.Allowance("higher", "Alpha", 9*60_000L, 10);
+        PersonSnapshot.Allowance bonus = new PersonSnapshot.Allowance("bonus", "Bonus", 5*60_000L, 5, null, 20*60_000L);
+        PersonSnapshot.Allowance unknown = new PersonSnapshot.Allowance("unknown", "Unknown", -1, 30);
+        java.util.List<PersonSnapshot.Allowance> original = Arrays.asList(unknown, bonus, higher, low);
+        assertEquals(Arrays.asList(low, higher, bonus, unknown), PersonSnapshot.Allowance.ordered(original));
+        assertSame(unknown, original.get(0)); assertEquals(5, bonus.dailyMinutes); assertEquals(20L, bonus.displayMinutes());
+    }
+
     @Test public void exactRemoteIdentityIsRetainedAcrossSectionsProfilesAndContractCopies() {
         RemoteAppIcon icon = new RemoteAppIcon("peer", "generation", PACKAGE, null);
         PersonSnapshot.App app = new PersonSnapshot.App(PACKAGE, "App", icon);

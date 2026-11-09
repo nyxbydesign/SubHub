@@ -240,17 +240,28 @@ public final class PersonSnapshot {
 
     public static final class Allowance {
         public final String packageName, label;
-        public final long usedMillis;
+        public final long usedMillis, budgetMillis;
         public final int dailyMinutes;
         public final RemoteAppIcon appIcon;
         public Allowance(String packageName, String label, long usedMillis, int dailyMinutes) {
             this(packageName, label, usedMillis, dailyMinutes, null);
         }
         public Allowance(String packageName, String label, long usedMillis, int dailyMinutes, RemoteAppIcon appIcon) {
+            this(packageName, label, usedMillis, dailyMinutes, appIcon, Math.max(0L, dailyMinutes * 60_000L));
+        }
+        public Allowance(String packageName, String label, long usedMillis, int dailyMinutes,
+                RemoteAppIcon appIcon, long budgetMillis) {
             this.packageName = packageName; this.label = label;
             this.usedMillis = usedMillis; this.dailyMinutes = dailyMinutes;
-            this.appIcon = matchingIcon(packageName, appIcon);
+            this.appIcon = matchingIcon(packageName, appIcon); this.budgetMillis = Math.max(0, budgetMillis);
         }
+        public static List<Allowance> ordered(List<Allowance> values) {
+            List<Allowance> result = new ArrayList<>(values);
+            result.sort((a, b) -> com.subhub.app.appmode.AppTimeOrder.compare(a.usedMillis, a.budgetMillis, a.label, a.packageName,
+                    b.usedMillis, b.budgetMillis, b.label, b.packageName));
+            return result;
+        }
+        public long displayMinutes() { return budgetMillis / 60_000L + (budgetMillis % 60_000L == 0 ? 0 : 1); }
     }
 
     private static RemoteAppIcon matchingIcon(String packageName, RemoteAppIcon icon) {

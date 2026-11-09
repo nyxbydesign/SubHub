@@ -290,7 +290,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 ProfileViews.targetDiscriminator(activity, person), person.connection, person.lastOnlineAt,
                 PersonUi.connection(activity, person)));
         if (favorite) java.util.Collections.addAll(signature, person.serviceLabel,
-                person.sync.runtime, person.sync.stats, person.protectedSeconds, person.activityEvents);
+                person.sync.runtime, person.sync.stats, person.serviceActive, person.protectedSeconds, person.activityEvents);
         return signature;
     }
 
@@ -527,7 +527,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         usageSignature.add(selection.allUsage);
         usageSignature.add(person.id);
         for (PersonSnapshot.Allowance value : person.allowances) java.util.Collections.addAll(usageSignature,
-                value.packageName, value.label, value.dailyMinutes, value.usedMillis, value.appIcon);
+                value.packageName, value.label, value.dailyMinutes, value.usedMillis, value.budgetMillis, value.appIcon);
         if (!usageSignature.equals(renderedUsage)) {
             renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person, dom);
         }
@@ -568,14 +568,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private void usage(PersonSnapshot person, AssignedDom dom) {
         if (person.allowances.isEmpty()) return;
         LinearLayout card = OverviewUi.card(subUsage); card.setTag("home_app_time");
-        List<PersonSnapshot.Allowance> values = new ArrayList<>(person.allowances);
-        values.sort((a, b) -> {
-            if (a.packageName.isEmpty() != b.packageName.isEmpty()) return a.packageName.isEmpty() ? -1 : 1;
-            long left = a.usedMillis < 0 ? Long.MAX_VALUE : Math.max(0, a.dailyMinutes * 60_000L - a.usedMillis);
-            long right = b.usedMillis < 0 ? Long.MAX_VALUE : Math.max(0, b.dailyMinutes * 60_000L - b.usedMillis);
-            int compared = Long.compare(left, right);
-            return compared != 0 ? compared : a.label.compareToIgnoreCase(b.label);
-        });
+        List<PersonSnapshot.Allowance> values = PersonSnapshot.Allowance.ordered(person.allowances);
         OverviewUi.heading(card, R.string.role_app_time, selection.allUsage
                 ? R.string.profile_show_less : R.string.overview_show_all, values.size() <= 3 ? null : () -> {
                     selection.allUsage = !selection.allUsage; renderSub(subPerson, subDom);
@@ -590,7 +583,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (index > 0) OverviewUi.divider(card);
             String copy = value.usedMillis < 0
                     ? activity.getString(R.string.role_allowance_unknown, value.dailyMinutes)
-                    : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.dailyMinutes);
+                    : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.displayMinutes());
             LinearLayout row = OverviewUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
             row.setMinimumHeight(dp(32)); row.setPadding(0, dp(4), 0, dp(4));
             int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
@@ -600,14 +593,14 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             else com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
-            progress.setMax(1000); progress.setProgress(value.dailyMinutes <= 0 ? 0 : (int) Math.min(1000,
-                    value.usedMillis / (value.dailyMinutes * 60_000d) * 1000));
+            progress.setMax(1000); progress.setProgress(value.budgetMillis <= 0 ? 0 : (int) Math.min(1000,
+                    value.usedMillis / (double) value.budgetMillis * 1000));
             progress.setProgressTintList(ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
             progress.setContentDescription(value.label);
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, dp(4));
             size.setMarginStart(dp(36)); size.bottomMargin = dp(8); card.addView(progress, size);
             if (!value.packageName.isEmpty() && value.dailyMinutes > 0
-                    && value.usedMillis >= value.dailyMinutes * 60_000L)
+                    && value.usedMillis >= value.budgetMillis)
                 com.subhub.app.appmode.ExtraTimeEntry.request(card, person.id, value.packageName);
         }
     }

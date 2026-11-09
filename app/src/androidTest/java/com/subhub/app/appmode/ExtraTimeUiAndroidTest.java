@@ -112,6 +112,8 @@ public final class ExtraTimeUiAndroidTest {
             ExtraTimeRequests.App approved = app(fixture.subRequests(), fixture.firstPackage);
             assertEquals("One-time bonus", 25, approved.bonusMinutes);
             assertEquals("Daily allowance is unchanged", 5, approved.dailyMinutes);
+            assertEquals("Exhausted app sorts before one with approved remaining credit", fixture.secondPackage,
+                    fixture.subRequests().snapshot(System.currentTimeMillis()).apps.get(0).packageName);
             try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
                 await(sub, a -> hasText(a, a.getString(R.string.extra_time_approved, 25)));
                 assertTrue(approved.remainingMillis > 0);

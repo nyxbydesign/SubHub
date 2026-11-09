@@ -18,12 +18,14 @@ import com.subhub.app.R;
 /** One app's retained daily allowance and live recorded usage, with no nested card surface. */
 final class AppLimitRow extends LinearLayout {
     final EditText allowance;
+    final String appLabel;
     private final TextView usage;
     private final ProgressBar progress;
     private String receipt = "";
 
     AppLimitRow(Context context, String packageName, String name, Drawable icon, String minutes) {
         super(context);
+        appLabel = name;
         setOrientation(VERTICAL);
         setPadding(0, dp(8), 0, dp(8));
         boolean large = getResources().getConfiguration().fontScale >= 1.5f

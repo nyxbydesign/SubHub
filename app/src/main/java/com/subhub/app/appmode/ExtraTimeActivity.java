@@ -195,7 +195,7 @@ public final class ExtraTimeActivity extends PreferencePage {
                     ? R.string.extra_time_total_reached : R.string.extra_time_reached)
                     : app.dailyMinutes > 0 || app.remainingMillis > 0 ? getString(R.string.extra_time_remaining,
                             (Math.max(0L, app.remainingMillis) + 59_999L) / 60_000L) : "";
-            ExtraTimeViews.usage(card, app.usedMillis, app.dailyMinutes, app.bonusMinutes, state, app.exhausted);
+            ExtraTimeViews.usage(card, app.usedMillis, app.dailyMinutes, app.bonusMinutes, state, app.exhausted, app.budgetMillis);
             // Keep every receipt with its own outcome, rather than replacing it on the next request.
             for (ExtraTimeRequests.Request request : value.requests) if (app.packageName.equals(request.packageName))
                 receipt(ExtraTimeViews.receipt(card, request.id), request);
@@ -379,7 +379,7 @@ public final class ExtraTimeActivity extends PreferencePage {
                 .append('|').append(value.personName).append('|').append(value.tributeCents).append('|').append(value.currency);
         for (ExtraTimeRequests.App app : value.apps) out.append('|').append(app.packageName).append('|').append(app.label)
                 .append('|').append(app.dailyMinutes).append('|').append(app.bonusMinutes).append('|').append(app.usedMillis)
-                .append('|').append(app.remainingMillis).append('|').append(app.combinedLimitReached)
+                .append('|').append(app.remainingMillis).append('|').append(app.budgetMillis).append('|').append(app.combinedLimitReached)
                 .append('|').append(app.exhausted).append('|').append(app.pending == null ? "" : app.pending.id)
                 .append('|').append(app.latest == null ? "" : app.latest.id + app.latest.status + app.latest.approvedMinutes);
         for (ExtraTimeRequests.Request request : value.requests) {

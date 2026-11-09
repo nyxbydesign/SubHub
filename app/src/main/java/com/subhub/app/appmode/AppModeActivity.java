@@ -444,11 +444,15 @@ public final class AppModeActivity extends AppCompatActivity {
         binding.limitsCombinedProgress.setVisibility(View.GONE);
         java.util.Map<String,com.subhub.app.people.PersonSnapshot.Allowance> values = new java.util.HashMap<>();
         if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);
+        Map<String, Double> order = new LinkedHashMap<>();
         for (java.util.Map.Entry<String,AppLimitRow> row : appRows.entrySet()) {
             com.subhub.app.people.PersonSnapshot.Allowance value = values.get(row.getKey());
             String usage = value == null || value.usedMillis < 0 ? getString(R.string.role_unknown_data) : getString(R.string.limits_usage_only, formatUsage(value.usedMillis));
             row.getValue().renderUsage(usage, 0, false);
+            order.put(row.getKey(), value == null ? Double.POSITIVE_INFINITY
+                    : AppTimeOrder.remainingFraction(value.usedMillis, value.budgetMillis));
         }
+        orderRows(order);
     }
 
     private void renderTimerUsage() {
@@ -492,21 +496,26 @@ public final class AppModeActivity extends AppCompatActivity {
                         : getString(R.string.limits_usage_only, formatUsage(totalUsed)));
         binding.limitsCombinedProgress.setVisibility(combined ? View.VISIBLE : View.GONE);
         binding.limitsCombinedProgress.setProgress(LimitsUsage.percent(totalUsed, totalBudget));
+        Map<String, Double> order = new LinkedHashMap<>();
         for (Map.Entry<String, AppLimitRow> entry : appRows.entrySet()) {
             AppTimerManager.UsageSnapshot current = usage.get(entry.getKey());
             if (current == null) continue;
             Integer draft = readMinutes(entry.getValue().allowance, true);
             int minutes = draft == null ? timers.allowanceMinutes(entry.getKey()) : draft;
             long budget = AppTimerManager.minutesToMillis(minutes);
+            ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(
+                    FeatureEditorSession.context(this), entry.getKey(), now);
+            long effectiveBudget = extra.individualBudget(budget);
             LimitsUsage state =
                     LimitsUsage.forApp(
                             current.appUsedMillis,
-                            budget,
+                            effectiveBudget,
                             totalUsed,
                             totalBudget,
                             individual,
                             combined);
-            long remaining = state.remainingMillis;
+            long remaining = state.limited ? extra.remaining(current.appUsedMillis, budget, totalUsed, totalBudget, individual, combined)
+                    : state.remainingMillis;
             boolean limited = state.limited;
             String description =
                     limited
@@ -518,7 +527,44 @@ public final class AppModeActivity extends AppCompatActivity {
                                             formatUsage(remaining))
                             : getString(
                                     R.string.limits_usage_only, formatUsage(current.appUsedMillis));
-            entry.getValue().renderUsage(description, state.progressPercent, limited);
+            double fraction = individual ? AppTimeOrder.remainingFraction(current.appUsedMillis, effectiveBudget)
+                    : Double.POSITIVE_INFINITY;
+            if (combined) {
+                long available = Math.max(Math.max(0L,totalBudget-totalUsed),Math.max(0L,extra.appCeilingMillis-current.appUsedMillis));
+                double sharedFraction = available / (double) Math.max(1L,Math.max(totalBudget,extra.appCeilingMillis));
+                fraction = Math.min(fraction, sharedFraction);
+            }
+            order.put(entry.getKey(),fraction);
+            entry.getValue().renderUsage(description, Double.isInfinite(fraction) ? 0 : (int)Math.round(100*(1-fraction)), limited);
+        }
+        orderRows(order);
+    }
+
+    private void orderRows(Map<String, Double> fractions) {
+        // Keep the focused editor under the user's finger. Reorder after its draft is committed.
+        for (EditText input : allowanceInputs.values()) if (input.hasFocus()) return;
+        List<String> names = new ArrayList<>(appRows.keySet());
+        names.sort((a,b) -> {
+            double left=fractions.containsKey(a)?fractions.get(a):Double.POSITIVE_INFINITY;
+            double right=fractions.containsKey(b)?fractions.get(b):Double.POSITIVE_INFINITY;
+            int compared=Double.compare(left,right);
+            if(compared==0)compared=appRows.get(a).appLabel.compareToIgnoreCase(appRows.get(b).appLabel);
+            return compared!=0?compared:a.compareTo(b);
+        });
+        List<AppLimitRow> current = new ArrayList<>();
+        for(int i=0;i<binding.perAppAllowancesList.getChildCount();i++)
+            if(binding.perAppAllowancesList.getChildAt(i) instanceof AppLimitRow)
+                current.add((AppLimitRow)binding.perAppAllowancesList.getChildAt(i));
+        boolean same=current.size()==names.size();
+        for(int i=0;same&&i<names.size();i++)same=current.get(i)==appRows.get(names.get(i));
+        if(same)return;
+        binding.perAppAllowancesList.removeAllViews();
+        for(String name:names) {
+            if(binding.perAppAllowancesList.getChildCount()>0) {
+                View divider=new View(this);divider.setBackgroundResource(R.color.outline_subtle);
+                binding.perAppAllowancesList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+            }
+            binding.perAppAllowancesList.addView(appRows.get(name),new LinearLayout.LayoutParams(-1,-2));
         }
     }
 

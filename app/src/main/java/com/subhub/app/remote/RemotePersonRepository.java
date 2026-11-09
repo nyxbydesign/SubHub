@@ -131,12 +131,20 @@ public final class RemotePersonRepository implements PersonRepository {
         if(apps.getBoolean("all"))for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))if(!row.deleted)packages.add(row.key);
         if(limits.optBoolean("app_timer_per_app_enabled"))for(String name:packages) {
             JSONObject entry=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG,name);
-            result.add(new PersonSnapshot.Allowance(name,entry==null?name:entry.optString("label",name),usage.has(name)?knownUsage(usage,name):-1,budgets.optInt(name,limits.optInt("app_timer_per_app_minutes",30)),feature.appIcons.identity(peer.identity,peer.generation,name)));
+            int daily=budgets.optInt(name,limits.optInt("app_timer_per_app_minutes",30));
+            long effective=daily*60_000L;
+            // Optional source-device observation; never infer applied credit from our approval journal.
+            JSONObject reported=currentUsage?today.optJSONObject("effectiveBudgets"):null;
+            JSONObject observed=reported==null?null:reported.optJSONObject(name);
+            if(observed!=null)try {
+                effective=com.subhub.app.appmode.AppTimeOrder.confirmedBudget(effective,
+                        Math.multiplyExact(RemoteProtocol.integer(observed,"daily"),60_000L),RemoteProtocol.integer(observed,"millis"));
+            } catch(JSONException|ArithmeticException invalid) { /* Legacy or malformed observation retains its configured budget. */ }
+            result.add(new PersonSnapshot.Allowance(name,entry==null?name:entry.optString("label",name),usage.has(name)?knownUsage(usage,name):-1,
+                    daily,feature.appIcons.identity(peer.identity,peer.generation,name),effective));
         }
         if(limits.optBoolean("app_timer_total_enabled"))result.add(new PersonSnapshot.Allowance("",context.getString(R.string.role_shared_allowance),knownUsage(usage,""),limits.optInt("app_timer_total_minutes",120)));
-        java.text.Collator order=java.text.Collator.getInstance(context.getResources().getConfiguration().getLocales().get(0));
-        result.sort((a,b)->{int compared=order.compare(a.label,b.label);return compared!=0?compared:a.packageName.compareTo(b.packageName);});
-        return result;
+        return PersonSnapshot.Allowance.ordered(result);
     }
     private static long knownUsage(JSONObject values,String name){try{long value=RemoteProtocol.integer(values,name);return value<0?-1:value;}catch(Exception invalid){return -1;}}
     private String display(ConfigurationSettingCatalog.Field field,Object value) {

@@ -112,11 +112,11 @@ public final class PersonUi {
         LinearLayout card = card(parent);
         UiIdentity.sectionIcon(text(card, parent.getContext().getString(R.string.role_app_time), true),
                 R.drawable.ic_nav_limits);
-        for (PersonSnapshot.Allowance value : snapshot.allowances) {
+        for (PersonSnapshot.Allowance value : PersonSnapshot.Allowance.ordered(snapshot.allowances)) {
             LinearLayout app = row(card, R.drawable.ic_nav_limits, value.label,
                     value.usedMillis < 0 ? parent.getContext().getString(R.string.role_allowance_unknown, value.dailyMinutes)
                             : parent.getContext().getString(R.string.role_allowance_usage,
-                                    value.usedMillis / 60_000L, value.dailyMinutes), null);
+                                    value.usedMillis / 60_000L, value.displayMinutes()), null);
             int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
             app.getChildAt(0).setTag("allowance_app_icon:" + value.packageName);
             if (value.appIcon != null || !snapshot.id.isLocal())
@@ -125,14 +125,14 @@ public final class PersonUi {
             if (value.usedMillis < 0) continue;
             ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
             progress.setMax(1000);
-            long maximum = value.dailyMinutes * 60_000L;
-            progress.setProgress(maximum <= 0 ? 0 : (int) Math.min(1000, value.usedMillis * 1000 / maximum));
+            long maximum = value.budgetMillis;
+            progress.setProgress(maximum <= 0 ? 0 : (int) Math.min(1000, value.usedMillis / (double) maximum * 1000));
             progress.setProgressTintList(android.content.res.ColorStateList.valueOf(parent.getContext().getColor(R.color.accent_text)));
             progress.setContentDescription(value.label);
             card.addView(progress, new LinearLayout.LayoutParams(-1, dp(parent.getContext(), 6)));
             if (snapshot.id.isLocal() && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())
                     && !value.packageName.isEmpty() && value.dailyMinutes > 0
-                    && value.usedMillis >= value.dailyMinutes * 60_000L)
+                    && value.usedMillis >= value.budgetMillis)
                 com.subhub.app.appmode.ExtraTimeEntry.request(card, snapshot.id, value.packageName);
         }
         com.subhub.app.appmode.ExtraTimeEntry.review(card, snapshot.id);

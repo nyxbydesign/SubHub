@@ -43,9 +43,15 @@ public final class RemoteTelemetry {
             publish(peer,RemoteProtocol.Stream.APP_USAGE,key,new JSONObject().put("schema",1).put("epoch",entry.epoch).put("day",entry.day)
                     .put("zone",entry.zone.isEmpty()?JSONObject.NULL:entry.zone).put("package",entry.packageName).put("millis",entry.millis));
         }
-        JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(timers.loadSettings().anyEnabled()?apps.getIncludedPackages():Collections.emptySet(),System.currentTimeMillis());
+        long usageAt=System.currentTimeMillis();JSONObject effectiveBudgets=new JSONObject();
+        JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(timers.loadSettings().anyEnabled()?apps.getIncludedPackages():Collections.emptySet(),usageAt);
         for(Map.Entry<String,AppTimerManager.UsageSnapshot> entry:usage.entrySet())now.put(entry.getKey(),entry.getKey().isEmpty()?entry.getValue().totalUsedMillis:entry.getValue().appUsedMillis);
-        publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("zone",java.time.ZoneId.systemDefault().getId()).put("millis",now));
+        if(timers.loadSettings().perAppEnabled)for(String name:usage.keySet())if(!name.isEmpty()) {
+            int daily=timers.allowanceMinutes(name);
+            long effective=ExtraTimeRequests.allowance(context,name,usageAt).individualBudget(daily*60_000L);
+            effectiveBudgets.put(name,new JSONObject().put("daily",daily).put("millis",effective));
+        }
+        publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("zone",java.time.ZoneId.systemDefault().getId()).put("millis",now).put("effectiveBudgets",effectiveBudgets));
         Set<String> catalog=new HashSet<>();
         for(InstalledAppCatalog.Entry entry:InstalledAppCatalog.load(context)) {
             catalog.add(entry.packageName);

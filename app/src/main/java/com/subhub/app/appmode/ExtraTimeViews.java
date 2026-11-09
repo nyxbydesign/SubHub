@@ -76,10 +76,10 @@ final class ExtraTimeViews {
     }
 
     static void usage(LinearLayout parent, long usedMillis, int dailyMinutes, int bonusMinutes,
-            String state, boolean exhausted) {
+            String state, boolean exhausted, long budgetMillis) {
         Context context = parent.getContext();
         long used = Math.max(0, usedMillis);
-        int total = Math.max(0, dailyMinutes) + Math.max(0, bonusMinutes);
+        long total = dailyMinutes > 0 ? (budgetMillis + 59_999L) / 60_000L : 0;
         String summary = dailyMinutes > 0
                 ? context.getString(R.string.extra_time_usage_summary, dailyMinutes, used / 60_000L, total)
                 : context.getString(R.string.extra_time_app_used, used / 60_000L);
@@ -107,7 +107,7 @@ final class ExtraTimeViews {
         ProgressBar progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
         progress.setTag("extra_time_usage_progress");
         progress.setMax(1000);
-        progress.setProgress(total <= 0 ? 0 : (int) Math.min(1000, used * 1000 / (total * 60_000L)));
+        progress.setProgress(total <= 0 ? 0 : (int) Math.min(1000, used * 1000 / Math.max(1L, budgetMillis)));
         progress.setProgressTintList(ColorStateList.valueOf(context.getColor(R.color.accent_mid)));
         progress.setProgressBackgroundTintList(ColorStateList.valueOf(context.getColor(R.color.outline_subtle)));
         progress.setContentDescription(context.getString(R.string.extra_time_usage, used / 60_000L, total));
