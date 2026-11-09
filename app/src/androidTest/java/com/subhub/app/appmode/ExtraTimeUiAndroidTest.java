@@ -154,7 +154,8 @@ public final class ExtraTimeUiAndroidTest {
                 });
                 assertTrue("Displaying an unavailable action never submits", fixture.subRequests()
                         .snapshot(System.currentTimeMillis()).requests.isEmpty());
-                capture(sub, text(R.string.extra_time_request_unavailable), "extra-time-sub-unavailable");
+                capture(sub, value -> ("extra_time_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
+                        "extra-time-sub-unavailable");
                 sub.recreate();
                 await(sub, a -> tagged(a, tag) != null && !tagged(a, tag).isEnabled());
                 assertTrue(settings.edit().putBoolean(AppModeManager.KEY_ARMED, true).commit());
@@ -195,7 +196,8 @@ public final class ExtraTimeUiAndroidTest {
                             reason.getText().toString());
                     assertTrue(hasText(a, a.getString(R.string.extra_time_no_tribute)));
                 });
-                capture(sub, text(R.string.extra_time_request_unavailable), "extra-time-sub-support-unconfirmed");
+                capture(sub, value -> ("extra_time_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
+                        "extra-time-sub-support-unconfirmed");
                 assertTrue(fixture.subRequests().snapshot(System.currentTimeMillis()).requests.isEmpty());
                 // A freshly confirmed supported handshake, not a tap, makes submission available.
                 fixture.setSubAppTimeSupport(true);
@@ -368,7 +370,8 @@ public final class ExtraTimeUiAndroidTest {
         AtomicReference<TextView> target = new AtomicReference<>();
         scenario.onActivity(a -> target.set(findText(a.findViewById(android.R.id.content), predicate)));
         assertNotNull("Capture target " + name, target.get());
-        onView(withText(target.get().getText().toString())).perform(reveal());
+        // Copy may repeat in the intro and app card; reveal the exact selected opaque witness.
+        onView(org.hamcrest.Matchers.sameInstance(target.get())).perform(reveal());
         android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         String run = InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui");
         assertTrue(run.matches("[A-Za-z0-9_-]+") && name.matches("[A-Za-z0-9_.-]+"));
