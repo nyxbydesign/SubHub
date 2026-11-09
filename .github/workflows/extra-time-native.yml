@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/extra-time-native.yml"
       - "scripts/run_extra_time_native.py"
+      - "scripts/test_run_extra_time_native.py"
       - "app/build.gradle"
       - "build.gradle"
       - "gradle.properties"
@@ -57,6 +58,8 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Test native observer admission and restoration
+        run: python3 -m unittest scripts.test_run_extra_time_native
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

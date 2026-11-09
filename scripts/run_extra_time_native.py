@@ -101,6 +101,71 @@ def digest(path):
     return value.hexdigest()
 
 
+def notification_permission_state(info):
+    """Read API35's default-device state for the installed target in its sole User 0.
+
+    Android 15 omits zero-valued permission entries, and Settings omits the flags
+    suffix when API flags are zero. This is not a general missing-line fallback:
+    require a closed package dump, the requested permission, and a complete runtime
+    section for the installed user before interpreting absence as denied/no flags.
+
+    AOSP android-15.0.0_r1, under https://github.com/aosp-mirror/platform_frameworks_base:
+    - services/core/java/com/android/server/pm/Settings.java:
+      dumpRuntimePermissionsLPr / permissionFlagsToString.
+    - services/permission/java/com/android/server/permission/access/permission/:
+      PermissionService.kt:getLegacyPermissionState enumerates stored entries;
+      AppIdPermissionPolicy.kt:getPermissionFlags / updatePermissionFlags default
+      absent entries to 0 and remove zero entries via putWithDefault;
+      PermissionFlags.kt:isPermissionGranted(0) is false, toApiFlags(0) is 0.
+    The producer verifies API35 before calling this observer. Other layouts fail closed.
+    """
+    def section(lines, header, require_end=False):
+        starts = [i for i, line in enumerate(lines) if re.fullmatch(header, line)]
+        if len(starts) != 1:
+            raise ValueError("Notification permission dump section is missing or ambiguous")
+        start = starts[0]
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].strip()
+                    and len(lines[i]) - len(lines[i].lstrip()) <= indent), len(lines))
+        if require_end and (end == len(lines) or not re.fullmatch(r"[A-Za-z][A-Za-z ]*:", lines[end])):
+            raise ValueError("Notification permission package dump is incomplete")
+        return lines[start + 1:end]
+
+    packages = section(info.splitlines(), r"Packages:", require_end=True)
+    headers = [line for line in packages if line.startswith("  Package ")]
+    if len(headers) != 1 or not re.fullmatch(r"  Package \[com\.subhub\.app\] \([0-9a-f]+\):", headers[0]):
+        raise ValueError("Notification permission target package is missing or ambiguous")
+    package = section(packages, re.escape(headers[0]))
+    if any("sharedUser" in line for line in package):
+        raise ValueError("Shared-UID notification permission state is unsupported")
+    permission = "android.permission.POST_NOTIFICATIONS"
+    requested = section(package, r"    requested permissions:")
+    if requested.count("      " + permission) != 1:
+        raise ValueError("Target does not uniquely request POST_NOTIFICATIONS")
+    users = [line for line in package if line.startswith("    User ")]
+    if len(users) != 1 or not re.fullmatch(r"    User 0: .+", users[0]) \
+            or "installed=true" not in users[0].split():
+        raise ValueError("Notification permission installed User 0 is missing or ambiguous")
+    user = section(package, re.escape(users[0]))
+    runtime = section(user, r"      runtime permissions:")
+    states = {}
+    for line in runtime:
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"        ([A-Za-z0-9_.]+): granted=(true|false)(?:, flags=\[([^]\r\n]*)\])?", line)
+        if not match or match[1] in states:
+            raise ValueError("Notification runtime permission record is malformed or duplicated")
+        flags = [value.strip() for value in match[3].split("|")] if match[3] and match[3].strip() else []
+        if any(not re.fullmatch(r"[A-Z][A-Z0-9_]*", flag) for flag in flags) or len(set(flags)) != len(flags):
+            raise ValueError("Notification runtime permission flags are malformed or duplicated")
+        states[match[1]] = {"granted": match[2] == "true", "flags": sorted(flags)}
+    # Do not misread a displaced, malformed or install-permission record as absent.
+    occurrences = sum(permission in line for line in package)
+    if occurrences != 1 + (permission in states):
+        raise ValueError("Notification permission appears outside its expected sections")
+    return states.get(permission, {"granted": False, "flags": []})
+
+
 def missing_loader_libraries(output):
     return set(re.findall(r"^\s*([A-Za-z0-9_+.-]+)\s+=>\s+not found\s*$", output, re.MULTILINE))
 
@@ -627,13 +692,11 @@ class Producer:
 
     def external_state(self):
         info = self.shell("dumpsys", "package", "com.subhub.app", label="permission-state")
-        matches = re.findall(r"android\.permission\.POST_NOTIFICATIONS: granted=(true|false), flags=\[([^]]*)\]", info)
-        if len(matches) != 1:
-            raise ValueError("Notification permission state is not uniquely observable")
+        notification = notification_permission_state(info)
         values = {"a11Services": self.shell("settings", "get", "secure", "enabled_accessibility_services", label="a11-services").strip(),
                   "a11Enabled": self.shell("settings", "get", "secure", "accessibility_enabled", label="a11-enabled").strip(),
                   "fontScale": self.shell("settings", "get", "system", "font_scale", label="font-scale").strip(),
-                  "postNotifications": {"granted": matches[0][0] == "true", "flags": sorted(v.strip() for v in matches[0][1].split("|") if v.strip())}}
+                  "postNotifications": notification}
         for key in ("a11Services", "a11Enabled", "fontScale"):
             if not re.fullmatch(r"[A-Za-z0-9_./:+-]*", values[key]):
                 raise ValueError("External state token cannot be restored safely")
