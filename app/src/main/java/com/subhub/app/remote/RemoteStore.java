@@ -1527,6 +1527,48 @@ public final class RemoteStore extends SQLiteOpenHelper {
         }
     }
 
+    synchronized void requireConfigurationEditor(String identity,String generation) {
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
+        if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new SecurityException("Configuration recovery is incomplete");
+        Peer peer=active(getWritableDatabase(),identity,generation);
+        if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Only the paired Dom controls configuration");
+    }
+
+    synchronized void saveConfigurationEdit(String identity,String generation,String encoded) {
+        requireConfigurationEditor(identity,generation);
+        putMetadata(identity,generation,"configuration_edit",encoded);
+    }
+
+    synchronized void resetConfigurationEdits(String identity,String generation) {
+        requireConfigurationEditor(identity,generation);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Command latest=latestCommand(identity,generation);
+            if(latest!=null && latest.pending())throw new IllegalStateException("A configuration change is pending");
+            putMetadata(identity,generation,"configuration_edit","");
+            putMetadata(identity,generation,"configuration_edit_failure","");
+            putMetadata(identity,generation,"configuration_edit_reset",latest==null?"":latest.id);
+            long desired=Long.parseLong(metadata(identity,generation,"desired_revision","0"));
+            long applied=Long.parseLong(metadata(identity,generation,"applied_revision","0"));
+            putMetadata(identity,generation,"desired_revision",Long.toString(Math.max(desired,applied)));
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+
+    synchronized void publishConfigurationEdit(String identity,String generation,JSONObject configuration,boolean unchanged)throws JSONException {
+        requireConfigurationEditor(identity,generation);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Command latest=latestCommand(identity,generation);
+            if(latest!=null && latest.state!=CommandState.APPLIED && (latest.pending() || !latest.id.equals(metadata(identity,generation,"configuration_edit_reset",""))))throw new IllegalStateException("Previous configuration not applied");
+            if(!unchanged)queueConfiguration(identity,generation,Long.parseLong(metadata(identity,generation,"desired_revision","0")),
+                    Long.parseLong(metadata(identity,generation,"applied_revision","0")),configuration);
+            putMetadata(identity,generation,"configuration_edit","");
+            putMetadata(identity,generation,"configuration_edit_failure","");
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+    }
+
     public synchronized Command queueConfiguration(String identity,String generation,long expectedDesired,long expectedApplied,JSONObject configuration) throws JSONException {
         if(!com.subhub.app.security.DeviceRolePreferences.supportsDom(context))throw new SecurityException("Dom capability unavailable");
         if(!com.subhub.app.configuration.LegacyPackMigration.isReady(context))throw new SecurityException("Configuration recovery is incomplete");
@@ -1598,9 +1640,11 @@ public final class RemoteStore extends SQLiteOpenHelper {
     }
 
     synchronized void acceptResult(String identity,String generation,JSONObject result) throws JSONException {
-        Peer peer=active(getWritableDatabase(),identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Unexpected command result");
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+        Peer peer=active(db,identity,generation);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new SecurityException("Unexpected command result");
         if(RemoteProtocol.integer(result,"schema")!=1)throw new IllegalArgumentException("Unsupported command result");
-        Command old=command(identity,generation,result.getString("id"));if(old==null)return;
+        Command old=command(identity,generation,result.getString("id"));if(old==null){db.setTransactionSuccessful();return;}
         CommandState state=CommandState.valueOf(result.getString("state"));long applied=RemoteProtocol.integer(result,"appliedRevision");
         if(RemoteProtocol.integer(result,"revision")!=old.revision || applied<0 || state==CommandState.APPLIED && applied!=old.revision
                 || state!=CommandState.APPLIED && state!=CommandState.REJECTED && state!=CommandState.CONFLICT)throw new SecurityException("Invalid command result");
@@ -1609,6 +1653,8 @@ public final class RemoteStore extends SQLiteOpenHelper {
         long previous=Long.parseLong(metadata(identity,generation,"applied_revision","0"));
         if(applied>=previous)putMetadata(identity,generation,"applied_revision",Long.toString(applied));
         putMetadata(identity,generation,"last_command_reason",result.optString("reason",""));
+        db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
     }
 
     private static Command readCommand(Cursor c){return new Command(c.getString(0),c.getLong(1),CommandState.valueOf(c.getString(2)),StoredPayloads.read(c,3));}

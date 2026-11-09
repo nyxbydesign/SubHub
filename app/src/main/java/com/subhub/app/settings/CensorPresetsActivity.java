@@ -73,7 +73,7 @@ public final class CensorPresetsActivity extends PreferencePage {
         } catch (IllegalStateException unreadable) { fieldHelp(page, unreadable.getMessage()); }
         android.widget.ScrollView scroll = (android.widget.ScrollView) page.getParent();
         scroll.post(() -> scroll.scrollTo(0, scrollPosition));
-        FeatureEditorSession.decorate(this);
+        FeatureEditorSession.bind(this,findViewById(android.R.id.content),"censor",()->true);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {

@@ -25,7 +25,7 @@ import java.util.function.BooleanSupplier;
 
 /** One native feature editor, backed by live local settings or an identity-bound remote draft. */
 public final class FeatureEditorSession {
-    private static final String TOKEN="feature_editor_token", DOCUMENT="feature_editor_document";
+    private static final String TOKEN="feature_editor_token", DOCUMENT="feature_editor_document", BASE="feature_editor_base";
     private static final Map<AppCompatActivity,FeatureEditorSession> PAGES=Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<String,FeatureEditorSession> DRAFTS=new HashMap<>();
     private final RemoteFeature feature;
@@ -35,10 +35,13 @@ public final class FeatureEditorSession {
     private final DraftContext context;
     private final Map<String,DraftPreferences> stores=new LinkedHashMap<>();
     private final Set<String> disabledArtwork=new HashSet<>();
-    private JSONObject document;
+    private JSONObject document,editBase;
+    private final Map<AppCompatActivity,EditorBinding> bindings=new IdentityHashMap<>();
+    private final android.os.Handler main=new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean flushing,invalidated,restorePending,userDirty;
     private long desired,applied;
     private int pages;
-    private volatile boolean saving;
+
 
     private FeatureEditorSession(AppCompatActivity activity,Bundle saved) throws Exception {
         Context app=activity.getApplicationContext();
@@ -50,8 +53,11 @@ public final class FeatureEditorSession {
         context=new DraftContext(app,this,id);
         requireAuthority();
         String raw=saved==null?activity.getIntent().getStringExtra(DOCUMENT):saved.getString(DOCUMENT);
-        document=raw==null?feature.contracts.current(peer):RemoteConfiguration.active(new JSONObject(raw));
+        document=raw==null?feature.contracts.editing(peer):RemoteConfiguration.active(new JSONObject(raw));
         if(document==null)throw new IOException("Configuration is unavailable");
+        String base=saved==null?activity.getIntent().getStringExtra(BASE):saved.getString(BASE);
+        editBase=base==null?new JSONObject(document.toString()):RemoteConfiguration.active(new JSONObject(base));
+        restorePending=!RemoteProtocol.canonical(document).equals(RemoteProtocol.canonical(editBase));
         if(saved!=null&&saved.containsKey("feature_artwork_all")) {
             document.getJSONObject("contract").put("assets",new JSONArray(saved.getString("feature_artwork_all")));
             ArrayList<String> disabled=saved.getStringArrayList("feature_artwork_disabled");
@@ -87,17 +93,33 @@ public final class FeatureEditorSession {
         try{
             String token=saved==null?activity.getIntent().getStringExtra(TOKEN):saved.getString(TOKEN);
             FeatureEditorSession session=token==null?null:DRAFTS.get(token);
+            if(session!=null&&session.invalidated)session=null;
             if(session==null)session=new FeatureEditorSession(activity,saved);
             if(!session.person.equals(PersonRoutes.requireId(activity.getIntent())))throw new SecurityException("Editor target changed");
             session.requireAuthority();session.pages++;PAGES.put(activity,session);DRAFTS.put(session.context.token,session);
             FeatureEditorSession attached=session;
             activity.getLifecycle().addObserver((LifecycleEventObserver)(owner,event)->{
                 if(event==Lifecycle.Event.ON_RESUME){
+                    if(attached.invalidated){restart(activity);return;}
+                    EditorBinding binding=attached.bindings.get(activity);
+                    if(binding!=null){
+                        binding.active=true;
+                        if(attached.restorePending||attached.userDirty){
+                            try{if(!RemoteProtocol.canonical(attached.snapshot()).equals(RemoteProtocol.canonical(binding.autosave.base())))binding.autosave.changed();else attached.userDirty=false;}
+                            catch(Exception incomplete){binding.autosave.changed();}
+                            attached.restorePending=false;
+                        }
+                    }
                     try{attached.requireAuthority();}catch(RuntimeException denied){activity.finish();return;}
                     activity.getWindow().getDecorView().post(()->decorate(activity));
+                } else if(event==Lifecycle.Event.ON_PAUSE){
+                    EditorBinding binding=attached.bindings.get(activity);
+                    if(binding!=null){binding.autosave.flush();binding.active=false;attached.remember(binding);}
                 } else if(event==Lifecycle.Event.ON_DESTROY){
+                    EditorBinding binding=attached.bindings.remove(activity);
+                    if(binding!=null){binding.autosave.close();attached.remember(binding);}
                     PAGES.remove(activity);attached.pages--;
-                    if(attached.pages==0&&!activity.isChangingConfigurations()) {
+                    if(attached.pages==0&&(attached.invalidated||!activity.isChangingConfigurations())) {
                         DRAFTS.remove(attached.context.token);attached.context.closeCache();
                     }
                 }
@@ -123,13 +145,14 @@ public final class FeatureEditorSession {
     public static boolean canEdit(AppCompatActivity activity,String section){
         FeatureEditorSession scope=scope(activity);
         if(scope!=null){
-            try{scope.requireAuthority();return !scope.saving&&scope.person.equals(PersonRoutes.requireId(activity.getIntent()))
+            try{scope.requireAuthority();return !scope.invalidated&&scope.person.equals(PersonRoutes.requireId(activity.getIntent()))
                     &&RemoteFeaturePolicy.remoteAllowed(scope.feature.store,scope.peer,section);}catch(RuntimeException denied){return false;}
         }
         return PersonRoutes.isLocalTarget(activity.getIntent())&&ControllerPinManager.canEditConfiguration()
                 &&(!SubFeaturePolicy.FEATURES.contains(section)||SubFeaturePolicy.allowed(activity,section));
     }
     private void requireAuthority(){
+        if(invalidated)throw new SecurityException("Editor was reloaded");
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);
         if(!feature.recoveryReady()||!DeviceRolePreferences.supportsDom(context.getBaseContext())
                 ||!ControllerPinManager.isDomModeActive()||!ControllerPinManager.hasCredentials(context.getBaseContext())
@@ -137,8 +160,9 @@ public final class FeatureEditorSession {
             throw new SecurityException("Remote editor is unavailable");
     }
     public static void saveState(AppCompatActivity activity,Bundle state){
-        FeatureEditorSession scope=scope(activity);if(scope==null)return;
-        try{state.putString(TOKEN,scope.context.token);state.putString(DOCUMENT,scope.snapshot().toString());
+        FeatureEditorSession scope=scope(activity);if(scope==null||scope.invalidated)return;
+        EditorBinding binding=scope.bindings.get(activity);if(binding!=null){binding.autosave.flush();scope.remember(binding);}
+        try{state.putString(BASE,scope.editBase.toString());state.putString(TOKEN,scope.context.token);state.putString(DOCUMENT,scope.snapshot().toString());
             state.putLong("feature_desired",scope.desired);state.putLong("feature_applied",scope.applied);
             state.putString("feature_artwork_all",scope.document.getJSONObject("contract").getJSONArray("assets").toString());
             state.putStringArrayList("feature_artwork_disabled",new ArrayList<>(scope.disabledArtwork));
@@ -147,7 +171,7 @@ public final class FeatureEditorSession {
     public static Intent child(AppCompatActivity activity,Class<?> destination){
         Intent intent=new Intent(activity,destination);FeatureEditorSession scope=scope(activity);
         intent.putExtra(PersonRoutes.EXTRA_PERSON_ID,scope==null?PersonId.LOCAL.value():scope.person.value());
-        if(scope!=null)try{intent.putExtra(TOKEN,scope.context.token).putExtra(DOCUMENT,scope.snapshot().toString())
+        if(scope!=null)try{EditorBinding binding=scope.bindings.get(activity);if(binding!=null){binding.autosave.flush();scope.remember(binding);}intent.putExtra(TOKEN,scope.context.token).putExtra(BASE,scope.editBase.toString()).putExtra(DOCUMENT,scope.snapshot().toString())
                 .putExtra("feature_desired",scope.desired).putExtra("feature_applied",scope.applied);}catch(Exception invalid){throw new IllegalStateException(invalid);}
         return intent;
     }
@@ -158,28 +182,55 @@ public final class FeatureEditorSession {
         decorate(activity);
         LinearLayout body=body(root);
         if(body==null)throw new IllegalStateException("Feature editor has no content");
-        TextView apply=PersonUi.action(body,R.string.remote_apply,()->{
-            if(!canEdit(activity,section)||!flush.getAsBoolean())return;
-            try{
-                JSONObject snapshot=scope.snapshot();scope.saving=true;
-                featureSave(scope,snapshot,activity,section);
-            }catch(Exception invalid){Toast.makeText(activity,R.string.remote_invalid_value,Toast.LENGTH_LONG).show();}
-        },true);
-        apply.setTag("feature_editor_apply");
-        apply.setEnabled(canEdit(activity,section));
+        try {
+            EditorBinding old=scope.bindings.remove(activity);if(old!=null){old.autosave.close();scope.remember(old);}
+            EditorBinding binding=new EditorBinding();scope.bindings.put(activity,binding);
+            binding.autosave=new RemoteConfigurationAutosave(activity,body,scope.feature,scope.peer,scope.editBase,()->{
+                if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
+                scope.flushing=true;
+                try{if(!flush.getAsBoolean())throw new IllegalArgumentException("Check the edited fields");return scope.snapshot();}
+                finally{scope.flushing=false;}
+            },()->{
+                scope.invalidated=true;DRAFTS.remove(scope.context.token);
+                restart(activity);
+            });
+            scope.watchText(root,binding);
+            binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);
+        }catch(Exception invalid){throw new IllegalStateException("Could not start automatic editing",invalid);}
     }
-    private static void featureSave(FeatureEditorSession scope,JSONObject snapshot,AppCompatActivity activity,String section){
-        scope.feature.submit(()->{
-            scope.requireAuthority();
-            if(!RemoteFeaturePolicy.remoteAllowed(scope.feature.store,scope.peer,section))throw new SecurityException("Feature disabled by Sub");
-            scope.feature.store.queueConfiguration(scope.peer.identity,scope.peer.generation,scope.desired,scope.applied,snapshot);
-            scope.feature.changed();return null;
-        }).whenComplete((result,error)->activity.runOnUiThread(()->{
-            scope.saving=false;
-            if(activity.isFinishing()||activity.isDestroyed())return;
-            Toast.makeText(activity,error==null?R.string.remote_saved:R.string.remote_reload,Toast.LENGTH_LONG).show();
-            if(error==null)activity.finish();
-        }));
+    private static final class EditorBinding {
+        RemoteConfigurationAutosave autosave;
+        boolean active;
+    }
+    private void remember(EditorBinding binding){
+        try{editBase=binding.autosave.base();}catch(Exception ignored){/* Keep the prior acknowledged base. */}
+    }
+    private void draftChanged(String store,String key){
+        if(!configurationKey(store,key))return;
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){main.post(()->draftChanged(store,key));return;}
+        if(flushing||invalidated)return;
+        for(EditorBinding binding:bindings.values())if(binding.active&&binding.autosave!=null){userDirty=true;binding.autosave.changed();}
+    }
+    static boolean configurationKey(String store,String key){
+        if(RemoteConfiguration.DURATION_PREFS.equals(store))return Arrays.asList("duration","minimum","maximum","hidden").contains(key);
+        if(SettingsRepository.PREFERENCES_NAME.equals(store)&&(AppModeManager.KEY_ALL_APPS.equals(key)
+                ||AppModeManager.KEY_INCLUDED_PACKAGES.equals(key)||key.startsWith("app_timer_allowance_minutes:")
+                ||com.subhub.app.capture.CustomImageManager.REVISION_KEY.equals(key)))return true;
+        for(String section:ConfigurationSchema.SECTIONS)if(ConfigurationSchema.preferenceStore(section).equals(store))
+            for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section))if(field.key.equals(key))return true;
+        return false;
+    }
+    private void watchText(View root,EditorBinding binding){
+        if(root instanceof EditText)((EditText)root).addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence value,int start,int count,int after){}
+            public void onTextChanged(CharSequence value,int start,int before,int count){if(binding.active&&!flushing&&!invalidated){userDirty=true;binding.autosave.changed();}}
+            public void afterTextChanged(android.text.Editable value){}
+        });
+        if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)watchText(((ViewGroup)root).getChildAt(i),binding);
+    }
+    private static void restart(AppCompatActivity activity){
+        activity.getIntent().removeExtra(TOKEN);activity.getIntent().removeExtra(DOCUMENT);activity.getIntent().removeExtra(BASE);
+        activity.recreate();
     }
     public static void decorate(AppCompatActivity activity){
         FeatureEditorSession scope=scope(activity);if(scope==null)return;
@@ -269,7 +320,7 @@ public final class FeatureEditorSession {
         private com.subhub.app.storage.DisposableCache.EditorLease cache;private boolean closed;
         DraftContext(Context source,FeatureEditorSession owner,String token){super(source);this.owner=owner;this.token=token;}
         @Override public Context getApplicationContext(){return this;}
-        @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(owner.stores){return owner.stores.computeIfAbsent(name,unused->new DraftPreferences());}}
+        @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(owner.stores){return owner.stores.computeIfAbsent(name,unused->{DraftPreferences prefs=new DraftPreferences();prefs.registerOnSharedPreferenceChangeListener((store,key)->owner.draftChanged(name,key));return prefs;});}}
         private synchronized File directory(String name) {
             if(closed)throw new IllegalStateException("Editor is closed");
             try {

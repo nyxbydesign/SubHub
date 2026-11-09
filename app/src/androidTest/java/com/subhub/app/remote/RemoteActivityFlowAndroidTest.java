@@ -300,9 +300,8 @@ public final class RemoteActivityFlowAndroidTest {
                 await(()->{RemoteContractActivity editor=resumedEditor();if(editor==null)return false;
                     java.util.concurrent.atomic.AtomicBoolean ready=new java.util.concurrent.atomic.AtomicBoolean();
                     InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{java.lang.reflect.Field draft=RemoteContractActivity.class.getDeclaredField("draft");draft.setAccessible(true);JSONObject doc=(JSONObject)draft.get(editor);ready.set(doc!=null&&doc.getJSONObject("contract").getJSONArray("assets").length()==original+1);}catch(Exception failure){throw new AssertionError(failure);}});return ready.get();},20_000);
-                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.remote_apply))
-                        .perform(androidx.test.espresso.action.ViewActions.scrollTo(),androidx.test.espresso.action.ViewActions.click());
-                await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.state==RemoteStore.CommandState.APPLIED;},120_000);
+                await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.state==RemoteStore.CommandState.APPLIED
+                        && command.body.contains(hash);},120_000);
                 RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);assertNotNull(command);
                 write("artwork-receipt",new JSONObject().put("command",command.id).put("sha256",hash).put("state",command.state.name()).toString());
             }

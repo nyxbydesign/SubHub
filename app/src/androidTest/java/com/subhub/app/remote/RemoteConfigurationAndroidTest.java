@@ -420,6 +420,83 @@ public class RemoteConfigurationAndroidTest {
         assertFalse(new File(root, "writer/journal.json").exists());
     }
 
+    @Test public void autoEditsCoalesceAcrossRestartAndWaitForAppliedReceipt() throws Exception {
+        JSONObject first=configuration();RemoteStore.Command command=dom.queueConfiguration(SUB,generation,0,0,first);
+        JSONObject second=new JSONObject(first.toString());second.getJSONObject("service").put("hidden",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(second));
+        JSONObject last=new JSONObject(second.toString());last.getJSONObject("service").put("duration",86400000);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(last));
+        dom.close();dom=new RemoteStore(context,prefix+"dom.db");
+        RemoteConfigurationEdits edits=new RemoteConfigurationEdits(context,dom);RemoteStore.Peer peer=dom.peer(SUB,generation);
+        assertTrue(RemoteConfigurationEdits.same(last,edits.editing(peer)));
+        edits.drain(peer);assertEquals(command.id,dom.latestCommand(SUB,generation).id);
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",command.id).put("revision",1)
+                .put("state","APPLIED").put("appliedRevision",1).put("reason",""));
+        edits.drain(peer);RemoteStore.Command next=dom.latestCommand(SUB,generation);
+        assertEquals(2,next.revision);assertEquals(1,new JSONObject(next.body).getLong("base"));
+        assertTrue(RemoteConfigurationEdits.same(last,RemoteConfiguration.active(new JSONObject(next.body).getJSONObject("configuration"))));
+        assertEquals("",dom.metadata(SUB,generation,"configuration_edit",""));
+        edits.drain(peer);assertEquals(next.id,dom.latestCommand(SUB,generation).id);
+    }
+
+    @Test public void rejectedAutoEditStopsUntilExplicitDiscardAndNeverErasesPendingCommand() throws Exception {
+        JSONObject first=configuration();RemoteStore.Command command=dom.queueConfiguration(SUB,generation,0,0,first);
+        JSONObject second=new JSONObject(first.toString());second.getJSONObject("service").put("hidden",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(second));
+        assertThrows(IllegalStateException.class,()->dom.resetConfigurationEdits(SUB,generation));
+        RemoteConfigurationEdits edits=new RemoteConfigurationEdits(context,dom);RemoteStore.Peer peer=dom.peer(SUB,generation);
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",command.id).put("revision",1)
+                .put("state","REJECTED").put("appliedRevision",0).put("reason","Invalid"));
+        edits.drain(peer);assertEquals(command.id,dom.latestCommand(SUB,generation).id);
+        assertFalse(edits.failure(peer).isEmpty());assertTrue(RemoteConfigurationEdits.same(second,edits.editing(peer)));
+        dom.resetConfigurationEdits(SUB,generation);
+        assertEquals("",dom.metadata(SUB,generation,"configuration_edit",""));
+        assertEquals(RemoteStore.CommandState.REJECTED,dom.command(SUB,generation,command.id).state);
+        assertEquals("",edits.failure(peer));
+    }
+
+    @Test public void identicalPendingSnapshotDoesNotAllocateAnotherRevisionAfterAck() throws Exception {
+        JSONObject snapshot=configuration();RemoteStore.Command first=dom.queueConfiguration(SUB,generation,0,0,snapshot);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(snapshot));
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",first.id).put("revision",1)
+                .put("state","APPLIED").put("appliedRevision",1).put("reason",""));
+        RemoteConfigurationEdits edits=new RemoteConfigurationEdits(context,dom);
+        edits.drain(dom.peer(SUB,generation));
+        assertEquals(first.id,dom.latestCommand(SUB,generation).id);
+        assertEquals("1",dom.metadata(SUB,generation,"desired_revision","0"));
+        assertEquals("",dom.metadata(SUB,generation,"configuration_edit",""));
+        assertTrue(RemoteConfigurationEdits.same(snapshot,edits.editing(dom.peer(SUB,generation))));
+    }
+
+    @Test public void explicitConflictReloadKeepsNextRevisionAboveTheReceiver() throws Exception {
+        JSONObject baseline=configuration();
+        sub.publish(DOM,generation,RemoteProtocol.Stream.BASELINE,"active",baseline,false,1000);
+        dom.receive(SUB,sub.nextBatch(DOM,generation,RemoteProtocol.Stream.BASELINE));
+        RemoteStore.Command first=dom.queueConfiguration(SUB,generation,0,0,baseline);
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",first.id).put("revision",1)
+                .put("state","CONFLICT").put("appliedRevision",5).put("reason","Stale revision"));
+        dom.resetConfigurationEdits(SUB,generation);
+        assertEquals("5",dom.metadata(SUB,generation,"desired_revision","0"));
+        JSONObject next=new JSONObject(baseline.toString());next.getJSONObject("service").put("hidden",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(next));
+        new RemoteConfigurationEdits(context,dom).drain(dom.peer(SUB,generation));
+        RemoteStore.Command command=dom.latestCommand(SUB,generation);
+        assertEquals(6,command.revision);assertEquals(5,new JSONObject(command.body).getLong("base"));
+        assertEquals(RemoteStore.CommandState.CONFLICT,dom.command(SUB,generation,first.id).state);
+    }
+
+    @Test public void staleWorkspaceRevisionCannotSaveOrDiscardConfigurationEdits() throws Exception {
+        JSONObject baseline=configuration();RemoteConfigurationEdits edits=new RemoteConfigurationEdits(context,dom);
+        long stale=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()+1;
+        RemoteStore.Peer peer=dom.peer(SUB,generation);
+        SecurityException save=assertThrows(SecurityException.class,()->edits.save(peer,baseline,baseline,stale));
+        assertEquals("Dom workspace changed",save.getMessage());
+        SecurityException reload=assertThrows(SecurityException.class,()->edits.reload(peer,stale));
+        assertEquals("Dom workspace changed",reload.getMessage());
+        assertEquals("",dom.metadata(SUB,generation,"configuration_edit",""));
+        assertNull(dom.latestCommand(SUB,generation));
+    }
+
     static JSONObject configuration() throws Exception {
         JSONObject sections=new JSONObject();
         for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSettingCatalog.defaults(section));

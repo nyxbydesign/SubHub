@@ -46,16 +46,55 @@ public class RemoteEditorAndroidTest {
         try(ActivityScenario<RemoteContractActivity> page=open("apps")) {
             ready(page,"budget:com.android.settings");page.onActivity(a->{((EditText)controls(a).get("budget:com.android.settings")).setText("");});page.recreate();
             ready(page,"budget:com.android.settings");page.onActivity(a->{assertEquals("",((EditText)controls(a).get("budget:com.android.settings")).getText().toString());});
-            tap(page,R.string.remote_apply);assertNull(feature.store.latestCommand(peer.identity,generation));
+            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,generation));
         }
     }
-    @Test public void nativeSpinnerChoiceAndApplyUseRemoteDuration()throws Exception {
+    @Test public void nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration()throws Exception {
         try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
             ready(page,"service_duration");AtomicReference<View> picker=new AtomicReference<>();page.onActivity(a->picker.set(controls(a).get("service_duration")));tapView(picker.get());
             UiDevice device=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String choice=context.getResources().getStringArray(R.array.remote_duration_choices)[2];
             assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(choice)),5000));device.findObject(androidx.test.uiautomator.By.text(choice)).click();InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             try{await(()->{AtomicReference<Integer> selected=new AtomicReference<>(-1);page.onActivity(a->selected.set(((Spinner)controls(a).get("service_duration")).getSelectedItemPosition()));return selected.get()==2;});}catch(AssertionError failed){diagnose(page,"duration-choice");throw failed;}
-            tap(page,R.string.remote_apply);try{await(()->feature.store.latestCommand(peer.identity,generation)!=null);}catch(AssertionError failed){diagnose(page,"duration-apply");throw failed;}JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");assertEquals(3_600_000,saved.getJSONObject("service").getLong("duration"));
+            try{await(()->feature.store.latestCommand(peer.identity,generation)!=null);}catch(AssertionError failed){diagnose(page,"duration-apply");throw failed;}JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");assertEquals(3_600_000,saved.getJSONObject("service").getLong("duration"));
+        }
+    }
+
+    @Test public void editorOpeningAndRecreationNeverQueueUnchangedConfiguration()throws Exception {
+        try(ActivityScenario<RemoteContractActivity> page=open("duration")) {
+            ready(page,"service_duration");page.recreate();ready(page,"service_duration");
+            Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);
+            assertNull(feature.store.latestCommand(peer.identity,generation));
+            page.onActivity(a->assertNull(find(a.body,"Apply to device")));
+        }
+    }
+    @Test public void rapidInputCoalescesAndClosingFlushesTheLastValidEdit()throws Exception {
+        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
+            ready(page,"name");page.onActivity(a->{EditText name=(EditText)controls(a).get("name");name.setText("F");name.setText("Final offline name");});
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            RemoteStore.Command command=feature.store.latestCommand(peer.identity,generation);
+            assertEquals(1,command.revision);
+            assertEquals("Final offline name",new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").getString("name"));
+        }
+    }
+    @Test public void newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending()throws Exception {
+        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
+            ready(page,"name");page.onActivity(a->((EditText)controls(a).get("name")).setText("First change"));
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            page.onActivity(a->((EditText)controls(a).get("name")).setText("Latest change"));
+            await(()->"Latest change".equals(feature.contracts.editing(peer).getJSONObject("contract").getString("name")));
+            assertEquals(1,feature.store.latestCommand(peer.identity,generation).revision);
+            page.recreate();ready(page,"name");
+            page.onActivity(a->assertEquals("Latest change",((EditText)controls(a).get("name")).getText().toString()));
+        }
+    }
+
+    @Test public void automaticSaveRetainsTheFocusedEditorAndCursor()throws Exception {
+        try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
+            ready(page,"name");AtomicReference<EditText> name=new AtomicReference<>();
+            page.onActivity(a->{EditText value=(EditText)controls(a).get("name");name.set(value);value.requestFocus();value.setText("Saved without rebuilding");value.setSelection(5);});
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            page.onActivity(a->{assertSame(name.get(),controls(a).get("name"));assertTrue(name.get().hasFocus());assertEquals(5,name.get().getSelectionStart());});
         }
     }
 
@@ -98,7 +137,7 @@ public class RemoteEditorAndroidTest {
         JSONObject document=feature.contracts.current(peer);document.getJSONObject("contract").getJSONArray("assets").put(new JSONObject().put("path","assets/censor/fixture.png").put("hash",hash).put("length",bytes.length)).put(new JSONObject().put("path","assets/popup/fixture.png").put("hash",hash).put("length",bytes.length));
         String dom=source.peers(false).get(0).identity;source.publish(dom,generation,RemoteProtocol.Stream.BASELINE,"active",document,false,2);feature.store.receive(peer.identity,source.nextBatch(dom,generation,RemoteProtocol.Stream.BASELINE));
         try(ActivityScenario<RemoteContractActivity> page=open("censor")) {
-            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);tap(page,R.string.remote_apply);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            ready(page,"module_censor_enabled");tap(page,R.string.remote_remove_images);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
             JSONArray kept=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration").getJSONObject("contract").getJSONArray("assets");assertEquals(1,kept.length());assertEquals("assets/popup/fixture.png",kept.getJSONObject(0).getString("path"));
         }
         try(ActivityScenario<RemoteContractActivity> page=open("popup")) {
@@ -117,7 +156,8 @@ public class RemoteEditorAndroidTest {
                 EditText minimum=(EditText)controls(a).get("service_minimum"),maximum=(EditText)controls(a).get("service_maximum");
                 assertFalse(minimum.isShown());assertFalse(maximum.isShown());minimum.setText("");maximum.setText("invalid");
             });
-            tap(page,R.string.remote_apply);await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            page.onActivity(a->((android.widget.Switch)controls(a).get("service_hidden")).setChecked(true));
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
         }
     }
     @Test public void failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire()throws Exception {
@@ -181,7 +221,8 @@ public class RemoteEditorAndroidTest {
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
             page.onActivity(a->{
                 assertTrue(destination.getSimpleName(),com.subhub.app.configuration.FeatureEditorSession.remote(a));
-                assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply"));
+                assertNull(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply"));
+                assertNotNull(a.findViewById(android.R.id.content).findViewWithTag("remote_configuration_save_status"));
                 View navigation=a.findViewById(R.id.bottom_navigation);
                 assertTrue(navigation==null || navigation.getVisibility()==View.GONE);
                 android.content.Context draft=com.subhub.app.configuration.FeatureEditorSession.context(a);
@@ -203,8 +244,8 @@ public class RemoteEditorAndroidTest {
             page.onActivity(a->selection.set(a.findViewById(R.id.button_appearance_details)));tapView(selection.get());
             page.onActivity(a->selection.set(a.findViewById(R.id.radio_blur)));tapView(selection.get());
             page.recreate();
-            page.onActivity(a->{assertTrue(((RadioButton)a.findViewById(R.id.radio_blur)).isChecked());selection.set(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply"));});
-            tapView(selection.get());await(()->feature.store.latestCommand(peer.identity,generation)!=null);
+            page.onActivity(a->{assertTrue(((RadioButton)a.findViewById(R.id.radio_blur)).isChecked());});
+            await(()->feature.store.latestCommand(peer.identity,generation)!=null);
         }
         JSONObject saved=new JSONObject(feature.store.latestCommand(peer.identity,generation).body).getJSONObject("configuration");
         assertEquals("blur",saved.getJSONObject("contract").getJSONObject("sections").getJSONObject("censor").getString("censor_type"));
@@ -267,7 +308,6 @@ public class RemoteEditorAndroidTest {
         Map<String,?> wallet=new HashMap<>(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME,0).getAll());
         try(ActivityScenario<?> page=ActivityScenario.launch(new Intent(context,target).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()))) {
             AtomicReference<View> view=new AtomicReference<>();page.onActivity(a->view.set(a.findViewById(toggle)));tapView(view.get());
-            page.onActivity(a->view.set(a.findViewById(android.R.id.content).findViewWithTag("feature_editor_apply")));tapView(view.get());
             await(()->feature.store.latestCommand(peer.identity,generation)!=null);
         }
         assertEquals(before,context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).getAll());

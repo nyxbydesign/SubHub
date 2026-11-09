@@ -59,6 +59,20 @@ public final class RemoteUi implements ConnectionUi {
         });
     }
 
+    private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> configurationObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final java.util.concurrent.atomic.AtomicBoolean configurationNotification=new java.util.concurrent.atomic.AtomicBoolean();
+    /** Event-driven save/receipt updates; no new polling or network work. */
+    public static AutoCloseable observeConfiguration(Runnable observer){
+        java.util.Objects.requireNonNull(observer);configurationObservers.addIfAbsent(observer);
+        return ()->configurationObservers.remove(observer);
+    }
+    static void configurationChanged(){
+        if(configurationNotification.compareAndSet(false,true))iconMain.post(()->{
+            configurationNotification.set(false);
+            for(Runnable observer:configurationObservers)try{observer.run();}catch(RuntimeException ignored){/* Observer owns its state. */}
+        });
+    }
+
     public static void install(Application app) {
         application = app;
         ControllerPinManager.initialize(app);

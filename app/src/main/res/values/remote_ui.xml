@@ -20,7 +20,11 @@
     <string name="remote_credentials">Set up a keyholder PIN or authenticator before pairing.</string>
     <string name="remote_pending">Waiting for the other device’s approval</string>
     <string name="remote_saved">Saved on this device; sync pending</string>
-    <string name="remote_apply">Apply to device</string>
+    <string name="remote_autosave_ready">Changes sync automatically</string>
+    <string name="remote_autosave_saving">Saving changes…</string>
+    <string name="remote_autosave_failed">Changes could not be saved. Check access and retry, or reload.</string>
+    <string name="remote_autosave_stopped">Changes were not applied. Reload the device’s configuration before editing again.</string>
+    <string name="remote_autosave_reload_warning">Discard unconfirmed changes and reload the device’s configuration?</string>
     <string name="remote_import">Import contract</string>
     <string name="remote_name">Contract name</string>
     <string name="remote_apps">Apps and allowances</string>

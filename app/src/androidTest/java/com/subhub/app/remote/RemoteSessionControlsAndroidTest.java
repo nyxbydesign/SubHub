@@ -253,22 +253,20 @@ public class RemoteSessionControlsAndroidTest {
         }
     }
 
-    @Test public void actualDurationDraftAndPendingApplyFenceTheSharedStartControls() throws Exception {
+    @Test public void actualDurationAutosaveAndPendingReceiptFenceTheSharedStartControls() throws Exception {
         Gateway gateway = new Gateway();
         try (ActivityScenario<PersonActivity> page = open()) {
             bindSharedDuration(page, gateway);
             await(() -> enabled(page, "remote_session_start"));
-            onView(withTagValue(is("remote_duration_choice"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
-            androidx.test.espresso.Espresso.onData(org.hamcrest.Matchers.anything()).atPosition(2).perform(click());
+            onView(withTagValue(is("duration_choice:3600000"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
 
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
-            assertNull(feature.store.latestCommand(peer.identity, peer.generation));
+            await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
             page.recreate(); bindSharedDuration(page, gateway);
             await(() -> hasText(page, "remote_session_reason", context.getString(R.string.remote_session_apply_duration)));
-            page.onActivity(a -> assertEquals(2, ((android.widget.Spinner) tag(a, "remote_duration_choice")).getSelectedItemPosition()));
-            tap("remote_duration_apply");
+            page.onActivity(a -> assertEquals(3_600_000L, ((com.subhub.app.commitment.DurationChoicesView) tag(a, "remote_duration_choice")).duration()));
             await(() -> feature.store.latestCommand(peer.identity, peer.generation) != null);
 
             page.onActivity(a -> assertFalse(tag(a, "remote_session_start").isEnabled()));
@@ -278,7 +276,7 @@ public class RemoteSessionControlsAndroidTest {
     }
 
     private void bindSharedDuration(ActivityScenario<PersonActivity> page, Gateway gateway) throws Exception {
-        await(() -> hasTag(page, "remote_duration_apply") && hasTag(page, "remote_session_controls"));
+        await(() -> hasTag(page, "remote_configuration_save_status") && hasTag(page, "remote_session_controls"));
         PersonSnapshot person = new RemotePersonRepository(context, feature).load(RemotePersonRepository.id(peer));
         page.onActivity(a -> {
             View actions = tag(a, "remote_session_controls"), oldDuration = tag(a, "remote_session_duration");
@@ -287,7 +285,7 @@ public class RemoteSessionControlsAndroidTest {
             RemoteDurationControls duration = new RemoteDurationControls(a, parent, person); duration.bind();
             new RemoteSessionControls(a, parent, person, duration::hasUnappliedDraft, gateway).bind();
         });
-        await(() -> hasTag(page, "remote_duration_apply"));
+        await(() -> hasTag(page, "remote_configuration_save_status"));
 
     }
 

@@ -48,9 +48,9 @@ public class RemoteDurationAndroidTest {
     private ActivityScenario<PersonActivity> open(){return ActivityScenario.launch(new Intent(context,PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(peer).value()));}
     @Test public void nativeInlineChoiceSurvivesRecreationAndQueuesOnlyTheSelectedPeersDuration()throws Exception {
         try(ActivityScenario<PersonActivity> page=open()) {
-            ready(page);onView(withTagValue(is("remote_duration_choice"))).perform(scrollTo(),click());onData(anything()).atPosition(2).perform(click());
-            page.recreate();ready(page);page.onActivity(a->assertEquals(2,((Spinner)a.findViewById(android.R.id.content).findViewWithTag("remote_duration_choice")).getSelectedItemPosition()));
-            onView(withTagValue(is("remote_duration_apply"))).perform(scrollTo(),click());await(()->feature.store.latestCommand(peer.identity,peer.generation)!=null);
+            ready(page);onView(withTagValue(is("duration_choice:3600000"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            page.recreate();ready(page);page.onActivity(a->assertEquals(3_600_000L,((com.subhub.app.commitment.DurationChoicesView)a.findViewById(android.R.id.content).findViewWithTag("remote_duration_choice")).duration()));
+            await(()->feature.store.latestCommand(peer.identity,peer.generation)!=null);
             RemoteStore.Command command=feature.store.latestCommand(peer.identity,peer.generation);JSONObject queued=new JSONObject(command.body).getJSONObject("configuration");
             assertEquals(3_600_000,queued.getJSONObject("service").getLong("duration"));
             assertEquals(RemoteProtocol.canonical(original.getJSONObject("apps")),RemoteProtocol.canonical(queued.getJSONObject("apps")));
@@ -61,17 +61,17 @@ public class RemoteDurationAndroidTest {
             assertEquals(RemoteStore.CommandState.QUEUED,command.state);
         }
     }
-    @Test public void staleInlineApplyCannotQueueAfterDeviceCapabilityOrRelationshipRevocation()throws Exception {
+    @Test public void staleInlineEditCannotQueueAfterDeviceCapabilityOrRelationshipRevocation()throws Exception {
         AtomicReference<View> stale=new AtomicReference<>();
         try(ActivityScenario<PersonActivity> page=open()) {
-            ready(page);page.onActivity(a->stale.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_apply")));
+            ready(page);page.onActivity(a->stale.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_hidden")));
             context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.SUB_ONLY.name()).commit();
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->stale.get().performClick());assertNull(feature.store.latestCommand(peer.identity,peer.generation));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->((android.widget.CompoundButton)stale.get()).setChecked(!((android.widget.CompoundButton)stale.get()).isChecked()));Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,peer.generation));
         }
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(DeviceRolePreferences.KEY_MODE,DeviceRolePreferences.Mode.BOTH.name()).commit();ControllerPinManager.enterDomMode();
         try(ActivityScenario<PersonActivity> page=open()) {
-            ready(page);page.onActivity(a->stale.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_apply")));feature.store.revoke(peer.identity,peer.generation);
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->stale.get().performClick());assertNull(feature.store.latestCommand(peer.identity,peer.generation));
+            ready(page);page.onActivity(a->stale.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_hidden")));feature.store.revoke(peer.identity,peer.generation);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->((android.widget.CompoundButton)stale.get()).setChecked(!((android.widget.CompoundButton)stale.get()).isChecked()));Thread.sleep(RemoteConfigurationAutosave.DEBOUNCE_MILLIS+200);assertNull(feature.store.latestCommand(peer.identity,peer.generation));
         }
     }
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion=29)
@@ -87,16 +87,15 @@ public class RemoteDurationAndroidTest {
             });
             ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),"remote-person-top",null);
             ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),"remote-person-duration","remote_duration_choice");
-            onView(withTagValue(is("remote_duration_choice"))).perform(scrollTo(),click());onData(anything()).atPosition(1).perform(click());
+            onView(withTagValue(is("duration_choice:-2"))).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
             page.onActivity(a->{View root=a.findViewById(android.R.id.content);
                 assertTrue(root.findViewWithTag("remote_duration_minimum").isShown());assertTrue(root.findViewWithTag("remote_duration_maximum").isShown());
-                assertNull(feature.store.latestCommand(peer.identity,peer.generation));
             });
             ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),"remote-person-random-minimum","remote_duration_minimum");
-            ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),"remote-person-random-apply","remote_duration_apply");
+            ProfileStatsActivityAndroidTest.captureNativeProfile(activity.get(),"remote-person-random-autosave","remote_configuration_save_status");
         }
     }
-    private static void ready(ActivityScenario<PersonActivity> page)throws Exception {await(()->{AtomicReference<Boolean> ready=new AtomicReference<>(false);page.onActivity(a->ready.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_apply")!=null));return ready.get();});}
+    private static void ready(ActivityScenario<PersonActivity> page)throws Exception {await(()->{AtomicReference<Boolean> ready=new AtomicReference<>(false);page.onActivity(a->ready.set(a.findViewById(android.R.id.content).findViewWithTag("remote_duration_hidden")!=null));return ready.get();});}
     private interface Check{boolean ready()throws Exception;}
     private static void await(Check check)throws Exception{long deadline=android.os.SystemClock.elapsedRealtime()+15_000;while(android.os.SystemClock.elapsedRealtime()<deadline){if(check.ready())return;Thread.sleep(50);}assertTrue(check.ready());}
 }

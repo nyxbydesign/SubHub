@@ -109,9 +109,13 @@ public class RemoteFlowAndroidTest {
             try { awaitText(editor,context.getString(R.string.remote_artwork_count,existingArtwork+1)); }
             catch(AssertionError failure) { capture("picker-return-failure.png");device.dumpWindowHierarchy(new File(directory,"picker-return-failure.xml"));throw failure; }
             write("dom-state","image-selected");
-            toggleFirst(editor,false);capture("remote-contract-editor.png");tap(editor,context.getString(R.string.remote_apply));write("dom-state","apply-requested");
+            toggleFirst(editor,false);capture("remote-contract-editor.png");write("dom-state","automatic-sync-requested");
         }
-        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.state==RemoteStore.CommandState.APPLIED;},90_000);
+        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);if(command==null||command.state!=RemoteStore.CommandState.APPLIED)return false;
+            JSONObject current=new JSONObject(command.body).getJSONObject("configuration");
+            return "Shared contract".equals(current.getJSONObject("contract").getString("name"))
+                    && !current.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").getBoolean("module_censor_enabled")
+                    && current.getJSONObject("contract").getJSONArray("assets").length()>0;},90_000);
         await(()->{try{return repository.load(id).can(PersonSnapshot.Capability.END_SESSION);}catch(Exception waiting){return false;}},90_000);
         new AppModeManager(context).setArmed(true);String expected=repository.load(id).sessionIdentity;assertFalse(expected.isEmpty());
         try(ActivityScenario<RemoteEndActivity> end=ActivityScenario.launch(new Intent(context,RemoteEndActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("expectedSession",expected))) {
@@ -134,11 +138,11 @@ public class RemoteFlowAndroidTest {
         write("dom-state","ready-offline");
         await(()->"yes".equals(read("offline-confirmed")),60_000);
         try(ActivityScenario<RemoteContractActivity> editor=ActivityScenario.launch(new Intent(context,RemoteContractActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()).putExtra("section","censor"))) {
-            awaitEditor(editor);name(editor,"Queued offline");tap(editor,context.getString(R.string.remote_apply));
+            awaitEditor(editor);name(editor,"Queued offline");
         }
-        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.revision==2&&command.pending();},10_000);Thread.sleep(1500);
+        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").optString("name").equals("Queued offline")&&command.pending();},10_000);Thread.sleep(1500);
         assertTrue(feature.store.latestCommand(sub.identity,sub.generation).pending());write("dom-state","queued-offline");
-        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&command.revision==2&&command.state==RemoteStore.CommandState.APPLIED;},100_000);
+        await(()->{RemoteStore.Command command=feature.store.latestCommand(sub.identity,sub.generation);return command!=null&&new JSONObject(command.body).getJSONObject("configuration").getJSONObject("contract").optString("name").equals("Queued offline")&&command.state==RemoteStore.CommandState.APPLIED;},100_000);
         await(()->"second-applied".equals(read("sub-state")),60_000);
         try(ActivityScenario<RemoteConnectionActivity> connection=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,id.value()))) {
             tap(connection,context.getString(R.string.remote_unpair));await(()->feature.store.peer(sub.identity,sub.generation).state==RemoteStore.State.REVOKED,10_000);
@@ -225,7 +229,9 @@ public class RemoteFlowAndroidTest {
     private void subWaitForFirstApply()throws Exception {
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
             RemoteStore.Peer dom=peer(RemoteProtocol.Role.SUB);
-            await(()->"1".equals(feature.store.metadata(dom.identity,dom.generation,"applied_revision","0")),90_000);
+            await(()->!main.getBoolean("module_censor_enabled",true)
+                    && "Shared contract".equals(feature.contracts.current(dom).getJSONObject("contract").getString("name"))
+                    && !main.getString(com.subhub.app.capture.CustomImageManager.PACK_DIR_KEY,"").isEmpty(),90_000);
             assertFalse(main.getBoolean("module_censor_enabled",true));assertEquals("kept-local",main.getString("paypal_secret_fixture",""));
             String folder=main.getString(com.subhub.app.capture.CustomImageManager.PACK_DIR_KEY,"");File[] files=new File(folder).listFiles();assertNotNull(files);assertEquals(1,files.length);assertNotNull(android.graphics.BitmapFactory.decodeFile(files[0].getPath()));
             assertEquals("Shared contract",feature.contracts.current(dom).getJSONObject("contract").getString("name"));
@@ -240,7 +246,7 @@ public class RemoteFlowAndroidTest {
     @Test public void subResumesQueuedConfigurationAndRetainsItAfterRevocation()throws Exception {
         RemoteStore.Peer dom=peer(RemoteProtocol.Role.SUB);assertNotNull(dom);assertEquals(RemoteStore.State.ACTIVE,dom.state);
         try(ActivityScenario<RemoteConnectionActivity> connection=ActivityScenario.launch(new Intent(context,RemoteConnectionActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,RemotePersonRepository.id(dom).value()))) {
-            feature.changed();await(()->"2".equals(feature.store.metadata(dom.identity,dom.generation,"applied_revision","0")),90_000);
+            feature.changed();await(()->"Queued offline".equals(feature.contracts.current(dom).getJSONObject("contract").getString("name")),90_000);
             assertEquals("Queued offline",feature.contracts.current(dom).getJSONObject("contract").getString("name"));write("sub-state","second-applied");
             await(()->feature.store.peer(dom.identity,dom.generation).state==RemoteStore.State.REVOKED,90_000);
             assertEquals("Queued offline",feature.contracts.localApplied().getJSONObject("contract").getString("name"));assertTrue(People.isLocalConfigurationAllowed());

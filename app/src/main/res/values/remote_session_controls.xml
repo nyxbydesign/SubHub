@@ -14,7 +14,7 @@
     <string name="remote_session_consent_required">The Sub must review Hardcore consent for this Dom.</string>
     <string name="remote_session_hardcore_required">Start requires Hardcore on the Sub.</string>
     <string name="remote_session_changed">Session or configuration changed. Checking current status.</string>
-    <string name="remote_session_apply_duration">Apply the duration changes and wait for the Sub before starting.</string>
+    <string name="remote_session_apply_duration">Duration changes sync automatically. Wait for the Sub before starting.</string>
     <string name="remote_session_applied_duration">Applied duration: %1$s</string>
     <string name="hardcore_review_body">Hardcore guards protected uninstall and data-clear actions. Your Dom can release these restrictions.</string>
     <string name="hardcore_review_consent">Review consent</string>

@@ -18,8 +18,10 @@ public final class RemoteContracts {
     private final RemoteStore store;
     private final File root;
     private final RemoteConfigurationWriter writer;
+    private final RemoteConfigurationEdits edits;
     public RemoteContracts(Context context,RemoteStore store,RemoteConfigurationWriter writer) {
         this.context=context.getApplicationContext();this.store=store;this.writer=writer;
+        edits=new RemoteConfigurationEdits(this.context,store);
         root=new File(context.getNoBackupFilesDir(),"remote-assets");
     }
     public RemoteAssets assets(RemoteStore.Peer peer) throws IOException {
@@ -124,8 +126,15 @@ public final class RemoteContracts {
 
     public void process(RemoteStore.Peer peer) throws Exception {
         if(peer.localRole==RemoteProtocol.Role.DOM) {
-            for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.COMMAND_RESULT))if(!row.deleted)
-                store.acceptResult(peer.identity,peer.generation,new JSONObject(row.body));
+            synchronized(store){
+                List<String> before=editState(peer);
+                for(RemoteProtocol.Change row:store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.COMMAND_RESULT))if(!row.deleted)
+                    store.acceptResult(peer.identity,peer.generation,new JSONObject(row.body));
+                try { edits.drain(peer); } catch(Exception blocked) {
+                    store.putMetadata(peer.identity,peer.generation,"configuration_edit_failure","Changes saved; automatic sync is blocked");
+                }
+                if(!before.equals(editState(peer)))RemoteUi.configurationChanged();
+            }
             return;
         }
         JSONObject desired=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"desired");if(desired==null)return;
@@ -163,6 +172,19 @@ public final class RemoteContracts {
         }
         return result;
     }
+
+    private List<String> editState(RemoteStore.Peer peer){
+        RemoteStore.Command command=store.latestCommand(peer.identity,peer.generation);
+        return Arrays.asList(command==null?"":command.id,command==null?"":command.state.name(),
+                store.metadata(peer.identity,peer.generation,"configuration_edit",""),edits.failure(peer));
+    }
+
+    public JSONObject editing(RemoteStore.Peer peer)throws Exception {return edits.editing(peer);}
+    public JSONObject saveEdit(RemoteStore.Peer peer,JSONObject expectedBase,JSONObject edited)throws Exception {JSONObject result=edits.save(peer,expectedBase,edited);RemoteUi.configurationChanged();return result;}
+    public JSONObject saveEdit(RemoteStore.Peer peer,JSONObject expectedBase,JSONObject edited,long expectedWorkspaceRevision)throws Exception {JSONObject result=edits.save(peer,expectedBase,edited,expectedWorkspaceRevision);RemoteUi.configurationChanged();return result;}
+    public JSONObject reloadEdits(RemoteStore.Peer peer)throws Exception {JSONObject result=edits.reload(peer);RemoteUi.configurationChanged();return result;}
+    public JSONObject reloadEdits(RemoteStore.Peer peer,long expectedWorkspaceRevision)throws Exception {JSONObject result=edits.reload(peer,expectedWorkspaceRevision);RemoteUi.configurationChanged();return result;}
+    public String editFailure(RemoteStore.Peer peer){return edits.failure(peer);}
 
     public JSONObject current(RemoteStore.Peer peer) throws Exception {
         if(peer.localRole==RemoteProtocol.Role.SUB) {
