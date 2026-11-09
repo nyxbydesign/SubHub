@@ -47,9 +47,9 @@ public final class RemoteTelemetry {
         JSONObject now=new JSONObject();Map<String,AppTimerManager.UsageSnapshot> usage=timers.snapshots(timers.loadSettings().anyEnabled()?apps.getIncludedPackages():Collections.emptySet(),usageAt);
         for(Map.Entry<String,AppTimerManager.UsageSnapshot> entry:usage.entrySet())now.put(entry.getKey(),entry.getKey().isEmpty()?entry.getValue().totalUsedMillis:entry.getValue().appUsedMillis);
         if(timers.loadSettings().perAppEnabled)for(String name:usage.keySet())if(!name.isEmpty()) {
-            int daily=timers.allowanceMinutes(name);
-            long effective=ExtraTimeRequests.allowance(context,name,usageAt).individualBudget(daily*60_000L);
-            effectiveBudgets.put(name,new JSONObject().put("daily",daily).put("millis",effective));
+            int dailyMinutes=timers.allowanceMinutes(name);
+            long effective=ExtraTimeRequests.allowance(context,name,usageAt).individualBudget(dailyMinutes*60_000L);
+            effectiveBudgets.put(name,new JSONObject().put("daily",dailyMinutes).put("millis",effective));
         }
         publish(peer,RemoteProtocol.Stream.APP_USAGE,"today",new JSONObject().put("schema",1).put("day",java.time.LocalDate.now().toString()).put("zone",java.time.ZoneId.systemDefault().getId()).put("millis",now).put("effectiveBudgets",effectiveBudgets));
         Set<String> catalog=new HashSet<>();
