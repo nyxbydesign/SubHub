@@ -46,14 +46,15 @@ public final class ExtraTimeRequests {
         /** Zero means there is no active individual daily budget; a shared budget may still apply. */
         public final int dailyMinutes, bonusMinutes;
         public final long usedMillis, remainingMillis, budgetMillis;
+        public final double remainingFraction;
         public final boolean exhausted, combinedLimitReached;
         public final Request pending, latest;
         private App(String packageName, String label, int dailyMinutes, int bonusMinutes, long usedMillis,
-                boolean exhausted, long remainingMillis, boolean combinedLimitReached, Request pending, Request latest, long budgetMillis) {
+                boolean exhausted, long remainingMillis, boolean combinedLimitReached, Request pending, Request latest, long budgetMillis, double remainingFraction) {
             this.packageName = packageName; this.label = label; this.dailyMinutes = dailyMinutes;
             this.bonusMinutes = bonusMinutes; this.usedMillis = usedMillis; this.exhausted = exhausted;
             this.remainingMillis = remainingMillis; this.combinedLimitReached = combinedLimitReached;
-            this.pending = pending; this.latest = latest; this.budgetMillis = budgetMillis;
+            this.pending = pending; this.latest = latest; this.budgetMillis = budgetMillis; this.remainingFraction = remainingFraction;
         }
     }
     public static final class Snapshot {
@@ -138,11 +139,12 @@ public final class ExtraTimeRequests {
                                 timers.limitStatus(packageName, packages, now) != AppTimerManager.LimitStatus.NONE,
                                 remaining, budget.totalEnabled && usage.totalUsedMillis >= AppTimerManager.minutesToMillis(budget.totalMinutes), pending, latest,
                                 budget.perAppEnabled ? extra.individualBudget(timers.allowanceMinutes(packageName)*60_000L)
-                                        : budget.totalEnabled ? Math.max(budget.totalMinutes*60_000L,extra.appCeilingMillis) : 0));
+                                        : budget.totalEnabled ? Math.max(budget.totalMinutes*60_000L,extra.appCeilingMillis) : 0,
+                                com.subhub.app.appmode.AppTimeOrder.forApp(usage.appUsedMillis,timers.allowanceMinutes(packageName)*60_000L,
+                                        usage.totalUsedMillis,budget.totalMinutes*60_000L,budget.perAppEnabled,budget.totalEnabled,extra)));
                     }
-                    apps.sort((left, right) -> com.subhub.app.appmode.AppTimeOrder.compare(
-                            Math.max(0,left.budgetMillis-left.remainingMillis),left.budgetMillis,left.label,left.packageName,
-                            Math.max(0,right.budgetMillis-right.remainingMillis),right.budgetMillis,right.label,right.packageName));
+                    apps.sort((left, right) -> com.subhub.app.appmode.AppTimeOrder.compareFractions(
+                            left.remainingFraction,left.label,left.packageName,right.remainingFraction,right.label,right.packageName));
                     eligible &= mode.isEffectivelyArmed(now) && new com.subhub.app.settings.FeatureModuleManager(context).isLimitsEnabled();
                 }
                 String reason = peer == null ? "Connect to your Dom to request time"

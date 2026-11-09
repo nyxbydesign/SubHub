@@ -37,6 +37,19 @@ public final class AppTimeOrderTest {
         assertEquals(10*60_000L,grant.remaining(70*60_000L,5*60_000L,100*60_000L,60*60_000L,true,true));
         assertEquals(86_400_000L,new ExtraTimeAllowance(86_400_000L,0).individualBudget(86_400_000L));
     }
+    @Test public void sharedCapDoesNotChangeIndividualPercentageOrderingAcrossScreens() {
+        double z=AppTimeOrder.forApp(0,100,90,100,true,true,ExtraTimeAllowance.NONE);
+        double a=AppTimeOrder.forApp(15,20,90,100,true,true,ExtraTimeAllowance.NONE);
+        assertEquals(AppTimeOrder.remainingFraction(0,100),z,0d);
+        assertEquals(AppTimeOrder.remainingFraction(15,20),a,0d);
+        assertTrue(AppTimeOrder.compareFractions(a,"A","a",z,"Z","z") < 0);
+        assertEquals(0.1d,AppTimeOrder.forApp(0,100,90,100,false,true,ExtraTimeAllowance.NONE),0d);
+        assertEquals(0.1d,AppTimeOrder.forApp(15,20,90,100,false,true,ExtraTimeAllowance.NONE),0d);
+    }
+    @Test public void sharedOnlyAppliedExceptionIsNotSortedAsExhausted() {
+        assertEquals(0d,AppTimeOrder.forApp(70,5,100,60,false,true,ExtraTimeAllowance.NONE),0d);
+        assertEquals(0.125d,AppTimeOrder.forApp(70,5,100,60,false,true,new ExtraTimeAllowance(15,80)),0d);
+    }
     @Test public void remoteBonusRequiresMatchingBoundedSourceObservation() {
         assertEquals(1_200_000L,AppTimeOrder.confirmedBudget(300_000L,300_000L,1_200_000L));
         assertEquals(300_000L,AppTimeOrder.confirmedBudget(300_000L,600_000L,1_200_000L));

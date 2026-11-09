@@ -527,15 +527,10 @@ public final class AppModeActivity extends AppCompatActivity {
                                             formatUsage(remaining))
                             : getString(
                                     R.string.limits_usage_only, formatUsage(current.appUsedMillis));
-            double fraction = individual ? AppTimeOrder.remainingFraction(current.appUsedMillis, effectiveBudget)
-                    : Double.POSITIVE_INFINITY;
-            if (combined) {
-                long available = Math.max(Math.max(0L,totalBudget-totalUsed),Math.max(0L,extra.appCeilingMillis-current.appUsedMillis));
-                double sharedFraction = available / (double) Math.max(1L,Math.max(totalBudget,extra.appCeilingMillis));
-                fraction = Math.min(fraction, sharedFraction);
-            }
+            double fraction = AppTimeOrder.forApp(current.appUsedMillis,budget,totalUsed,totalBudget,
+                    individual,combined,extra);
             order.put(entry.getKey(),fraction);
-            entry.getValue().renderUsage(description, Double.isInfinite(fraction) ? 0 : (int)Math.round(100*(1-fraction)), limited);
+            entry.getValue().renderUsage(description, state.progressPercent, limited);
         }
         orderRows(order);
     }
@@ -547,9 +542,7 @@ public final class AppModeActivity extends AppCompatActivity {
         names.sort((a,b) -> {
             double left=fractions.containsKey(a)?fractions.get(a):Double.POSITIVE_INFINITY;
             double right=fractions.containsKey(b)?fractions.get(b):Double.POSITIVE_INFINITY;
-            int compared=Double.compare(left,right);
-            if(compared==0)compared=appRows.get(a).appLabel.compareToIgnoreCase(appRows.get(b).appLabel);
-            return compared!=0?compared:a.compareTo(b);
+            return AppTimeOrder.compareFractions(left,appRows.get(a).appLabel,a,right,appRows.get(b).appLabel,b);
         });
         List<AppLimitRow> current = new ArrayList<>();
         for(int i=0;i<binding.perAppAllowancesList.getChildCount();i++)
