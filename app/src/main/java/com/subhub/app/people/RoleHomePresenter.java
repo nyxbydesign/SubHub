@@ -420,19 +420,19 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             unknown.setTag("home_favorite_unknown:" + person.id.value()); copy.addView(unknown); return;
         }
         String session = person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
-                ? activity.getString(R.string.overview_session_unknown) : person.serviceLabel;
+                ? activity.getString(R.string.overview_session_unknown)
+                : activity.getString(person.serviceActive ? R.string.home_favorite_session_active
+                        : R.string.home_favorite_session_inactive);
         if (person.sync.runtime == PersonSnapshot.Freshness.STALE)
             session += " · " + activity.getString(R.string.role_stale_data);
-        TextView sessionText = OverviewUi.text(activity, session, 13, false);
-        sessionText.setTag("home_favorite_session:" + person.id.value()); copy.addView(sessionText);
         String stats = person.sync.stats == PersonSnapshot.Freshness.UNKNOWN
                 ? activity.getString(R.string.overview_stats_unknown)
-                : activity.getString(R.string.overview_protected_activity,
-                        StatsSnapshot.formatDuration(person.protectedSeconds), person.activityEvents);
+                : activity.getString(R.string.home_favorite_event_count, person.activityEvents);
         if (person.sync.stats == PersonSnapshot.Freshness.STALE)
             stats += " · " + activity.getString(R.string.role_stale_data);
-        TextView statsText = OverviewUi.text(activity, stats, 12, false);
-        statsText.setTag("home_favorite_stats:" + person.id.value()); copy.addView(statsText);
+        TextView sessionText = OverviewUi.text(activity,
+                activity.getString(R.string.home_favorite_session_events, session, stats), 13, false);
+        sessionText.setTag("home_favorite_session:" + person.id.value()); copy.addView(sessionText);
     }
 
     private LinearLayout identityHeader(LinearLayout parent, PersonSnapshot person, boolean favorite) {

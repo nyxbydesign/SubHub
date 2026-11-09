@@ -145,9 +145,13 @@ public final class HomeFavoritesAndroidTest {
             scenario.onActivity(activity -> {
                 View root = activity.findViewById(R.id.home_dom_overview);
                 assertNotSame(favoriteView.get(), root.findViewWithTag(favorite));
-                assertTrue(contains(root.findViewWithTag("home_favorite_stats:" + first.id.value()),
-                        activity.getString(R.string.overview_protected_activity,
-                                com.subhub.app.stats.StatsSnapshot.formatDuration(changed.protectedSeconds), changed.activityEvents)));
+                String session = activity.getString(changed.serviceActive ? R.string.home_favorite_session_active
+                        : R.string.home_favorite_session_inactive);
+                assertTrue(contains(root.findViewWithTag("home_favorite_session:" + first.id.value()),
+                        activity.getString(R.string.home_favorite_session_events, session,
+                                activity.getString(R.string.home_favorite_event_count, changed.activityEvents))));
+                assertNull("Favorite session and event count share one line", root.findViewWithTag(
+                        "home_favorite_stats:" + first.id.value()));
                 assertSame(summary.get(), root.findViewWithTag("home_devices"));
                 assertSame(recentRow.get(), root.findViewWithTag(recent));
                 assertSame(preview.get(), root.findViewWithTag("activity_preview:all"));
