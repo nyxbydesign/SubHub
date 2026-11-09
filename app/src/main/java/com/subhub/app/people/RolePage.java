@@ -22,6 +22,41 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
     private int pageTitle;
     private SubHubNavigation.Screen screen;
     private boolean domOnly;
+    private Integer restoredPosition;
+
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        if (state != null) restoredPosition = state.getInt("role_page_position");
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
+        if (scroll != null) state.putInt("role_page_position",
+                restoredPosition == null ? scroll.position() : restoredPosition);
+        super.onSaveInstanceState(state);
+    }
+
+    protected final void renderPage(Runnable render) {
+        com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
+        scroll.preserve(render);
+        if (restoredPosition != null) {
+            scroll.restorePosition(restoredPosition);
+            restoredPosition = null;
+        }
+    }
+
+    protected final void restorePagePosition(int position) { restoredPosition = Math.max(0, position); }
+
+    protected final void rememberPagePosition() {
+        com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
+        if (scroll != null) restoredPosition = scroll.position();
+    }
+
+    protected final void resetPagePosition() {
+        restoredPosition = null;
+        com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
+        if (scroll != null) scroll.scrollTo(0, 0);
+    }
 
     protected final void page(int title, SubHubNavigation.Screen destination, boolean requiresDom) {
         pageTitle = title; screen = destination; domOnly = requiresDom;
@@ -66,15 +101,18 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
     protected abstract void refresh();
 
     @Override public void showSectionHome() {
+        resetPagePosition();
         SubHubNavigation.scrollToTop(findViewById(android.R.id.content));
     }
 
     protected final void loading() {
-        body.removeAllViews();
+        // A background refresh must not collapse a populated page while its read is pending.
+        if (body.getChildCount() != 0) return;
         PersonUi.text(body, getString(R.string.role_loading), false);
     }
 
     protected final void unavailable() {
+        resetPagePosition();
         body.removeAllViews();
         PersonUi.text(body, getString(R.string.role_person_unavailable), false);
         PersonUi.action(body, R.string.role_retry, this::refresh, false);

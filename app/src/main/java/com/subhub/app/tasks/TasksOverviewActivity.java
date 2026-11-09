@@ -17,6 +17,9 @@ import java.util.List;
 /** The Dom's primary Tasks destination; each card retains its own relationship identity. */
 public final class TasksOverviewActivity extends RolePage {
     private long rosterEpoch;
+    private Roster displayedRoster;
+    private final java.util.Map<PersonId, LinearLayout> cards = new java.util.LinkedHashMap<>();
+    private final java.util.Map<PersonId, List<Object>> signatures = new java.util.HashMap<>();
     private TaskStore.Observation taskObservation;
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -94,29 +97,64 @@ public final class TasksOverviewActivity extends RolePage {
             return new Roster(fresh, result, epoch, domRevision);
         }, loaded -> {
             if (!current(loaded)) return;
+            displayedRoster = loaded;
+            renderPage(() -> renderRoster(loaded));
+        }, failure -> { if (allowed()) unavailable(); else body.removeAllViews(); });
+    }
+
+    private void renderRoster(Roster loaded) {
+        if (cards.isEmpty() || cards.values().stream().anyMatch(card -> card.getParent() != body)) {
+            body.removeAllViews(); cards.clear(); signatures.clear();
+        }
+        java.util.Set<PersonId> present = new java.util.HashSet<>();
+        for (Summary summary : loaded.summaries) present.add(summary.person.id);
+        for (PersonId id : new ArrayList<>(cards.keySet())) if (!present.contains(id)) {
+            body.removeView(cards.remove(id)); signatures.remove(id);
+        }
+        if (loaded.summaries.isEmpty()) {
             body.removeAllViews();
-            if (loaded.summaries.isEmpty()) {
-                TasksUi.empty(body, R.string.tasks_overview_empty);
-                PersonUi.action(body, R.string.role_add_sub, () -> {
-                    if (!current(loaded)) return;
-                    ConnectionUi ui = People.connectionUi();
-                    if (ui != null) ui.openPairing(this, true);
-                    else startActivity(new Intent(this, PeopleActivity.class));
-                }, true);
-            }
-            for (Summary summary : loaded.summaries) {
-                LinearLayout card = PersonUi.card(body);
+            TasksUi.empty(body, R.string.tasks_overview_empty);
+            PersonUi.action(body, R.string.role_add_sub, () -> {
+                if (displayedRoster == null || !current(displayedRoster)) return;
+                ConnectionUi ui = People.connectionUi();
+                if (ui != null) ui.openPairing(this, true);
+                else startActivity(new Intent(this, PeopleActivity.class));
+            }, true);
+        }
+        for (int index = 0; index < loaded.summaries.size(); index++) {
+            Summary summary = loaded.summaries.get(index);
+            PersonId id = summary.person.id;
+            List<Object> signature = java.util.Arrays.asList(summary.person.name, summary.person.device,
+                    summary.failed, summary.supported, summary.allowed, summary.active, summary.pending, summary.scheduled);
+            LinearLayout card = cards.get(id);
+            if (!signature.equals(signatures.get(id))) {
+                if (card != null) body.removeView(card);
+                LinearLayout staging = PersonUi.column(this);
+                card = PersonUi.card(staging); staging.removeView(card);
                 PersonUi.row(card, R.drawable.ic_nav_tasks, summary.person.name,
-                        ProfileViews.targetDiscriminator(this, summary.person), () -> open(summary, loaded))
-                        .setTag("tasks_profile_row:" + summary.person.id.value());
+                        ProfileViews.targetDiscriminator(this, summary.person), () -> openCurrent(id))
+                        .setTag("tasks_profile_row:" + id.value());
                 if (summary.failed) PersonUi.text(card, getString(R.string.tasks_profile_unavailable), false);
                 else if (!summary.supported) PersonUi.text(card, getString(R.string.tasks_update_devices), false);
                 else if (!summary.allowed) PersonUi.text(card, getString(R.string.tasks_disabled), false);
                 else TasksUi.counts(card, summary.active, summary.pending, summary.scheduled);
-                PersonUi.action(card, R.string.tasks_view_all, () -> open(summary, loaded), false)
-                        .setTag("tasks_profile:" + summary.person.id.value());
+                PersonUi.action(card, R.string.tasks_view_all, () -> openCurrent(id), false)
+                        .setTag("tasks_profile:" + id.value());
+                cards.put(id, card); signatures.put(id, signature);
             }
-        }, failure -> { if (allowed()) unavailable(); else body.removeAllViews(); });
+            if (body.getChildAt(index) != card) {
+                if (card.getParent() == body) body.removeView(card);
+                body.addView(card, index);
+            }
+        }
+    }
+
+    private void openCurrent(PersonId id) {
+        Roster loaded = displayedRoster;
+        if (loaded == null || !current(loaded)) return;
+        for (Summary summary : loaded.summaries) if (id.equals(summary.person.id)) {
+            open(summary, loaded); return;
+        }
     }
 
     private boolean current(Roster loaded) {
@@ -188,6 +226,7 @@ public final class TasksOverviewActivity extends RolePage {
         if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
         clock.removeCallbacks(tick);
         ++rosterEpoch;
+        rememberPagePosition();
         if (body != null) body.removeAllViews();
         if (data != null) {
             data.cancel("tasks-overview");

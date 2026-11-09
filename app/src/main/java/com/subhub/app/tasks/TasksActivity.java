@@ -137,6 +137,7 @@ public final class TasksActivity extends RolePage {
         taskDataDirty = false;
         clock.removeCallbacks(tick);
         if (model != null) model.changed = null;
+        rememberPagePosition();
         closeInlineMedia();
         renderedState = null; renderedLocation = null;
         taskCards.clear(); shownCards.clear();
@@ -181,12 +182,7 @@ public final class TasksActivity extends RolePage {
         else finish();
     }
 
-    private void scrollTop() {
-        if (body != null && body.getParent() instanceof LinearLayout
-                && ((View) body.getParent()).getParent() instanceof android.widget.ScrollView)
-            ((android.widget.ScrollView) ((View) body.getParent()).getParent()).post(() ->
-                    ((android.widget.ScrollView) ((View) body.getParent()).getParent()).scrollTo(0, 0));
-    }
+    private void scrollTop() { resetPagePosition(); }
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean("tasks.primary", primary);
@@ -223,21 +219,14 @@ public final class TasksActivity extends RolePage {
         if (model.form.isEmpty() && model.failure == null && signature.equals(renderedState)
                 && body.getChildCount() > 0 && inlineMedia.stream().noneMatch(TaskAttachmentView::isClosed)
                 && (inlineMedia.isEmpty() || inlineAuthorized()) && (!renderedLoading || model.loading)) return;
-        android.widget.ScrollView scroll = null;
-        for (android.view.ViewParent parent = body.getParent(); parent != null; parent = parent.getParent())
-            if (parent instanceof android.widget.ScrollView) { scroll = (android.widget.ScrollView) parent; break; }
-        boolean retainPosition = location.equals(renderedLocation);
-        int position = scroll == null ? 0 : scroll.getScrollY();
+        boolean changedLocation = renderedLocation != null && body.findViewWithTag("tasks_target") != null
+                && !location.equals(renderedLocation);
+        if (changedLocation) resetPagePosition();
         renderedState = signature; renderedLocation = location; renderedLoading = model.loading;
         shownCards.clear();
-        renderContent();
+        if (state == null) renderContent(); // Keep a saved position pending until real content arrives.
+        else renderPage(this::renderContent);
         taskCards.keySet().retainAll(shownCards);
-        if (retainPosition && position > 0 && scroll != null) {
-            android.widget.ScrollView retained = scroll;
-            retained.post(() -> {
-                if (resumed && location.equals(renderedLocation)) retained.scrollTo(0, position);
-            });
-        }
     }
 
     private void renderContent() {

@@ -211,7 +211,8 @@ public final class JournalActivity extends PreferencePage {
             closePlayers(); content.removeAllViews();
             showMessageIn(content);
             if (value.selected.isEmpty()) renderList(value); else renderEntry(value);
-            if (scroll != null) scroll.post(() -> scroll.scrollTo(0, previous));
+            if (scroll instanceof com.subhub.app.util.PageScrollView)
+                ((com.subhub.app.util.PageScrollView) scroll).restorePosition(previous);
         }, failure -> {
             if (failure instanceof SecurityException || !authorized()) unavailable();
             else failedRefresh();

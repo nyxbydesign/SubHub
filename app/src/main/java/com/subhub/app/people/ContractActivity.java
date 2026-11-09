@@ -64,7 +64,7 @@ public final class ContractActivity extends RolePage {
                         application.getString(popup ? R.string.role_enabled : R.string.role_disabled));
             }
             return new ContractData(person, atmosphere);
-        }, value -> { atmosphereSummary = value.atmosphere; render(value.person); }, failure -> unavailable());
+        }, value -> { atmosphereSummary = value.atmosphere; renderPage(() -> render(value.person)); }, failure -> unavailable());
     }
 
     private void render(PersonSnapshot person) {

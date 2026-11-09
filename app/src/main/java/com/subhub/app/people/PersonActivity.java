@@ -16,7 +16,10 @@ public final class PersonActivity extends RolePage {
     private PersonId personId;
     private String section = "profile";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
-    private java.util.List<Object> rendered;
+    private String renderedSection;
+    private final java.util.Map<String, LinearLayout> panels = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, java.util.List<Object>> signatures = new java.util.HashMap<>();
+    private final java.util.Map<String, Integer> positions = new java.util.HashMap<>();
     private boolean observing;
     private AutoCloseable appIconObserver;
     private long appIconEpoch;
@@ -91,24 +94,12 @@ public final class PersonActivity extends RolePage {
         }, person -> {
             if (!guardTarget() || !observing || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
-            if (!requested.equals(person.id)) { rendered = null; unavailable(); return; }
+            if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
             com.subhub.app.appmode.ExtraTimeEntry.refresh(body, requested);
-            java.util.List<Object> next = signature(person);
-            if (next.equals(rendered)) return;
-            android.view.ViewParent ancestor = body.getParent();
-            while (ancestor != null && !(ancestor instanceof android.widget.ScrollView)) ancestor = ancestor.getParent();
-            android.widget.ScrollView scroll = ancestor instanceof android.widget.ScrollView
-                    ? (android.widget.ScrollView) ancestor : null;
-            int position = scroll == null ? 0 : scroll.getScrollY();
-            String currentSection = section;
-            rendered = next;
             render(person);
-            if (scroll != null) scroll.post(() -> {
-                if (guardTarget() && observing && currentSection.equals(section)) scroll.scrollTo(0, position);
-            });
         }, failure -> {
             if (guardTarget() && observing && provider == com.subhub.app.relationships.RelationshipUi.provider()
-                    && authority == People.keyholder()) { rendered = null; unavailable(); }
+                    && authority == People.keyholder()) { renderedSection = null; unavailable(); }
         });
     }
 
@@ -132,28 +123,6 @@ public final class PersonActivity extends RolePage {
                 : ControllerPinManager.isDomWorkspaceUnlocked() && com.subhub.app.security.DeviceRolePreferences.supportsDom(context));
     }
 
-    private static java.util.List<Object> signature(PersonSnapshot person) {
-        String contact = person.lastOnlineAt <= 0 || person.lastOnlineAt > System.currentTimeMillis() ? ""
-                : ProfileViews.formatLastSeen(person.lastOnlineAt);
-        java.util.List<Object> result = new java.util.ArrayList<>(java.util.Arrays.asList(
-                person.id, person.name, person.profile, person.featureConsent, person.consentHardcoreOverride,
-                person.device, person.contractName, person.serviceLabel,
-                person.connection, person.freshness, person.lastSyncedAt, person.lastOnlineAt, contact, person.capabilities,
-                person.contractDom, person.contractDomId, person.contractDomContact,
-                person.currency, person.protectedSeconds, person.activityEvents, person.tributeCents,
-                person.sessions, person.serviceActive, person.sessionIdentity,
-                person.sync.contract, person.sync.stats, person.sync.runtime,
-                person.sync.desiredRevision, person.sync.appliedRevision));
-        for (PersonSnapshot.Section section : person.sections) {
-            java.util.Collections.addAll(result, section.key, section.title, section.summary, section.details);
-            for (PersonSnapshot.App app : section.apps)
-                java.util.Collections.addAll(result, app.packageName, app.label, app.appIcon);
-        }
-        for (PersonSnapshot.Allowance allowance : person.allowances)
-            java.util.Collections.addAll(result, allowance.packageName, allowance.label,
-                    allowance.usedMillis, allowance.dailyMinutes, allowance.appIcon);
-        return result;
-    }
 
 
     @Override protected void onCreate(Bundle state) {
@@ -163,6 +132,8 @@ public final class PersonActivity extends RolePage {
         section = state == null ? getIntent().getStringExtra("person_section")
                 : state.getString("person_section", "profile");
         if (section == null || !java.util.List.of("profile", "contracts", "stats", "connection").contains(section)) section = "profile";
+        if (state != null) for (String key : java.util.List.of("profile", "contracts", "connection"))
+            positions.put(key, state.getInt("person_position:" + key));
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
         body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(android.view.View view) { observeAppIcons(); }
@@ -176,6 +147,8 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("person_section", section);
+        for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
+            state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
     }
 
@@ -196,11 +169,10 @@ public final class PersonActivity extends RolePage {
         }, person -> {
             if (!guardTarget() || !requested.equals(personId)
                     || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()) return;
-            if (!requested.equals(person.id)) { rendered = null; unavailable(); return; }
-            rendered = signature(person);
+            if (!requested.equals(person.id)) { renderedSection = null; unavailable(); return; }
             render(person);
         }, failure -> { if (guardTarget() && provider == com.subhub.app.relationships.RelationshipUi.provider()
-                && authority == People.keyholder()) unavailable(); });
+                && authority == People.keyholder()) { renderedSection = null; unavailable(); } });
     }
 
     private void render(PersonSnapshot person) {
@@ -211,57 +183,115 @@ public final class PersonActivity extends RolePage {
             openStats(person);
             return;
         }
-        currentCountdown = null;
-        body.removeAllViews();
-        if ("profile".equals(section)) {
-            title(R.string.role_profile);
-            ProfileViews.identity(body, person);
-            session(person);
-            LinearLayout destinations = PersonUi.card(body);
-            destinations.setTag("person_destinations");
-            destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
-            PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", () -> {
-                if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
-                        .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
-            }).setTag("person_tab:tasks");
-            if (person.can(PersonSnapshot.Capability.VIEW_STATS))
-                destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
-            destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
-            ActivityPreview.add(body, person.id, 3, data, "person-recent-activity");
-        } else {
-            title("connection".equals(section) ? R.string.role_connection : R.string.role_contract);
-            PersonUi.text(body, person.name, true);
-            if ("connection".equals(section)) {
-                PersonUi.text(body, ProfileViews.targetDiscriminator(this, person), false)
-                        .setTag("person_target:" + person.id.value());
-                connection(person);
-            } else {
-                ProfileViews.allowedFeatures(body, person);
-                contracts(person);
+        renderPage(() -> {
+            if (!section.equals(renderedSection)) {
+                body.removeAllViews(); panels.clear(); signatures.clear(); currentCountdown = null;
+                renderedSection = section;
             }
+            if ("profile".equals(section)) {
+                title(R.string.role_profile);
+                reconcile("identity", java.util.Arrays.asList(person.profile), parent -> ProfileViews.identity(parent, person));
+                ProfileViews.updateIdentityConnection(panels.get("identity"), person);
+                java.util.List<Object> session = new java.util.ArrayList<>(java.util.Arrays.asList(
+                        person.id, person.serviceActive, person.sessionIdentity, person.sync.runtime,
+                        person.capabilities, person.sync.desiredRevision, person.sync.appliedRevision,
+                        People.connectionUi(), People.keyholder(),
+                        com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()));
+                if (person.id.isLocal()) session.add(com.subhub.app.commitment.CommitmentManager.isActive(this));
+                reconcile("session", session, parent -> session(parent, person));
+                TextView label = panels.get("session").findViewWithTag("person_service_label");
+                if (label != null) label.setText(!person.id.isLocal() && person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
+                        ? getString(R.string.role_unknown_data) : person.serviceLabel);
+                reconcile("destinations", java.util.Arrays.asList(person.capabilities), parent -> {
+                    LinearLayout destinations = PersonUi.card(parent);
+                    destinations.setTag("person_destinations");
+                    destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
+                    PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", () -> {
+                        if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
+                                .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
+                    }).setTag("person_tab:tasks");
+                    if (person.can(PersonSnapshot.Capability.VIEW_STATS))
+                        destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+                    destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
+                });
+                reconcile("activity", java.util.List.of(person.id), parent ->
+                        ActivityPreview.add(parent, person.id, 3, data, "person-recent-activity"));
+            } else if ("connection".equals(section)) {
+                title(R.string.role_connection);
+                String observed = person.lastSyncedAt > 0 ? getString(R.string.role_last_synced,
+                        android.text.format.DateUtils.getRelativeTimeSpanString(person.lastSyncedAt,
+                                System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))
+                        : getString(R.string.role_never_synced);
+                reconcile("connection", java.util.Arrays.asList(person.name, person.device,
+                        PersonUi.connection(this, person), observed, person.capabilities, People.connectionUi()), parent -> {
+                    PersonUi.text(parent, person.name, true);
+                    PersonUi.text(parent, ProfileViews.targetDiscriminator(this, person), false)
+                            .setTag("person_target:" + person.id.value());
+                    connection(parent, person);
+                });
+            } else {
+                title(R.string.role_contract);
+                java.util.List<Object> contract = PersonPresentation.contract(person);
+                java.util.Collections.addAll(contract, People.connectionUi(), People.keyholder(),
+                        com.subhub.app.relationships.RelationshipUi.provider(),
+                        ControllerPinManager.domWorkspaceRevision());
+                reconcile("contracts", contract, parent -> {
+                    PersonUi.text(parent, person.name, true);
+                    ProfileViews.allowedFeatures(parent, person);
+                    contracts(parent, person);
+                });
+                // Image bytes can arrive after the descriptor without changing the content signature.
+                for (PersonSnapshot.Section value : person.sections) for (PersonSnapshot.App app : value.apps) {
+                    android.widget.ImageView icon = body.findViewWithTag("contract_app_icon:" + app.packageName);
+                    if (icon != null && app.appIcon != null)
+                        com.subhub.app.remote.RemoteUi.bindAppIcon(icon, app.appIcon, R.drawable.ic_settings_apps);
+                }
+            }
+        });
+    }
+
+    private void reconcile(String key, java.util.List<Object> signature,
+            java.util.function.Consumer<LinearLayout> render) {
+        LinearLayout panel = panels.get(key);
+        if (panel == null) {
+            panel = PersonUi.column(this); panels.put(key, panel);
+            body.addView(panel, new LinearLayout.LayoutParams(-1, -2));
         }
+        if (signature.equals(signatures.get(key))) return;
+        panel.removeAllViews(); render.accept(panel); signatures.put(key, signature);
+    }
+
+    private void selectSection(String next) {
+        com.subhub.app.util.PageScrollView scroll = findViewById(R.id.role_page_scroll);
+        positions.put(section, scroll.position());
+        section = next;
+        resetPagePosition();
+        body.removeAllViews(); panels.clear(); signatures.clear(); renderedSection = null;
+        // Restoring a subpage is an explicit navigation action, not an old refresh callback.
+        restorePagePosition(positions.getOrDefault(next, 0));
+        refresh();
     }
 
     private void destination(LinearLayout parent, PersonSnapshot person, String key, int icon, int label) {
         PersonUi.row(parent, icon, getString(label), "", () -> {
             if (!guardTarget()) return;
             if ("stats".equals(key)) openStats(person);
-            else { section = key; refresh(); }
+            else selectSection(key);
         }).setTag("person_tab:" + key);
     }
 
     private void backToProfile() {
         if (!guardTarget()) { finish(); return; }
         if ("profile".equals(section)) finish();
-        else { section = "profile"; refresh(); }
+        else selectSection("profile");
     }
 
-    private void session(PersonSnapshot person) {
+    private void session(LinearLayout body, PersonSnapshot person) {
         if (!person.id.isLocal()) {
             LinearLayout session = PersonUi.card(body);
             PersonUi.text(session, getString(R.string.role_session), true);
             PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
-                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false);
+                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false).setTag("person_service_label");
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
             ConnectionUi remote = People.connectionUi();
             if (remote == null) return;
@@ -281,7 +311,7 @@ public final class PersonActivity extends RolePage {
         if (person.id.isLocal()) {
             LinearLayout session = PersonUi.card(body);
             PersonUi.text(session, getString(R.string.role_session), true);
-            PersonUi.text(session, person.serviceLabel, false);
+            PersonUi.text(session, person.serviceLabel, false).setTag("person_service_label");
             boolean active = LocalSessionControls.isActive(this);
             if (com.subhub.app.commitment.CommitmentManager.isActive(this)) {
                 currentCountdown = PersonUi.text(session,
@@ -309,7 +339,7 @@ public final class PersonActivity extends RolePage {
         }
     }
 
-    private void contracts(PersonSnapshot person) {
+    private void contracts(LinearLayout body, PersonSnapshot person) {
         if (!person.can(PersonSnapshot.Capability.VIEW_CONTRACT)) {
             PersonUi.text(body, getString(R.string.role_contract_unavailable), false);
             return;
@@ -385,7 +415,7 @@ public final class PersonActivity extends RolePage {
         }
     }
 
-    private void connection(PersonSnapshot person) {
+    private void connection(LinearLayout body, PersonSnapshot person) {
         LinearLayout card = PersonUi.card(body);
         PersonUi.text(card, PersonUi.connection(this, person), true);
         PersonUi.row(card, R.drawable.ic_nav_people, getString(R.string.role_device), person.device, null);

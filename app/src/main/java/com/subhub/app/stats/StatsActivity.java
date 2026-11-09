@@ -186,8 +186,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             if (preview != null) preview.collapse();
         }
         com.subhub.app.util.SubHubNavigation.scrollToTop(scroll);
-        // renderSection posts its restored offset when changing from a secondary section.
-        scroll.post(() -> com.subhub.app.util.SubHubNavigation.scrollToTop(scroll));
+        // Explicit navigation cancels any pending section restoration.
     }
 
     public final void showAchievements(boolean selected) {
@@ -250,7 +249,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                 hasSections ? (profileSelected ? R.drawable.ic_nav_profile : R.drawable.ic_nav_stats) : 0,
                 profileSelected ? R.string.role_profile : catalogSelected ? R.string.achievements_title : R.string.role_stats, 0);
         int target = profileSelected ? profileScroll : catalogSelected ? catalogScroll : statisticsScroll;
-        scroll.post(() -> scroll.scrollTo(0, target));
+        ((com.subhub.app.util.PageScrollView) scroll).restorePosition(target);
     }
 
     private void pauseSection() {

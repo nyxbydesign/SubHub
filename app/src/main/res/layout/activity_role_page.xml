@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@drawable/bg_main">
-    <ScrollView android:layout_width="match_parent" android:layout_height="match_parent"
+    <com.subhub.app.util.PageScrollView android:id="@+id/role_page_scroll" android:layout_width="match_parent" android:layout_height="match_parent"
         android:clipToPadding="false" android:fillViewport="true">
         <LinearLayout android:id="@+id/role_page_content"
             android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -16,6 +16,6 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" />
         </LinearLayout>
-    </ScrollView>
+    </com.subhub.app.util.PageScrollView>
     <include layout="@layout/view_bottom_pill_nav" />
 </FrameLayout>

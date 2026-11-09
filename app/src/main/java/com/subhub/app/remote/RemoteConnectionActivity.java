@@ -25,7 +25,6 @@ public final class RemoteConnectionActivity extends RemotePage {
         clock.removeCallbacks(poll);if(codeDialog!=null)codeDialog.dismiss();super.onPause();}
     private void render(){
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);if(current==null){finish();return;}peer=current;
-        long contact=feature.store.lastContactAt(peer);
         PeerPresence.Observation presence=PeerPresence.read(feature.store,peer);
         boolean online=presence.online;
         com.subhub.app.people.PersonSnapshot.Connection state=peer.state==RemoteStore.State.REVOKED?com.subhub.app.people.PersonSnapshot.Connection.REVOKED:
@@ -33,16 +32,29 @@ public final class RemoteConnectionActivity extends RemotePage {
                 online?com.subhub.app.people.PersonSnapshot.Connection.CONNECTED:com.subhub.app.people.PersonSnapshot.Connection.OFFLINE;
         String status=PersonUi.connection(this,state,presence.lastOnlineAt);
         if(codeDialog!=null&&(peer.state!=RemoteStore.State.ACTIVE||peer.localRole!=RemoteProtocol.Role.DOM||codeRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()||!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()))codeDialog.dismiss();
-        StringBuilder observations=new StringBuilder();
-        for(RemoteProtocol.Stream stream:observedStreams(peer))observations.append(':').append(feature.store.metadata(peer.identity,peer.generation,"confirmed_"+stream.name(),"0"));
-        String signature=observations+":"+peer.state+":"+status+":"+contact+":"+com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()+":"+com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
-        if(signature.equals(rendered))return;rendered=signature;body.removeAllViews();
+        String model=getString(R.string.remote_unknown);
+        if(peer.localRole==RemoteProtocol.Role.DOM)try{
+            org.json.JSONObject runtime=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");
+            if(RemoteTelemetry.validRuntime(runtime))model=runtime.optString("device",model);
+        }catch(Exception unavailable){/* Preserve unknown remote device identity. */}
+        String signature=peer.name+":"+peer.state+":"+model+":"+com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()+":"+com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+        if(signature.equals(rendered)){
+            android.widget.TextView presenceText=body.findViewWithTag("connection_presence");
+            if(presenceText!=null)presenceText.setText(status);
+            for(RemoteProtocol.Stream stream:observedStreams(peer)){
+                android.widget.TextView value=body.findViewWithTag("connection_observed_"+stream.name());
+                if(value!=null)value.setText(observed(stream));
+            }
+            return;
+        }
+        rendered=signature;
+        com.subhub.app.util.PageScrollView scroll=findViewById(R.id.role_page_scroll);
+        int position=scroll.position();
+        body.removeAllViews();
         android.widget.LinearLayout card=PersonUi.card(body);text(card,peer.name,true);
         text(card,com.subhub.app.people.ProfileViews.targetDiscriminator(this,RemotePersonRepository.id(peer),""),false);
         text(card,status,false).setTag("connection_presence");
         if(peer.localRole==RemoteProtocol.Role.DOM){
-            String model=getString(R.string.remote_unknown);
-            try{org.json.JSONObject runtime=feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current");if(RemoteTelemetry.validRuntime(runtime))model=runtime.optString("device",model);}catch(Exception unavailable){/* Keep unavailable source observations distinct from this phone. */}
             PersonUi.row(card,0,getString(R.string.role_device),model,null).setTag("connection_device_model");
         }
         if(peer.state==RemoteStore.State.ACTIVE){
@@ -53,9 +65,12 @@ public final class RemoteConnectionActivity extends RemotePage {
         }
         for(RemoteProtocol.Stream stream:observedStreams(peer)){
             int label=stream==RemoteProtocol.Stream.BASELINE||stream==RemoteProtocol.Stream.CONFIGURATION?R.string.role_contracts:stream==RemoteProtocol.Stream.STATS?R.string.role_stats:R.string.remote_runtime;
-            PersonUi.row(card,0,getString(label),observed(stream),null).setTag("connection_stream_"+stream.name());
+            android.widget.LinearLayout row=PersonUi.row(card,0,getString(label),observed(stream),null);
+            row.setTag("connection_stream_"+stream.name());
+            ((android.view.ViewGroup)row.getChildAt(0)).getChildAt(1).setTag("connection_observed_"+stream.name());
         }
         if(peer.state!=RemoteStore.State.REVOKED)button(card,R.string.remote_unpair,()->authorize(()->{feature.revoke(peer);render();}));
+        scroll.restorePosition(position);
     }
     static RemoteProtocol.Stream[] observedStreams(RemoteStore.Peer peer){
         return peer.localRole==RemoteProtocol.Role.SUB?new RemoteProtocol.Stream[]{RemoteProtocol.Stream.CONFIGURATION}

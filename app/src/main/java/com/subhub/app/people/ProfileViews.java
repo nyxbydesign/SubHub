@@ -79,11 +79,24 @@ public final class ProfileViews {
         TextView state = PersonUi.text(parent, PersonUi.connection(parent.getContext(), person), false);
         state.setTag(tag); state.setTextSize(12); state.setPadding(0, PersonUi.dp(parent.getContext(), 10), 0, 0);
         if (profile) {
-            if (person.sync.contract == PersonSnapshot.Freshness.STALE || person.sync.stats == PersonSnapshot.Freshness.STALE
-                    || person.sync.runtime == PersonSnapshot.Freshness.STALE)
-                PersonUi.text(parent, parent.getContext().getString(R.string.peer_cached_data), false)
-                        .setTag("profile_cached_data:" + person.id.value());
+            TextView cached = PersonUi.text(parent, parent.getContext().getString(R.string.peer_cached_data), false);
+            cached.setTag("profile_cached_data:" + person.id.value());
+            cached.setVisibility(cached(person) ? View.VISIBLE : View.GONE);
         }
+    }
+
+    static void updateIdentityConnection(View parent, PersonSnapshot person) {
+        presence(parent, "person", person.id, person.connection);
+        TextView status = parent.findViewWithTag("person_connection:" + person.id.value());
+        if (status != null) status.setText(PersonUi.connection(parent.getContext(), person));
+        View cached = parent.findViewWithTag("profile_cached_data:" + person.id.value());
+        if (cached != null) cached.setVisibility(cached(person) ? View.VISIBLE : View.GONE);
+    }
+
+    private static boolean cached(PersonSnapshot person) {
+        return person.sync.contract == PersonSnapshot.Freshness.STALE
+                || person.sync.stats == PersonSnapshot.Freshness.STALE
+                || person.sync.runtime == PersonSnapshot.Freshness.STALE;
     }
 
     public static void lastOnline(LinearLayout parent, PersonId target, PersonSnapshot.Connection state, long observed) {

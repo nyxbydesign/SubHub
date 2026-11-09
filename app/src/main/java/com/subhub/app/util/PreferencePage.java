@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 public abstract class PreferencePage extends AppCompatActivity {
     protected LinearLayout page;
     protected void page(int title) {
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
+        PageScrollView scroll = new PageScrollView(this); scroll.setId(com.subhub.app.R.id.role_page_scroll); scroll.setFillViewport(true);
         page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL);
         int margin = getResources().getDimensionPixelSize(R.dimen.page_margin);
         page.setPadding(margin, getResources().getDimensionPixelSize(R.dimen.primary_header_top), margin, dp(32));

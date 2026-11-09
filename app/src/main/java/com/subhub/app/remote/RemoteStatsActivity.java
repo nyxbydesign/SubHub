@@ -53,7 +53,7 @@ public final class RemoteStatsActivity extends RemotePage {
         LinearLayout runtime=section(R.string.remote_runtime,RemoteProtocol.Stream.RUNTIME);
         try{runtime(runtime,feature.store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.RUNTIME,"current"));}
         catch(JSONException invalid){text(runtime,getString(R.string.remote_incomplete),false);}
-        updateFreshness();android.widget.ScrollView scroll=scroll();if(scroll!=null)scroll.post(()->scroll.scrollTo(0,scrollY));
+        updateFreshness();com.subhub.app.util.PageScrollView scroll=findViewById(R.id.role_page_scroll);scroll.restorePosition(scrollY);
     }
     private void history(RemoteProtocol.Stream stream,int label,int offset){
         LinearLayout group=section(label,stream);List<RemoteProtocol.Change> rows=feature.store.mirror(peer.identity,peer.generation,stream);rows.removeIf(row->row.deleted);
