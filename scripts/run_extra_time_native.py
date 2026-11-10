@@ -2,7 +2,8 @@
 
 This producer is separate from canonical unit/lint CI and never signs or publishes a
 release. Each selected method runs once; a failure retains its log and the remaining
-inventory. A later explicit workflow dispatch may select only a named subset.
+inventory. An explicitly invoked hosted run may select only a named subset.
+The retained producer and inventories do not install a feature-specific workflow.
 """
 
 import argparse
@@ -37,6 +38,26 @@ MEMORY_AVAILABLE = (2560 + 2048) * MIB
 MAX_LOG = 16 * MIB
 MAX_ARCHIVE = 64 * MIB
 MAX_MEMBER = 16 * MIB
+# Only allowlisted metadata from a newly executed method reaches the job console.
+# Raw assertion messages, values, view dumps and logcat stay in retained evidence.
+MAX_FAILURE_CHARS = 256 * 1024
+MAX_FAILURE_LINES = 4096
+MAX_FAILURE_LINE = 2048
+MAX_FAILURE_ITEMS = 4
+SAFE_FAILURE_EXCEPTIONS = frozenset((
+    "java.lang.AssertionError", "junit.framework.AssertionFailedError",
+    "org.junit.ComparisonFailure", "java.lang.IllegalStateException",
+    "java.lang.IllegalArgumentException", "java.lang.NullPointerException",
+    "java.lang.RuntimeException", "java.util.concurrent.TimeoutException",
+    "org.junit.AssumptionViolatedException", "org.junit.internal.AssumptionViolatedException",
+    "androidx.test.espresso.NoMatchingViewException", "androidx.test.espresso.AmbiguousViewMatcherException",
+    "androidx.test.espresso.PerformException", "androidx.test.espresso.AppNotIdleException",
+    "androidx.test.espresso.IdlingResourceTimeoutException",
+))
+SAFE_ASSERTION_OPERATIONS = frozenset((
+    "fail", "assertTrue", "assertFalse", "assertEquals", "assertNotEquals",
+    "assertNull", "assertNotNull", "assertSame", "assertNotSame", "assertArrayEquals", "assertThat",
+))
 # Ubuntu 24.04's client-library package supplies the missing emulator SONAME.
 # Never infer arbitrary apt package names from loader output.
 EMULATOR_RUNTIME_PACKAGES = {"libpulse.so.0": "libpulse0"}
@@ -401,6 +422,37 @@ DUMMY_PREVIEW_NATIVE = {
         "cancelledAndUnscopedBackGesturesNeverToggle",
         "rosterPreviewBrowsesEverySectionWithoutRealStateMutation",
         "previewRecreationAndRoleLossStayGuarded",
+        "censorEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "limitsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "walletEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "atmosphereEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "appsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "durationEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "profileAuthorityRejectsForgeryAndLiveEditorRevocation",
+    ],
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
+        "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
+        "sharedWhispersEnableIsQueuedWithoutChangingTheDomModule",
+        "sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime",
+        "sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials",
+        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets",
+    ],
+    "com.subhub.app.people.PersonRefreshAndroidTest": [
+        "telemetryAndDeferredRefreshKeepTheProfileDraftAndDeliveryTimeScroll",
+        "changedIdentityRecreationAndBackRetainPositionButRoleRevocationClosesPage",
+        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft",
+    ],
+    "com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest": [
+        "constructorFailureRestoresRealAdaptersAndDeletesOwnedStore",
+        "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore",
+    ],
+}
+DUMMY_PREVIEW_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        method for method in (SUBHUB_PASS_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
+                              + SUBHUB_PASS_SOURCE_ONLY["com.subhub.app.remote.RemoteEditorAndroidTest"])
+        if method not in DUMMY_PREVIEW_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
     ],
 }
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
@@ -417,7 +469,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54, "dummy-preview": 4}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54, "dummy-preview": 22}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -427,7 +479,10 @@ MAX_PR_BODY_BYTES = 64 * 1024
 # Keep their required visual artifacts distinct from the stronger UI_WITNESSES contract.
 UI_SCREENSHOTS = {
     "com.subhub.app.people.DummySubPreviewAndroidTest#rosterPreviewBrowsesEverySectionWithoutRealStateMutation": [
-        "dummy-preview-roster", "dummy-preview-settings"],
+        "dummy-preview-profile", "dummy-preview-censor", "dummy-preview-limits",
+        "dummy-preview-wallet", "dummy-preview-atmosphere", "dummy-preview-apps",
+        "dummy-preview-duration", "dummy-preview-subliminal", "dummy-preview-popup",
+        "dummy-preview-presets"],
     "com.subhub.app.people.ProfileStatsActivityAndroidTest#profileAppTimeSharesSessionCardAcrossRefreshAndRecreation": [
         "local-session-app-time-active", "local-session-app-time-idle"],
     "com.subhub.app.people.ProfileAndroidTest#profileEditorPairsActionsAndKeepsAvatarRemovalAsDraft": [
@@ -570,6 +625,7 @@ def source_inventory(suite="extra-time"):
         source_only = DEVICE_PASS_SOURCE_ONLY
     elif suite == "dummy-preview":
         native = DUMMY_PREVIEW_NATIVE
+        source_only = DUMMY_PREVIEW_SOURCE_ONLY
     inventory = {}
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"
@@ -597,7 +653,8 @@ def source_inventory(suite="extra-time"):
         expected = selected_methods + excluded
         if len(set(expected)) != len(expected) or set(found) != set(expected):
             raise ValueError(f"Native inventory changed for {cls}: expected {expected}, found {list(found)}")
-        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found,
+        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path),
+                          "lineCount": len(text.splitlines()), "methods": found,
                           "selectedMethods": selected_methods, "sourceOnlyMethods": excluded}
     if {f"{cls}#{method}" for cls, methods in native.items() for method in methods} != eligible:
         raise ValueError("Native source inventory differs from the selected suite")
@@ -639,14 +696,9 @@ def pr_subset(body, suite):
     return [value for value in known if value in requested]
 
 
-def native_workflow_path(suite):
-    suite_selectors(suite)  # Retain the same explicit suite admission boundary.
-    return ".github/workflows/dummy-preview-native.yml" if suite == "dummy-preview" else ".github/workflows/extra-time-native.yml"
-
-
 def selected_methods(suite):
-    # The dedicated preview workflow always qualifies all four contracts. A subset
-    # for another workflow on the same PR cannot silently reduce this fixed suite.
+    # The preview suite always qualifies its complete fixed inventory. A subset
+    # for another suite on the same PR cannot silently reduce it.
     if suite == "dummy-preview":
         return suite_selectors(suite), "suite_default"
     """Read opt-in PR subsets before producer directories, builds, or guest work."""
@@ -763,6 +815,113 @@ def instrumentation_result(text, selector, exit_code):
             "statusCodes": [1, 0], "instrumentationCode": -1}
 
 
+def instrumentation_failure_summary(text, selector, exit_code, inventory):
+    """Lossy diagnostics, never a success oracle or a copy of arbitrary test output.
+
+    Bind stack metadata to the selected status bundle. Source locations must match
+    that class's already-reconciled repository inventory, including its line bounds.
+    Even apparently harmless assertion messages may contain private runtime values.
+    """
+    result = {"schema": 1, "outputAvailable": text is not None, "protocolComplete": False,
+              "statusCodes": [], "finalCodes": [], "exceptions": [], "assertionOperations": [],
+              "sourceFrames": [], "failureMarkers": [], "truncated": False, "messagesOmitted": True}
+    if text is None:
+        return result
+    result["exitCode"] = exit_code if type(exit_code) is int and -255 <= exit_code <= 255 else "unknown"
+    selected_class, selected_method = selector.split("#", 1)
+    source = inventory.get(selected_class, {})
+    expected_path = "app/src/androidTest/java/" + selected_class.replace(".", "/") + ".java"
+    source_verified = source.get("path") == expected_path and type(source.get("lineCount")) is int
+    bundle, stack, statuses, finals = {}, [], [], []
+    in_stack = ambiguous = False
+    result["truncated"] = len(text) > MAX_FAILURE_CHARS
+    bounded = text[:MAX_FAILURE_CHARS]
+    if result["truncated"]:
+        bounded = bounded.rsplit("\n", 1)[0] if "\n" in bounded else ""
+    lines = bounded.splitlines()
+    if len(lines) > MAX_FAILURE_LINES:
+        result["truncated"] = True
+
+    def add(key, value):
+        if value not in result[key]:
+            if len(result[key]) < MAX_FAILURE_ITEMS:
+                result[key].append(value)
+            else:
+                result["truncated"] = True
+
+    def retain_stack():
+        if ambiguous or bundle.get("class") != selected_class or bundle.get("test") != selected_method \
+                or bundle.get("numtests") != "1" or bundle.get("current") != "1":
+            return
+        for line in stack:
+            exception = re.fullmatch(r"\s*(?:(?:Caused by|Suppressed): )?([A-Za-z0-9_.$]+(?:Exception|Error))(?::.*)?", line)
+            if exception:
+                add("exceptions", exception[1] if exception[1] in SAFE_FAILURE_EXCEPTIONS else "other")
+            frame = re.fullmatch(r"\s+at ([A-Za-z0-9_.$]+)\.([A-Za-z0-9_$<>]+)\(([A-Za-z0-9_$]+\.java):([0-9]{1,6})\)", line)
+            if not frame:
+                continue
+            if frame[1] in ("org.junit.Assert", "junit.framework.Assert") and frame[2] in SAFE_ASSERTION_OPERATIONS:
+                add("assertionOperations", frame[1] + "." + frame[2])
+            if source_verified and frame[1].split("$", 1)[0] == selected_class \
+                    and frame[3] == selected_class.rsplit(".", 1)[-1] + ".java" \
+                    and 1 <= int(frame[4]) <= source["lineCount"]:
+                add("sourceFrames", {"path": source["path"], "line": int(frame[4])})
+
+    for index, line in enumerate(lines[:MAX_FAILURE_LINES]):
+        if len(line) > MAX_FAILURE_LINE:
+            result["truncated"] = True
+            in_stack = False
+            continue
+        for prefix, marker in (("INSTRUMENTATION_FAILED:", "failed"),
+                               ("INSTRUMENTATION_ABORTED:", "aborted"),
+                               ("INSTRUMENTATION_RESULT: shortMsg=", "short_message"),
+                               ("FAILURES!!!", "failure_summary")):
+            if line.startswith(prefix):
+                add("failureMarkers", marker)
+        field = re.fullmatch(r"INSTRUMENTATION_STATUS: ([A-Za-z0-9_]+)=(.*)", line)
+        if field:
+            if field[1] in bundle:
+                ambiguous = True
+            bundle[field[1]] = field[2]
+            in_stack = field[1] == "stack"
+            if in_stack:
+                stack.append(field[2])
+            continue
+        status = re.fullmatch(r"INSTRUMENTATION_STATUS_CODE: (-?[0-9]+)", line)
+        final = re.fullmatch(r"INSTRUMENTATION_CODE: (-?[0-9]+)", line)
+        if status:
+            code = int(status[1]) if status[1] in ("-4", "-3", "-2", "-1", "0", "1", "2") else "unknown"
+            if len(result["statusCodes"]) < MAX_FAILURE_ITEMS:
+                result["statusCodes"].append(code)
+            else:
+                result["truncated"] = True
+            matches = not ambiguous and all(bundle.get(key) == value for key, value in (
+                ("class", selected_class), ("test", selected_method), ("numtests", "1"), ("current", "1")))
+            statuses.append((code, matches, index))
+            retain_stack()
+            bundle, stack, in_stack = {}, [], False
+        elif final:
+            code = int(final[1]) if final[1] in ("-1", "0", "1") else "unknown"
+            if len(result["finalCodes"]) < MAX_FAILURE_ITEMS:
+                result["finalCodes"].append(code)
+            else:
+                result["truncated"] = True
+            finals.append((code, index))
+            in_stack = False
+        elif line.startswith("INSTRUMENTATION_"):
+            in_stack = False
+        elif in_stack:
+            stack.append(line)
+    # A cut-off bundle can still supply safe locations, but never complete proof.
+    retain_stack()
+    result["protocolComplete"] = not (result["truncated"] or ambiguous or bundle
+                                        or set(result["failureMarkers"]) - {"failure_summary"}) \
+        and len(statuses) == 2 and statuses[0][0] == 1 and statuses[1][0] in (-4, -3, -2, -1, 0) \
+        and all(item[1] for item in statuses) and len(finals) == 1 and finals[0][1] > statuses[-1][2] \
+        and finals[0][0] == -1
+    return result
+
+
 class Producer:
     def __init__(self, suite="extra-time"):
         if sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true":
@@ -792,7 +951,9 @@ class Producer:
         self.serial = "emulator-5554"
         self.avd = "subhub_extra_time_api35"
         self.soft_deadline = time.monotonic() + 35 * 60
-        self.record = {"schema": 1, "workflowPath": native_workflow_path(suite),
+        # No feature-specific workflow is installed. Identify the retained producer
+        # without claiming a deleted workflow supplied this receipt.
+        self.record = {"schema": 1, "workflowPath": None, "producerPath": "scripts/run_extra_time_native.py",
                        "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
                        "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
                        "producerSoftTimeoutSeconds": 35 * 60,
@@ -1171,6 +1332,7 @@ class Producer:
 
     def method(self, selector, index):
         started = time.monotonic()
+        text, code = None, None
         self.record["methods"][selector] = {"state": "running", "index": index}
         self.record["remaining"].remove(selector)
         self.save()
@@ -1184,10 +1346,21 @@ class Producer:
         except BaseException as failure:
             self.record["methods"][selector].update(state="failed", failure=type(failure).__name__ + ": " + str(failure),
                                                     seconds=round(time.monotonic() - started, 2))
+            try:
+                diagnostic = instrumentation_failure_summary(text, selector, code, self.record.get("inventory", {}))
+            except Exception:
+                # Reporting must not replace the original failure or delay cleanup.
+                diagnostic = {"schema": 1, "outputAvailable": False, "messagesOmitted": True}
+            diagnostic["stage"] = "command" if text is None else "instrumentation_validation"
+            self.record["methods"][selector]["failureDiagnostic"] = diagnostic
             raise
         finally:
             self.save()
-            print(json.dumps({"method": selector, "state": self.record["methods"][selector]["state"]}), flush=True)
+            result = self.record["methods"][selector]
+            console = {"method": selector, "state": result["state"]}
+            if "failureDiagnostic" in result:
+                console["failureDiagnostic"] = result["failureDiagnostic"]
+            print(json.dumps(console), flush=True)
 
     def run_tests(self):
         self.record["state"] = "selected_native_running"; self.save()

@@ -358,6 +358,8 @@ User-facing changes from every tagged SubHub release.
 - **Remove explanatory session statistics subtext** — Remove the explanatory paragraphs below current-session statistics on Sub and the corresponding remote view on Dom while retaining elapsed values, observation timestamps, and existing sync freshness indicators.
 - **Retry pending synchronization on a stable connection** — Resume saved changes automatically after the default network has remained validated and usable for two seconds, clearing stale offline reconnect delays without replacing durable commands or bypassing consent and terminal results.
 - **Keep Completed on Tasks and mirror app-time meters correctly** — Keep accepted-only Completed counts on the Tasks page while restoring the overview's original Active, Pending and Scheduled counters, and render app-time meters from the correct side in RTL layouts.
+- **Preview Dummy Sub through real native screens** — Dummy Sub now opens the normal read-only profile and native contract settings with an isolated synthetic configuration, while preserving the five-second Back toggle.
+- **Preserve the Wallet restoration guard in preview** — Keep Wallet preview read-only through the existing lifecycle override while preserving normal saved-rule restoration.
 
 ### Faster & smoother
 
@@ -442,6 +444,7 @@ User-facing changes from every tagged SubHub release.
 - **Integrate atomic native session preparations** — Persist each exact native preparation with its applying journal state in one SQLite transaction, so interrupted commands retain their original selection and target.
 - **Integrate the typed relationship presentation boundary** — Keep relationship eligibility, operation state and connection availability distinct in immutable presentation data.
 - **Group Settings by connection, privacy and app controls** — Settings now separates device role, connections, privacy and safety, notifications, Android access, app preferences, and help so related controls are easy to find.
+- **Retain the daily writer pool for supported isolation checks** — Keep the existing single-worker scheduling contract behind an unconfigurable ExecutorService while retaining its private app-owned pool reference.
 
 ### Restored
 
@@ -581,6 +584,10 @@ User-facing changes from every tagged SubHub release.
 - **Select a focused 52-method SubHub native suite** — Keep the default 21 ExtraTime/Tribute contracts and add an opt-in subhub-pass suite for the 31 additional single-guest integration contracts.
 - **Admit labelled exact native subsets from PR event data** — Allow an explicit native-subset label to select one bounded JSON array of exact known methods from a delimited PR body block.
 - **Reconcile stable dependencies for the 0.7 promotion** — Combine the completed development application, including the isolated Dummy Sub preview, with the stable branch's newer build dependencies and verified wrapper.
+- **Report bounded native failure locations without runtime values** — Make future native failures diagnosable from the supported CI job log using allowlisted exception categories, protocol state and selected-class source locations.
+- **Expose bounded build failure categories without raw traces** — Keep one complete canonical test, lint and universal APK build while streaming future Gradle failure diagnostics through a fixed-label sanitizer.
+- **Contain parent Bash notifications without losing build status** — Keep version-dependent parent-shell pipeline notices inside the same stderr boundary as reporter failures, while capturing PIPESTATUS immediately in the current shell.
+- **Remove feature-specific native workflows from development** — Stop automatic Extra-time and Dummy preview workflow jobs while retaining their native test inventories and runner for explicitly arranged qualification.
 
 ### Quality
 
@@ -656,6 +663,13 @@ User-facing changes from every tagged SubHub release.
 - **Attach and settle native profile fixtures** — Verify allowance accessibility in an attached debug Activity and wait for the newly imported avatar and recreated allowance text layout before asserting native presentation.
 - **Resolve profile avatar fallback by its tagged view** — Verify the visible initials and removed image after avatar removal using the tagged ProfileAvatarView rather than stale ancestor assumptions.
 - **Retain the native extra-time draft restoration witness** — Record synthetic editor and retained-draft state around the large-font recreation check without changing its input or assertions; keep Dummy Sub qualification fixed and identify its actual workflow in receipts.
+- **Separate roster journal acknowledgements from preview isolation** — Keep Dummy Sub preview comparisons strict while allowing only the real roster's documented write_witness UUID refresh after returning to PeopleActivity.
+- **Isolate real preview adapters and restore owned fixture state** — Exercise Dummy Sub through actual production adapters bound to an owned endpoint and relationship store instead of leaving captured providers attached to the application's database.
+- **Recreate preview children within their existing navigation task** — Qualify Presets, Whispers and Popup recreation on the actual open child rather than launching an independent ActivityScenario and expecting its retained parent to resume.
+- **Reveal native Back controls before preview navigation** — Scroll the actual Back control into view after inspecting lower settings, using the existing native reveal helper.
+- **Qualify preview editors in separate bounded contracts** — Keep every real preview editor recreation, read-only input, forged route and live revocation assertion in independently restored native cases without increasing the per-method timeout.
+- **Prepare guarded authentication for explicitly unkeyed fixture guests** — Allow endpoint cleanup regressions to prepare a temporary PIN only for an explicitly unkeyed guest with no credentials, retaining existing credentials, guarded verification and exact restoration.
+- **Keep read-only cleanup contracts independent of guest authentication** — Verify owned endpoint failure cleanup without changing credentials or roles that its read-only snapshot never requires, and assert the original settings and session remain unchanged before failure-safe restoration.
 
 ### Maintenance
 

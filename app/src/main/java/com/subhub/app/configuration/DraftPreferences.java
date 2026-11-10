@@ -5,6 +5,8 @@ import java.util.*;
 
 /** An editor's in-memory preferences never delegate reads or writes to device stores. */
 public final class DraftPreferences implements SharedPreferences {
+    private boolean readOnly;
+    public synchronized void freeze(){readOnly=true;}
     private final Map<String,Object> values = new LinkedHashMap<>();
     private final Set<OnSharedPreferenceChangeListener> listeners = new HashSet<>();
     @Override public synchronized Map<String,?> getAll() {
@@ -38,6 +40,7 @@ public final class DraftPreferences implements SharedPreferences {
         public boolean commit(){
             Set<String> changed=new LinkedHashSet<>();Set<OnSharedPreferenceChangeListener> observers;
             synchronized(DraftPreferences.this){
+                if(readOnly)return false;
                 if(clear){changed.addAll(values.keySet());values.clear();}
                 for(Map.Entry<String,Object> entry:pending.entrySet()){
                     if(!Objects.equals(values.get(entry.getKey()),entry.getValue()))changed.add(entry.getKey());

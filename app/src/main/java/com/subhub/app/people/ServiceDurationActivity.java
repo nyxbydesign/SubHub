@@ -20,7 +20,7 @@ public final class ServiceDurationActivity extends RolePage {
         if (!FeatureEditorSession.attach(this, "duration", state)) return;
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
-        if (!mayEdit()) { finish(); return; }
+        if (!mayView()) { finish(); return; }
         page(R.string.person_duration_title, SubHubNavigation.Screen.PEOPLE, true);
         secondaryBack(this::finish);
         PersonUi.text(body, FeatureEditorSession.targetName(this), false).setId(R.id.person_editor_target);
@@ -28,10 +28,17 @@ public final class ServiceDurationActivity extends RolePage {
         duration.setId(R.id.person_duration_control);
         duration.setTag("person_duration:" + personId.value());
         duration.setHeadingVisible(false);
-        duration.setEditable(true);
+        duration.setEditable(mayEdit());
         body.addView(duration, new LinearLayout.LayoutParams(-1, -2));
         FeatureEditorSession.bind(this, findViewById(android.R.id.content), "duration", () -> duration.validateSelection());
         InputFocusPolicy.openActivityForReading(this);
+    }
+
+    private boolean mayView() {
+        try {
+            return personId != null && personId.equals(PersonRoutes.requireId(getIntent()))
+                    && FeatureEditorSession.canView(this, "duration");
+        } catch (IllegalArgumentException invalid) { return false; }
     }
 
     private boolean mayEdit() {
@@ -51,12 +58,17 @@ public final class ServiceDurationActivity extends RolePage {
         if (duration == null) return;
         boolean editable = mayEdit();
         duration.setEditable(editable);
-        if (!editable) { finish(); return; }
+        if (!mayView()) { finish(); return; }
         duration.reload();
     }
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

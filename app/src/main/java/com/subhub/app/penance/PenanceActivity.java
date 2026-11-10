@@ -144,7 +144,9 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
+        if (com.subhub.app.people.DummySubPreview.isRequested(intent)
+                && !FeatureEditorSession.preview(this)) { finish(); return; }
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canView(this, "wallet")) finish(); return; }
         if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
         showConnectionIfRequested();
@@ -156,7 +158,8 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
+        if (binding == null || isFinishing()) return;
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canView(this, "wallet")) finish(); return; }
         applyEditState();
         connection.onResume();
         showConnectionIfRequested();
@@ -305,6 +308,8 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override
     protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (FeatureEditorSession.preview(this)) return;
         // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
         populatingRules = true;
         try {
@@ -323,6 +328,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
+        if (FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);
@@ -1017,4 +1023,5 @@ public final class PenanceActivity extends AppCompatActivity {
         binding = null;
         super.onDestroy();
     }
+
 }

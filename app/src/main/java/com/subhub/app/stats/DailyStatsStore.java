@@ -13,7 +13,12 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
     private final Context context;
     private final Map<String, Map<String,Long>> cachedTotals=new HashMap<>();
     private String importedHistory;
-    private static final java.util.concurrent.ExecutorService counterWriter = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-daily-counters"));
+    // Keep the actual single worker observable without inspecting private JDK wrapper fields.
+    // The unconfigurable facade preserves the single-thread executor's scheduling contract.
+    private static final java.util.concurrent.ThreadPoolExecutor counterPool = new java.util.concurrent.ThreadPoolExecutor(
+            1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.LinkedBlockingQueue<Runnable>(), r -> new Thread(r, "subhub-daily-counters"));
+    private static final java.util.concurrent.ExecutorService counterWriter = java.util.concurrent.Executors.unconfigurableExecutorService(counterPool);
     public void queueStats(SharedPreferences prefs) { queueStats(prefs, System.currentTimeMillis(), false); }
     void queueStats(SharedPreferences prefs, long observedAt) { queueStats(prefs, observedAt, true); }
     private void queueStats(SharedPreferences prefs, long observedAt, boolean durations) {

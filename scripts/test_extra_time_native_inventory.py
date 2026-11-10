@@ -463,6 +463,8 @@ class NativePrSubsetTest(unittest.TestCase):
             with mock.patch.dict(os.environ, env), mock.patch.object(native, "ROOT", root), mock.patch.object(sys, "platform", "linux"):
                 producer = native.Producer("subhub-pass")
             receipt = json.loads((producer.out / "receipt.json").read_text())
+            self.assertIsNone(receipt["workflowPath"])
+            self.assertEqual("scripts/run_extra_time_native.py", receipt["producerPath"])
             self.assertEqual("pull_request_body", receipt["selectionSource"])
             self.assertEqual("subhub-pass", receipt["suite"])
             self.assertEqual(self.chosen, receipt["selected"])
@@ -479,119 +481,6 @@ class NativePrSubsetTest(unittest.TestCase):
         receipt = json.loads(output.getvalue())
         self.assertEqual(self.chosen, receipt["selectors"])
         self.assertEqual("pull_request_body", receipt["selectionSource"])
-
-
-class NativeWorkflowSelectionTest(unittest.TestCase):
-    def setUp(self):
-        self.workflow = (native.ROOT / ".github/workflows/extra-time-native.yml").read_text()
-
-    def expression(self, name):
-        match = re.search(r"^      " + name + r": \$\{\{ (.+) \}\}$", self.workflow, re.MULTILINE)
-        self.assertIsNotNone(match)
-        return match[1]
-
-    def evaluate(self, expression, event="pull_request", labels=(), suite="", selectors=""):
-        # The workflow's small supported expression vocabulary, exercised directly
-        # from YAML so label precedence cannot silently diverge from these fixtures.
-        replacements = {
-            "github.event.pull_request.labels.*.name": "labels",
-            "github.event_name": "event", "inputs.suite": "suite", "inputs.selectors": "selectors",
-            "&&": " and ", "||": " or ", "!": " not ",
-        }
-        for before, after in replacements.items():
-            expression = expression.replace(before, after)
-        return eval(expression, {"__builtins__": {}}, {
-            "contains": lambda values, item: item in values,
-            "event": event, "labels": labels, "suite": suite, "selectors": selectors,
-        })
-
-    def test_plain_pr_preserves_default_full_21(self):
-        suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"))
-        raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"))
-        self.assertEqual("extra-time", suite)
-        self.assertEqual(21, len(native.selectors(raw, suite)))
-
-    def test_integration_label_runs_52_even_with_both_legacy_labels(self):
-        for labels in (("native-subhub-pass",), ("native-subhub-pass", "native-extra-time-ui", "native-extra-time-tribute-large")):
-            with self.subTest(labels=labels):
-                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
-                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
-                self.assertEqual("subhub-pass", suite)
-                self.assertEqual("", raw)
-                self.assertEqual(52, len(native.selectors(raw, suite)))
-
-    def test_legacy_subset_labels_keep_original_counts(self):
-        for label, count in (("native-extra-time-ui", 10), ("native-extra-time-tribute-large", 2)):
-            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=(label,))
-            raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=(label,))
-            self.assertEqual("extra-time", suite)
-            self.assertEqual(count, len(native.selectors(raw, suite)))
-
-    def test_reconnect_label_runs_only_six_even_with_older_suite_labels(self):
-        for labels in (("native-reconnect",), ("native-reconnect", "native-subhub-pass", "native-extra-time-ui")):
-            with self.subTest(labels=labels):
-                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
-                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
-                self.assertEqual("reconnect", suite)
-                self.assertEqual("", raw)
-                self.assertEqual(6, len(native.selectors(raw, suite)))
-
-    def test_battery_label_wins_over_all_older_suite_and_subset_labels(self):
-        for labels in (("native-battery",), ("native-battery", "native-reconnect", "native-subhub-pass",
-                                            "native-extra-time-ui", "native-extra-time-tribute-large")):
-            with self.subTest(labels=labels):
-                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
-                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
-                self.assertEqual("battery", suite)
-                self.assertEqual("", raw)
-                self.assertEqual(31, len(native.selectors(raw, suite)))
-
-    def test_device_pass_label_precedes_existing_suites_and_supports_dispatch(self):
-        labels = ("native-device-pass", "native-battery", "native-reconnect", "native-extra-time-ui")
-        self.assertEqual("device-pass", self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels))
-        self.assertEqual("", self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels))
-        self.assertEqual(54, len(native.selectors("", "device-pass")))
-        for raw, count in (("", 54), (native.DEVICE_PASS_SELECTORS[-1], 1)):
-            args = dict(event="workflow_dispatch", suite="device-pass", selectors=raw)
-            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
-            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
-            self.assertEqual(count, len(native.selectors(selected, suite)))
-
-    def test_dispatch_battery_supports_full_suite_and_exact_subset(self):
-        for raw, count in (("", 31), (native.BATTERY_SELECTORS[-1], 1)):
-            args = dict(event="workflow_dispatch", suite="battery", selectors=raw)
-            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
-            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
-            self.assertEqual(count, len(native.selectors(selected, suite)))
-
-    def test_dispatch_reconnect_supports_full_suite_and_exact_subset(self):
-        for raw, count in (("", 6), (native.RECONNECT_SELECTORS[0], 1)):
-            args = dict(event="workflow_dispatch", suite="reconnect", selectors=raw)
-            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
-            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
-            self.assertEqual(count, len(native.selectors(selected, suite)))
-
-    def test_dispatch_pass_supports_full_suite_and_exact_subset(self):
-        for raw, count in (("", 52), (native.SUBHUB_PASS_SELECTORS[20], 1)):
-            args = dict(event="workflow_dispatch", suite="subhub-pass", selectors=raw)
-            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
-            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
-            self.assertEqual(count, len(native.selectors(selected, suite)))
-
-    def test_only_one_job_and_no_label_push_schedule_or_dispatch_side_effect(self):
-        self.assertEqual(["native"], re.findall(r"^  ([a-zA-Z_-]+):$", self.workflow.split("jobs:\n", 1)[1], re.MULTILINE))
-        self.assertNotIn("matrix:", self.workflow)
-        self.assertNotIn("github.event.pull_request.body", self.workflow)
-        self.assertNotIn("native-manual-only", self.workflow)
-        self.assertNotRegex(self.workflow, r"(?m)^    if:")  # No job gate silently skips native qualification.
-        trigger = self.workflow.split("on:\n", 1)[1].split("permissions:\n", 1)[0]
-        self.assertNotIn("labeled", trigger)
-        self.assertNotIn("types:", trigger)  # Retain the original PR default event set.
-        self.assertNotRegex(trigger, r"(?m)^  (push|schedule|workflow_run|pull_request_target):")
-        self.assertIn("options: [extra-time, subhub-pass, reconnect, battery, device-pass]", trigger)
-        self.assertIn("timeout-minutes: 45", self.workflow)
-        self.assertEqual(1, self.workflow.count("run: python3 scripts/run_extra_time_native.py"))
-        self.assertRegex(self.workflow, r"run: python3 -m unittest [^\n]*\bscripts\.test_extra_time_native_inventory\b")
 
 
 if __name__ == "__main__":

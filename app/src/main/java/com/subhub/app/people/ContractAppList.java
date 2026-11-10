@@ -12,6 +12,11 @@ public final class ContractAppList {
     }
 
     public static void add(LinearLayout parent, PersonSnapshot.Section section) {
+        add(parent, section, true);
+    }
+
+    /** Synthetic presentations keep static icons and never query installed applications. */
+    public static void add(LinearLayout parent, PersonSnapshot.Section section, boolean localIcons) {
         java.util.List<PersonSnapshot.App> apps = section.apps;
         if (apps.isEmpty()) {
             apps = new java.util.ArrayList<>();
@@ -33,7 +38,7 @@ public final class ContractAppList {
             icon.getLayoutParams().height = PersonUi.dp(parent.getContext(), 32);
             icon.setTag("contract_app_icon:" + app.packageName);
             if (app.appIcon != null) com.subhub.app.remote.RemoteUi.bindAppIcon(icon, app.appIcon, R.drawable.ic_settings_apps);
-            else com.subhub.app.util.AppIcons.bind(icon, app.packageName, R.drawable.ic_settings_apps);
+            else if (localIcons) com.subhub.app.util.AppIcons.bind(icon, app.packageName, R.drawable.ic_settings_apps);
             androidx.core.view.ViewCompat.setScreenReaderFocusable(row, true);
         }
     }
