@@ -464,9 +464,8 @@ public final class DummySubPreviewAndroidTest {
             pointer(MotionEvent.ACTION_UP, down, bounds.centerX(), bounds.centerY());
             await(() -> resumed(presets)); // A disabled Save must not create the name dialog.
             capture(presets, "dummy-preview-presets");
-            Intent nestedRoute = new Intent(presets.getIntent());
-            nativeBack(presets); await(() -> resumed(censor));
-            exerciseNestedRecreation(nestedRoute); await(() -> resumed(censor));
+            Activity recreatedPresets = exerciseNestedRecreation(presets, censor);
+            nativeBack(recreatedPresets); await(() -> resumed(censor));
             // Return to the normal section's first visible controls for the retained frame.
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.button_appearance_details))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
@@ -485,23 +484,54 @@ public final class DummySubPreviewAndroidTest {
                 instrumentation.runOnMainSync(() -> assertReadOnly(page.findViewById(android.R.id.content)));
                 assertNoAutosave(page); attemptDisabledNativeInput(page); attemptMaterialSlider(page);
                 capture(page, "dummy-preview-" + (whispers ? "subliminal" : "popup"));
-                Intent nestedRoute = new Intent(page.getIntent());
-                nativeBack(page); await(() -> resumed(atmosphere));
-                exerciseNestedRecreation(nestedRoute); await(() -> resumed(atmosphere));
+                Activity recreatedPage = exerciseNestedRecreation(page, atmosphere);
+                nativeBack(recreatedPage); await(() -> resumed(atmosphere));
             } finally { instrumentation.removeMonitor(monitor); }
         }
     }
-    private void exerciseNestedRecreation(Intent route) {
-        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(route)) {
-            AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set);
-            await(() -> resumed(page.get()));
-            scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
-            instrumentation.runOnMainSync(() -> assertReadOnly(page.get().findViewById(android.R.id.content)));
-            assertNoAutosave(page.get());
-            if (!(page.get() instanceof com.subhub.app.settings.CensorPresetsActivity)) {
-                attemptDisabledNativeInput(page.get()); attemptMaterialSlider(page.get());
-            }
-            else instrumentation.runOnMainSync(() -> assertFalse(tagged(page.get(), "preset:save").isEnabled()));
+    private Activity exerciseNestedRecreation(Activity original, Activity parent) {
+        await(() -> resumed(original));
+        AtomicReference<Activity> replacement = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger task = new java.util.concurrent.atomic.AtomicInteger();
+        AtomicReference<Intent> route = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> {
+            task.set(original.getTaskId()); route.set(new Intent(original.getIntent()));
+            assertEquals("Nested child remains in its existing parent's task", task.get(), parent.getTaskId());
+            assertFalse(parent.isFinishing()); assertFalse(parent.isDestroyed());
+        });
+        androidx.test.runner.lifecycle.ActivityLifecycleCallback observer = (activity, stage) -> {
+            if (stage == Stage.RESUMED && activity != original
+                    && activity.getClass() == original.getClass() && activity.getTaskId() == task.get())
+                replacement.set(activity);
+        };
+        try {
+            instrumentation.runOnMainSync(() -> {
+                ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(observer);
+                // Recreate the actual open child. A new ActivityScenario launch owns a separate
+                // launch/cleanup lifecycle and cannot verify this retained parent's back stack.
+                original.recreate();
+            });
+            await(() -> original.isDestroyed() && replacement.get() != null && resumed(replacement.get()));
+            Activity page = replacement.get();
+            instrumentation.runOnMainSync(() -> {
+                assertNotSame("Recreation must replace the original child", original, page);
+                assertEquals(original.getClass(), page.getClass());
+                assertEquals(task.get(), page.getTaskId());
+                assertEquals(route.get().getStringExtra(PersonRoutes.EXTRA_PERSON_ID),
+                        page.getIntent().getStringExtra(PersonRoutes.EXTRA_PERSON_ID));
+                assertEquals(route.get().getStringExtra("section"), page.getIntent().getStringExtra("section"));
+                assertTrue("Recreated child keeps the authorized preview route", DummySubPreview.isAllowed(page));
+                assertFalse("The existing parent must survive child recreation", parent.isDestroyed());
+                assertFalse(parent.isFinishing());
+                assertReadOnly(page.findViewById(android.R.id.content));
+            });
+            assertNoAutosave(page);
+            if (!(page instanceof com.subhub.app.settings.CensorPresetsActivity)) {
+                attemptDisabledNativeInput(page); attemptMaterialSlider(page);
+            } else instrumentation.runOnMainSync(() -> assertFalse(tagged(page, "preset:save").isEnabled()));
+            return page;
+        } finally {
+            instrumentation.runOnMainSync(() -> ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(observer));
         }
     }
     private void attemptMaterialSlider(Activity page) {
