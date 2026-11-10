@@ -39,6 +39,7 @@ import java.util.Set;
 final class AchievementsPane extends android.content.ContextWrapper {
     private final StatsActivity host;
     private final LinearLayout content;
+    private final TextView membershipUnavailable;
     private boolean active;
     private static final String[] CATEGORY_ORDER = {
             "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_wallet", "dom_tribute", "dom_hardcore",
@@ -66,6 +67,11 @@ final class AchievementsPane extends android.content.ContextWrapper {
         ((android.view.ViewGroup) content.getParent()).removeView(content);
         content.removeViewAt(0);
         content.setPadding(0, 0, 0, 0);
+        membershipUnavailable = new TextView(host);
+        membershipUnavailable.setText(R.string.role_unknown_data);
+        membershipUnavailable.setTextColor(getColor(R.color.text_primary));
+        membershipUnavailable.setVisibility(View.GONE);
+        content.addView(membershipUnavailable, 0);
     }
 
     LinearLayout view() { return content; }
@@ -76,7 +82,11 @@ final class AchievementsPane extends android.content.ContextWrapper {
         manager = AchievementManager.forWorkspace(this);
         if (!manager.isAccessible()) { showUnavailable(); host.finish(); return; }
         if (retained == null || !retained.current()) showUnavailable();
-        else { manager = retained.manager; stats = retained.stats; }
+        else {
+            manager = retained.manager; stats = retained.stats;
+            // Provider identity alone cannot prove that membership survived a pause.
+            if (retained.scope != null) setCatalogVisible(false);
+        }
         content.setVisibility(View.VISIBLE);
         loadCatalog();
     }
@@ -112,7 +122,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
         }, loaded -> {
             if (!active) return;
             if (!loaded.current()) { showUnavailable(); scheduleRefresh(); return; }
-            if (loaded == retained) { content.setVisibility(View.VISIBLE); scheduleRefresh(); return; }
+            if (loaded == retained) { setCatalogVisible(true); content.setVisibility(View.VISIBLE); scheduleRefresh(); return; }
             retained = loaded;
             manager = loaded.manager;
             stats = loaded.stats;
@@ -124,6 +134,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
                 if (detailDialog != null && detailDialog.isShowing() && detailAchievement != null)
                     bindDetails(detailContent, detailAchievement);
             }
+            setCatalogVisible(true);
             content.setVisibility(View.VISIBLE);
             scheduleRefresh();
         }, failure -> {
@@ -151,8 +162,18 @@ final class AchievementsPane extends android.content.ContextWrapper {
         return value.toString();
     }
 
+    /** Retain view identities while withholding all aggregate content until membership is checked. */
+    private void setCatalogVisible(boolean visible) {
+        for (int i = 0; i < content.getChildCount(); i++) {
+            View child = content.getChildAt(i);
+            child.setVisibility(child == membershipUnavailable
+                    ? (visible ? View.GONE : View.VISIBLE) : (visible ? View.VISIBLE : View.GONE));
+        }
+    }
+
     private void showUnavailable() {
         retained = null; stats = null; renderedFingerprint = null;
+        setCatalogVisible(true);
         if (detailDialog != null) detailDialog.dismiss();
         binding.achievementList.removeAllViews(); binding.achievementBadgeStrip.removeAllViews();
         binding.achievementProgress.setText(R.string.role_unknown_data);
@@ -188,6 +209,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
         if (detailDialog != null) { detailDialog.dismiss(); detailDialog = null; }
         com.subhub.app.util.AsyncUiScope.forPage(host).cancel("workspace-achievement-catalog");
         if (retained != null && !retained.current()) showUnavailable();
+        else if (retained != null && retained.scope != null) setCatalogVisible(false);
     }
 
     private void rebuild() {

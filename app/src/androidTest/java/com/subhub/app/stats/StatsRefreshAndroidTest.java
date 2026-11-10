@@ -197,6 +197,100 @@ public final class StatsRefreshAndroidTest {
         }
     }
 
+    @Test public void pausedDomCatalogWithholdsRowsUntilSameProviderMembershipIsValidated() throws Exception {
+        ControllerPinManager.enterDomMode();
+        new StatsRepository(context, false).setCustomPhrasesCount(3);
+        com.subhub.app.relationships.RelationshipUi.Provider previous = com.subhub.app.relationships.RelationshipUi.provider();
+        MembershipProjection provider = new MembershipProjection();
+        provider.snapshot = java.util.concurrent.CompletableFuture.completedFuture(provider.snapshot(true));
+        com.subhub.app.relationships.RelationshipUi.install(provider);
+        try (ActivityScenario<AchievementsActivity> page = ActivityScenario.launch(AchievementsActivity.class)) {
+            AtomicReference<AchievementsActivity> current = new AtomicReference<>();
+            AtomicReference<View> oldRow = new AtomicReference<>();
+            AtomicReference<AchievementsPane> pane = new AtomicReference<>();
+            page.onActivity(current::set);
+            String rowTag = "achievement:phrase_library";
+            await(() -> containsText(current.get().findViewById(android.R.id.content).findViewWithTag(rowTag), "3 / 10"));
+            java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Snapshot> blocked =
+                    new java.util.concurrent.CompletableFuture<>();
+            page.onActivity(activity -> {
+                try {
+                    java.lang.reflect.Field field = StatsActivity.class.getDeclaredField("catalog");
+                    field.setAccessible(true); pane.set((AchievementsPane) field.get(activity));
+                    oldRow.set(activity.findViewById(android.R.id.content).findViewWithTag(rowTag));
+                    assertTrue(oldRow.get().isShown());
+                    pane.get().pause();
+                    // The provider instance is unchanged; its paused membership observation is blocked.
+                    provider.snapshot = blocked;
+                    pane.get().resume();
+                    assertSame(oldRow.get(), activity.findViewById(android.R.id.content).findViewWithTag(rowTag));
+                    assertFalse("Unvalidated retained aggregate must not be visible", oldRow.get().isShown());
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
+            // Revocation becomes observable through the same provider, never through a new identity.
+            com.subhub.app.relationships.RelationshipUi.Snapshot revoked = provider.snapshot(false);
+            blocked.complete(revoked);
+            await(() -> {
+                View row = current.get().findViewById(android.R.id.content).findViewWithTag(rowTag);
+                return row != null && row.isShown() && !catalogHasLocalScope(pane.get());
+            });
+            java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Snapshot> failed =
+                    new java.util.concurrent.CompletableFuture<>();
+            page.onActivity(activity -> {
+                oldRow.set(activity.findViewById(android.R.id.content).findViewWithTag(rowTag));
+                pane.get().pause(); provider.snapshot = failed; pane.get().resume();
+                assertFalse(oldRow.get().isShown());
+            });
+            // Neither the new read nor fallback revalidation may expose rows on an unknown membership.
+            failed.completeExceptionally(new IllegalStateException("Synthetic membership unavailable"));
+            await(() -> current.get().findViewById(android.R.id.content).findViewWithTag(rowTag) == null);
+            page.onActivity(activity -> assertFalse(oldRow.get().isShown()));
+            // The same provider now reports the revoked membership. Fresh authorized content may return.
+            provider.snapshot = java.util.concurrent.CompletableFuture.completedFuture(provider.snapshot(false));
+            page.onActivity(activity -> { pane.get().pause(); pane.get().resume(); });
+            await(() -> containsText(current.get().findViewById(android.R.id.content).findViewWithTag(rowTag), "3 / 10"));
+            page.onActivity(activity -> {
+                View fresh = activity.findViewById(android.R.id.content).findViewWithTag(rowTag);
+                assertNotSame(oldRow.get(), fresh); assertTrue(fresh.isShown());
+                assertSame(provider, com.subhub.app.relationships.RelationshipUi.provider());
+            });
+        } finally { com.subhub.app.relationships.RelationshipUi.install(previous); }
+    }
+
+    private boolean catalogHasLocalScope(AchievementsPane pane) {
+        try {
+            java.lang.reflect.Field retained = AchievementsPane.class.getDeclaredField("retained");
+            retained.setAccessible(true); Object catalog = retained.get(pane);
+            if (catalog == null) throw new AssertionError("Expected loaded catalog");
+            java.lang.reflect.Field scope = catalog.getClass().getDeclaredField("scope"); scope.setAccessible(true);
+            return ((com.subhub.app.relationships.DomSubjectScope) scope.get(catalog))
+                    .includes(com.subhub.app.people.PersonId.LOCAL);
+        } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+    }
+
+    private static final class MembershipProjection implements com.subhub.app.relationships.RelationshipUi.Provider {
+        volatile java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Snapshot> snapshot;
+        com.subhub.app.relationships.RelationshipUi.Snapshot snapshot(boolean linked) {
+            com.subhub.app.relationships.RelationshipUi.Edge edge = new com.subhub.app.relationships.RelationshipUi.Edge(
+                    "catalog-local", "generation", "dom", "sub", com.subhub.app.relationships.RelationshipUi.Delivery.LOCAL,
+                    "ACTIVE", 1, com.subhub.app.people.PersonId.LOCAL,
+                    com.subhub.app.relationships.RelationshipUi.Availability.UNKNOWN,
+                    com.subhub.app.people.PersonSnapshot.Freshness.UNKNOWN);
+            return new com.subhub.app.relationships.RelationshipUi.Snapshot(true, linked ? "linked" : "revoked",
+                    Collections.emptyList(), linked ? Collections.singletonList(edge) : Collections.emptyList(),
+                    null, Collections.emptyList());
+        }
+        public java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Snapshot> snapshot() { return snapshot; }
+        public java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.LocalReview> prepareLocal(
+                String k, String d, String s, String r) { throw new AssertionError("Read-only fixture"); }
+        public java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Operation> confirmLocal(
+                String i, String d) { throw new AssertionError("Read-only fixture"); }
+        public java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Operation> resume(
+                String i) { throw new AssertionError("Read-only fixture"); }
+        public java.util.concurrent.CompletableFuture<com.subhub.app.relationships.RelationshipUi.Operation> cancel(
+                String i) { throw new AssertionError("Read-only fixture"); }
+    }
+
     private boolean containsText(View view, String text) {
         if (view == null) return false;
         if (view instanceof TextView && text.equals(((TextView) view).getText().toString())) return true;

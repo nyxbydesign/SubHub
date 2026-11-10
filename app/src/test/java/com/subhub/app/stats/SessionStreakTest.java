@@ -41,6 +41,10 @@ public final class SessionStreakTest {
                 at("2026-11-03T00:00:00Z"), observedAt, "Asia/Tokyo");
         assertEquals("2026-11-10", value.lastDay);
         assertEquals(8, value.current(observedAt, "Asia/Tokyo"));
+        SessionStreak stopped = SessionStreak.through(value.days, value.lastDay, 0, observedAt, "Asia/Tokyo");
+        assertEquals(8, stopped.current(observedAt, "Asia/Tokyo"));
+        assertEquals(8, stopped.current(at("2026-11-11T01:00:00Z"), "Asia/Tokyo"));
+        assertEquals(0, stopped.current(at("2026-11-12T01:00:00Z"), "Asia/Tokyo"));
         assertEquals(LocalDate.parse("2026-11-09"), Instant.ofEpochMilli(observedAt)
                 .atZone(java.time.ZoneId.of("America/Los_Angeles")).toLocalDate());
         assertEquals(0, value.current(observedAt, "invalid"));

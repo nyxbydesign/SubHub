@@ -38,6 +38,7 @@ public final class StatsRepository {
     private static final String KEY_CUSTOM_PHRASES_COUNT = "custom_phrases_count";
     private static final String KEY_EXPORTED_IMAGES = "exported_images_count";
     private static final String KEY_LAST_SESSION_DATE = "last_session_date";
+    static final String LAST_SESSION_ZONE = "last_session_zone_v1";
     private static final String KEY_LONGEST_SESSION = "longest_session_seconds";
     private static final String KEY_PEAK_SESSION_BLOCKS = "peak_session_blocks";
     private static final String KEY_SESSIONS_COUNT = "sessions_count";
@@ -308,7 +309,8 @@ public final class StatsRepository {
     private void recordSessionStreak(SharedPreferences.Editor edit, long start, long end, String zone) {
         SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
                 preferences.getString(KEY_LAST_SESSION_DATE, ""), start, end, zone);
-        edit.putInt(KEY_CURRENT_STREAK, streak.days).putString(KEY_LAST_SESSION_DATE, streak.lastDay);
+        edit.putInt(KEY_CURRENT_STREAK, streak.days).putString(KEY_LAST_SESSION_DATE, streak.lastDay)
+                .putString(LAST_SESSION_ZONE, zone);
     }
 
     private boolean flushNativeState() {
@@ -493,37 +495,43 @@ public final class StatsRepository {
     }
 
     public StatsSnapshot load() {
-        return load(true);
+        return load(true, System.currentTimeMillis());
     }
 
-    StatsSnapshot retainedSnapshot() { return load(false); }
+    StatsSnapshot retainedSnapshot() { return retainedSnapshot(System.currentTimeMillis()); }
 
-    boolean observedSessionActive() { return observedSessionStart() > 0; }
+    /** Read-only observation at one clock instant, shared by progress and regression checks. */
+    StatsSnapshot retainedSnapshot(long observedAt) { return load(false, observedAt); }
 
-    private long observedSessionStart() {
-        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0L), now = System.currentTimeMillis();
+    boolean observedSessionActive() { return observedSessionStart(System.currentTimeMillis()) > 0; }
+
+    private long observedSessionStart(long now) {
+        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0L);
         return start > 0 && start <= now && now - start <= 366L * 24L * 60L * 60L * 1000L ? start : 0;
     }
 
-    private StatsSnapshot load(boolean restore) {
+    private StatsSnapshot load(boolean restore, long now) {
         synchronized (SESSION_LOCK) {
             if (restore) restoreActiveSession();
-            long observedStart = restore ? sessionStartMs : observedSessionStart();
+            long observedStart = restore ? sessionStartMs : observedSessionStart(now);
             long protectedSeconds = preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0);
             long totalSessionSeconds = preferences.getLong(KEY_TOTAL_SESSION_TIME, 0);
             long currentSessionSeconds = 0;
             if (observedStart > 0) {
                 currentSessionSeconds = Math.max(0,
-                        (System.currentTimeMillis() - observedStart) / 1000);
+                        (now - observedStart) / 1000);
                 protectedSeconds += currentSessionSeconds;
                 totalSessionSeconds += currentSessionSeconds;
             }
-            long now = System.currentTimeMillis();
+            // A stopped streak keeps the calendar used to persist its last civil date.
+            // Legacy records without a zone retain their previous device-calendar interpretation.
+            String streakZone = observedStart > 0 ? activeSessionZone()
+                    : preferences.getString(LAST_SESSION_ZONE, java.time.ZoneId.systemDefault().getId());
             SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
-                    preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, activeSessionZone());
+                    preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, streakZone);
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
-                    streak.current(now, activeSessionZone()), streak.lastDay, protectedSeconds,
+                    streak.current(now, streakZone), streak.lastDay, protectedSeconds,
                     restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
                     preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),
