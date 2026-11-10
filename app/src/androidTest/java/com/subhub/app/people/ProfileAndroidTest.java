@@ -454,17 +454,29 @@ public final class ProfileAndroidTest {
         try {
             int iteration = 0;
             for (File source : new File[]{pink, blue}) {
+                int expected = iteration == 0 ? Color.rgb(227, 82, 166) : Color.rgb(67, 135, 208);
                 androidx.test.espresso.intent.Intents.init();
                 try {
                     androidx.test.espresso.intent.Intents.intending(androidx.test.espresso.intent.matcher.IntentMatchers
                             .hasAction(Intent.ACTION_GET_CONTENT)).respondWith(new android.app.Instrumentation.ActivityResult(
                             Activity.RESULT_OK, new Intent().setData(android.net.Uri.fromFile(source))));
                     try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
+                        AtomicReference<View> previousPreview = new AtomicReference<>();
+                        scenario.onActivity(a -> previousPreview.set(a.findViewById(android.R.id.content)
+                                .findViewWithTag("profile_avatar_preview")));
                         onView(tag("profile_avatar_change")).perform(revealAboveNavigation(), click());
                         await(scenario, a -> {
                             ViewGroup preview = a.findViewById(android.R.id.content).findViewWithTag("profile_avatar_preview");
+                            if (preview == previousPreview.get() || !preview.isAttachedToWindow()
+                                    || !preview.isLaidOut() || preview.isLayoutRequested()) return false;
                             android.widget.ImageView image = (android.widget.ImageView) preview.getChildAt(1);
-                            return image.getVisibility() == View.VISIBLE && image.getDrawable() != null;
+                            if (image.getVisibility() != View.VISIBLE
+                                    || !(image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable)) return false;
+                            Bitmap decoded = ((android.graphics.drawable.BitmapDrawable) image.getDrawable()).getBitmap();
+                            View root = a.findViewById(android.R.id.content);
+                            return root.findViewWithTag("profile_save").isEnabled()
+                                    && root.findViewWithTag("profile_avatar_change").isEnabled()
+                                    && distance(expected, decoded.getPixel(decoded.getWidth() / 2, decoded.getHeight() / 2)) < 18;
                         });
                         onView(tag("profile_avatar_preview")).perform(revealAboveNavigation());
                         Rect bounds = new Rect();
@@ -474,7 +486,6 @@ public final class ProfileAndroidTest {
                             assertEquals(preview.getWidth(), bounds.width()); assertEquals(preview.getHeight(), bounds.height());
                         });
                         Bitmap pixels = capture(scenario, iteration == 0 ? "avatar-pink" : "avatar-blue");
-                        int expected = iteration == 0 ? Color.rgb(227, 82, 166) : Color.rgb(67, 135, 208);
                         try {
                             org.json.JSONObject witness = new org.json.JSONObject().put("view", "profile_avatar_preview")
                                     .put("role", "SUB").put("bounds", bounds.toShortString()).put("expected", expected)

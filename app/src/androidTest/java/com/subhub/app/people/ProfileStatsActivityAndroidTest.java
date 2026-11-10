@@ -205,7 +205,19 @@ public final class ProfileStatsActivityAndroidTest {
         View details = activity.getWindow().getDecorView().findViewWithTag("profile_current_session_details");
         return appTime != null && text(appTime).contains("Chrome") && details != null
                 && (details.getVisibility() == View.VISIBLE) == active
-                && (!active || text(details).contains(activity.getString(R.string.stats_session_elapsed)));
+                && (!active || text(details).contains(activity.getString(R.string.stats_session_elapsed)))
+                && localTextLayoutReady(appTime);
+    }
+
+    private static boolean localTextLayoutReady(View view) {
+        if (view.getVisibility() != View.VISIBLE) return true;
+        if (!view.isAttachedToWindow() || !view.isLaidOut() || view.isLayoutRequested()) return false;
+        if (view instanceof TextView && ((TextView) view).getText().length() > 0
+                && (((TextView) view).getLayout() == null || view.getWidth() <= 0 || view.getHeight() <= 0))
+            return false;
+        if (view instanceof ViewGroup) for (int index = 0; index < ((ViewGroup) view).getChildCount(); index++)
+            if (!localTextLayoutReady(((ViewGroup) view).getChildAt(index))) return false;
+        return true;
     }
 
     private static void assertNestedAppTime(Activity activity, boolean active) {
