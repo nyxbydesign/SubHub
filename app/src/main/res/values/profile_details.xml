@@ -13,6 +13,6 @@
         <item quantity="other">%1$d years</item>
     </plurals>
     <string name="profile_age_invalid">Enter an age from 1 to 130, or leave it blank.</string>
-    <string name="profile_journal_loading">Loading entries…</string>
+    <string name="profile_journal_loading">No entry information yet</string>
     <string name="profile_journal_locked">Unlock to view entries.</string>
 </resources>

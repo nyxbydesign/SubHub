@@ -320,66 +320,57 @@ public final class AppModeActivity extends AppCompatActivity {
             return;
         }
         loadingPackages = requested;
-        if (appRows.isEmpty()) {
-            binding.perAppAllowancesList.removeAllViews();
-            message(R.string.limits_loading_apps);
-        }
+        renderStoredAllowances(requested);
         android.content.Context app = FeatureEditorSession.context(this);
-        appData.load(
-                "limits-apps",
-                () -> loadApps(app, requested),
-                models -> {
-                    loadingPackages = null;
-                    if (binding == null || !manager.getIncludedPackages().equals(requested)) return;
-                    Map<String, String> drafts = new LinkedHashMap<>();
-                    for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet())
-                        drafts.put(entry.getKey(), entry.getValue().getText().toString());
-                    boolean previous = populatingTimers;
-                    populatingTimers = true;
-                    binding.perAppAllowancesList.removeAllViews();
-                    appRows.clear();
-                    allowanceInputs.clear();
-                    for (AppInfo model : models) {
-                        if (!appRows.isEmpty()) {
-                            View line = new View(this);
-                            line.setBackgroundResource(R.color.outline_subtle);
-                            binding.perAppAllowancesList.addView(
-                                    line, new LinearLayout.LayoutParams(-1, dp(1)));
-                        }
-                        String value =
-                                drafts.getOrDefault(
-                                        model.packageName, String.valueOf(model.allowance));
-                        if (restoredDrafts != null && restoredDrafts.containsKey(model.packageName))
-                            value = restoredDrafts.getString(model.packageName);
-                        AppLimitRow row =
-                                new AppLimitRow(
-                                        this, model.packageName, model.name, model.icon, value);
-                        EditText input = row.allowance;
-                        input.addTextChangedListener(autoSaveWatcher);
-                        input.setOnFocusChangeListener(
-                                (view, focused) -> {
-                                    if (!focused) commitTimers(true);
-                                });
-                        allowanceInputs.put(model.packageName, input);
-                        appRows.put(model.packageName, row);
-                        binding.perAppAllowancesList.addView(
-                                row, new LinearLayout.LayoutParams(-1, -2));
-                    }
-                    restoredDrafts = null;
-                    displayedPackages = requested;
-                    populatingTimers = previous;
-                    renderTimerControls();
-                    renderTimerUsage();
-                    if (dirtyTimers) scheduleAutoSave();
-                },
-                failure -> {
-                    loadingPackages = null;
-                    failedPackages = requested;
-                    if (binding != null && appRows.isEmpty()) {
-                        binding.perAppAllowancesList.removeAllViews();
-                        message(R.string.limits_apps_unavailable);
-                    }
-                });
+        appData.load("limits-apps", () -> loadApps(app, requested), models -> {
+            loadingPackages = null;
+            if (binding == null || !manager.getIncludedPackages().equals(requested)) return;
+            // Update only the label/icon: entered values, selection and scroll remain untouched.
+            for (AppInfo model : models) {
+                AppLimitRow row = appRows.get(model.packageName);
+                if (row != null) row.metadata(model.name, model.icon);
+            }
+            displayedPackages = requested;
+            renderTimerControls();
+            renderTimerUsage();
+        }, failure -> {
+            loadingPackages = null;
+            failedPackages = requested;
+            // Stored allowances stay usable even when the package catalog cannot be queried.
+            if (binding != null) message(R.string.limits_apps_unavailable);
+        });
+    }
+
+    private void renderStoredAllowances(Set<String> requested) {
+        Map<String, Integer> saved = timers.loadAllowances(requested);
+        boolean previous = populatingTimers;
+        populatingTimers = true;
+        try {
+            Map<String, AppLimitRow> retained = new LinkedHashMap<>(appRows);
+            binding.perAppAllowancesList.removeAllViews();
+            appRows.clear(); allowanceInputs.clear();
+            for (String name : requested) {
+                AppLimitRow row = retained.get(name);
+                if (row == null) {
+                    String value = restoredDrafts != null && restoredDrafts.containsKey(name)
+                            ? restoredDrafts.getString(name) : String.valueOf(saved.get(name));
+                    row = new AppLimitRow(this, name, name, null, value);
+                    row.allowance.addTextChangedListener(autoSaveWatcher);
+                    row.allowance.setOnFocusChangeListener((view, focused) -> {
+                        if (!focused && !populatingTimers) commitTimers(true);
+                    });
+                }
+                if (!appRows.isEmpty()) {
+                    View line = new View(this); line.setBackgroundResource(R.color.outline_subtle);
+                    binding.perAppAllowancesList.addView(line, new LinearLayout.LayoutParams(-1, dp(1)));
+                }
+                appRows.put(name, row); allowanceInputs.put(name, row.allowance);
+                binding.perAppAllowancesList.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            }
+            restoredDrafts = null;
+        } finally { populatingTimers = previous; }
+        renderTimerControls(); renderTimerUsage();
+        if (dirtyTimers) scheduleAutoSave();
     }
 
     private void message(int label) {
@@ -394,7 +385,6 @@ public final class AppModeActivity extends AppCompatActivity {
     private static List<AppInfo> loadApps(android.content.Context app, Set<String> included)
             throws InterruptedException {
         PackageManager packages = app.getPackageManager();
-        Map<String, Integer> allowances = new AppTimerManager(app).loadAllowances(included);
         List<AppInfo> models = new ArrayList<>();
         for (String name : included) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -409,7 +399,7 @@ public final class AppModeActivity extends AppCompatActivity {
                 icon = packages.getApplicationIcon(info);
             } catch (PackageManager.NameNotFoundException | RuntimeException removed) {
             }
-            models.add(new AppInfo(name, label, icon, allowances.get(name)));
+            models.add(new AppInfo(name, label, icon));
         }
         Collator collator = Collator.getInstance(Locale.getDefault());
         models.sort((left, right) -> collator.compare(left.name, right.name));
@@ -419,17 +409,14 @@ public final class AppModeActivity extends AppCompatActivity {
     private static final class AppInfo {
         final String packageName, name;
         final android.graphics.drawable.Drawable icon;
-        final int allowance;
 
         AppInfo(
                 String packageName,
                 String name,
-                android.graphics.drawable.Drawable icon,
-                int allowance) {
+                android.graphics.drawable.Drawable icon) {
             this.packageName = packageName;
             this.name = name;
             this.icon = icon;
-            this.allowance = allowance;
         }
     }
 

@@ -54,7 +54,8 @@ public final class JournalActivity extends PreferencePage {
     private final List<JournalAudioPlayer> players = new ArrayList<>();
     private ActivityResultLauncher<String[]> picker;
     private ActivityResultLauncher<String> microphone;
-    private String rendered = "";
+    private String rendered = "", requestedSelection;
+    private int requestedOffset;
     private boolean resumed, pendingRecord;
     private MediaRecorder recorder;
     private File recording;
@@ -172,9 +173,12 @@ public final class JournalActivity extends PreferencePage {
     }
     private void refresh() {
         if (content == null || model.editing || model.busy) return;
+        if (data.isPending("journal-screen") && model.selected.equals(requestedSelection)
+                && model.offset == requestedOffset) return;
         if (!authorized()) { unavailable(); return; }
         JournalRuntime runtime = model.runtime; boolean dom = model.dom;
         PersonId target = model.target; String selected = model.selected; int offset = model.offset;
+        requestedSelection = selected; requestedOffset = offset;
         android.content.Context application = getApplicationContext();
         data.load("journal-screen", () -> {
             List<JournalEntry> entries;

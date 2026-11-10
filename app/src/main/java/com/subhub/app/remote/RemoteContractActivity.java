@@ -85,7 +85,7 @@ public final class RemoteContractActivity extends RemotePage {
 
     private void load() {
         if(autosave!=null){autosave.close();autosave=null;}
-        body.removeAllViews();collect.clear();controls.clear();iconViews.clear();text(body,getString(R.string.role_loading),false);
+        body.removeAllViews();collect.clear();controls.clear();iconViews.clear();text(body,getString(R.string.role_data_unknown),false);
         work(()->{JSONObject doc=feature.contracts.editing(peer);if(doc==null)throw new IOException("No baseline");
             long want=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"desired_revision","0"));
             long done=Long.parseLong(feature.store.metadata(peer.identity,peer.generation,"applied_revision","0"));
