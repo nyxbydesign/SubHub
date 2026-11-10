@@ -1,0 +1,207 @@
+package com.subhub.app.tasks;
+
+import android.Manifest;
+import android.app.*;
+import android.content.*;
+import android.content.pm.PackageManager;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.work.*;
+import com.subhub.app.R;
+import com.subhub.app.people.*;
+import com.subhub.app.remote.*;
+import com.subhub.app.security.*;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.time.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+/** Tasks wake only their own ledger and peer sync; Android background deadlines are best effort. */
+public final class TaskRuntime {
+    private static TaskRuntime instance;
+    public static synchronized TaskRuntime get(Context context) {
+        if (instance == null) instance = new TaskRuntime(context.getApplicationContext());
+        return instance;
+    }
+    private final Context context;
+    private final RemoteStore scopedAuthority;
+    public final TaskStore store;
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "subhub-tasks"));
+    private final TaskForegroundTicker foregroundTicker = new TaskForegroundTicker((tick, delay) -> {
+        ScheduledFuture<?> scheduled = executor.scheduleWithFixedDelay(tick, 0, delay, TimeUnit.MILLISECONDS);
+        return () -> scheduled.cancel(false);
+    }, this::tick);
+    private volatile boolean installed;
+    private TaskRuntime(Context context) { this(context, null); }
+    private TaskRuntime(Context context, RemoteStore authority) {
+        this.context = context; scopedAuthority = authority; store = new TaskStore(context);
+    }
+    boolean hasCancellations(String scope) {
+        try { return store.load(scope).hasCancellations(); }
+        catch (org.json.JSONException invalid) { throw new IllegalStateException("Task history unavailable", invalid); }
+    }
+    public RemoteAssets assets(String scope) throws Exception {
+        if (!scope.matches("local|[0-9a-f]{64}_[A-Za-z0-9_-]{1,128}")) throw new SecurityException("Invalid Tasks scope");
+        return new RemoteAssets(new File(context.getFilesDir(), "tasks-media/" + scope));
+    }
+    public synchronized void install(Application application) {
+        if (installed) return; installed = true;
+        application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityStarted(Activity activity) { foregroundTicker.activityStarted(); }
+            @Override public void onActivityStopped(Activity activity) { foregroundTicker.activityStopped(); }
+            @Override public void onActivityCreated(Activity a, android.os.Bundle b) { }
+            @Override public void onActivityResumed(Activity a) { }
+            @Override public void onActivityPaused(Activity a) { }
+            @Override public void onActivitySaveInstanceState(Activity a, android.os.Bundle b) { }
+            @Override public void onActivityDestroyed(Activity a) { }
+        });
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork("subhub-task-deadlines", ExistingPeriodicWorkPolicy.KEEP,
+                new PeriodicWorkRequest.Builder(TaskWorker.class, 15, TimeUnit.MINUTES).build());
+    }
+    public void changed() {
+        store.changed();
+        executor.execute(this::tick);
+        if (scopedAuthority == null) RemoteFeature.get(context).changed();
+    }
+    public void tick() {
+        try {
+            RemoteStore remote = authorityLock();
+            boolean controlled = remote.isRemotelyControlled();
+            if (!controlled && DeviceRolePreferences.supportsSub(context)) sweep(new TaskRepository.Target("local", null));
+            for (RemoteStore.Peer peer : remote.peers(false)) if (peer.state == RemoteStore.State.ACTIVE)
+                sweep(new TaskRepository.Target(peer.identity + "_" + peer.generation, peer));
+        } catch (Exception unavailable) { android.util.Log.w("Tasks", "Task update deferred"); }
+    }
+    public void requireActive(TaskRepository.Target target) {
+        if (target.peer == null) {
+            if (authorityLock().isRemotelyControlled()) throw new SecurityException("Local task authority changed");
+        } else {
+            RemoteStore.Peer live = authorityLock().peer(target.peer.identity, target.peer.generation);
+            if (live == null || live.state != RemoteStore.State.ACTIVE || live.localRole != target.peer.localRole)
+                throw new SecurityException("Task pairing is no longer active");
+        }
+    }
+    public RemoteStore authorityLock() { return scopedAuthority == null ? RemoteFeature.get(context).store : scopedAuthority; }
+    public void sweep(TaskRepository.Target target) throws Exception {
+        synchronized (SubFeaturePolicy.LOCK) {
+            synchronized (authorityLock()) {
+                requireActive(target);
+                if (!enabled(target)) return;
+                if (target.peer == null || target.peer.localRole == RemoteProtocol.Role.SUB) {
+                    long now = System.currentTimeMillis(); TaskEngine engine = store.load(target.scope); int count = 0;
+                    long resumeAfter = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0);
+                    for (TaskDefinition task : engine.definitions()) {
+                        if (engine.seriesRefused(task.id) || engine.seriesCancelled(task.id)) continue;
+                        LocalDate today = Instant.ofEpochMilli(now).atZone(task.zone).toLocalDate();
+                        for (LocalDate date = task.nextDate(task.firstStart.toLocalDate()); date != null && !date.isAfter(today);
+                                date = task.nextDate(date.plusDays(1))) {
+                            if (task.end(date).toEpochMilli() > now) {
+                                store.started(target.scope, engine.occurrence(task.id, date, now), now);
+                                continue;
+                            }
+                            TaskEngine.Occurrence row = engine.occurrence(task.id, date, now);
+                            if (row.status != TaskEngine.Status.ACTIVE) continue;
+                            requireActive(target);
+                            String id = "timeout_" + UUID.nameUUIDFromBytes((target.scope + ":" + row.id).getBytes(StandardCharsets.UTF_8));
+                            TaskAction.Kind kind = task.end(date).toEpochMilli() <= resumeAfter ? TaskAction.Kind.SKIP : TaskAction.Kind.TIMEOUT;
+                            TaskAction action = new TaskAction(id, task.id, kind, date, now, "", "", List.of(), null);
+                            store.append(target.scope, action, false, false); engine.apply(action, false);
+                            if (++count == 64) break;
+                        }
+                        if (count == 64) break;
+                    }
+                }
+                effects(target);
+            }
+        }
+    }
+    public void effects(TaskRepository.Target target) throws Exception {
+        synchronized (SubFeaturePolicy.LOCK) {
+            synchronized (authorityLock()) {
+                requireActive(target);
+                TaskEngine engine = store.load(target.scope);
+                cancelNotifications(target, engine);
+                if (!enabled(target)) return;
+                List<TaskStore.Effect> effects = new ArrayList<>(store.pending(target.scope));
+                effects.addAll(store.pendingNotices(target.scope));
+                for (TaskStore.Effect effect : effects) {
+                    if (engine.cancelled(effect.action.taskId, effect.action.date) && !effect.action.cancellation()) { store.done(target.scope, effect); continue; }
+                    requireActive(target);
+                    if (effect.kind.startsWith("sub_")) {
+                        if (target.peer == null || target.peer.localRole == RemoteProtocol.Role.SUB) {
+                            TaskNotifications.deliver(context, target, effect, engine);
+                        }
+                    } else if ("notification".equals(effect.kind)) {
+                        if (target.peer == null || target.peer.localRole != RemoteProtocol.Role.DOM) { store.done(target.scope, effect); continue; }
+                        if (!notifyDom(target, effect)) continue;
+                    } else {
+                        if (target.peer != null && target.peer.localRole != RemoteProtocol.Role.SUB) { store.done(target.scope, effect); continue; }
+                        TaskEngine.Occurrence row = store.load(target.scope).occurrence(effect.action.taskId, effect.action.date, System.currentTimeMillis());
+                        long resumeAfter = context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getLong("tasks_resume_after", 0);
+                        if (row.failed() && row.task.failureTribute && effect.action.at > resumeAfter)
+                            new com.subhub.app.penance.PenanceManager(context).recordTaskFailure(target.scope + ":" + effect.id, System.currentTimeMillis());
+                    }
+                    store.done(target.scope, effect);
+                }
+            }
+        }
+    }
+    private void cancelNotifications(TaskRepository.Target target, TaskEngine engine) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null || !engine.hasCancellations()) return;
+        String prefix = "tasks:" + target.scope + ":";
+        for (android.service.notification.StatusBarNotification notification : manager.getActiveNotifications()) {
+            String tag = notification.getTag();
+            if (tag == null || !tag.startsWith(prefix)) continue;
+            TaskAction action = engine.action(tag.substring(prefix.length()));
+            if (action != null && engine.cancelled(action.taskId, action.date)) manager.cancel(tag, notification.getId());
+        }
+    }
+
+    public boolean enabled(TaskRepository.Target target) {
+        return target.peer != null && target.peer.localRole == RemoteProtocol.Role.DOM
+                || SubFeaturePolicy.allowed(context, "tasks");
+    }
+    private String engineTitle(TaskRepository.Target target, TaskStore.Effect effect) {
+        try { return com.subhub.app.notifications.NotificationText.clean(store.load(target.scope).occurrence(effect.action.taskId, effect.action.date, effect.action.at).task.title); }
+        catch (org.json.JSONException unavailable) { return context.getString(R.string.tasks_review_notification); }
+    }
+    private boolean notifyDom(TaskRepository.Target target, TaskStore.Effect effect) {
+        synchronized (com.subhub.app.notifications.NotificationPreferences.DELIVERY_LOCK) {
+            return notifyDomLocked(target, effect);
+        }
+    }
+    private boolean notifyDomLocked(TaskRepository.Target target, TaskStore.Effect effect) {
+        if (!com.subhub.app.notifications.NotificationPreferences.enabled(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.TASK_REVIEW)) return true;
+        if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return true;
+        NotificationManagerCompat notifications = NotificationManagerCompat.from(context);
+        if (!notifications.areNotificationsEnabled()) return true;
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        manager.createNotificationChannel(new NotificationChannel("tasks", "Tasks", NotificationManager.IMPORTANCE_DEFAULT));
+        if (manager.getNotificationChannel("tasks").getImportance() == NotificationManager.IMPORTANCE_NONE) return true;
+        PersonId person = target.peer == null ? PersonId.LOCAL : RemotePersonRepository.id(target.peer);
+        Intent intent = new Intent(context, TasksActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, person.value());
+        intent.setData(android.net.Uri.parse("subhub://tasks/" + effect.action.id));
+        PendingIntent pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        com.subhub.app.notifications.OptionalNotificationDispatch.post(context,
+                com.subhub.app.notifications.NotificationPreferences.Role.DOM,
+                com.subhub.app.notifications.NotificationPreferences.Event.TASK_REVIEW,
+                "tasks:" + target.scope + ":" + effect.id, 1,
+                com.subhub.app.notifications.OptionalNotificationPresentation.present(context,
+                        new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_nav_contract)
+                                .setContentTitle(context.getString(R.string.tasks_completion_notification))
+                                .setContentText(engineTitle(target, effect))
+                                .setStyle(new NotificationCompat.BigTextStyle().bigText(context.getString(R.string.notification_task_review_detail,
+                                        target.peer == null ? context.getString(R.string.role_sub) : com.subhub.app.notifications.NotificationText.clean(target.peer.name), engineTitle(target, effect))))
+                                .setColor(context.getColor(R.color.accent)).setShowWhen(true).setWhen(effect.action.at)
+                                .setGroup("subhub.tasks:" + target.scope).setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                                .setPublicVersion(new NotificationCompat.Builder(context, "tasks").setSmallIcon(R.drawable.ic_notification_subhub)
+                                        .setContentTitle(context.getString(R.string.app_name)).setContentText(context.getString(R.string.privacy_notification_body)).build())
+                                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).setAutoCancel(true)
+                                .setContentIntent(pending).build()));
+        return true;
+    }
+}

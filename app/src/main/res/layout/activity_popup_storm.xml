@@ -24,11 +24,16 @@
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="12dp">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:text="@string/popup_configuration" />
+
+            <com.subhub.app.util.StateToggle
+                android:id="@+id/switch_popup_storm"
+                style="@style/Widget.SubHub.SettingsToggle"
+                android:layout_width="match_parent"
+                android:text="@string/atmosphere_popup_toggle" />
 
             <TextView style="@style/Widget.SubHub.FieldLabel"
                 android:text="@string/popup_presets" />
@@ -46,19 +51,19 @@
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="horizontal">
                 <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                    android:text="@string/popup_preset_gentle" android:textColor="@color/text_secondary" android:textSize="11sp" />
+                    android:text="@string/popup_preset_gentle" android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_caption" />
                 <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                    android:gravity="center" android:text="@string/popup_preset_medium" android:textColor="@color/text_secondary" android:textSize="11sp" />
+                    android:gravity="center" android:text="@string/popup_preset_medium" android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_caption" />
                 <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                    android:gravity="center" android:text="@string/popup_preset_intense" android:textColor="@color/text_secondary" android:textSize="11sp" />
+                    android:gravity="center" android:text="@string/popup_preset_intense" android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_caption" />
                 <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                    android:gravity="end" android:text="@string/popup_preset_overload" android:textColor="@color/text_secondary" android:textSize="11sp" />
+                    android:gravity="end" android:text="@string/popup_preset_overload" android:textColor="@color/text_secondary" android:textSize="@dimen/ui_text_caption" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:orientation="horizontal">
                 <Button
                     android:id="@+id/button_preview"
@@ -87,20 +92,19 @@
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="12dp">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:text="@string/popup_library" />
             <TextView android:id="@+id/library_count"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="7dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:textSize="@dimen/ui_text_caption" />
             <Button android:id="@+id/button_add_folder"
                 style="@style/Widget.SubHub.CompactOutlineButton"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:text="@string/popup_add_folder" />
             <LinearLayout android:id="@+id/folders_list"
                 android:layout_width="match_parent"
@@ -115,8 +119,7 @@
             android:layout_marginHorizontal="@dimen/page_margin"
             android:layout_marginTop="@dimen/settings_card_gap"
             android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="12dp">
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
             <TextView android:id="@+id/button_advanced_details" style="@style/Widget.SubHub.SectionHeader"
                 android:accessibilityHeading="true"
                 android:minHeight="48dp" android:gravity="center_vertical"

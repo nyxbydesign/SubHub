@@ -12,6 +12,19 @@ import java.util.List;
 import java.util.Set;
 
 public final class SubliminalSettingsRepositoryTest {
+    @Test public void raisingOpacityCeilingPreservesPresetDefaults() {
+        assertEquals(35, SubliminalSettings.MAX_OPACITY_PERCENT);
+        assertEquals(3, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.GENTLE).opacity);
+        assertEquals(5, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.NORMAL).opacity);
+        assertEquals(7, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.STRICT).opacity);
+        assertEquals(10, SubliminalSettingsRepository.valuesFor(
+                SubliminalSettings.Preset.ULTRA).opacity);
+        assertEquals(5, SubliminalSettingsRepository.valuesFor(null).opacity);
+    }
+
     @Test public void presetsStayWithinFaintSafeBounds() {
         for (SubliminalSettings.Preset preset : SubliminalSettings.Preset.values()) {
             SubliminalSettingsRepository.Values values =
@@ -35,18 +48,20 @@ public final class SubliminalSettingsRepositoryTest {
         assertEquals(10, ultra.opacity);
     }
 
-    @Test public void builtInPacksContainTwentyDistinctBriefMessagesEach() {
+    @Test public void updatedBuiltInPacksKeepDistinctBriefMessages() {
         Set<String> all = new LinkedHashSet<>();
         for (String pack : Arrays.asList("obedience", "focus", "beta", "findom")) {
             List<String> phrases = SubliminalSettingsRepository.resolvePhrases(
                     settings(Collections.singleton(pack), ""));
-            assertEquals(20, phrases.size());
+            int expected = "obedience".equals(pack) ? 25 : "beta".equals(pack) ? 24
+                    : "findom".equals(pack) ? 23 : 20;
+            assertEquals(expected, phrases.size());
             for (String phrase : phrases) {
                 assertTrue(phrase, phrase.length() <= 60);
                 assertTrue("Duplicate message: " + phrase, all.add(phrase));
             }
         }
-        assertEquals(80, all.size());
+        assertEquals(92, all.size());
     }
 
     @Test public void displayDedupDoesNotModifySavedCustomTextOrCase() {
@@ -54,7 +69,7 @@ public final class SubliminalSettingsRepositoryTest {
         SubliminalSettings settings = settings(
                 new LinkedHashSet<>(Arrays.asList("obedience", "custom")), custom);
         List<String> phrases = SubliminalSettingsRepository.resolvePhrases(settings);
-        assertEquals(22, phrases.size());
+        assertEquals(27, phrases.size());
         assertEquals(custom, settings.getCustomPhrases());
         assertTrue(phrases.contains("My message"));
         assertTrue(phrases.contains("my message"));

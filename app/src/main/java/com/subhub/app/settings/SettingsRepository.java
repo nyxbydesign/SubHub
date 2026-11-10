@@ -23,6 +23,7 @@ public final class SettingsRepository {
     public static final String KEY_ENABLED_CATEGORIES = "enabled_categories";
     public static final String KEY_CONFIDENCE = "detection_confidence_percent";
     public static final String KEY_CENSOR_TYPE = "censor_type";
+    public static final String KEY_CENSOR_COVERAGE = "censor_coverage";
     public static final String KEY_CENSOR_INTENSITY = "censor_intensity";
     public static final String KEY_SHOW_BORDER = "show_border";
     public static final String KEY_SHOW_TEXT = "show_text";
@@ -48,6 +49,15 @@ public final class SettingsRepository {
 
     private final SharedPreferences preferences;
 
+    /** Explicit settings source for isolated exports; the default constructor remains live. */
+    private SettingsRepository(SharedPreferences preferences) {
+        this.preferences = preferences;
+    }
+
+    public static SettingsRepository forPreferences(SharedPreferences preferences) {
+        return new SettingsRepository(preferences);
+    }
+
     public SettingsRepository(Context context) {
         preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
     }
@@ -65,9 +75,19 @@ public final class SettingsRepository {
                 : preset.getConfidence();
         DetectorConfig.Builder builder = preset.applyTo(DetectorConfig.builder());
         return builder
+                .censorCoverage(loadCensorCoverage())
                 .enabledCategories(categories)
                 .confidenceThreshold(confidence)
                 .build();
+    }
+
+    public com.subhub.app.detection.CensorCoverage loadCensorCoverage() {
+        try {
+            return com.subhub.app.detection.CensorCoverage.fromPreference(
+                    preferences.getString(KEY_CENSOR_COVERAGE, "detected_areas"));
+        } catch (ClassCastException invalidPackValue) {
+            return com.subhub.app.detection.CensorCoverage.DETECTED_AREAS;
+        }
     }
 
     public DetectionPreset loadDetectionPreset() {

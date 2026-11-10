@@ -9,9 +9,12 @@
     android:layout_gravity="bottom"
     android:background="@drawable/bg_bottom_pill"
     android:elevation="12dp"
-    android:columnCount="6"
+    android:columnCount="4"
     android:orientation="horizontal"
-    android:padding="6dp">
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="5dp"
+    android:paddingBottom="5dp">
 
     <LinearLayout
         android:id="@+id/nav_home"
@@ -26,6 +29,45 @@
             android:id="@+id/nav_home_label"
             style="@style/Widget.SubHub.BottomTabLabel"
             android:text="@string/nav_home" />
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/nav_people" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_your_subs" android:visibility="gone">
+        <FrameLayout android:layout_width="32dp" android:layout_height="24dp"
+            android:importantForAccessibility="no">
+            <ImageView android:id="@+id/nav_people_icon" style="@style/Widget.SubHub.BottomTabIcon"
+                android:layout_gravity="center" android:contentDescription="@null" android:src="@drawable/ic_nav_people" />
+            <View android:id="@+id/nav_activity_unread" android:layout_width="8dp"
+                android:layout_height="8dp" android:layout_gravity="top|end"
+                android:background="@drawable/bg_shell_unread" android:visibility="gone"
+                android:importantForAccessibility="no" />
+        </FrameLayout>
+        <TextView android:id="@+id/nav_people_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_your_subs" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_contract" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_contract" android:visibility="gone">
+        <ImageView android:id="@+id/nav_contract_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_contract" />
+        <TextView android:id="@+id/nav_contract_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_contract" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_tasks" style="@style/Widget.SubHub.BottomTab"
+        android:contentDescription="@string/tasks_title" android:visibility="gone">
+        <ImageView android:id="@+id/nav_tasks_icon" style="@style/Widget.SubHub.BottomTabIcon"
+            android:contentDescription="@null" android:src="@drawable/ic_nav_tasks" />
+        <TextView android:id="@+id/nav_tasks_label" style="@style/Widget.SubHub.BottomTabLabel"
+            android:text="@string/tasks_title" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_activity" style="@style/Widget.SubHub.BottomTab"
+        android:contentDescription="@string/dom_activity_title" android:visibility="gone">
+        <FrameLayout android:layout_width="32dp" android:layout_height="24dp"
+            android:importantForAccessibility="no">
+            <ImageView android:id="@+id/nav_activity_icon" style="@style/Widget.SubHub.BottomTabIcon"
+                android:layout_gravity="center" android:contentDescription="@null"
+                android:src="@drawable/ic_shell_activity" />
+        </FrameLayout>
+        <TextView android:id="@+id/nav_activity_label" style="@style/Widget.SubHub.BottomTabLabel"
+            android:text="@string/dom_activity_title" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/nav_stats" style="@style/Widget.SubHub.BottomTab" android:contentDescription="@string/role_profile" android:visibility="gone">
+        <ImageView android:id="@+id/nav_stats_icon" style="@style/Widget.SubHub.BottomTabIcon" android:contentDescription="@null" android:src="@drawable/ic_nav_profile" />
+        <TextView android:id="@+id/nav_stats_label" style="@style/Widget.SubHub.BottomTabLabel" android:text="@string/role_profile" />
     </LinearLayout>
 
     <LinearLayout
@@ -88,18 +130,4 @@
             android:text="@string/nav_atmosphere" />
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/nav_settings"
-        style="@style/Widget.SubHub.BottomTab"
-        android:contentDescription="@string/nav_settings">
-        <ImageView
-            android:id="@+id/nav_settings_icon"
-            style="@style/Widget.SubHub.BottomTabIcon"
-            android:contentDescription="@null"
-            android:src="@drawable/ic_tab_settings" />
-        <TextView
-            android:id="@+id/nav_settings_label"
-            style="@style/Widget.SubHub.BottomTabLabel"
-            android:text="@string/nav_settings" />
-    </LinearLayout>
 </GridLayout>

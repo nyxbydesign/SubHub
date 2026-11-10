@@ -1,5 +1,6 @@
 package com.subhub.app.detection;
 
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -20,6 +21,36 @@ public final class DetectionPostProcessor {
                 || frameWidth <= 0 || frameHeight <= 0 || inputSize <= 0) {
             return Collections.emptyList();
         }
+        int candidateCount = output[0].length;
+        for (int feature = 1; feature < OUTPUT_FEATURES; feature++) {
+            if (output[feature] == null || output[feature].length != candidateCount) {
+                return Collections.emptyList();
+            }
+        }
+        float frameScale = (float) Math.max(frameWidth, frameHeight) / inputSize;
+        return decodeMatrix(
+                (feature, candidate) -> output[feature][candidate],
+                candidateCount,
+                frameWidth,
+                frameHeight,
+                frameScale,
+                frameScale,
+                config);
+    }
+
+    /** Decodes a rectangular, aspect-preserving letterboxed model input. */
+    public List<Detection> decode(
+            float[][] output,
+            int frameWidth,
+            int frameHeight,
+            int inputWidth,
+            int inputHeight,
+            DetectorConfig config) {
+        if (output == null || output.length < OUTPUT_FEATURES || output[0] == null
+                || frameWidth <= 0 || frameHeight <= 0
+                || inputWidth <= 0 || inputHeight <= 0) {
+            return Collections.emptyList();
+        }
 
         int candidateCount = output[0].length;
         for (int feature = 1; feature < OUTPUT_FEATURES; feature++) {
@@ -27,30 +58,103 @@ public final class DetectionPostProcessor {
                 return Collections.emptyList();
             }
         }
+        // DetectionEngine scales the source uniformly and pads the remaining model space. The
+        // inverse mapping is therefore one scale on both axes; using frameWidth/inputWidth and
+        // frameHeight/inputHeight independently would undo the letterbox as if the image had
+        // been stretched, shifting boxes horizontally for portrait sources.
+        float frameScale = Math.max(
+                (float) frameWidth / inputWidth,
+                (float) frameHeight / inputHeight);
+        return decodeMatrix((feature, candidate) -> output[feature][candidate],
+                candidateCount, frameWidth, frameHeight, frameScale, frameScale, config);
+    }
 
-        float letterboxScale = (float) inputSize / Math.max(frameWidth, frameHeight);
-        float frameScale = 1f / letterboxScale;
+    /** Decodes ONNX's contiguous [1, features, candidates] buffer without nested arrays. */
+    public List<Detection> decode(
+            FloatBuffer output,
+            int featureCount,
+            int candidateCount,
+            int frameWidth,
+            int frameHeight,
+            int inputSize,
+            DetectorConfig config) {
+        if (output == null || featureCount < OUTPUT_FEATURES || candidateCount <= 0
+                || output.remaining() < featureCount * candidateCount
+                || frameWidth <= 0 || frameHeight <= 0 || inputSize <= 0) {
+            return Collections.emptyList();
+        }
+        int start = output.position();
+        float frameScale = (float) Math.max(frameWidth, frameHeight) / inputSize;
+        return decodeMatrix(
+                (feature, candidate) -> output.get(
+                        start + feature * candidateCount + candidate),
+                candidateCount,
+                frameWidth,
+                frameHeight,
+                frameScale,
+                frameScale,
+                config);
+    }
+
+    /** Decodes ONNX output for a dynamic rectangular, aspect-preserving letterboxed tensor. */
+    public List<Detection> decode(
+            FloatBuffer output,
+            int featureCount,
+            int candidateCount,
+            int frameWidth,
+            int frameHeight,
+            int inputWidth,
+            int inputHeight,
+            DetectorConfig config) {
+        if (output == null || featureCount < OUTPUT_FEATURES || candidateCount <= 0
+                || output.remaining() < featureCount * candidateCount
+                || frameWidth <= 0 || frameHeight <= 0
+                || inputWidth <= 0 || inputHeight <= 0) {
+            return Collections.emptyList();
+        }
+        int start = output.position();
+        float frameScale = Math.max(
+                (float) frameWidth / inputWidth,
+                (float) frameHeight / inputHeight);
+        return decodeMatrix(
+                (feature, candidate) -> output.get(
+                        start + feature * candidateCount + candidate),
+                candidateCount, frameWidth, frameHeight, frameScale, frameScale, config);
+    }
+
+    private List<Detection> decodeMatrix(
+            OutputMatrix output,
+            int candidateCount,
+            int frameWidth,
+            int frameHeight,
+            float frameScaleX,
+            float frameScaleY,
+            DetectorConfig config) {
         float[] confidenceFloors = confidenceFloors(config.getConfidenceThreshold());
         List<Detection> accepted = new ArrayList<>();
         List<ScoredBox> disabledClassBoxes = new ArrayList<>();
 
         for (int candidate = 0; candidate < candidateCount; candidate++) {
             int bestClass = -1;
+            int secondClass = -1;
             float bestScore = 0f;
             float secondScore = 0f;
             for (int classIndex = 0; classIndex < NudeNetClassCatalog.CLASS_COUNT; classIndex++) {
-                float score = output[classIndex + 4][candidate];
+                float score = output.get(classIndex + 4, candidate);
                 if (score > bestScore) {
+                    secondClass = bestClass;
                     secondScore = bestScore;
                     bestScore = score;
                     bestClass = classIndex;
                 } else if (score > secondScore) {
                     secondScore = score;
+                    secondClass = classIndex;
                 }
             }
 
             if (bestClass < 0 || bestScore < confidenceFloors[bestClass]
-                    || (secondScore >= 0.10f && bestScore - secondScore < 0.10f)) {
+                    || isCrossCategoryAmbiguity(
+                    bestClass, secondClass, bestScore, secondScore, config)) {
                 continue;
             }
             String className = NudeNetClassCatalog.nameByIndex(bestClass);
@@ -58,9 +162,9 @@ public final class DetectionPostProcessor {
             if (className == null || info == null) continue;
 
             BBox rawBox = decodeBox(
-                    output[0][candidate], output[1][candidate],
-                    output[2][candidate], output[3][candidate],
-                    frameScale, frameWidth, frameHeight, className);
+                    output.get(0, candidate), output.get(1, candidate),
+                    output.get(2, candidate), output.get(3, candidate),
+                    frameScaleX, frameScaleY, frameWidth, frameHeight, className);
 
             String category = firstEnabled(info.getCategories(), config.getEnabledCategories());
             if (category == null) {
@@ -110,6 +214,11 @@ public final class DetectionPostProcessor {
         return suppressCrossCategory(filtered, 0.50f);
     }
 
+    @FunctionalInterface
+    private interface OutputMatrix {
+        float get(int feature, int candidate);
+    }
+
     private static float confidenceFloor(String className, float configured) {
         switch (className) {
             case "FEET_EXPOSED":
@@ -143,22 +252,43 @@ public final class DetectionPostProcessor {
         return floors;
     }
 
+    private static boolean isCrossCategoryAmbiguity(
+            int bestClass,
+            int secondClass,
+            float bestScore,
+            float secondScore,
+            DetectorConfig config) {
+        if (secondClass < 0 || secondScore < 0.10f || bestScore - secondScore >= 0.10f) {
+            return false;
+        }
+        NudeNetClassCatalog.ClassInfo best = NudeNetClassCatalog.byIndex(bestClass);
+        NudeNetClassCatalog.ClassInfo second = NudeNetClassCatalog.byIndex(secondClass);
+        if (best == null || second == null) return true;
+        String bestCategory = firstEnabled(best.getCategories(), config.getEnabledCategories());
+        String secondCategory = firstEnabled(
+                second.getCategories(), config.getEnabledCategories());
+        // Sex-specific face logits often trade places on stylized/AI faces. If both resolve to
+        // the same user-enabled censor category, the distinction has no policy consequence.
+        return bestCategory == null || !bestCategory.equals(secondCategory);
+    }
+
     private static BBox decodeBox(
             float centerX,
             float centerY,
             float modelWidth,
             float modelHeight,
-            float frameScale,
+            float frameScaleX,
+            float frameScaleY,
             int frameWidth,
             int frameHeight,
             String className) {
         float sizeMultiplier = expandedClass(className) ? 1.08f : 1.0f;
-        int width = Math.max(1, (int) (modelWidth * frameScale * sizeMultiplier));
-        int height = Math.max(1, (int) (modelHeight * frameScale * sizeMultiplier));
+        int width = Math.max(1, (int) (modelWidth * frameScaleX * sizeMultiplier));
+        int height = Math.max(1, (int) (modelHeight * frameScaleY * sizeMultiplier));
         width = Math.max(width, (int) (height * 0.6f));
         height = Math.max(height, (int) (width * 0.6f));
-        int x = Math.max(0, (int) (centerX * frameScale) - width / 2);
-        int y = Math.max(0, (int) (centerY * frameScale) - height / 2);
+        int x = Math.max(0, (int) (centerX * frameScaleX) - width / 2);
+        int y = Math.max(0, (int) (centerY * frameScaleY) - height / 2);
         return new BBox(
                 x,
                 y,

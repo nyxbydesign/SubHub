@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="stats_session_elapsed">Session elapsed</string>
+    <string name="stats_session_as_of">As of %1$s</string>
+</resources>

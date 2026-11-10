@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="role_app_time_daily">App time · today</string>
+    <string name="role_allowance_progress_description">%1$s: %2$d of %3$d minutes used today</string>
+    <style name="Widget.SubHub.AllowanceProgress" parent="@android:style/Widget.Material.ProgressBar.Horizontal">
+        <item name="android:indeterminateOnly">false</item>
+        <item name="android:progressDrawable">@drawable/bg_allowance_progress</item>
+        <item name="android:progressTint">@null</item>
+        <item name="android:progressBackgroundTint">@null</item>
+        <item name="android:secondaryProgressTint">@null</item>
+        <!-- Mirror once at draw time, including direction changes at unchanged size/progress. -->
+        <item name="android:mirrorForRtl">true</item>
+        <item name="android:minHeight">10dp</item>
+        <item name="android:maxHeight">10dp</item>
+        <item name="android:padding">0dp</item>
+    </style>
+</resources>

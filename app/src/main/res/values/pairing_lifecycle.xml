@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pairing_channel">Pairing</string>
+    <string name="pairing_background">Background pairing</string>
+    <string name="pairing_resume">Resume pairing</string>
+    <string name="pairing_starting">Starting pairing…</string>
+    <string name="pairing_running">Pairing work is running. Connection still requires approval on both devices.</string>
+    <string name="pairing_notification_running">Pairing work is running</string>
+    <string name="pairing_stopped">Pairing is paused. Resume while this page is open.</string>
+    <string name="pairing_unavailable">Pairing is unavailable. Retry while this page is open.</string>
+    <string name="pairing_recovery">This request cannot safely resume. Cancel it before creating a new invitation.</string>
+    <string name="pairing_remaining">Time remaining: %1$s</string>
+    <string name="pairing_preserved">Leaving this page does not cancel the request or extend its time limit.</string>
+    <string name="pairing_notifications_blocked">Pairing notifications are blocked. Cancel remains available on this page. Android may show background work in its active apps list; notification drawer controls are unavailable.</string>
+    <string name="pairing_notification_settings">Pairing notification settings</string>
+    <string name="pairing_no_operation">No pending pairing request.</string>
+    <string name="pairing_status_unavailable">Pairing status is unavailable. Retry while this page is open.</string>
+</resources>

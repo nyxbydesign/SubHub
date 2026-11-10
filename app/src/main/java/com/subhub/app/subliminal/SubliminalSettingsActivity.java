@@ -1,5 +1,7 @@
 package com.subhub.app.subliminal;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import com.subhub.app.util.PrimaryHeader;
 
 import android.os.Bundle;
@@ -30,40 +32,50 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     private final SecureRandom random = new SecureRandom();
     private boolean loading;
     private final Runnable saveCustom = () -> {
-        if (binding != null && !loading) repository.saveCustomPhrases(
+        if (binding != null && !loading && FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) repository.saveCustomPhrases(
                 binding.customPhrases.getText() == null ? ""
                         : binding.customPhrases.getText().toString());
     };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (!ControllerPinManager.isDomModeActive()) {
+        if (!FeatureEditorSession.attach(this, "subliminal", savedInstanceState)) return;
+        if (!FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) {
             finish();
             return;
         }
         binding = ActivitySubliminalSettingsBinding.inflate(getLayoutInflater());
+        binding.opacity.setMax(SubliminalSettings.MAX_OPACITY_PERCENT - 1);
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.subliminal_title, false);
-        repository = new SubliminalSettingsRepository(this);
+        repository = new SubliminalSettingsRepository(FeatureEditorSession.context(this));
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         android.widget.LinearLayout page = (android.widget.LinearLayout) binding.intensityCard.getParent();
         page.removeView(binding.messagePacksCard);
         page.addView(binding.messagePacksCard, page.indexOfChild(binding.intensityCard));
         bindListeners();
         render(repository.load());
+        FeatureEditorSession.bind(this, binding.getRoot(), "subliminal", () -> { main.removeCallbacks(saveCustom); saveCustom.run(); return true; });
     }
 
     private void bindListeners() {
+        binding.switchWhispers.setOnCheckedChangeListener((button, checked) -> {
+            if (loading || !FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) return;
+            if (FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) {
+                new com.subhub.app.settings.FeatureModuleManager(FeatureEditorSession.context(this)).setSubliminalEnabled(checked);
+            }
+            render(repository.load());
+        });
         binding.presetSlider.setLabelFormatter(value -> presetLabel(Math.round(value)));
         binding.presetSlider.addOnChangeListener((slider, value, fromUser) -> {
-            if (loading || !fromUser) return;
+            if (loading || !fromUser || !FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) return;
             main.removeCallbacks(saveCustom);
             saveCustom.run();
             repository.savePreset(SubliminalSettings.Preset.values()[Math.round(value)]);
             render(repository.load());
         });
         binding.advancedEnabled.setOnCheckedChangeListener((button, checked) -> {
-            if (loading) return;
+            if (loading || !FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) return;
             main.removeCallbacks(saveCustom);
             saveCustom.run();
             saveAdvanced(checked);
@@ -86,7 +98,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.textSize.setOnSeekBarChangeListener(advancedListener);
         for (CheckBox check : packChecks()) {
             check.setOnCheckedChangeListener((button, checked) -> {
-                if (!loading) {
+                if (!loading && FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) {
                     repository.savePacks(selectedPacks());
                     binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
                 }
@@ -95,7 +107,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.customPhrases.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
-                if (loading) return;
+                if (loading || !FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) return;
                 main.removeCallbacks(saveCustom);
                 main.postDelayed(saveCustom, 400L);
             }
@@ -107,6 +119,9 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     private void render(SubliminalSettings settings) {
         if (binding == null) return;
         loading = true;
+        binding.switchWhispers.setChecked(
+                new com.subhub.app.settings.FeatureModuleManager(FeatureEditorSession.context(this)).isSubliminalEnabled());
+        binding.switchWhispers.setEnabled(FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal"));
         binding.presetSlider.setValue(settings.getPreset().ordinal());
         binding.presetValue.setText(presetLabel(settings.getPreset().ordinal()));
         binding.advancedEnabled.setChecked(settings.isAdvanced());
@@ -124,6 +139,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding.packCustom.setChecked(packs.contains(SubliminalSettingsRepository.PACK_CUSTOM));
         binding.customPhrasesSection.setVisibility(binding.packCustom.isChecked() ? View.VISIBLE : View.GONE);
         if (!binding.customPhrases.getText().toString().equals(settings.getCustomPhrases())) {
+            com.subhub.app.util.InputBounds.limit(binding.customPhrases, com.subhub.app.util.InputBounds.SUBLIMINAL_PHRASES);
             binding.customPhrases.setText(settings.getCustomPhrases());
         }
         updateAdvancedLabels();
@@ -131,6 +147,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     }
 
     private void saveAdvanced(boolean enabled) {
+        if (!FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) return;
         long minimum = (binding.minInterval.getProgress() + 5L) * 1_000L;
         long maximum = (binding.maxInterval.getProgress() + 5L) * 1_000L;
         if (maximum < minimum) maximum = minimum;
@@ -206,4 +223,9 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         binding = null;
         super.onDestroy();
     }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        super.onSaveInstanceState(state);
+    }
+
 }

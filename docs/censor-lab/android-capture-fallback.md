@@ -26,6 +26,8 @@ On 8 September, a 24-second/30fps window recording produced719 frames with245 co
 
 ## Instrumentation taps and floating navigation
 
+Bound Accessibility fixtures that also use UiAutomator must preserve non-suppressing automation flags for every actor. `UiDevice` obtains its handle through [`Configurator`](https://developer.android.com/reference/androidx/test/uiautomator/Configurator#setUiAutomationFlags(int)); its default flags can suppress the service even when setup acquired a non-suppressing `UiAutomation`. Save the exact Configurator flags before the first UiDevice operation, enable `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, clear `FLAG_DONT_USE_ACCESSIBILITY`, and restore the saved flags in an outer `finally` after wake, keyguard and input cleanup. If a helper explicitly changes the automation flags, reacquire the non-suppressing handle before rebinding the service. Verify actual automation registration flags and enabled/bound service state before attributing a missing connection to screen-off behavior.
+
 For a guarded disposable emulator, pass an explicit virtual RAM and CPU budget rather than
 inheriting the AVD's stored configuration. For example, `-memory 2048 -cores 2` fits the UI-test
 workload under the established 8-GiB host job guard; an inherited 8-GiB guest configuration can
@@ -46,3 +48,14 @@ the navigation rectangle. Do not substitute `performClick()` or disable navigati
 test pass: that bypasses the touch-routing failure. If a later matcher reports the wrong screen,
 check the actual foreground activity and the preceding tap's geometry before blaming the missing
 control or weakening its assertion. Retain failed-run results separately from a corrected run.
+
+Native ScrollView fixtures should use `NativeUiActions.revealAboveNavigation()` before an
+Espresso `click()`. The shared helper scrolls the actual control and asserts clearance above
+`bottom_navigation`; keep the injected tap so the test still verifies touch routing.
+
+When launching `MainActivity` with a custom `ActivityScenario` intent, set `Intent.ACTION_MAIN`
+before launch. Home normalizes shortcut intents to that action; an initially null action makes
+ActivityScenario reject subsequent lifecycle events as belonging to a different intent and time
+out at `PRE_ON_CREATE`, even though Android displayed the screen. Keep the explicit action and
+any readiness-suppression extra on the same launch intent. Editable-screen fixtures must also
+enter Dom mode explicitly; the instrumentation runner deliberately preserves the current role.

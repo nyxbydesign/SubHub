@@ -77,8 +77,8 @@ final class HardcoreAutoPayEngine {
                 settlement.getAmountCents(), settlement.getCurrency(), vault.vaultId(), bill, result -> {
                     try {
                         if (result.isSuccess()) {
-                            if (penance.completeSettlement(
-                                    settlement.getId(), settlement.getAmountCents())) {
+                            if (penance.completeVerifiedSettlement(
+                                    settlement.getId(), settlement.getAmountCents(), result.value())) {
                                 policy.markPaid();
                                 notify(app, true, "Wallet payment completed · "
                                         + WalletCurrency.format(settlement.getCurrency(),
@@ -122,11 +122,16 @@ final class HardcoreAutoPayEngine {
         if (notifications == null) return;
         notifications.createNotificationChannel(new NotificationChannel(
                 CHANNEL, "Hardcore Wallet", NotificationManager.IMPORTANCE_DEFAULT));
-        notifications.notify(9062, new NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+        notifications.notify(9062, com.subhub.app.privacy.PrivacyNotifications.present(context, 9062, new NotificationCompat.Builder(context, CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification_subhub).setColor(context.getColor(R.color.accent))
                 .setContentTitle(success ? "SubHub Wallet" : "SubHub Wallet needs attention")
                 .setContentText(text)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
+                .setContentIntent(android.app.PendingIntent.getActivity(context, 0,
+                        new android.content.Intent(context, PenanceActivity.class)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE))
                 .setAutoCancel(true)
-                .build());
+                .build()));
     }
 }

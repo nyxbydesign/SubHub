@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
@@ -20,6 +21,7 @@ import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
 import com.subhub.app.overlay.CensorLabelLayout;
 import com.subhub.app.settings.CensorAppearance;
+import com.subhub.app.settings.LockpadArtwork;
 import com.subhub.app.settings.SettingsRepository;
 
 import java.util.List;
@@ -30,6 +32,8 @@ import ai.onnxruntime.OrtException;
 public final class CensorRenderer implements AutoCloseable {
     private final Context context;
     private final CustomImagePool customImages;
+    private final LockpadArtwork lockpad = new LockpadArtwork();
+    private final RectF lockpadLabel = new RectF();
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -37,11 +41,19 @@ public final class CensorRenderer implements AutoCloseable {
     private final Paint nearest = new Paint();
     private final Paint cyanShift = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint redShift = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Matrix borderMatrix = new Matrix();
+    private long animationTime;
 
     public CensorRenderer(Context context) {
+        this(context, null);
+    }
+
+    /** A non-null image list freezes custom artwork for an export job. */
+    public CensorRenderer(Context context, List<Bitmap> frozenImages) {
         this.context = context.getApplicationContext();
-        customImages = new CustomImagePool(this.context);
-        customImages.reload();
+        customImages = frozenImages == null ? new CustomImagePool(this.context)
+                : new CustomImagePool(this.context, frozenImages);
+        if (frozenImages == null) customImages.reload();
         border.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
         text.setFakeBoldText(true);
@@ -68,6 +80,17 @@ public final class CensorRenderer implements AutoCloseable {
             Bitmap source,
             List<Detection> detections,
             CensorAppearance appearance) {
+        drawAtTime(target, source, detections, appearance, 0L);
+    }
+
+    /** Deterministic animation frames without changing the still-image export contract. */
+    public void drawAtTime(
+            Bitmap target,
+            Bitmap source,
+            List<Detection> detections,
+            CensorAppearance appearance,
+            long timeMillis) {
+        animationTime = Math.max(0L, timeMillis);
         Canvas canvas = new Canvas(target);
         if (appearance.isReverseMode()) {
             drawEffect(canvas, source, new RectF(0, 0, target.getWidth(), target.getHeight()),
@@ -92,7 +115,6 @@ public final class CensorRenderer implements AutoCloseable {
         for (int index = 0; index < detections.size(); index++) {
             RectF rect = paddedRect(detections.get(index).getBox(), target, appearance);
             if (appearance.isShowText()
-                    && appearance.getType() != CensorAppearance.Type.ERROR_POPUP
                     && rect.width() >= 32 && rect.height() >= 16) {
                 drawLabel(canvas, rect, index, appearance);
             }
@@ -132,7 +154,7 @@ public final class CensorRenderer implements AutoCloseable {
                 drawTape(canvas, source, rect, id, intensity, appearance);
                 break;
             case ERROR_POPUP:
-                drawErrorPopup(canvas, rect, appearance);
+                lockpad.draw(canvas, rect, appearance.getEffectPalette(), animationTime);
                 break;
             case BOX:
             default:
@@ -188,7 +210,8 @@ public final class CensorRenderer implements AutoCloseable {
         int clamped = Math.max(1, Math.min(100, intensity));
         int cell = Math.max(2, Math.min(7, 7 - clamped / 20));
         float contrast = .35f + clamped / 100f * .65f;
-        long seed = id * 1103515245L + Float.floatToIntBits(rect.left);
+        long seed = id * 1103515245L + Float.floatToIntBits(rect.left)
+                + animationTime / 90L * 6364136223846793005L;
         for (float y = rect.top; y < rect.bottom; y += cell) {
             for (float x = rect.left; x < rect.right; x += cell) {
                 seed = seed * 6364136223846793005L + 1442695040888963407L;
@@ -233,11 +256,12 @@ public final class CensorRenderer implements AutoCloseable {
         int sourceBandHeight = Math.max(3, sourceRegion.height() / 11);
         for (int index = 0; index < bands; index++) {
             int available = Math.max(1, sourceRegion.height() - sourceBandHeight);
-            int sourceTop = sourceRegion.top + hashInt(id * 131L + index * 31L) % available;
+            long tick = animationTime / 90L;
+            int sourceTop = sourceRegion.top + hashInt(id * 131L + index * 31L + tick * 961L) % available;
             int sourceBottom = Math.min(sourceRegion.bottom, sourceTop + sourceBandHeight);
             float topRatio = (sourceTop - sourceRegion.top) / (float) sourceRegion.height();
             float bottomRatio = (sourceBottom - sourceRegion.top) / (float) sourceRegion.height();
-            float offset = ((index % 3) - 1) * shift;
+            float offset = ((index + tick) % 3 - 1) * shift;
             Rect bandSource = new Rect(sourceRegion.left, sourceTop,
                     sourceRegion.right, sourceBottom);
             RectF bandDestination = new RectF(rect.left + offset,
@@ -272,7 +296,9 @@ public final class CensorRenderer implements AutoCloseable {
         Paint yellow = new Paint(Paint.ANTI_ALIAS_FLAG);
         yellow.setColor(appearance.getEffectPalette().third());
         yellow.setStrokeWidth(Math.max(3f, spacing / 5f));
-        float shift = id * 7f % spacing;
+        // Complete whole stripe cycles so a cached four-second loop has no seam.
+        float cycles = Math.max(1, Math.round(4000f / (spacing * 25f)));
+        float shift = ((animationTime % 4000L) / 4000f * spacing * cycles + id * 7f) % spacing;
         float rise = rect.height() * .45f;
         for (float x = rect.left - rect.width(); x < rect.right + rect.width(); x += spacing) {
             canvas.drawLine(x + shift, rect.bottom, x + shift + rise, rect.top, red);
@@ -282,87 +308,6 @@ public final class CensorRenderer implements AutoCloseable {
             canvas.drawLine(x + shift, rect.bottom, x + shift + rise, rect.top, yellow);
         }
         canvas.restoreToCount(save);
-    }
-
-    private void drawErrorPopup(Canvas canvas, RectF rect, CensorAppearance appearance) {
-        if (rect.width() < 82 || rect.height() < 46) {
-            fill.setColor(appearance.getEffectPalette().first());
-            fill.setAlpha(255);
-            canvas.drawRect(rect, fill);
-            fill.setColor(appearance.getEffectPalette().second());
-            float radius = Math.max(4, Math.min(rect.width(), rect.height()) / 10f);
-            float cx = rect.left + 6 + radius;
-            canvas.drawCircle(cx, rect.centerY(), radius, fill);
-            return;
-        }
-        RectF shadow = new RectF(rect);
-        shadow.offset(3, 3);
-        fill.setColor(Color.argb(58, 0, 0, 0));
-        canvas.drawRect(shadow, fill);
-        fill.setColor(appearance.getEffectPalette().first());
-        fill.setAlpha(255);
-        canvas.drawRect(rect, fill);
-        border.setColor(Color.rgb(118, 118, 118));
-        border.setStrokeWidth(1);
-        canvas.drawRect(rect, border);
-        float header = Math.max(21, Math.min(32, rect.height() * .22f));
-        fill.setColor(blendColor(appearance.getEffectPalette().first(), Color.WHITE, .12f));
-        canvas.drawRect(rect.left + 1, rect.top + 1, rect.right - 1, rect.top + header, fill);
-        float iconSize = Math.max(14, Math.min(38,
-                Math.min(rect.width(), rect.height()) * .22f));
-        float iconLeft = rect.left + Math.max(10, rect.width() * .07f);
-        float iconTop = rect.top + header + Math.max(8, rect.height() * .08f);
-        fill.setColor(appearance.getEffectPalette().second());
-        canvas.drawCircle(iconLeft + iconSize / 2f, iconTop + iconSize / 2f,
-                iconSize / 2f, fill);
-        border.setColor(Color.WHITE);
-        border.setStrokeWidth(Math.max(2, iconSize / 8f));
-        float a = iconSize * .30f;
-        float b = iconSize * .70f;
-        canvas.drawLine(iconLeft + a, iconTop + a, iconLeft + b, iconTop + b, border);
-        canvas.drawLine(iconLeft + b, iconTop + a, iconLeft + a, iconTop + b, border);
-
-        text.setColor(contrastText(appearance.getEffectPalette().first()));
-        text.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL));
-        text.setTextAlign(Paint.Align.LEFT);
-        text.setTextSize(Math.max(8, Math.min(12, header - 8)));
-        canvas.drawText(appearance.getErrorTitle(), rect.left + 10,
-                rect.top + header * .68f, text);
-        float messageLeft = iconLeft + iconSize + Math.max(9, rect.width() * .05f);
-        text.setTextSize(Math.max(8, Math.min(13, rect.height() * .12f)));
-        drawWrappedText(canvas, appearance.getErrorMessage(), messageLeft,
-                iconTop - 2 + text.getTextSize(), rect.right - 12, rect.bottom - 12);
-        float buttonHeight = Math.max(20, Math.min(30, rect.height() * .20f));
-        float buttonWidth = Math.max(58, Math.min(92, rect.width() * .28f));
-        RectF button = new RectF(rect.right - buttonWidth - 12,
-                rect.bottom - buttonHeight - 10, rect.right - 12, rect.bottom - 10);
-        fill.setColor(Color.rgb(250, 250, 250));
-        canvas.drawRect(button, fill);
-        border.setColor(appearance.getEffectPalette().third());
-        border.setStrokeWidth(1);
-        canvas.drawRect(button, border);
-        text.setTextAlign(Paint.Align.CENTER);
-        text.setTextSize(Math.max(8, Math.min(11, buttonHeight - 10)));
-        canvas.drawText("OK", button.centerX(),
-                button.centerY() - (text.ascent() + text.descent()) / 2f, text);
-        text.setTypeface(Typeface.DEFAULT_BOLD);
-    }
-
-    private void drawWrappedText(
-            Canvas canvas, String value, float left, float baseline, float right, float bottom) {
-        String line = "";
-        float lineHeight = text.getTextSize() * 1.18f;
-        for (String word : value.split(" ")) {
-            String candidate = line.isEmpty() ? word : line + " " + word;
-            if (text.measureText(candidate) <= right - left || line.isEmpty()) line = candidate;
-            else {
-                if (baseline > bottom) return;
-                canvas.drawText(line, left, baseline, text);
-                baseline += lineHeight;
-                line = word;
-            }
-        }
-        if (!line.isEmpty() && baseline <= bottom) canvas.drawText(line, left, baseline, text);
     }
 
     private static long mix(long seed) {
@@ -413,6 +358,11 @@ public final class CensorRenderer implements AutoCloseable {
                     Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE,
                     Color.MAGENTA, Color.RED}, null));
         }
+        if (border.getShader() != null && appearance.isAnimateBorder()) {
+            borderMatrix.setRotate((animationTime % 4000L) / 4000f * 360f,
+                    rect.centerX(), rect.centerY());
+            border.getShader().setLocalMatrix(borderMatrix);
+        }
         drawShape(canvas, rect, border, appearance);
         canvas.restoreToCount(save);
         border.setShader(null);
@@ -433,10 +383,16 @@ public final class CensorRenderer implements AutoCloseable {
 
     private void drawLabel(
             Canvas canvas, RectF rect, int stableId, CensorAppearance appearance) {
+        if (appearance.getType() == CensorAppearance.Type.ERROR_POPUP) {
+            LockpadArtwork.labelBounds(rect, lockpadLabel);
+            if (lockpadLabel.isEmpty()) return;
+            rect = lockpadLabel;
+        }
         text.setColor(Color.WHITE);
         float maximumWidth = Math.max(18f, rect.width() - 10f);
         float minimumSize = 7f;
-        float maximumSize = Math.min(36f, Math.max(minimumSize, rect.height() * .20f));
+        float heightFraction = appearance.getType() == CensorAppearance.Type.ERROR_POPUP ? .60f : .20f;
+        float maximumSize = Math.min(36f, Math.max(minimumSize, rect.height() * heightFraction));
         text.setTextSize(minimumSize);
         String selected = CensorLabelLayout.selectPhrase(
                 appearance.getPhrases(), stableId, maximumWidth, text::measureText);

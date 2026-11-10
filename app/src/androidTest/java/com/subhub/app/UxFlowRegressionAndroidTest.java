@@ -3,11 +3,12 @@ package com.subhub.app;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import android.content.Context;
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,7 +23,6 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.penance.PenanceInfraction;
@@ -31,18 +31,17 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.studio.StudioActivity;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
 
 /** Native interaction and hierarchy checks; never creates a payment or starts service. */
 @RunWith(AndroidJUnit4.class)
@@ -59,6 +58,7 @@ public final class UxFlowRegressionAndroidTest {
             SharedPreferences prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE);
             original.put(prefs, new LinkedHashMap<>(prefs.getAll()));
         }
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putString(com.subhub.app.security.DeviceRolePreferences.KEY_MODE,"BOTH").commit();
         ControllerPinManager.enterDomMode();
         new FeatureModuleManager(context).save(true, true, true);
         new AppModeManager(context).setArmed(false);
@@ -102,8 +102,12 @@ public final class UxFlowRegressionAndroidTest {
 
     @Test public void unassignedLimitsCannotLookEnabledAndOfferChooseApps() {
         AppModeManager apps = new AppModeManager(context);
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, Collections.emptySet());
-        apps.saveAppSelections(Collections.emptySet(), Collections.emptySet(), Collections.emptySet());
+        apps.save(false, Collections.emptySet());
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
+                        java.util.Set.of()));
         AppTimerManager timers = new AppTimerManager(context);
         timers.saveSettings(false, 30, false, 120);
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
@@ -116,32 +120,35 @@ public final class UxFlowRegressionAndroidTest {
                 assertFalse(total.isChecked());
                 assertFalse(timers.loadSettings().perAppEnabled);
                 assertFalse(timers.loadSettings().totalEnabled);
-                View action = activity.findViewById(R.id.per_app_allowances_list)
-                        .findViewWithTag("limits_choose_apps");
+                View action = activity.findViewById(R.id.limits_manage_apps);
                 assertNotNull(action);
                 assertTrue(action.isClickable());
             });
         }
     }
 
-    @Test public void appAssignmentDestinationExpandsWithoutChangingScope() {
+    @Test public void includedAppsDestinationExpandsWithoutChangingScope() {
         AppModeManager apps = new AppModeManager(context);
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, Collections.emptySet());
-        apps.saveAppSelections(Collections.emptySet(), Collections.emptySet(), Collections.emptySet());
+        apps.save(false, Collections.emptySet());
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
+                        java.util.Set.of()));
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
                 GlobalSettingsActivity.class.getName(), null, false);
         Activity destination = null;
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
             scenario.onActivity(activity -> activity.findViewById(R.id.per_app_allowances_list)
-                    .findViewWithTag("limits_choose_apps").performClick());
+                    .findViewById(R.id.limits_manage_apps).performClick());
             destination = monitor.waitForActivityWithTimeout(3000);
             assertNotNull(destination);
             instrumentation.waitForIdleSync();
             Activity opened = destination;
             instrumentation.runOnMainSync(() -> {
                 assertEquals(View.VISIBLE, opened.findViewById(R.id.app_list_content).getVisibility());
-                assertEquals(AppModePolicy.Mode.SELECTED_APPS, apps.getMode());
+                        assertTrue(apps.getIncludedPackages().isEmpty());
                 assertFalse(apps.isArmed());
             });
         } finally {
@@ -156,8 +163,10 @@ public final class UxFlowRegressionAndroidTest {
     @Test public void perAppAllowanceIsLabelledWithItsApp() {
         AppModeManager apps = new AppModeManager(context);
         Set<String> selected = Collections.singleton(context.getPackageName());
-        apps.save(false, AppModePolicy.Mode.SELECTED_APPS, selected);
-        apps.saveAppSelections(selected, selected, Collections.emptySet());
+        apps.save(false, selected);
+        apps.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false, selected, selected, Collections.emptySet(), java.util.Set.of()));
         try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
             scenario.onActivity(activity -> {
                 ViewGroup list = activity.findViewById(R.id.per_app_allowances_list);
@@ -198,45 +207,25 @@ public final class UxFlowRegressionAndroidTest {
         }
     }
 
-    @Test public void settingsFollowSetupBeforeHardcoreAndPayments() {
-        try (ActivityScenario<GlobalSettingsActivity> scenario = ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                ViewGroup sections = activity.findViewById(R.id.settings_sections);
-                int previous = -1;
-                for (int id : new int[] {R.id.feature_areas_card, R.id.apps_card,
-                        R.id.hardcore_card, R.id.app_settings_card, R.id.paypal_card}) {
-                    View card = activity.findViewById(id);
-                    assertEquals(sections, card.getParent());
-                    assertTrue(sections.indexOfChild(card) > previous);
-                    previous = sections.indexOfChild(card);
-                }
-                assertEquals(activity.findViewById(R.id.apps_card),
-                        activity.findViewById(R.id.android_access_card).getParent());
-            });
-        }
-    }
 
-    @Test public void studioExposesExplicitBackAction() {
-        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
-                GlobalSettingsActivity.class.getName(), null, false);
-        Activity destination = null;
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            scenario.onActivity(activity -> {
-                View back = activity.findViewById(R.id.button_back);
-                assertEquals(View.VISIBLE, back.getVisibility());
-                assertTrue(back.hasOnClickListeners());
-                back.performClick();
+
+
+    @Test public void settingsExposeInlinePrivacyPermissionsAndHelpWithoutDomHardcore() {
+        try(ActivityScenario<GlobalSettingsActivity> page=ActivityScenario.launch(GlobalSettingsActivity.class)) {
+            page.onActivity(a->{
+                ViewGroup sections=a.findViewById(R.id.settings_sections);
+                View privacy=sections.findViewWithTag("settings:privacy"),permissions=sections.findViewWithTag("settings:permissions"),help=sections.findViewWithTag("settings:help");
+                assertNull(sections.findViewWithTag("settings:apps"));
+                assertNotNull(privacy);assertNotNull(permissions);assertNotNull(help);
+                assertEquals(sections,privacy.getParent());assertEquals(sections,permissions.getParent());assertEquals(sections,help.getParent());
+                assertTrue(sections.indexOfChild(privacy)<sections.indexOfChild(permissions));
+                assertTrue(sections.indexOfChild(permissions)<sections.indexOfChild(help));
+                assertFalse(privacy.isClickable());assertFalse(permissions.isClickable());assertFalse(help.isClickable());
+                assertTrue(a.findViewById(R.id.privacy_discreet_toggle).isShown());
+                assertTrue(a.findViewById(R.id.button_help).isShown());assertTrue(a.findViewById(R.id.button_diagnostics).isShown());
+                assertTrue(a.findViewById(R.id.settings_connections_security).isClickable());
+                assertNull(a.findViewById(R.id.hardcore_card));assertNull(a.findViewById(R.id.switch_hardcore_mode));
             });
-            destination = monitor.waitForActivityWithTimeout(3000);
-            assertNotNull(destination);
-            assertTrue(destination instanceof GlobalSettingsActivity);
-        } finally {
-            if (destination != null) {
-                Activity opened = destination;
-                instrumentation.runOnMainSync(opened::finish);
-            }
-            instrumentation.removeMonitor(monitor);
         }
     }
 }

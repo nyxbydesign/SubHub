@@ -1,5 +1,7 @@
 package com.subhub.app.penance;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -9,27 +11,23 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
-import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.Toast;
-
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityPenanceBinding;
+import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.text.DateFormat;
-import java.util.Date;
 import java.util.EnumMap;
 import java.util.Locale;
 import java.util.Map;
@@ -45,8 +43,18 @@ public final class PenanceActivity extends AppCompatActivity {
     private String activeClientMetadataId = "";
     private boolean checkoutBusy;
     private boolean populatingRules;
+    private boolean historyExpanded;
+    public static final String EXTRA_SHOW_CONNECTION = "wallet_show_connection";
+    private WalletConnectionController connection;
+    private final Map<String, WalletActionRow> walletActions = new java.util.LinkedHashMap<>();
+    private final Map<String, View> walletEditors = new java.util.LinkedHashMap<>();
+    private final Map<String, Integer> walletTitles = new java.util.LinkedHashMap<>();
+    private int overviewScroll;
+    private androidx.activity.OnBackPressedCallback editorBack;
+    private String expandedWalletSection = "";
     private final Handler ruleSaveHandler = new Handler(Looper.getMainLooper());
     private final Runnable persistRules = () -> saveRules(false);
+    private boolean dirtyRules;
     private final TextWatcher ruleMathWatcher = new TextWatcher() {
         @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
         @Override public void onTextChanged(CharSequence value, int start, int before, int count) {}
@@ -65,24 +73,51 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "wallet", savedInstanceState)) return;
         binding = ActivityPenanceBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        arrangeWalletSections();
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
-                R.string.penance_title, R.string.penance_subtitle);
-        if (!Intent.ACTION_VIEW.equals(getIntent().getAction())
-                && SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.MONEY)) return;
-        manager = new PenanceManager(this);
+                R.string.penance_title, 0);
+        manager = new PenanceManager(FeatureEditorSession.context(this));
+        if (FeatureEditorSession.remote(this)) {
+            bindRemoteRules();
+            return;
+        }
         paypalCredentials = new PayPalCredentialStore(this);
         paypalClient = new PayPalOrdersClient(this);
+        if (savedInstanceState != null) {
+            expandedWalletSection = savedInstanceState.getString("wallet_section", "");
+            overviewScroll = savedInstanceState.getInt("wallet_overview_scroll", 0);
+            historyExpanded = savedInstanceState.getBoolean("wallet_history_expanded", false);
+        }
+        arrangeWalletSections();
+        binding.walletHistoryMore.setOnClickListener(
+                view -> {
+                    historyExpanded = !historyExpanded;
+                    render();
+                });
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.MONEY);
         populateRules();
         attachRuleMathListeners();
 
-        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> openWalletEditor(""));
+        editorBack =
+                new androidx.activity.OnBackPressedCallback(!expandedWalletSection.isEmpty()) {
+                    @Override
+                    public void handleOnBackPressed() {
+                        openWalletEditor("");
+                    }
+                };
+        getOnBackPressedDispatcher().addCallback(this, editorBack);
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setOnClickListener(view -> toggleEditSession());
-        binding.buttonSettle.setOnClickListener(view -> beginCheckout());
+        binding.buttonSettle.setOnClickListener(view -> {
+                    if (!paypalCredentials.hasCredentials()
+                            && !validExternalUrl(manager.getPayPalLink())
+                            && FeatureEditorSession.canEdit(this, "wallet")) {
+                        openWalletEditor("paypal");
+                    } else beginCheckout();
+                });
         binding.buttonResumeCheckout.setOnClickListener(view -> openApprovalUrl());
         binding.buttonConfirmPayment.setOnClickListener(view -> confirmPayment());
         binding.buttonCancelCheckout.setOnClickListener(view -> cancelCheckout());
@@ -109,54 +144,209 @@ public final class PenanceActivity extends AppCompatActivity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
+        if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
+        showConnectionIfRequested();
+    }
+
+    public void showSectionHome() {
+        openWalletEditor("");
     }
 
     @Override protected void onResume() {
         super.onResume();
+        if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canEdit(this, "wallet")) finish(); return; }
         applyEditState();
+        connection.onResume();
+        showConnectionIfRequested();
         timer.removeCallbacks(tick);
         timer.post(tick);
     }
 
+    private void bindRemoteRules() {
+        binding.walletOverview.setVisibility(View.GONE);
+        binding.walletEditor.setVisibility(View.VISIBLE);
+        View[] editors = {binding.ruleConfigCard, binding.safetyConfigCard,
+                binding.paidPauseConfigCard};
+        android.view.ViewGroup container = (android.view.ViewGroup) binding.walletEditor;
+        for (View editor : editors) {
+            if (editor.getParent() instanceof android.view.ViewGroup)
+                ((android.view.ViewGroup) editor.getParent()).removeView(editor);
+        }
+        container.removeAllViews();
+        for (View editor : editors) {
+            editor.setVisibility(View.VISIBLE);
+            android.widget.LinearLayout.LayoutParams params =
+                    (android.widget.LinearLayout.LayoutParams) editor.getLayoutParams();
+            params.topMargin = editor == editors[0] ? 0
+                    : getResources().getDimensionPixelSize(R.dimen.ui_gap_section);
+            container.addView(editor);
+        }
+        populateRules(); attachRuleMathListeners(); renderRuleMathPreview();
+        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
+        FeatureEditorSession.bind(this, binding.getRoot(), "wallet", () -> saveRules(true));
+    }
+
     private void arrangeWalletSections() {
-        android.view.ViewGroup sections = (android.view.ViewGroup) binding.balanceCard.getParent();
-        View historyCard = (View) binding.history.getParent();
-        View[] order = {binding.balanceCard, binding.checkoutCard, binding.safetyConfigCard,
-                binding.ruleConfigCard, binding.paidPauseConfigCard, historyCard,
-                binding.correctionsCard};
-        for (View section : order) ((android.view.ViewGroup) section.getParent()).removeView(section);
-        for (View section : order) sections.addView(section);
+        walletDestination(
+                "rules",
+                R.string.tribute_rules_title,
+                R.drawable.ic_tab_settings,
+                binding.ruleConfigCard);
+        walletDestination(
+                "limits",
+                R.string.tribute_spending_limits_title,
+                R.drawable.ic_ux_lock,
+                binding.safetyConfigCard);
+        walletDestination(
+                "pause",
+                R.string.tribute_paid_pauses_title,
+                R.drawable.ic_nav_limits, binding.paidPauseConfigCard);
+        com.subhub.app.databinding.ViewWalletConnectionBinding panel =
+                com.subhub.app.databinding.ViewWalletConnectionBinding.inflate(
+                        getLayoutInflater(), binding.walletEditor, false);
+        binding.walletEditor.addView(panel.getRoot());
+        walletDestination(
+                "paypal",
+                R.string.wallet_connection_title,
+                R.drawable.ic_settings_wallet,
+                panel.getRoot());
+        connection =
+                new WalletConnectionController(this, panel, walletActions.get("paypal").summary());
+        walletDestination(
+                "corrections",
+                R.string.tribute_adjustments_title,
+                R.drawable.ic_ux_lock,
+                binding.correctionsCard);
+        walletActions.get("corrections").summary().setVisibility(View.GONE);
+        displayWalletSections();
+    }
+
+    private void walletDestination(String key, int title, int icon, View control) {
+        if (!walletActions.isEmpty()) {
+            View line = new View(this);
+            line.setBackgroundResource(R.color.outline_subtle);
+            android.widget.LinearLayout.LayoutParams lineParams =
+                    new android.widget.LinearLayout.LayoutParams(-1, dp(1));
+            lineParams.setMarginStart(dp(54));
+            lineParams.setMarginEnd(dp(16));
+            binding.walletActions.addView(line, lineParams);
+        }
+        WalletActionRow row = new WalletActionRow(this, title, icon);
+        row.setTag("wallet:" + key);
+        row.setOnClickListener(view -> openWalletEditor(key));
+        binding.walletActions.addView(row, new android.widget.LinearLayout.LayoutParams(-1, -2));
+        walletActions.put(key, row);
+        walletEditors.put(key, control);
+        walletTitles.put(key, title);
+    }
+
+    private void openWalletEditor(String key) {
+        if (!key.isEmpty() && !FeatureEditorSession.canEdit(this, "wallet")) return;
+        if (expandedWalletSection.isEmpty()) overviewScroll = binding.walletScroll.getScrollY();
+        if (FeatureEditorSession.canEdit(this, "wallet")) commitRules(false);
+        View focused = getCurrentFocus();
+        if (focused != null) {
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+                    .hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            focused.clearFocus();
+        }
+        expandedWalletSection = key;
+        displayWalletSections();
+        binding.walletScroll.post(
+                () ->
+                        binding.walletScroll.scrollTo(
+                                0, expandedWalletSection.isEmpty() ? overviewScroll : 0));
+        render();
+    }
+
+    private void displayWalletSections() {
+        boolean dom = FeatureEditorSession.canEdit(this, "wallet");
+        if (!dom) expandedWalletSection = "";
+        boolean overview = expandedWalletSection.isEmpty();
+        binding.walletOverview.setVisibility(overview ? View.VISIBLE : View.GONE);
+        binding.walletEditor.setVisibility(overview ? View.GONE : View.VISIBLE);
+        binding.walletManagement.setVisibility(dom ? View.VISIBLE : View.GONE);
+        for (Map.Entry<String, View> entry : walletEditors.entrySet())
+            entry.getValue()
+                    .setVisibility(
+                            entry.getKey().equals(expandedWalletSection)
+                                    ? View.VISIBLE
+                                    : View.GONE);
+        PrimaryHeader.backButton(binding.getRoot()).setVisibility(overview ? View.GONE : View.VISIBLE);
+        PrimaryHeader.bind(
+                binding.getRoot(),
+                overview ? R.drawable.ic_nav_money : 0,
+                overview ? R.string.penance_title : walletTitles.get(expandedWalletSection),
+                0);
+        PrimaryHeader.subtitle(binding.getRoot()).setText(com.subhub.app.people.ProfileNames.get(this, false));
+        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
+                ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
+        if (editorBack != null) editorBack.setEnabled(!overview);
+    }
+
+    private void showConnectionIfRequested() {
+        if (!getIntent().getBooleanExtra(EXTRA_SHOW_CONNECTION, false)) return;
+        getIntent().removeExtra(EXTRA_SHOW_CONNECTION);
+        if (FeatureEditorSession.canEdit(this, "wallet")) openWalletEditor("paypal");
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        // Remote writes stay in the identity-bound draft until Apply is chosen.
+        commitRules(false);
+        FeatureEditorSession.saveState(this, state);
+        state.putString("wallet_section", expandedWalletSection);
+        state.putInt("wallet_overview_scroll", overviewScroll);
+        state.putBoolean("wallet_history_expanded", historyExpanded);
+        super.onSaveInstanceState(state);
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Bundle state) {
+        // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
+        populatingRules = true;
+        try {
+            super.onRestoreInstanceState(state);
+        } finally {
+            populatingRules = false;
+        }
+        if (binding != null) {
+            populateRules();
+            renderRuleMathPreview();
+        }
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void toggleEditSession() {
-        if (ControllerPinManager.isSessionUnlocked()) {
+        if (ControllerPinManager.isDomModeActive()) {
             // Flush the last edit before leaving the role that is allowed to save it.
             commitRules(true);
-            ControllerEditMode.enterSubMode(this);
-        } else ControllerPinGate.require(this, this::applyEditState, false);
+            FeatureEditorSession.leaveEditor(this);
+        } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
         if (binding == null) return;
-        boolean editing = ControllerPinManager.isDomModeActive();
+        boolean editing = FeatureEditorSession.canEdit(this, "wallet");
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setVisibility(editing ? View.VISIBLE : View.GONE);
-        PrimaryHeader.backButton(binding.getRoot()).setVisibility(View.GONE);
-        PrimaryHeader.subtitle(binding.getRoot()).setText(
-                getString(R.string.wallet_currency_label) + ": " + manager.getCurrency());
-        binding.ruleConfigCard.setVisibility(editing ? View.VISIBLE : View.GONE);
-        binding.safetyConfigCard.setVisibility(editing ? View.VISIBLE : View.GONE);
-        // Dom mode must always expose the buyout setup. The Wallet master switch still
-        // gates purchasing and settlement, but it should not hide configuration.
-        binding.paidPauseConfigCard.setVisibility(editing ? View.VISIBLE : View.GONE);
-        binding.correctionsCard.setVisibility(editing ? View.VISIBLE : View.GONE);
-        View[] editable = {binding.ledgerEnabled, binding.ruleDetectionEnabled,
+        PrimaryHeader.subtitle(binding.getRoot()).setText(com.subhub.app.people.ProfileNames.get(this, false));
+        PrimaryHeader.subtitle(binding.getRoot()).setVisibility(
+                ControllerPinManager.isDomModeActive() ? View.VISIBLE : View.GONE);
+        displayWalletSections();
+        if (connection != null) connection.refresh();
+        View[] editable = { binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount, binding.ruleDetectionEnabled,
                 binding.ruleDetectionAmount, binding.detectionBatch, binding.ruleDwellEnabled,
                 binding.ruleDwellAmount, binding.dwellSeconds,
                 binding.ruleTapEnabled, binding.ruleTapAmount,
-                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount, binding.dailyCap,
+                binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount, binding.dailyCap,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes,
                 binding.weeklyCap, binding.mercyMinutes,
@@ -171,14 +361,13 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override protected void onPause() {
         ruleSaveHandler.removeCallbacks(persistRules);
-        if (ControllerPinManager.isSessionUnlocked()) saveRules(false);
+        if (FeatureEditorSession.canEdit(this, "wallet")) saveRules(false);
         timer.removeCallbacks(tick);
         super.onPause();
     }
 
     private void populateRules() {
         populatingRules = true;
-        binding.ledgerEnabled.setChecked(manager.isEnabled());
         populateRule(PenanceInfraction.NEW_DETECTION,
                 binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
@@ -188,6 +377,9 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount);
         populateRule(PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        populateRule(PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
+        populateRule(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         populateRule(PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
@@ -198,7 +390,7 @@ public final class PenanceActivity extends AppCompatActivity {
         binding.detectionBatch.setText(String.valueOf(manager.getDetectionBatch()));
         binding.tamperCooldownMinutes.setText(
                 String.valueOf(manager.getTamperCooldownMinutes()));
-        PaidPauseManager paidPause = new PaidPauseManager(this);
+        PaidPauseManager paidPause = new PaidPauseManager(FeatureEditorSession.context(this));
         binding.paidPauseEnabled.setChecked(paidPause.isEnabled());
         binding.paidPauseAmount.setText(decimalEuros(paidPause.getPriceCents()));
         binding.paidPauseMinutes.setText(String.valueOf(paidPause.getDurationMinutes()));
@@ -207,19 +399,22 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void populateRule(
-            PenanceInfraction infraction, CheckBox toggle, EditText amount, View... dependents) {
+            PenanceInfraction infraction,
+            CompoundButton toggle, EditText amount, View... dependents) {
         toggle.setChecked(manager.isInfractionEnabled(infraction));
         amount.setText(decimalEuros(manager.getInfractionCents(infraction)));
         syncRuleInputState(toggle, amount, dependents);
     }
 
     private void syncRuleInputStates() {
+        syncRuleInputState(binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
         syncRuleInputState(binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
         syncRuleInputState(binding.ruleDwellEnabled, binding.ruleDwellAmount,
                 binding.dwellSeconds);
         syncRuleInputState(binding.ruleTapEnabled, binding.ruleTapAmount);
         syncRuleInputState(binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        syncRuleInputState(binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
         syncRuleInputState(binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         syncPaidPauseInputs();
@@ -228,44 +423,48 @@ public final class PenanceActivity extends AppCompatActivity {
     private void syncPaidPauseInputs() {
         if (binding == null) return;
         boolean enabled = binding.paidPauseEnabled.isChecked();
-        boolean editable = enabled && ControllerPinManager.isSessionUnlocked();
+        boolean editable = enabled && FeatureEditorSession.canEdit(this, "wallet");
         binding.paidPauseAmount.setEnabled(editable);
         binding.paidPauseMinutes.setEnabled(editable);
-        binding.paidPauseAmount.setAlpha(enabled ? 1f : 0.45f);
-        binding.paidPauseMinutes.setAlpha(enabled ? 1f : 0.45f);
     }
 
-    private void syncRuleInputState(CheckBox toggle, EditText amount, View... dependents) {
+    private void syncRuleInputState(CompoundButton toggle, EditText amount, View... dependents) {
         boolean ruleEnabled = toggle.isChecked();
-        boolean editable = ruleEnabled && ControllerPinManager.isSessionUnlocked();
+        boolean editable = ruleEnabled && FeatureEditorSession.canEdit(this, "wallet");
         amount.setEnabled(editable);
-        amount.setAlpha(ruleEnabled ? 1f : 0.45f);
         if (dependents == null) return;
         for (View dependent : dependents) {
             dependent.setEnabled(editable);
-            dependent.setAlpha(ruleEnabled ? 1f : 0.45f);
         }
     }
 
     private void attachRuleMathListeners() {
-        binding.ledgerEnabled.setOnCheckedChangeListener((button, checked) -> {
-            renderRuleMathPreview();
-            scheduleRulesSave();
-        });
-        attachRuleToggle(binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
+        attachRuleToggle(PenanceInfraction.NEW_DETECTION, binding.ruleDetectionEnabled, binding.ruleDetectionAmount,
                 binding.detectionBatch);
-        attachRuleToggle(binding.ruleDwellEnabled, binding.ruleDwellAmount,
+        attachRuleToggle(PenanceInfraction.CENSORED_DWELL, binding.ruleDwellEnabled, binding.ruleDwellAmount,
                 binding.dwellSeconds);
-        attachRuleToggle(binding.ruleTapEnabled, binding.ruleTapAmount);
-        attachRuleToggle(binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
-        attachRuleToggle(binding.ruleTamperEnabled, binding.ruleTamperAmount,
+        attachRuleToggle(PenanceInfraction.CENSORED_TAP, binding.ruleTapEnabled, binding.ruleTapAmount);
+        attachRuleToggle(PenanceInfraction.WATCHED_APP_OPEN, binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount);
+        attachRuleToggle(PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount);
+        attachRuleToggle(PenanceInfraction.TASK_FAILURE, binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount);
+        attachRuleToggle(PenanceInfraction.TAMPER_ATTEMPT, binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
         binding.paidPauseEnabled.setOnCheckedChangeListener((button, checked) -> {
+            if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
+                populateRules();
+                return;
+            }
+            if (!populatingRules && !checked) {
+                PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
+                pause.configure(false, pause.getPriceCents(), pause.getDurationMinutes());
+            }
             syncPaidPauseInputs();
             scheduleRulesSave();
         });
-        EditText[] inputs = {binding.ruleDetectionAmount, binding.detectionBatch,
+        EditText[] inputs = {binding.ruleTaskFailureAmount, binding.ruleDetectionAmount, binding.detectionBatch,
                 binding.ruleDwellAmount, binding.ruleTapAmount, binding.ruleAppOpenAmount,
+                binding.ruleExtraTimeRequestAmount,
                 binding.ruleTamperAmount, binding.tamperCooldownMinutes,
                 binding.dailyCap, binding.weeklyCap, binding.mercyMinutes,
                 binding.dwellSeconds, binding.paidPauseAmount, binding.paidPauseMinutes};
@@ -283,8 +482,13 @@ public final class PenanceActivity extends AppCompatActivity {
         }
     }
 
-    private void attachRuleToggle(CheckBox toggle, EditText amount, View... dependents) {
+    private void attachRuleToggle(PenanceInfraction rule, CompoundButton toggle, EditText amount, View... dependents) {
         toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (!populatingRules && !FeatureEditorSession.canEdit(this, "wallet")) {
+                populateRules();
+                return;
+            }
+            if (!populatingRules && !checked) manager.disableInfraction(rule);
             syncRuleInputState(toggle, amount, dependents);
             renderRuleMathPreview();
             scheduleRulesSave();
@@ -292,16 +496,18 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void scheduleRulesSave() {
-        if (populatingRules || !ControllerPinManager.isSessionUnlocked()) return;
+        if (populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return;
+        dirtyRules = true;
         ruleSaveHandler.removeCallbacks(persistRules);
         ruleSaveHandler.postDelayed(persistRules, 450L);
     }
 
     private void commitRules(boolean restoreIfInvalid) {
-        if (populatingRules || !ControllerPinManager.isSessionUnlocked()) return;
+        if (populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return;
         ruleSaveHandler.removeCallbacks(persistRules);
         if (!saveRules(restoreIfInvalid) && restoreIfInvalid) {
             populateRules();
+            dirtyRules = false;
             renderRuleMathPreview();
         }
     }
@@ -338,7 +544,8 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private boolean saveRules(boolean showInvalid) {
-        boolean enabled = binding.ledgerEnabled.isChecked();
+        if (binding == null || populatingRules || !FeatureEditorSession.canEdit(this, "wallet")) return false;
+        if (!dirtyRules) return true;
         Map<PenanceInfraction, Integer> rules = new EnumMap<>(PenanceInfraction.class);
         if (!readRule(rules, PenanceInfraction.NEW_DETECTION,
                 binding.ruleDetectionEnabled, binding.ruleDetectionAmount)
@@ -348,11 +555,16 @@ public final class PenanceActivity extends AppCompatActivity {
                 binding.ruleTapEnabled, binding.ruleTapAmount)
                 || !readRule(rules, PenanceInfraction.WATCHED_APP_OPEN,
                 binding.ruleAppOpenEnabled, binding.ruleAppOpenAmount)
+                || !readRule(rules, PenanceInfraction.EXTRA_TIME_REQUEST,
+                binding.ruleExtraTimeRequestEnabled, binding.ruleExtraTimeRequestAmount)
+                || !readRule(rules, PenanceInfraction.TASK_FAILURE,
+                binding.ruleTaskFailureEnabled, binding.ruleTaskFailureAmount)
                 || !readRule(rules, PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount)) {
             if (showInvalid) toast(R.string.penance_rules_invalid);
             return false;
         }
+        boolean enabled = !rules.isEmpty();
         Integer daily = parseEuros(binding.dailyCap.getText().toString());
         Integer weekly = parseEuros(binding.weeklyCap.getText().toString());
         Integer mercy = parseInteger(binding.mercyMinutes.getText().toString());
@@ -387,15 +599,17 @@ public final class PenanceActivity extends AppCompatActivity {
         }
         manager.configure(enabled, rules, daily, weekly, mercy, dwell, detectionBatch,
                 tamperCooldown);
-        new PaidPauseManager(this).configure(binding.paidPauseEnabled.isChecked(),
+        new PaidPauseManager(FeatureEditorSession.context(this)).configure(binding.paidPauseEnabled.isChecked(),
                 pausePrice, pauseMinutes);
-        HardcoreAutoPayManager.schedule(this);
+        dirtyRules = false;
+        if (!FeatureEditorSession.remote(this)) HardcoreAutoPayManager.schedule(this);
         render();
         return true;
     }
 
     private boolean readRule(Map<PenanceInfraction, Integer> rules,
-            PenanceInfraction infraction, CheckBox toggle, EditText input) {
+            PenanceInfraction infraction,
+            CompoundButton toggle, EditText input) {
         if (!toggle.isChecked()) return true;
         Integer amount = parseEuros(input.getText().toString());
         if (amount == null || amount < PenancePolicy.MIN_STRIKE_CENTS
@@ -409,7 +623,7 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void beginCheckout(boolean paidPauseOnly) {
-        if (paidPauseOnly && !new PaidPauseManager(this).canPurchase()) {
+        if (paidPauseOnly && !new PaidPauseManager(FeatureEditorSession.context(this)).canPurchase()) {
             toast(R.string.paid_pause_unavailable);
             return;
         }
@@ -570,7 +784,7 @@ public final class PenanceActivity extends AppCompatActivity {
                                 capture.vaultStatus(), capture.vaultId(), capture.customerId(),
                                 capture.payerEmail(), capture.payerAccountId());
                     }
-                    if (!manager.completeSettlement(settlementId, snapshot.getCheckoutCents())) {
+                    if (!manager.completeVerifiedSettlement(settlementId, snapshot.getCheckoutCents(), capture)) {
                         toast(R.string.penance_payment_mismatch);
                     } else toast(R.string.penance_payment_complete);
                     render();
@@ -579,7 +793,7 @@ public final class PenanceActivity extends AppCompatActivity {
 
     private boolean canProcessSettlement(String settlementId) {
         return !manager.isPaidPauseSettlement(settlementId)
-                || new PaidPauseManager(this).canPurchase();
+                || new PaidPauseManager(FeatureEditorSession.context(this)).canPurchase();
     }
 
     private void handlePayPalReturn(Intent intent) {
@@ -622,7 +836,12 @@ public final class PenanceActivity extends AppCompatActivity {
     }
 
     private void render() {
+        if (FeatureEditorSession.remote(this)) { renderRuleMathPreview(); return; }
         if (binding == null) return;
+        if (!expandedWalletSection.isEmpty()) {
+            if ("rules".equals(expandedWalletSection)) renderRuleMathPreview();
+            return;
+        }
         long now = System.currentTimeMillis();
         PenanceSnapshot snapshot = manager.snapshot(now);
         binding.dueAmount.setText(manager.money(snapshot.getDueCents()));
@@ -643,8 +862,19 @@ public final class PenanceActivity extends AppCompatActivity {
                     ? R.string.penance_payment_ready
                     : linkReady ? R.string.penance_payment_link_ready
                     : R.string.penance_payment_unavailable);
+        boolean setupNeeded = !paymentAvailable && FeatureEditorSession.canEdit(this, "wallet");
+        binding.buttonSettle.setText(
+                setupNeeded
+                        ? getString(R.string.wallet_setup_paypal)
+                        : getString(
+                                R.string.wallet_pay_amount, manager.money(snapshot.getDueCents())));
+        binding.buttonSettle.setVisibility(checkout ? View.GONE : View.VISIBLE);
         binding.buttonSettle.setEnabled(
-                paymentAvailable && snapshot.getDueCents() > 0 && !checkout && !checkoutBusy);
+                !checkoutBusy
+                        && !checkout
+                        && (setupNeeded || paymentAvailable && snapshot.getDueCents() > 0));
+        binding.checkoutRecoveryActions.setVisibility(
+                checkout && !automaticCheckout ? View.VISIBLE : View.GONE);
         binding.buttonResumeCheckout.setVisibility(
                 checkout && !automaticCheckout && !manager.getActiveApprovalUrl().isEmpty()
                         ? View.VISIBLE : View.GONE);
@@ -663,36 +893,56 @@ public final class PenanceActivity extends AppCompatActivity {
             binding.paymentStatus.setText(R.string.paypal_auto_payment_processing);
         } else if (checkout) binding.paymentStatus.setText(R.string.penance_payment_pending);
         else binding.paymentStatus.setText("");
-        renderHistory(snapshot, now);
-        renderRuleMathPreview();
+        binding.paymentStatus.setVisibility(
+                binding.paymentStatus.length() == 0 ? View.GONE : View.VISIBLE);
+        updateWalletSummaries(snapshot);
+        if (expandedWalletSection.isEmpty()) renderHistory(snapshot, now);
+        if ("rules".equals(expandedWalletSection)) renderRuleMathPreview();
+    }
+
+    private void updateWalletSummaries(PenanceSnapshot snapshot) {
+        int enabled = 0;
+        for (PenanceInfraction infraction : PenanceInfraction.values())
+            if (infraction != PenanceInfraction.PAID_PAUSE
+                    && manager.isInfractionEnabled(infraction)) enabled++;
+        walletActions
+                .get("rules")
+                .summary()
+                .setText(
+                        getResources().getQuantityString(
+                                R.plurals.tribute_rules_enabled_summary, enabled, enabled));
+        walletActions
+                .get("limits")
+                .summary()
+                .setText(getString(
+                        R.string.tribute_spending_limits_summary,
+                        manager.money(manager.getDailyCapCents()),
+                        manager.money(manager.getWeeklyCapCents())));
+        PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
+        walletActions
+                .get("pause")
+                .summary()
+                .setText(
+                        pause.isEnabled()
+                                ? getString(
+                                        R.string.wallet_pause_summary,
+                                        pause.getDurationMinutes(),
+                                        manager.money(pause.getPriceCents()))
+                                : getString(R.string.control_state_off));
     }
 
     private void renderHistory(PenanceSnapshot snapshot, long nowMillis) {
-        if (snapshot.getEvents().isEmpty()) {
-            binding.history.setText(R.string.penance_history_empty);
-            return;
-        }
-        StringBuilder text = new StringBuilder();
-        DateFormat date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
-        int count = 0;
-        for (PenanceEvent event : snapshot.getEvents()) {
-            if (count++ >= 12) break;
-            String status;
-            if (event.isInMercy(nowMillis)) status = getString(R.string.penance_status_mercy);
-            else if (event.getStatus() == PenanceEvent.Status.OPEN) status = getString(R.string.penance_status_open);
-            else if (event.getStatus() == PenanceEvent.Status.CHECKOUT) status = getString(R.string.penance_status_checkout);
-            else if (event.getStatus() == PenanceEvent.Status.PAID) status = getString(R.string.penance_status_paid);
-            else status = getString(R.string.penance_status_forgiven);
-            if (text.length() > 0) text.append('\n');
-            text.append(getString(R.string.penance_history_item,
-                    date.format(new Date(event.getCreatedAtMillis())),
-                    infractionLabel(event.getInfraction()), event.getStrikeCount(),
-                    WalletCurrency.format(event.getCurrency(), event.getAmountCents()), status));
-        }
-        binding.history.setText(text.toString());
+        binding.history.setText(snapshot.getEvents().isEmpty() ? getString(R.string.penance_history_empty) : "");
+        binding.history.setVisibility(snapshot.getEvents().isEmpty() ? View.VISIBLE : View.GONE);
+        int groupCount = binding.walletHistoryList.bind(snapshot.getEvents(), nowMillis, historyExpanded ? 12 : 2);
+        binding.walletHistoryMore.setVisibility(
+                groupCount > 2 ? View.VISIBLE : View.GONE);
+        binding.walletHistoryMore.setText(
+                historyExpanded ? R.string.wallet_history_less : R.string.wallet_history_more);
     }
 
     private String infractionLabel(PenanceInfraction infraction) {
+        if (infraction == PenanceInfraction.TASK_FAILURE) return getString(R.string.tasks_tribute_rule);
         if (infraction == PenanceInfraction.PAID_PAUSE) {
             return getString(R.string.paid_pause_history_label);
         }
@@ -763,6 +1013,7 @@ public final class PenanceActivity extends AppCompatActivity {
         ruleSaveHandler.removeCallbacksAndMessages(null);
         timer.removeCallbacks(tick);
         if (paypalClient != null) paypalClient.close();
+        if (connection != null) connection.close();
         binding = null;
         super.onDestroy();
     }

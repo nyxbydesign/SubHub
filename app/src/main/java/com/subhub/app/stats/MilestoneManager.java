@@ -34,6 +34,14 @@ public final class MilestoneManager {
         return new Result(reached, MESSAGES.get(reached), MAJOR.contains(reached));
     }
 
+    static void acknowledgeHistory(Context context, long totalBlocks) {
+        SharedPreferences preferences = context.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE);
+        int reached = preferences.getInt(KEY_LAST_SHOWN, 0);
+        for (int value : ALL) if (totalBlocks >= value) reached = Math.max(reached, value);
+        if (!preferences.edit().putInt(KEY_LAST_SHOWN, reached).commit())
+            throw new IllegalStateException("Historical milestone persistence unavailable");
+    }
+
     public static int next(long current) {
         for (int value : ALL) if (value > current) return value;
         return ALL.get(ALL.size() - 1);

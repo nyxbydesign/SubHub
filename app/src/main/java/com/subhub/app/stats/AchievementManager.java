@@ -5,11 +5,9 @@ import android.content.SharedPreferences;
 
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.text.TextSmutConfig;
-import com.subhub.app.pack.SubHubPackManager;
 import com.subhub.app.penance.PaidPauseManager;
 import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceInfraction;
@@ -33,95 +31,208 @@ import java.util.Set;
 
 /** Persistent implementation of the recovered and expanded achievement contracts. */
 public final class AchievementManager {
+    private static final Object UNLOCK_LOCK = new Object();
     private static final String PREFS_NAME = "betablocker_achievements";
     private static final String KEY_UNLOCKED = "unlocked";
     private static final String KEY_PENDING = "pending_notifications";
     private static final String KEY_UNLOCKED_AT_PREFIX = "unlocked_at.";
-    private static final LocalDate LEGACY_UNLOCK_DATE = LocalDate.of(2026, 8, 27);
     private static final List<Achievement> ACHIEVEMENTS = achievements();
     private final Context context;
     private final SharedPreferences preferences;
     private final Set<String> unlocked;
+    private final AchievementRole role;
+    private final boolean workspaceBound;
+    private final List<Achievement> catalog;
+    private DomStatsSnapshot domStats;
+    private Long historicalPaid;
+    private String historicalPaidCurrency = "EUR";
 
     public AchievementManager(Context context) {
+        this(context, AchievementRole.SUB, false);
+    }
+
+    public static AchievementManager forWorkspace(Context context) {
+        return new AchievementManager(context, AchievementRole.current(context), true);
+    }
+
+    private AchievementManager(Context context, AchievementRole role, boolean workspaceBound) {
         this.context = context.getApplicationContext();
+        this.role = role;
+        this.workspaceBound = workspaceBound;
+        catalog = role == AchievementRole.DOM ? DomAchievementCatalog.all() : ACHIEVEMENTS;
         preferences = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         Set<String> stored = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
         unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
-        backfillLegacyUnlockDates();
     }
 
-    public List<Achievement> all() { return ACHIEVEMENTS; }
-    public boolean isUnlocked(String id) { return unlocked.contains(id); }
+    public AchievementRole getRole() { return role; }
+    public boolean isAccessible() {
+        return workspaceBound ? role.accessible(context)
+                : com.subhub.app.security.DeviceRolePreferences.supportsSub(context);
+    }
+    public List<Achievement> all() { return isAccessible() ? catalog : Collections.emptyList(); }
+    public boolean isUnlocked(String id) { return isAccessible() && role.owns(id) && unlocked.contains(id); }
     public long getUnlockedAt(String id) {
         if (!isUnlocked(id)) return 0L;
-        return preferences.getLong(KEY_UNLOCKED_AT_PREFIX + id, legacyUnlockTimestamp());
+        if (preferences.contains("history_earned_at." + id)) return preferences.getLong("history_earned_at." + id, 0L);
+        long stored = preferences.getLong(KEY_UNLOCKED_AT_PREFIX + id, 0L);
+        long placeholder = LocalDate.of(2026, 8, 27).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        return stored == placeholder ? 0L : stored;
     }
     public int getUnlockedCount() {
         int count = 0;
-        for (Achievement value : ACHIEVEMENTS) if (unlocked.contains(value.id)) count++;
+        for (Achievement value : all()) if (unlocked.contains(value.id)) count++;
         return count;
     }
-    public int getTotalCount() { return ACHIEVEMENTS.size(); }
+    public int getTotalCount() { return all().size(); }
 
     public Progress progress(Achievement value, StatsSnapshot stats) {
+        if (!isAccessible() || !catalog.contains(value)) return new Progress(0, 0, false, false);
+        if (role == AchievementRole.DOM) return new Progress(
+                domStats == null ? 0 : DomAchievementCatalog.current(value.id, domStats),
+                DomAchievementCatalog.target(value.id), isUnlocked(value.id),
+                DomAchievementCatalog.known(value.id, domStats));
         long current = current(value.id, stats);
         long target = target(value.id);
         return new Progress(current, target, isUnlocked(value.id));
     }
 
     public List<Achievement> checkAchievements(StatsSnapshot stats) {
-        List<Achievement> newlyUnlocked = new ArrayList<>();
-        for (Achievement value : ACHIEVEMENTS) {
-            if (unlocked.contains(value.id) || !qualifies(value.id, stats)) continue;
-            unlocked.add(value.id);
-            newlyUnlocked.add(value);
-        }
-        if (!newlyUnlocked.isEmpty()) {
-            Set<String> pending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
-            Set<String> updatedPending = new LinkedHashSet<>(
-                    pending == null ? Collections.emptySet() : pending);
-            long unlockedAt = System.currentTimeMillis();
-            SharedPreferences.Editor editor = preferences.edit()
-                    .putStringSet(KEY_UNLOCKED, new LinkedHashSet<>(unlocked));
-            for (Achievement value : newlyUnlocked) {
-                updatedPending.add(value.id);
-                editor.putLong(KEY_UNLOCKED_AT_PREFIX + value.id, unlockedAt);
+        if (role != AchievementRole.SUB || !isAccessible()) return Collections.emptyList();
+        return unlock(value -> qualifies(value.id, stats));
+    }
+
+    List<Achievement> checkRetainedAchievements(StatsSnapshot stats) {
+        if (role != AchievementRole.SUB || !isAccessible()) return Collections.emptyList();
+        return unlock(value -> qualifies(value.id, stats, true));
+    }
+
+    public List<Achievement> checkDomAchievements(DomStatsSnapshot stats) {
+        if (role != AchievementRole.DOM || !isAccessible()) return Collections.emptyList();
+        domStats = java.util.Objects.requireNonNull(stats);
+        return unlock(value -> DomAchievementCatalog.known(value.id, stats)
+                && DomAchievementCatalog.current(value.id, stats) >= DomAchievementCatalog.target(value.id));
+    }
+
+    public String progressCurrency() { return domStats == null ? historicalPaidCurrency : domStats.leadingPaidCurrency(); }
+
+    void historicalPaid(long eur, long usd) {
+        historicalPaid = Math.max(eur, usd);
+        historicalPaidCurrency = usd > eur ? "USD" : "EUR";
+    }
+
+    private List<Achievement> unlock(java.util.function.Predicate<Achievement> qualifies) {
+        synchronized (UNLOCK_LOCK) {
+            if (!isAccessible()) return Collections.emptyList();
+            Set<String> current = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
+            if (current != null) unlocked.addAll(current);
+            List<Achievement> newlyUnlocked = new ArrayList<>();
+            for (Achievement value : catalog) {
+                if (unlocked.contains(value.id) || !qualifies.test(value)) continue;
+                unlocked.add(value.id);
+                newlyUnlocked.add(value);
             }
-            editor.putStringSet(KEY_PENDING, updatedPending).apply();
+            if (!newlyUnlocked.isEmpty() && isAccessible()) {
+                Set<String> pending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
+                Set<String> updatedPending = new LinkedHashSet<>(
+                        pending == null ? Collections.emptySet() : pending);
+                long unlockedAt = System.currentTimeMillis();
+                SharedPreferences.Editor editor = preferences.edit()
+                        .putStringSet(KEY_UNLOCKED, new LinkedHashSet<>(unlocked));
+                for (Achievement value : newlyUnlocked) {
+                    updatedPending.add(value.id);
+                    editor.putLong(KEY_UNLOCKED_AT_PREFIX + value.id, unlockedAt);
+                }
+                editor.putStringSet(KEY_PENDING, updatedPending).apply();
+            }
+            return newlyUnlocked;
+
         }
-        return newlyUnlocked;
     }
 
-    private void backfillLegacyUnlockDates() {
-        if (unlocked.isEmpty()) return;
-        SharedPreferences.Editor editor = null;
-        long timestamp = legacyUnlockTimestamp();
-        for (String id : unlocked) {
-            String key = KEY_UNLOCKED_AT_PREFIX + id;
-            if (preferences.contains(key)) continue;
-            if (editor == null) editor = preferences.edit();
-            editor.putLong(key, timestamp);
+    /** Historical eligibility updates presentation state only, never replaying product effects. */
+    boolean reconcileHistory(java.util.Map<String, Long> dates, Set<String> sources, StatsSnapshot stats,
+            DomStatsSnapshot aggregate) {
+        synchronized (UNLOCK_LOCK) {
+            if (!isAccessible()) return false;
+            String prefix = "history_v1." + role.name() + ".";
+            long now = System.currentTimeMillis();
+            boolean initial = !preferences.contains(prefix + "cutoff");
+            long cutoff = preferences.getLong(prefix + "cutoff", now);
+            Set<String> oldSources = preferences.getStringSet(prefix + "sources", Collections.emptySet());
+            boolean added = oldSources == null || !oldSources.containsAll(sources);
+            Set<String> remembered = new LinkedHashSet<>(oldSources == null ? Collections.emptySet() : oldSources);
+            remembered.addAll(sources);
+            Set<String> saved = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
+            Set<String> updated = new LinkedHashSet<>(saved == null ? Collections.emptySet() : saved);
+            Set<String> storedPending = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
+            Set<String> pending = new LinkedHashSet<>(storedPending == null ? Collections.emptySet() : storedPending);
+            SharedPreferences.Editor editor = preferences.edit();
+            long today = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            if (role == AchievementRole.DOM) domStats = java.util.Objects.requireNonNull(aggregate);
+            for (Achievement value : catalog) {
+                long proof = Math.max(0, dates.getOrDefault(value.id, 0L));
+                if (proof > now) proof = 0;
+                boolean wasUnlocked = updated.contains(value.id);
+                boolean datedHistory = proof > 0 && (proof <= cutoff || proof < today);
+                boolean eligible;
+                if (role == AchievementRole.DOM)
+                    eligible = DomAchievementCatalog.known(value.id, aggregate)
+                            && DomAchievementCatalog.current(value.id, aggregate) >= DomAchievementCatalog.target(value.id);
+                else if ("legend".equals(value.id)) {
+                    eligible = true;
+                    for (Achievement other : catalog)
+                        if (!"legend".equals(other.id) && !updated.contains(other.id)) eligible = false;
+                } else eligible = historicalClockOnly(value.id) ? proof > 0 : qualifies(value.id, stats, true);
+                boolean quietUnlock = !wasUnlocked && (initial || added || datedHistory) && (eligible || proof > 0);
+                if (quietUnlock) updated.add(value.id);
+                if (!updated.contains(value.id)) continue;
+                long originalDate = preferences.getLong(KEY_UNLOCKED_AT_PREFIX + value.id, 0L);
+                long placeholder = LocalDate.of(2026, 8, 27).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                long effectiveDate = preferences.contains("history_earned_at." + value.id)
+                        ? preferences.getLong("history_earned_at." + value.id, 0L)
+                        : originalDate == placeholder ? 0 : originalDate;
+                if (proof > 0 && (effectiveDate <= 0 || proof < effectiveDate))
+                    editor.putLong("history_earned_at." + value.id, proof);
+                if (quietUnlock || initial || added || proof > 0 && proof <= cutoff) pending.remove(value.id);
+            }
+            if (!isAccessible()) return false;
+            editor.putStringSet(KEY_UNLOCKED, updated).putStringSet(KEY_PENDING, pending)
+                    .putLong(prefix + "cutoff", cutoff).putStringSet(prefix + "sources", remembered);
+            // Always obtain a persistence acknowledgement, including a retry after a failed commit.
+            if (!editor.commit()) throw new IllegalStateException("Historical achievement persistence unavailable");
+            unlocked.clear(); unlocked.addAll(updated);
+            return initial;
         }
-        if (editor != null) editor.apply();
     }
 
-    static long legacyUnlockTimestamp() {
-        return LEGACY_UNLOCK_DATE.atStartOfDay(ZoneId.systemDefault())
-                .toInstant().toEpochMilli();
+    private static boolean historicalClockOnly(String id) {
+        return "midnight_blocker".equals(id) || "early_bird".equals(id) || "night_owl".equals(id)
+                || "new_year".equals(id) || "halloween_block".equals(id)
+                || "christmas_block".equals(id) || "valentine_block".equals(id);
     }
 
     public List<Achievement> takePendingNotifications() {
-        Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
-        Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
-        if (pending.isEmpty()) return Collections.emptyList();
-        List<Achievement> result = new ArrayList<>();
-        for (Achievement value : ACHIEVEMENTS) if (pending.contains(value.id)) result.add(value);
-        preferences.edit().remove(KEY_PENDING).apply();
-        return result;
+        synchronized (UNLOCK_LOCK) {
+            if (!isAccessible()) return Collections.emptyList();
+            Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
+            Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
+            if (pending.isEmpty()) return Collections.emptyList();
+            List<Achievement> result = new ArrayList<>();
+            for (Achievement value : catalog) if (pending.remove(value.id)) result.add(value);
+            SharedPreferences.Editor editor = preferences.edit();
+            if (pending.isEmpty()) editor.remove(KEY_PENDING); else editor.putStringSet(KEY_PENDING, pending);
+            editor.apply();
+            return result;
+
+        }
     }
 
     private boolean qualifies(String id, StatsSnapshot stats) {
+        return qualifies(id, stats, false);
+    }
+
+    private boolean qualifies(String id, StatsSnapshot stats, boolean observedOnly) {
         switch (id) {
             case "midnight_blocker": return LocalTime.now().getHour() == 0 && stats.getCurrentSessionBlocks() > 0;
             case "early_bird": return hourBetween(4, 6) && stats.getCurrentSessionBlocks() > 0;
@@ -143,11 +254,15 @@ public final class AchievementManager {
                 return true;
             default:
                 long target = target(id);
-                return target > 0 && current(id, stats) >= target;
+                return target > 0 && current(id, stats, observedOnly) >= target;
         }
     }
 
     private long current(String id, StatsSnapshot stats) {
+        return current(id, stats, true);
+    }
+
+    private long current(String id, StatsSnapshot stats, boolean observedOnly) {
         switch (id) {
             case "first_block": case "blocks_10": case "blocks_100": case "blocks_1000": case "blocks_10000":
                 return stats.getTotalBlocks();
@@ -164,10 +279,11 @@ public final class AchievementManager {
             case "ntr_50": case "ntr_100": case "ntr_200": case "ntr_500": return stats.getAllCategoryCensors();
             case "legend": return getUnlockedCount();
             case "app_mode_guardian":
-                return new AppModeManager(context).isArmed() ? 1 : 0;
+                return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
+                        .getBoolean(AppModeManager.KEY_ARMED, false) ? 1 : 0;
             case "app_assignment_curator":
-                return new AppModeManager(context).getMode() == AppModePolicy.Mode.SELECTED_APPS
-                        ? new AppModeManager(context).getSelectedPackages().size() : 0;
+                return (observedOnly ? AppModeManager.observedIncludedPackages(context)
+                        : new AppModeManager(context).getIncludedPackages()).size();
             case "limits_setter":
                 return new AppTimerManager(context).loadSettings().anyEnabled() ? 1 : 0;
             case "limits_dual_guard": {
@@ -175,7 +291,7 @@ public final class AchievementManager {
                 return settings.perAppEnabled && settings.totalEnabled ? 1 : 0;
             }
             case "pact_sealed":
-                return CommitmentManager.isActive(context) ? 1 : 0;
+                return (observedOnly ? CommitmentManager.observedActive(context) : CommitmentManager.isActive(context)) ? 1 : 0;
             case "pact_long_haul":
                 return CommitmentManager.originalDurationMillis(context)
                         >= 7L * 24L * 60L * 60L * 1000L ? 1 : 0;
@@ -196,11 +312,10 @@ public final class AchievementManager {
                         && config.getEnabledCategories().containsAll(TextSmutConfig.DEFAULT_CATEGORIES)
                         ? config.getEnabledCategories().size() : 0;
             }
-            case "pack_curator":
-                return new SubHubPackManager(context).activePackId() == null ? 0 : 1;
             case "wallet_keeper":
-                return new PenanceManager(context).isEnabled() ? 1 : 0;
+                return (observedOnly ? PenanceManager.observedEnabled(context) : new PenanceManager(context).isEnabled()) ? 1 : 0;
             case "tribute_rulesmith": {
+                if (observedOnly) return PenanceManager.observedRuleCount(context);
                 PenanceManager penance = new PenanceManager(context);
                 if (!penance.isEnabled()) return 0;
                 int enabledRules = 0;
@@ -215,6 +330,11 @@ public final class AchievementManager {
                 return new PaidPauseManager(context).isEnabled() ? 1 : 0;
             case "wallet_paid_10": case "wallet_paid_100":
             case "wallet_paid_500": case "wallet_paid_1000":
+                if (historicalPaid != null) return historicalPaid;
+                if (observedOnly) {
+                    java.util.Map<String, Long> paid = PenanceManager.readRetainedStatistics(context).paidCents;
+                    return Math.max(paid.get("EUR"), paid.get("USD"));
+                }
                 return Math.max(new PenanceManager(context).getTotalPaidCents("EUR"),
                         new PenanceManager(context).getTotalPaidCents("USD"));
             case "subliminal_1": case "subliminal_100": case "subliminal_1000":
@@ -224,6 +344,7 @@ public final class AchievementManager {
     }
 
     static long target(String id) {
+        if (id.startsWith("dom_")) return DomAchievementCatalog.target(id);
         switch (id) {
             case "first_block": case "first_session": case "first_custom_phrase":
             case "export_first": case "color_picker": return 1;
@@ -247,7 +368,7 @@ public final class AchievementManager {
             case "ntr_200": return 200;
             case "app_mode_guardian": case "limits_setter": case "limits_dual_guard":
             case "pact_sealed": case "pact_long_haul": case "hardcore_guardian":
-            case "text_filter_enabled": case "pack_curator": case "wallet_keeper":
+            case "text_filter_enabled": case "wallet_keeper":
             case "paypal_vault": case "paid_pause": return 1;
             case "app_assignment_curator": return 3;
             case "text_filter_catalog": return 3;
@@ -320,7 +441,6 @@ public final class AchievementManager {
                 a("color_picker", R.string.achievement_color_picker, R.string.achievement_desc_color_picker, "◉", "custom", R.drawable.achievement_badge_color_picker, false),
                 a("first_custom_phrase", R.string.achievement_first_custom_phrase, R.string.achievement_desc_first_custom_phrase, "✎", "custom", R.drawable.achievement_badge_first_custom_phrase, false),
                 a("phrase_library", R.string.achievement_phrase_library, R.string.achievement_desc_phrase_library, "▤", "custom", R.drawable.achievement_badge_phrase_library, false),
-                a("pack_curator", R.string.achievement_pack_curator, R.string.achievement_desc_pack_curator, "▤", "custom", R.drawable.achievement_badge_pack_curator, false),
                 a("export_first", R.string.achievement_export_first, R.string.achievement_desc_export_first, "⇩", "export", R.drawable.achievement_badge_export_first, false),
                 a("export_artist", R.string.achievement_export_artist, R.string.achievement_desc_export_artist, "⇩", "export", R.drawable.achievement_badge_export_artist, false),
                 a("subliminal_1", R.string.achievement_subliminal_1, R.string.achievement_desc_subliminal_1, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1, false),
@@ -366,17 +486,22 @@ public final class AchievementManager {
             this.category = category; this.badgeArtRes = badgeArtRes; this.hidden = hidden;
         }
         public String getId() { return id; }
+        public AchievementRole getRole() { return id.startsWith("dom_") ? AchievementRole.DOM : AchievementRole.SUB; }
         public int getName() { return name; }
         public int getDescription() { return description; }
         public String getIcon() { return icon; }
         public String getCategory() { return category; }
-        /** @return the generated illustrated badge drawable for this achievement. */
+
+        /**
+         * @return the generated illustrated badge drawable for this achievement.
+         */
         public int getBadgeArtRes() { return badgeArtRes; }
+
         /**
          * Legacy asset accessor retained for binary/source compatibility.
          *
-         * <p>Badges no longer use licensed asset filenames; callers should use
-         * {@link #getBadgeArtRes()} instead.</p>
+         * <p>Badges no longer use licensed asset filenames; callers should use {@link
+         * #getBadgeArtRes()} instead.
          */
         @Deprecated public String getBadge() { return null; }
         public boolean isHidden() { return hidden; }
@@ -384,13 +509,19 @@ public final class AchievementManager {
 
     public static final class Progress {
         private final long current; private final long target; private final boolean unlocked;
+        private final boolean known;
         Progress(long current, long target, boolean unlocked) {
+            this(current, target, unlocked, true);
+        }
+        Progress(long current, long target, boolean unlocked, boolean known) {
             this.current = unlocked && target > 0 ? target : current;
             this.target = target; this.unlocked = unlocked;
+            this.known = known || unlocked;
         }
         public long getCurrent() { return current; }
         public long getTarget() { return target; }
         public boolean isUnlocked() { return unlocked; }
+        public boolean isKnown() { return known; }
         public boolean isCountable() { return target > 0; }
         public int percent() {
             return target <= 0 ? (unlocked ? 100 : 0)

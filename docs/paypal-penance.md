@@ -3,16 +3,12 @@
 For merchant-dashboard, environment, eligibility, and payer-linking steps, see
 [PayPal setup](paypal-setup.md).
 
-SubHub keeps its Wallet ledger on the device. Dom Settings selects Sandbox or Live and accepts the
+SubHub keeps its Wallet ledger on the device. Wallet → PayPal in Dom mode selects Sandbox or Live and accepts the
 matching PayPal Client ID and secret for this installation. Both values are encrypted at rest with
 an Android Keystore AES-GCM key and are never compiled into the APK. An optional PayPal.Me or other
 PayPal-hosted payment link remains available as a fallback.
 
-Studio can optionally transfer that merchant client ID, secret, environment, and fallback link
-inside a passphrase-encrypted arrangement attachment. See [pack format and activation safeguards](subhubpack-format.md#optional-encrypted-paypal-attachment).
-This does not transfer saved payer tokens, verification, checkout state, or automatic-payment
-authorization. Only trusted recipients should receive merchant credentials: encryption does not
-hide the secret from the recipient after they unlock it.
+Merchant credentials, saved payer tokens, verification, checkout state, and automatic-payment authorization stay on this installation. Pairing shares eligible configuration and recorded activity without transferring payment credentials.
 
 The environment toggle is an authorization boundary. Changing Sandbox/Live or changing the Client
 ID clears the old credentials and saved-wallet state and cancels any active checkout. The Orders
@@ -25,7 +21,7 @@ capture status all match.
 
 Every new API payment includes a purchase description built from its immutable settlement:
 the cause, counted events, and actual charged amount in EUR or USD. Charges of the same cause
-are grouped, so a full 200-entry ledger becomes at most six cause rows. Applied caps are already
+are grouped into one row per cause, including extra-time requests. Applied caps are already
 reflected in the amounts; the bill does not invent a per-event price or include later ledger entries.
 Tamper events and paid pauses have their own labels. The compact purchase summary fits PayPal's
 127-character limit; longer bills remain complete in the item description, rather than being silently
@@ -50,7 +46,7 @@ Dom mode can request a saved PayPal wallet without creating a charge. SubHub cre
 Method Tokens v3 setup token, stores its pending identifiers under the active credential boundary,
 and opens PayPal's payer-present approval page. PayPal may finish on its own HTTPS fallback page
 instead of returning to Android's custom URI. Therefore the custom URI is only a fast path: whenever
-Settings resumes, SubHub reads the setup token's server-side state and exchanges an approved setup
+Wallet resumes, SubHub reads the setup token's server-side state and exchanges an approved setup
 token for a permanent payment token. The Resume button checks the token first and reopens PayPal
 only while payer action is still required.
 
@@ -98,7 +94,7 @@ Payouts route is implemented here.
 
 ## Wallet currency
 
-Dom Settings reads the merchant's primary currency through the optional, read-only
+Wallet → PayPal in Dom mode reads the merchant's primary currency through the optional, read-only
 `GET /v1/reporting/balances` endpoint after connecting credentials. Only one supported primary
 EUR/USD code is retained, encrypted and bound to the verified merchant/environment; account
 balances and identifiers are not retained. Missing permissions, malformed metadata, or an unsupported
@@ -125,3 +121,32 @@ Android Keystore protects credentials and tokens at rest but cannot make a merch
 unextractable while the app process is running. An on-device client also cannot reliably receive a
 public PayPal webhook while offline or unreachable; those are deliberate tradeoffs of this local
 development architecture.
+
+## Payment activity
+
+Only a completed provider capture with the expected settlement reference, amount, currency and capture identity can create Tribute-paid activity. Triggered charges, checkout creation, balances and manually confirmed links do not provide that proof. The checkout retains its original approved activity audience; a later relationship cannot receive an earlier payment's activity.
+
+Verified completion acknowledges the ledger, paid total and optional activity receipt in one preference commit. A verified paid-pause grant shares that commit with its exact settlement owner and original expiry. Reconciliation never credits the same settlement twice, extends an acknowledged pause, or restarts an expired grant. Activity projection runs separately from payment processing; its bounded outbox and delivery failures cannot initiate another payment or block successful credit. Only hash-based event identity and the advisory amount/currency cross the paired Activity stream.
+
+## Extra-time requests
+
+Both paired apps must support app-time requests. When a selected app reaches an active
+individual or combined limit, the Sub can open **App time requests** from Home or the
+limit notification and submit a request. The assigned Dom reviews it from that Sub's
+profile and approves a positive number of minutes or declines. Limits remain in place
+while the request is pending or declined.
+
+An approval adds a one-time allowance for that app on the Sub's current local day.
+It does not edit the recurring daily allowance or unlock other apps after a combined
+limit. Unused extra time expires at the end of that day; a changed configuration or
+relationship cannot reuse a stale approval. After a decision and exhaustion of any
+approved time, the Sub may deliberately submit another request.
+
+In **Tribute > Rules > Apps & requests**, the **Extra-time requests** rule controls
+tribute on submission. It is off by default, with a configurable initial price of 1.00
+in the selected wallet currency. The request page shows the current bounded amount
+before submission. Existing daily and weekly caps, correction window, currency and
+Wallet participation apply. Approval and decline never trigger another tribute;
+a retry or reconnect of the same request does not create a second debit. An assessed
+tribute is a ledger balance, not proof of a completed payment, and requesting does not
+guarantee approval.

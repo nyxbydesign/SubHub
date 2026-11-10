@@ -17,6 +17,12 @@ public final class BootReceiver extends BroadcastReceiver {
     public static final String ACTION_DISARM = "com.subhub.app.action.DISARM_APP_MODE";
 
     @Override public void onReceive(Context context, Intent intent) {
+        SessionReceiverLifetime.Work work = SessionReceiverLifetime.begin(this);
+        try { receive(context, intent); work.afterQueues(); }
+        catch (RuntimeException | Error failure) { work.failed(); throw failure; }
+    }
+
+    private void receive(Context context, Intent intent) {
         String action = intent == null ? "" : intent.getAction();
         AppModeManager mode = new AppModeManager(context);
         if (ACTION_DISARM.equals(action)) {

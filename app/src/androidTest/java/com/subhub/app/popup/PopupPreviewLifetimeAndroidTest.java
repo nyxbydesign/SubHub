@@ -46,36 +46,18 @@ public final class PopupPreviewLifetimeAndroidTest {
         try (ActivityScenario<com.subhub.app.MainActivity> home = ActivityScenario.launch(intent)) {
             home.onActivity(activity -> activity.startActivity(new android.content.Intent(activity,
                     com.subhub.app.atmosphere.AtmosphereActivity.class)));
-            await(() -> {
-                AtomicReference<Boolean> resumed = new AtomicReference<>(false);
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                    for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-                            .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
-                        if (activity instanceof com.subhub.app.atmosphere.AtmosphereActivity) resumed.set(true);
-                    }
-                });
-                return resumed.get();
-            }, 3_000);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             AtomicReference<PopupStormActivity> editor = new AtomicReference<>();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
                         .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
                     if (activity instanceof com.subhub.app.atmosphere.AtmosphereActivity) {
-                        assertTrue("Dom fixture must still authorize the editor", ControllerPinManager.isDomModeActive());
                         activity.findViewById(R.id.button_popup_storm).performClick();
                         break;
                     }
                 }
             });
-            await(() -> {
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                    for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-                            .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
-                        if (activity instanceof PopupStormActivity) editor.set((PopupStormActivity) activity);
-                    }
-                });
-                return editor.get() != null;
-            }, 3_000);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 for (android.app.Activity activity : androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
                         .getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {

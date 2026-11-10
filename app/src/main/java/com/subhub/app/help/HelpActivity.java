@@ -11,22 +11,25 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.AccessibilityDelegateCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 
 import com.subhub.app.R;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.databinding.ActivityHelpBinding;
 import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.ControllerPinGate;
+import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.util.LocaleHelper;
 import com.subhub.app.update.UpdateCandidate;
 import com.subhub.app.update.UpdateStateStore;
@@ -34,11 +37,14 @@ import com.subhub.app.update.UpdatesActivity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
-/** Source-native help, permission repair, and per-app language selection. */
+/** Searchable local help with explicit permission repair and troubleshooting entry points. */
 public final class HelpActivity extends AppCompatActivity {
+    public static final String EXTRA_LANGUAGE = "help_language";
     private ActivityHelpBinding binding;
-    private ControllerEditMode editMode;
+    private final List<Question> questions = new ArrayList<>();
+    private int expandedTitle;
     private final ActivityResultLauncher<Intent> overlaySettings = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), result -> renderPermissions());
     private final ActivityResultLauncher<String> notificationPermission = registerForActivityResult(
@@ -54,29 +60,45 @@ public final class HelpActivity extends AppCompatActivity {
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonFixPermissions.setOnClickListener(view -> repairNextPermission());
         binding.buttonAccessibility.setOnClickListener(view ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+                startActivity(new Intent(this, PermissionSetupActivity.class)));
         binding.buttonLanguage.setOnClickListener(view -> showLanguageChooser());
         binding.buttonUpdates.setOnClickListener(view ->
                 startActivity(new Intent(this, UpdatesActivity.class)));
+        binding.helpDiagnostics.setOnClickListener(view ->
+                startActivity(new Intent(this, DiagnosticsActivity.class)));
         addSections();
-        if (ControllerPinManager.isDomModeActive()) {
-            editMode = ControllerEditMode.bind(this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> {
-                int actionVisibility = editing ? View.VISIBLE : View.GONE;
-                binding.buttonFixPermissions.setVisibility(actionVisibility);
-                binding.buttonAccessibility.setVisibility(actionVisibility);
-                binding.buttonLanguage.setVisibility(actionVisibility);
-            });
-        } else {
-            PrimaryHeader.editLockButton(binding.getRoot()).setVisibility(View.GONE);
-            binding.buttonFixPermissions.setVisibility(View.GONE);
-            binding.buttonAccessibility.setVisibility(View.GONE);
-            binding.buttonLanguage.setVisibility(View.GONE);
+        PrimaryHeader.editLockButton(binding.getRoot()).setOnClickListener(view -> {
+            if (ControllerPinManager.isDomModeActive()) {
+                ControllerEditMode.enterSubMode(this);
+            } else {
+                ControllerPinGate.unlock(this, this::renderEditableActions, false);
+            }
+        });
+        binding.helpSearch.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                filterQuestions(text.toString());
+            }
+            @Override public void afterTextChanged(android.text.Editable text) {}
+        });
+        if (savedInstanceState != null) {
+            expandedTitle = savedInstanceState.getInt("help_expanded", 0);
+            binding.helpSearch.setText(savedInstanceState.getString("help_query", ""));
+            renderQuestions();
+        }
+        binding.helpBuild.setText(getString(R.string.help_rework_build,
+                BuildConfig.VERSION_NAME, BuildConfig.BUILD_DATE));
+        renderEditableActions();
+        if (getIntent().getBooleanExtra(EXTRA_LANGUAGE, false)) {
+            getIntent().removeExtra(EXTRA_LANGUAGE);
+            binding.buttonLanguage.post(() -> binding.buttonLanguage.requestRectangleOnScreen(
+                    new android.graphics.Rect(0, 0, binding.buttonLanguage.getWidth(), binding.buttonLanguage.getHeight()), true));
         }
     }
 
     @Override protected void onResume() {
         super.onResume();
-        if (editMode != null) editMode.refresh();
+        renderEditableActions();
         renderPermissions();
         renderLanguage();
         renderUpdates();
@@ -84,21 +106,21 @@ public final class HelpActivity extends AppCompatActivity {
 
     private void addSections() {
         int[][] sections = {
-                {R.string.help_getting_started, R.string.help_body_started},
-                {R.string.help_permissions, R.string.help_body_perms},
-                {R.string.help_dom_sub, R.string.help_body_dom_sub},
-                {R.string.help_service_timers, R.string.help_body_service_timers},
-                {R.string.help_app_assignment, R.string.help_body_app_assignment},
-                {R.string.help_subliminal, R.string.help_body_subliminal},
-                {R.string.help_censoring, R.string.help_body_censoring},
-                {R.string.help_limits, R.string.help_body_limits},
-                {R.string.help_wallet, R.string.help_body_wallet},
-                {R.string.help_paypal_setup, R.string.help_body_paypal_setup},
-                {R.string.help_hardcore, R.string.help_body_hardcore},
-                {R.string.help_troubleshooting, R.string.help_body_troubleshooting},
-                {R.string.help_privacy, R.string.help_body_privacy},
-                {R.string.help_studio, R.string.help_body_studio},
-                {R.string.help_updates, R.string.help_body_updates}
+                {R.string.help_rework_start_title, R.string.help_rework_start_body},
+                {R.string.help_rework_modes_title, R.string.help_rework_modes_body},
+                {R.string.help_rework_service_title, R.string.help_rework_service_body},
+                {R.string.help_rework_apps_title, R.string.help_rework_apps_body},
+                {R.string.help_rework_permissions_title, R.string.help_rework_permissions_body},
+                {R.string.help_rework_censor_title, R.string.help_rework_censor_body},
+                {R.string.help_rework_limits_title, R.string.help_rework_limits_body},
+                {R.string.help_rework_wallet_title, R.string.help_rework_wallet_body},
+                {R.string.help_rework_paypal_title, R.string.help_rework_paypal_body},
+                {R.string.help_rework_hardcore_title, R.string.help_rework_hardcore_body},
+                {R.string.help_rework_rituals_title, R.string.help_rework_rituals_body},
+                {R.string.help_rework_gallery_title, R.string.help_rework_gallery_body},
+                {R.string.help_rework_profiles_title, R.string.help_rework_profiles_body},
+                {R.string.help_rework_troubleshoot_title, R.string.help_rework_troubleshoot_body},
+                {R.string.help_rework_privacy_title, R.string.help_rework_privacy_body}
         };
         for (int[] section : sections) addSection(section[0], section[1]);
     }
@@ -107,36 +129,116 @@ public final class HelpActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackgroundResource(R.drawable.bg_card);
-        card.setPadding(dp(14), dp(4), dp(14), dp(8));
+        card.setPadding(dp(14), 0, dp(14), 0);
+        card.setTag("help_question:" + getResources().getResourceEntryName(title));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        if (binding.helpSections.getChildCount() > 0) params.topMargin = dp(5);
+        if (binding.helpSections.getChildCount() > 0) params.topMargin = dp(10);
         card.setLayoutParams(params);
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+        headerRow.setPadding(0, dp(6), 0, dp(6));
+        headerRow.setMinimumHeight(dp(48));
+        headerRow.setFocusable(true);
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        headerRow.setBackgroundResource(ripple.resourceId);
         TextView header = new TextView(this);
-        header.setText(getString(title) + "  +");
+        header.setText(title);
         header.setTextColor(getColor(R.color.text_primary));
-        header.setTextSize(13);
+        com.subhub.app.util.UiIdentity.textSize(header, R.dimen.ui_text_section);
         header.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinHeight(dp(48));
+        header.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        ViewCompat.setAccessibilityDelegate(headerRow, new AccessibilityDelegateCompat() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host,
+                    AccessibilityNodeInfoCompat info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(android.widget.Button.class.getName());
+            }
+        });
+        headerRow.addView(header, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView indicator = new TextView(this);
+        indicator.setTextColor(getColor(R.color.accent));
+        com.subhub.app.util.UiIdentity.textSize(indicator, R.dimen.ui_icon_text);
+        indicator.setGravity(Gravity.CENTER);
+        indicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        headerRow.addView(indicator, new LinearLayout.LayoutParams(dp(28),
+                LinearLayout.LayoutParams.WRAP_CONTENT));
         TextView content = new TextView(this);
         content.setText(body);
         content.setTextColor(getColor(R.color.text_secondary));
-        content.setTextSize(12);
-        content.setLineSpacing(dp(2), 1f);
-        content.setPadding(0, 0, 0, dp(6));
+        com.subhub.app.util.UiIdentity.textSize(content, R.dimen.ui_text_row_title);
+        content.setLineSpacing(dp(4), 1f);
+        content.setPadding(0, 0, 0, dp(16));
         content.setVisibility(View.GONE);
-        header.setOnClickListener(view -> {
-            boolean opening = content.getVisibility() != View.VISIBLE;
-            content.setVisibility(opening ? View.VISIBLE : View.GONE);
-            header.setText(getString(title) + (opening ? "  −" : "  +"));
+        headerRow.setOnClickListener(view -> {
+            expandedTitle = expandedTitle == title ? 0 : title;
+            renderQuestions();
         });
-        card.addView(header);
+        card.addView(headerRow);
         card.addView(content);
         binding.helpSections.addView(card);
+        questions.add(new Question(title, card, headerRow, indicator, content,
+                (getString(title) + " " + getString(body)).toLowerCase(Locale.ROOT)));
+        renderQuestions();
+    }
+
+    private void renderQuestions() {
+        for (Question question : questions) {
+            boolean expanded = question.title == expandedTitle;
+            question.content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            question.indicator.setText(expanded ? "−" : "+");
+            question.header.setContentDescription(getString(question.title));
+            ViewCompat.setStateDescription(question.header,
+                    getString(expanded ? R.string.help_rework_expanded : R.string.help_rework_collapsed));
+        }
+    }
+
+    private void filterQuestions(String query) {
+        String normalized = query.trim().toLowerCase(Locale.ROOT);
+        boolean anyVisible = false;
+        for (Question question : questions) {
+            boolean matches = normalized.isEmpty() || question.searchText.contains(normalized);
+            question.card.setVisibility(matches ? View.VISIBLE : View.GONE);
+            anyVisible |= matches;
+        }
+        binding.helpNoResults.setVisibility(anyVisible ? View.GONE : View.VISIBLE);
+    }
+
+    private void renderEditableActions() {
+        ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
+        binding.buttonFixPermissions.setVisibility(View.VISIBLE);
+        binding.buttonLanguage.setVisibility(View.VISIBLE);
+    }
+
+    private static final class Question {
+        final int title;
+        final LinearLayout card;
+        final LinearLayout header;
+        final TextView indicator;
+        final TextView content;
+        final String searchText;
+
+        Question(int title, LinearLayout card, LinearLayout header, TextView indicator,
+                TextView content, String searchText) {
+            this.title = title;
+            this.card = card;
+            this.header = header;
+            this.indicator = indicator;
+            this.content = content;
+            this.searchText = searchText;
+        }
     }
 
     private void repairNextPermission() {
+        if (new com.subhub.app.settings.FeatureModuleManager(this).hasRuntimeFeature()
+                && !new com.subhub.app.appmode.AppModeManager(this).isAccessibilityEnabled()) {
+            startActivity(new Intent(this, PermissionSetupActivity.class));
+            return;
+        }
         if (!Settings.canDrawOverlays(this)) {
             overlaySettings.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName())));
@@ -148,11 +250,15 @@ public final class HelpActivity extends AppCompatActivity {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS);
             return;
         }
-        Toast.makeText(this, R.string.permission_all_granted, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, R.string.help_rework_access_ready, Toast.LENGTH_SHORT).show();
     }
 
     private void renderPermissions() {
+        if (binding == null) return;
         List<String> missing = new ArrayList<>();
+        if (new com.subhub.app.settings.FeatureModuleManager(this).hasRuntimeFeature()
+                && !new com.subhub.app.appmode.AppModeManager(this).isAccessibilityEnabled())
+            missing.add(getString(R.string.tour_accessibility_title));
         if (!Settings.canDrawOverlays(this)) missing.add(getString(R.string.permission_overlay_name));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -160,8 +266,9 @@ public final class HelpActivity extends AppCompatActivity {
             missing.add(getString(R.string.permission_notifications_name));
         }
         binding.permissionStatus.setText(missing.isEmpty()
-                ? getString(R.string.permission_all_granted)
-                : getString(R.string.permission_missing_fmt, String.join(", ", missing)));
+                ? getString(R.string.help_rework_access_ready)
+                : getString(R.string.help_rework_access_missing, String.join(", ", missing)));
+        binding.buttonFixPermissions.setEnabled(!missing.isEmpty());
     }
 
     private void showLanguageChooser() {
@@ -192,18 +299,25 @@ public final class HelpActivity extends AppCompatActivity {
                 R.string.language_german, R.string.language_japanese,
                 R.string.language_chinese_simplified, R.string.language_chinese_traditional,
                 R.string.language_korean, R.string.language_russian};
-        binding.languageStatus.setText(labels[Math.max(0, index)]);
+        binding.languageStatus.setText(getString(R.string.help_rework_language,
+                getString(labels[Math.max(0, index)])));
     }
 
     private void renderUpdates() {
         UpdateCandidate candidate = new UpdateStateStore(this).candidate();
-        binding.updateSummary.setText(candidate == null
-                ? getString(R.string.update_help_current, BuildConfig.VERSION_NAME)
+        binding.updateSummary.setVisibility(candidate == null ? View.GONE : View.VISIBLE);
+        binding.updateSummary.setText(candidate == null ? ""
                 : getString(R.string.update_help_available, candidate.manifest.versionName));
     }
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putInt("help_expanded", expandedTitle);
+        state.putString("help_query", binding.helpSearch.getText().toString());
+        super.onSaveInstanceState(state);
     }
 
     @Override protected void onDestroy() {

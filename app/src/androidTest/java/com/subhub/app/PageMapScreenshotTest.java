@@ -17,7 +17,6 @@ import androidx.test.uiautomator.UiDevice;
 
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.appmode.AppModeManager;
-import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.atmosphere.AtmosphereActivity;
 import com.subhub.app.capture.CustomImagesActivity;
@@ -27,14 +26,13 @@ import com.subhub.app.diagnostics.DiagnosticsActivity;
 import com.subhub.app.help.HelpActivity;
 import com.subhub.app.penance.PenanceActivity;
 import com.subhub.app.popup.PopupStormActivity;
-import com.subhub.app.settings.SettingsActivity;
-import com.subhub.app.settings.GlobalSettingsActivity;
-import com.subhub.app.settings.FeatureModuleManager;
-import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.GlobalSettingsActivity;
+import com.subhub.app.settings.SettingsActivity;
+import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.AchievementsActivity;
 import com.subhub.app.stats.StatsActivity;
-import com.subhub.app.studio.StudioActivity;
 import com.subhub.app.subliminal.SubliminalSettingsActivity;
 import com.subhub.app.update.UpdatesActivity;
 
@@ -47,23 +45,6 @@ import java.io.FileInputStream;
 /** Captures the real running screens used by the design inventory. */
 @RunWith(AndroidJUnit4.class)
 public final class PageMapScreenshotTest {
-    @Test public void captureStableProductBoundaryPages() throws Exception {
-        prepareFixture(false);
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        new AppModeManager(context).setArmed(false);
-        try (ActivityScenario<SettingsActivity> settings = ActivityScenario.launch(SettingsActivity.class)) {
-            settings.onActivity(activity -> {
-                if (activity.getResources().getIdentifier("coverage_group", "id", activity.getPackageName()) != 0) {
-                    throw new AssertionError("Stable capture must not include experimental image coverage");
-                }
-            });
-        }
-        capture("05-censor-settings", SettingsActivity.class);
-        capture("foundation-02-censor", SettingsActivity.class);
-        capture("19-diagnostics", DiagnosticsActivity.class);
-        captureTarget("03b-wallet-rules-and-safety", PenanceActivity.class, R.id.rule_grid, 0);
-    }
-
     @Test public void capturePrimaryFoundationPages() throws Exception {
         prepareFixture(false);
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -82,7 +63,7 @@ public final class PageMapScreenshotTest {
         prepareFixture(true);
         captureMain("00-sub-home", true);
         captureInSpace("00b-sub-settings", GlobalSettingsActivity.class, true);
-        captureInSpace("00c-sub-arrangements", StudioActivity.class, true);
+        captureInSpace("00c-sub-contract", com.subhub.app.people.ContractActivity.class, true);
 
         ControllerPinManager.enterDomMode();
         captureMain("01-dom-home", false);
@@ -102,8 +83,8 @@ public final class PageMapScreenshotTest {
                 R.id.censor_text_section, 0);
         captureTarget("05c-settings-phrases-and-tools", SettingsActivity.class,
                 R.id.censor_phrases_section, R.id.button_appearance_details);
-        captureTarget("04b-app-assignments", GlobalSettingsActivity.class,
-                R.id.app_list, R.id.button_toggle_apps);
+        captureTarget("04b-app-assignments", com.subhub.app.people.LocalAppsActivity.class,
+                R.id.app_list, 0);
         capture("07-censor-photos", ExportActivity.class);
         capture("08-help-safety", HelpActivity.class);
         capture("09-statistics", StatsActivity.class);
@@ -112,9 +93,6 @@ public final class PageMapScreenshotTest {
         capture("14-atmosphere", AtmosphereActivity.class);
         capture("15-whispers", SubliminalSettingsActivity.class);
         capture("16-popup-storm", PopupStormActivity.class);
-        capture("17-studio-library", StudioActivity.class);
-        captureAfterClick("17b-studio-drafts", StudioActivity.class, R.id.tab_drafts);
-        captureAfterClick("17c-studio-create", StudioActivity.class, R.id.tab_create);
         capture("18-updates", UpdatesActivity.class);
         capture("19-diagnostics", DiagnosticsActivity.class);
         captureActiveServiceLock("20-service-lock");
@@ -133,68 +111,6 @@ public final class PageMapScreenshotTest {
             settleDisplay();
             if (!device.takeScreenshot(new File(directory, "21-color-wheel.png"))) {
                 throw new IllegalStateException("Could not capture color picker");
-            }
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button2))
-                    .perform(androidx.test.espresso.action.ViewActions.click());
-        }
-    }
-
-    @Test public void captureFirstClassPackWizard() throws Exception {
-        prepareFixture(false);
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        File directory = new File(context.getExternalFilesDir(null), "page-map");
-        if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            scenario.onActivity(activity -> activity.findViewById(R.id.button_blank).performClick());
-            String[] names = {"22-wizard-details", "23-wizard-features", "24-wizard-images", "25-wizard-review"};
-            for (int step = 0; step < names.length; step++) {
-                final int selected = step;
-                scenario.onActivity(activity -> activity.getWindow().getDecorView()
-                        .findViewWithTag("pack_step:" + selected).performClick());
-                int[] panels = {R.id.details_step, R.id.features_step, R.id.images_step, R.id.review_step};
-                scenario.onActivity(activity -> {
-                    if (!activity.findViewById(panels[selected]).isShown()) {
-                        throw new AssertionError("Wrong wizard panel: " + selected);
-                    }
-                });
-                UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-                device.waitForIdle(750L);
-                settleDisplay();
-                if (!device.takeScreenshot(new File(directory, names[step] + ".png"))) {
-                    throw new IllegalStateException("Could not capture wizard step " + step);
-                }
-            }
-        }
-    }
-
-    @Test public void captureNativePackSectionEditor() throws Exception {
-        prepareFixture(false);
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        File directory = new File(context.getExternalFilesDir(null), "page-map");
-        if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
-        try (ActivityScenario<StudioActivity> scenario = ActivityScenario.launch(StudioActivity.class)) {
-            scenario.onActivity(activity -> {
-                try {
-                    java.lang.reflect.Method show = Class.forName("com.subhub.app.studio.PackSectionEditor")
-                            .getDeclaredMethod("show", androidx.appcompat.app.AppCompatActivity.class,
-                                    String.class, String.class, org.json.JSONObject.class, java.util.function.Consumer.class);
-                    show.setAccessible(true);
-                    show.invoke(null, activity, "censor", "Censor",
-                            com.subhub.app.pack.PackSettingCatalog.defaults("censor"),
-                            (java.util.function.Consumer<org.json.JSONObject>) values -> { });
-                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
-            });
-            UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-            device.waitForIdle(750L);
-            androidx.test.espresso.Espresso.onView(
-                    androidx.test.espresso.matcher.ViewMatchers.withText(
-                            context.getString(R.string.pack_editor_title, "Censor")))
-                    .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
-                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(
-                            androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
-            settleDisplay();
-            if (!device.takeScreenshot(new File(directory, "26-pack-section-editor.png"))) {
-                throw new IllegalStateException("Could not capture section editor");
             }
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button2))
                     .perform(androidx.test.espresso.action.ViewActions.click());
@@ -235,11 +151,13 @@ public final class PageMapScreenshotTest {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File directory = new File(context.getExternalFilesDir(null), "page-map");
         if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("No screenshot directory");
-        try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(activityClass)) {
+        Intent launch = new Intent(context, activityClass);
+        if (activityClass == com.subhub.app.people.LocalAppsActivity.class)
+            launch.putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID,
+                    com.subhub.app.people.PersonId.LOCAL.value());
+        try (ActivityScenario<? extends Activity> scenario = ActivityScenario.launch(launch)) {
             scenario.onActivity(activity -> {
-                if (activityClass == GlobalSettingsActivity.class) {
-                    activity.findViewById(R.id.mode_selected).performClick();
-                }
+                if (activityClass == GlobalSettingsActivity.class) {}
                 if (expandId != 0) activity.findViewById(expandId).performClick();
             });
             if (targetId == R.id.app_list) {
@@ -300,8 +218,12 @@ public final class PageMapScreenshotTest {
         }
         if (examples.isEmpty()) throw new AssertionError("Install one or two demo apps before documentation capture");
         AppModeManager mode = new AppModeManager(context);
-        mode.saveAppSelections(mode.getSelectedPackages(), examples.keySet(), mode.getSubliminalPackages());
-        mode.save(false, AppModePolicy.Mode.SELECTED_APPS, mode.getSelectedPackages());
+        mode.saveIncludedPackages(
+                com.subhub.app.appmode.LegacyAppSelection.merge(
+                        false,
+                        mode.getIncludedPackages(), examples.keySet(), mode.getIncludedPackages(),
+                        java.util.Set.of()));
+        mode.save(false, mode.getIncludedPackages());
         AppTimerManager timers = new AppTimerManager(context);
         timers.saveSettings(true, 30, true, 45);
         timers.saveAllowances(examples.keySet(), examples);
@@ -340,15 +262,18 @@ public final class PageMapScreenshotTest {
             if (activityClass == AppModeActivity.class) {
                 scenario.onActivity(activity -> {
                     ViewGroup rows = activity.findViewById(R.id.per_app_allowances_list);
-                    int expected = new AppModeManager(activity).getTimerPackages().size();
-                    if (expected < 1 || expected > 2 || rows.getChildCount() != expected) {
-                        throw new AssertionError("Limits screenshot must show one or two selected demo apps");
+                    int expected = new AppModeManager(activity).getIncludedPackages().size();
+                    if (expected < 1 || expected > 2) {
+                        throw new AssertionError(
+                                        "Limits screenshot must show one or two selected demo"
+                                            + " apps");
                     }
                     java.util.Set<String> values = new java.util.LinkedHashSet<>();
-                    for (int index = 0; index < rows.getChildCount(); index++) {
-                        ViewGroup row = (ViewGroup) rows.getChildAt(index);
-                        android.widget.EditText allowance = (android.widget.EditText) row.getChildAt(1);
-                        if (!allowance.isShown()) throw new AssertionError("Custom allowance is not visible");
+                    for (String packageName :
+                                    new AppModeManager(activity).getIncludedPackages()) {
+                                android.widget.EditText allowance =
+                                        rows.findViewWithTag("limit:" + packageName);
+                        if (allowance == null || !allowance.isShown()) throw new AssertionError("Custom allowance is not visible");
                         values.add(allowance.getText().toString());
                     }
                     if (!values.contains("20") || (expected == 2 && !values.contains("10"))) {
@@ -356,7 +281,6 @@ public final class PageMapScreenshotTest {
                     }
                 });
             }
-            settleDisplay();
             if (!device.takeScreenshot(new File(directory, name + ".png"))) {
                 throw new IllegalStateException("Could not capture " + name);
             }

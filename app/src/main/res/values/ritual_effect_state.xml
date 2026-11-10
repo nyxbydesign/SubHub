@@ -1,0 +1,4 @@
+<resources>
+    <string name="ritual_effect_enabled">Enabled</string>
+    <string name="ritual_effect_disabled">Disabled</string>
+</resources>

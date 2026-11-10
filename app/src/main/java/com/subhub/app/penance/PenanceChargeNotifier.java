@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.widget.Toast;
 
 import com.subhub.app.R;
+import java.util.function.BooleanSupplier;
 
 /** Shows a compact confirmation only after a real ledger entry has been created. */
 public final class PenanceChargeNotifier {
@@ -15,6 +16,12 @@ public final class PenanceChargeNotifier {
 
     public static void show(Context context, PenanceManager manager,
             PenanceInfraction infraction, int amountCents, long nowMillis) {
+        show(context, manager, infraction, amountCents, nowMillis, () -> true);
+    }
+
+    /** Recheck source eligibility on actual UI delivery, not only while preparing the message. */
+    public static void show(Context context, PenanceManager manager,
+            PenanceInfraction infraction, int amountCents, long nowMillis, BooleanSupplier stillEligible) {
         if (context == null || manager == null || infraction == null || amountCents <= 0) return;
         PenanceSnapshot snapshot = manager.snapshot(nowMillis);
         int unsettledCents = snapshot.getDueCents()
@@ -25,6 +32,7 @@ public final class PenanceChargeNotifier {
                 manager.money(unsettledCents));
         Context app = context.getApplicationContext();
         new Handler(Looper.getMainLooper()).post(() -> {
+            if (!stillEligible.getAsBoolean()) return;
             if (activeToast != null) activeToast.cancel();
             activeToast = Toast.makeText(app, message, Toast.LENGTH_LONG);
             activeToast.show();
@@ -32,6 +40,8 @@ public final class PenanceChargeNotifier {
     }
 
     private static String label(Context context, PenanceInfraction infraction) {
+        if (infraction == PenanceInfraction.EXTRA_TIME_REQUEST) return context.getString(R.string.extra_time_tribute_rule_enabled);
+        if (infraction == PenanceInfraction.TASK_FAILURE) return context.getString(R.string.tasks_tribute_rule);
         if (infraction == PenanceInfraction.CENSORED_DWELL) {
             return context.getString(R.string.penance_history_dwell);
         }

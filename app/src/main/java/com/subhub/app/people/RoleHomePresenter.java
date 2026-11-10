@@ -1,0 +1,683 @@
+package com.subhub.app.people;
+
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.ViewCompat;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
+import com.subhub.app.R;
+import com.subhub.app.help.HelpActivity;
+import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
+import com.subhub.app.security.KeyholderProvider;
+import com.subhub.app.stats.StatsActivity;
+import com.subhub.app.stats.StatsSnapshot;
+import com.subhub.app.util.AsyncUiScope;
+import java.util.ArrayList;
+import java.util.List;
+
+/** Person-focused overviews share the existing service controls and identity-bound routes. */
+public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecycleObserver, View.OnAttachStateChangeListener {
+    private final AppCompatActivity activity;
+    private final AsyncUiScope data;
+    private final LinearLayout domBody, subBody, relationship;
+    private final View service, oldDashboard;
+    private final HomeSelection selection;
+    private final FavoriteSubStore favorites;
+    private final OverviewSession session;
+    private LinearLayout domPeople;
+    private com.subhub.app.stats.AchievementPreviewView domAchievements;
+    private LinearLayout domFavorite, domSummary, domRecent, subUsage;
+    private TextView subTasksDetail;
+    private com.subhub.app.stats.AchievementPreviewView subAchievements;
+    private List<Object> renderedFavorite, renderedSummary, renderedRecent, renderedUsage, renderedRelationship;
+    private long lastRefresh;
+    private boolean displayedDom, sessionPage;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private DeviceRolePreferences.Mode iconRole;
+    private boolean iconUnlocked;
+    private KeyholderProvider iconAuthority;
+    private com.subhub.app.relationships.RelationshipUi.Provider iconProvider;
+    private PersonSnapshot iconPerson;
+    private TaskSummary taskSummary;
+    private PersonSnapshot subPerson;
+    private AssignedDom subDom;
+    private boolean subFormal, subRelationshipUnavailable;
+    private com.subhub.app.relationships.RelationshipPresentation.Access homeAccess;
+
+    public static final class HomeSelection extends ViewModel {
+        boolean allUsage;
+        public HomeSelection() {}
+    }
+
+    public RoleHomePresenter(AppCompatActivity activity, AsyncUiScope data) {
+        this.activity = activity;
+        this.data = data;
+        selection = new ViewModelProvider(activity).get(HomeSelection.class);
+        favorites = new FavoriteSubStore(activity);
+        domBody = activity.findViewById(R.id.home_dom_overview);
+        subBody = activity.findViewById(R.id.home_sub_summary);
+        service = activity.findViewById(R.id.home_service_widget);
+        oldDashboard = activity.findViewById(R.id.sub_dashboard);
+        relationship = PersonUi.column(activity);
+        relationship.setId(R.id.home_assigned_dom);
+        relationship.setVisibility(View.GONE);
+        LinearLayout content = (LinearLayout) service.getParent();
+        LinearLayout.LayoutParams relationshipParams = new LinearLayout.LayoutParams(-1, -2);
+        relationshipParams.topMargin = activity.getResources().getDimensionPixelSize(R.dimen.primary_header_content_gap);
+        content.addView(relationship, content.indexOfChild(service), relationshipParams);
+        View status = activity.findViewById(R.id.protection_status_row);
+        ((android.view.ViewGroup) status.getParent()).removeView(status);
+        ((LinearLayout) service).addView(status, 0, new LinearLayout.LayoutParams(-1, -2));
+        status.setVisibility(View.VISIBLE);
+        reparent(activity.findViewById(R.id.sub_wallet_pay));
+        reparent(activity.findViewById(R.id.sub_wallet_pause));
+        session = new OverviewSession(activity);
+        domBody.addOnAttachStateChangeListener(this); subBody.addOnAttachStateChangeListener(this);
+        activity.getLifecycle().addObserver(this);
+    }
+
+    private void observeAppIcons() {
+        if (sessionPage || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()) { stopAppIcons(); return; }
+        DeviceRolePreferences.Mode role = DeviceRolePreferences.get(activity);
+        boolean unlocked = ControllerPinManager.isDomWorkspaceUnlocked();
+        KeyholderProvider authority = People.keyholder();
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        PersonSnapshot person = subPerson;
+        if (appIconObserver != null && iconRole == role && iconUnlocked == unlocked && iconAuthority == authority
+                && iconProvider == provider && iconPerson == person) return;
+        stopAppIcons(); iconRole = role; iconUnlocked = unlocked; iconAuthority = authority; iconProvider = provider; iconPerson = person;
+        long request = ++appIconEpoch;
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (request != appIconEpoch || sessionPage || activity.isFinishing() || activity.isDestroyed()
+                    || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()
+                    || role != DeviceRolePreferences.get(activity) || unlocked != ControllerPinManager.isDomWorkspaceUnlocked()
+                    || authority != People.keyholder() || provider != com.subhub.app.relationships.RelationshipUi.provider()
+                    || person != subPerson) return;
+            refresh(true);
+        });
+    }
+    private void stopAppIcons() {
+        ++appIconEpoch; AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
+    }
+    @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeAppIcons(); }
+    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopAppIcons(); data.cancel("role-home"); }
+    @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
+        stopAppIcons(); domBody.removeOnAttachStateChangeListener(this); subBody.removeOnAttachStateChangeListener(this);
+        activity.getLifecycle().removeObserver(this);
+    }
+    @Override public void onViewAttachedToWindow(View view) { observeAppIcons(); }
+    @Override public void onViewDetachedFromWindow(View view) { stopAppIcons(); }
+
+    private void reparent(View child) {
+        ((android.view.ViewGroup) child.getParent()).removeView(child);
+        ((LinearLayout) service).addView(child, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    public void setSessionPage(boolean value) { sessionPage = value; }
+
+    public boolean overviewSession() { return !sessionPage && !domWorkspace(); }
+
+    public void renderOverviewSession(boolean active, boolean paused) { session.state(active, paused); }
+
+    public void refresh(boolean force) {
+        observeAppIcons();
+        boolean dom = domWorkspace();
+        session.bind(overviewSession());
+        domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
+        subBody.setVisibility(!dom && !sessionPage ? View.VISIBLE : View.GONE);
+        service.setVisibility(!dom || sessionPage ? View.VISIBLE : View.GONE);
+        if (dom || sessionPage) relationship.setVisibility(View.GONE);
+        oldDashboard.setVisibility(View.GONE);
+        if (dom && !ControllerPinManager.isDomWorkspaceUnlocked()) {
+            data.cancel("role-home");
+            domPeople = null;
+            domAchievements = null;
+            resetDomSignatures();
+            if (domBody.findViewWithTag("home_dom_unlock") == null) {
+                domBody.removeAllViews();
+                PersonUi.action(domBody, R.string.home_dom_locked, () ->
+                        com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(activity, () -> refresh(true), false), true)
+                        .setTag("home_dom_unlock");
+            }
+            return;
+        }
+        if (sessionPage) return;
+        if (dom) ensureDomSections();
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!force && dom == displayedDom && now - lastRefresh < 5_000L) return;
+        displayedDom = dom;
+        lastRefresh = now;
+        android.content.Context application = activity.getApplicationContext();
+        PersonRepository repository = People.repository(application);
+        com.subhub.app.relationships.RelationshipUi.Provider iconSource = com.subhub.app.relationships.RelationshipUi.provider();
+        KeyholderProvider authoritySource = People.keyholder();
+        java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
+        data.load("role-home", () -> {
+            List<PersonSnapshot> values = new ArrayList<>();
+            com.subhub.app.relationships.RelationshipPresentation.Access access = null;
+            boolean relationshipUnavailable = false;
+            if (dom) {
+                if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(application))
+                    throw new IllegalStateException("Home context changed");
+                try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
+                catch (Exception unavailable) { throw new RelationshipUnavailable(unavailable); }
+                values.addAll(com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale));
+            } else {
+                values.add(repository.load(PersonId.LOCAL));
+                try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
+                catch (Exception unavailable) { relationshipUnavailable = true; }
+            }
+            AssignedDom assigned = dom || access == null ? null : access.legacy
+                    ? assignedDom(application) : formalAssignedDom(application, access.snapshot, values.get(0));
+            return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
+                    access, relationshipUnavailable);
+        }, loaded -> {
+            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                    || dom != domWorkspace() || sessionPage
+                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
+            boolean current = loaded.access != null
+                    && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
+            homeAccess = current ? loaded.access : null;
+            if (dom) {
+                if (!current) {
+                    renderDomUnavailable(R.string.relationships_unavailable);
+                    return;
+                }
+                renderDom(loaded.people);
+            }
+            else if (!loaded.people.isEmpty()) {
+                taskSummary = loaded.tasks;
+                subFormal = !current || !loaded.access.legacy;
+                subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
+                renderSub(loaded.people.get(0), current ? loaded.dom : null);
+            }
+        }, failure -> {
+            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                    || dom != domWorkspace()
+                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
+            relationship.setVisibility(View.GONE);
+            if (dom) {
+                renderDomUnavailable(failure instanceof RelationshipUnavailable
+                        ? R.string.relationships_unavailable : R.string.role_person_unavailable);
+                return;
+            }
+            renderedRelationship = null;
+            LinearLayout target = subBody;
+            target.removeAllViews();
+            PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
+                    ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
+            PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
+        });
+    }
+
+    private void renderDomUnavailable(int message) {
+        homeAccess = null;
+        resetDomSignatures();
+        // Relationship observations own these slots, not the independent journal and local previews.
+        domFavorite.removeAllViews();
+        domSummary.removeAllViews();
+        domRecent.removeAllViews();
+        PersonUi.text(domFavorite, activity.getString(message), false);
+        PersonUi.action(domFavorite, R.string.role_retry, () -> refresh(true), false);
+    }
+
+    private boolean domWorkspace() {
+        return DeviceRolePreferences.supportsDom(activity) && DeviceRolePreferences.isDomWorkspace(activity);
+    }
+
+    private void renderDom(List<PersonSnapshot> people) {
+        ensureDomSections();
+        domAchievements.load(data, "home-achievement-preview");
+        PersonSnapshot favorite = favorites.resolve(people);
+        List<Object> signature = favorite == null ? java.util.Collections.singletonList(favorites.identity())
+                : personSignature(favorite, true);
+        if (!signature.equals(renderedFavorite)) {
+            renderedFavorite = signature;
+            domFavorite.removeAllViews();
+            if (favorite == null) {
+                LinearLayout empty = OverviewUi.card(domFavorite);
+                OverviewUi.heading(empty, R.string.home_favorite_title, 0, null);
+                PersonUi.action(empty, R.string.home_favorite_choose, () -> {
+                if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
+                    activity.startActivity(new Intent(activity, PeopleActivity.class));
+                }, true).setTag("home_choose_favorite");
+            } else favoriteOverview(favorite);
+        }
+        if (favorite != null) com.subhub.app.appmode.ExtraTimeEntry.refresh(domFavorite, favorite.id);
+        signature = new ArrayList<>();
+        for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
+                person.id, person.connection, person.serviceActive, person.sync.runtime);
+        if (!signature.equals(renderedSummary)) {
+            renderedSummary = signature;
+            domSummary.removeAllViews();
+            homeSummary(people);
+        }
+        List<PersonSnapshot> recent = recentAdditions(people, favorite);
+        signature = new ArrayList<>();
+        for (PersonSnapshot person : recent) signature.addAll(personSignature(person, false));
+        if (!signature.equals(renderedRecent)) {
+            renderedRecent = signature;
+            domRecent.removeAllViews();
+            if (!recent.isEmpty()) {
+                LinearLayout recentCard = OverviewUi.card(domRecent);
+                OverviewUi.heading(recentCard, R.string.home_recent_additions, R.string.overview_view_subs, () -> {
+                    if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
+                        activity.startActivity(new Intent(activity, PeopleActivity.class));
+                });
+                for (PersonSnapshot person : recent)
+                    identityHeader(recentCard, person, false).setTag("home_recent_person:" + person.id.value());
+            }
+        }
+    }
+
+    private void resetDomSignatures() {
+        renderedFavorite = null; renderedSummary = null; renderedRecent = null;
+    }
+
+    private List<Object> personSignature(PersonSnapshot person, boolean favorite) {
+        List<Object> signature = new ArrayList<>(java.util.Arrays.asList(person.id, person.name, person.profile,
+                ProfileViews.targetDiscriminator(activity, person), person.connection, person.lastOnlineAt,
+                PersonUi.connection(activity, person)));
+        if (favorite) java.util.Collections.addAll(signature, person.serviceLabel,
+                person.sync.runtime, person.sync.stats, person.serviceActive, person.protectedSeconds, person.activityEvents);
+        return signature;
+    }
+
+    private void homeSummary(List<PersonSnapshot> people) {
+        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        java.util.Set<String> counted = new java.util.HashSet<>();
+        for (PersonSnapshot person : people) {
+            if (person.connection == PersonSnapshot.Connection.REVOKED
+                    || person.connection == PersonSnapshot.Connection.PENDING
+                    || person.connection == PersonSnapshot.Connection.UNPAIRED) continue;
+            if (!counted.add(FavoriteSubStore.identity(person.id))) continue;
+            if (person.sync.runtime == PersonSnapshot.Freshness.CURRENT) {
+                if (person.serviceActive) sessions++;
+            } else unknownSessions++;
+            subs++;
+            if (person.id.isLocal()) { local++; continue; }
+            paired++;
+            if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            else if (person.connection == PersonSnapshot.Connection.OFFLINE) offline++;
+            else unknownDevices++;
+        }
+        LinearLayout summaries = new LinearLayout(activity);
+        boolean stacked = activity.getResources().getConfiguration().screenWidthDp < 360
+                || activity.getResources().getConfiguration().fontScale >= 1.3f;
+        summaries.setOrientation(stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        summaries.setBaselineAligned(false);
+        domSummary.addView(summaries, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout inSession = summary(summaries, stacked, R.drawable.ic_overview_clock,
+                R.string.home_in_session, unknownSessions == 0 ? Integer.toString(sessions)
+                        : activity.getString(R.string.overview_unknown));
+        inSession.setTag("home_in_session");
+        if (unknownSessions > 0) PersonUi.text(inSession,
+                activity.getString(R.string.home_status_unknown, unknownSessions), false);
+        if (unknownSessions > 0 && sessions > 0) PersonUi.text(inSession,
+                activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
+        List<String> status = new ArrayList<>();
+        if (local > 0) status.add(activity.getString(R.string.home_local_sub_count, local));
+        if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
+        if (unknownDevices > 0) status.add(activity.getString(R.string.home_status_unknown, unknownDevices));
+        LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
+                R.string.home_subs_total, Integer.toString(subs), String.join(" · ", status));
+        pairedSubs.setTag("home_devices");
+    }
+
+    private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value) {
+        return summary(parent, stacked, icon, label, value, "");
+    }
+
+    private LinearLayout summary(LinearLayout parent, boolean stacked, int icon, int label, String value, String status) {
+        LinearLayout tile = PersonUi.column(activity);
+        tile.setBackgroundResource(R.drawable.bg_overview_card); tile.setPadding(dp(14), dp(10), dp(14), dp(10));
+        LinearLayout.LayoutParams size = stacked ? new LinearLayout.LayoutParams(-1, -2)
+                : new LinearLayout.LayoutParams(0, -1, 1);
+        size.bottomMargin = dp(10);
+        if (!stacked && parent.getChildCount() > 0) size.setMarginStart(dp(10));
+        parent.addView(tile, size);
+        LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL);
+        android.widget.ImageView image = new android.widget.ImageView(activity); image.setImageResource(icon);
+        image.setImageTintList(ColorStateList.valueOf(activity.getColor(R.color.text_primary)));
+        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(image, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        LinearLayout copy = PersonUi.column(activity);
+        LinearLayout.LayoutParams copySize = new LinearLayout.LayoutParams(0, -2, 1); copySize.setMarginStart(dp(12));
+        row.addView(copy, copySize);
+        copy.addView(OverviewUi.text(activity, value, 22, true), new LinearLayout.LayoutParams(-1, -2));
+        String subtitle = activity.getString(label) + (status.isEmpty() ? "" : " · " + status);
+        TextView caption = OverviewUi.text(activity, subtitle, 12, false);
+        if (label == R.string.home_subs_total) caption.setTag("home_subs_label");
+        copy.addView(caption, new LinearLayout.LayoutParams(-1, -2));
+        tile.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        OverviewUi.click(tile, () -> {
+            if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked())
+                activity.startActivity(new Intent(activity, PeopleActivity.class));
+        });
+        return tile;
+    }
+
+    private void ensureDomSections() {
+        if (domPeople != null && domPeople.getParent() == domBody
+                && domFavorite != null && domFavorite.getParent() == domPeople) return;
+        domBody.removeAllViews();
+        domPeople = PersonUi.column(activity);
+        domPeople.setTag("home_people_composition");
+        domBody.addView(domPeople, new LinearLayout.LayoutParams(-1, -2));
+        resetDomSignatures();
+        domFavorite = PersonUi.column(activity); domSummary = PersonUi.column(activity); domRecent = PersonUi.column(activity);
+        for (LinearLayout slot : new LinearLayout[]{domFavorite, domSummary})
+            domPeople.addView(slot, new LinearLayout.LayoutParams(-1, -2));
+        com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(domPeople), true,
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, true));
+        domPeople.addView(domRecent, new LinearLayout.LayoutParams(-1, -2));
+        PersonUi.text(domFavorite, activity.getString(R.string.role_loading), false);
+        com.subhub.app.activity.ActivityPreview.addOverview(domBody, data, "home-activity-preview");
+        domAchievements = achievementPreview(domBody);
+        helpSafety(domBody, "home_help:dom");
+    }
+
+    static List<PersonSnapshot> recentAdditions(List<PersonSnapshot> people, PersonSnapshot favorite) {
+        List<PersonSnapshot> ordered = new ArrayList<>();
+        for (PersonSnapshot person : people) {
+            if (person.id.isLocal() || !FavoriteSubStore.eligible(person) || person.additionOrder <= 0) continue;
+            if (favorite != null && FavoriteSubStore.identity(favorite.id).equals(FavoriteSubStore.identity(person.id))) continue;
+            ordered.add(person);
+        }
+        ordered.sort(java.util.Comparator.comparingLong((PersonSnapshot person) -> person.additionOrder).reversed()
+                .thenComparing(person -> FavoriteSubStore.identity(person.id)).thenComparing(person -> person.id.value()));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<PersonSnapshot> result = new ArrayList<>();
+        for (PersonSnapshot person : ordered) {
+            if (seen.add(FavoriteSubStore.identity(person.id))) result.add(person);
+            if (result.size() == 3) break;
+        }
+        return result;
+    }
+
+    private void favoriteOverview(PersonSnapshot person) {
+        LinearLayout card = OverviewUi.card(domFavorite);
+        card.setTag("home_favorite:" + person.id.value());
+        card.setBackgroundResource(R.drawable.bg_home_favorite);
+        OverviewUi.heading(card, R.string.home_favorite_title, R.string.overview_view_profile, () -> openPerson(person));
+        LinearLayout identity = identityHeader(card, person, true);
+        identity.setTag("home_favorite_identity:" + person.id.value());
+        LinearLayout copy = identity.findViewWithTag("home_identity_copy");
+        com.subhub.app.appmode.ExtraTimeEntry.review(card, person.id);
+        if (person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN && person.sync.stats == PersonSnapshot.Freshness.UNKNOWN) {
+            TextView unknown = OverviewUi.text(activity, activity.getString(R.string.overview_session_stats_unknown), 13, false);
+            unknown.setTag("home_favorite_unknown:" + person.id.value()); copy.addView(unknown); return;
+        }
+        String session = person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
+                ? activity.getString(R.string.overview_session_unknown)
+                : activity.getString(person.serviceActive ? R.string.home_favorite_session_active
+                        : R.string.home_favorite_session_inactive);
+        if (person.sync.runtime == PersonSnapshot.Freshness.STALE)
+            session += " · " + activity.getString(R.string.role_stale_data);
+        String stats = person.sync.stats == PersonSnapshot.Freshness.UNKNOWN
+                ? activity.getString(R.string.overview_stats_unknown)
+                : activity.getString(R.string.home_favorite_event_count, person.activityEvents);
+        if (person.sync.stats == PersonSnapshot.Freshness.STALE)
+            stats += " · " + activity.getString(R.string.role_stale_data);
+        TextView sessionText = OverviewUi.text(activity,
+                activity.getString(R.string.home_favorite_session_events, session, stats), 13, false);
+        sessionText.setTag("home_favorite_session:" + person.id.value()); copy.addView(sessionText);
+    }
+
+    private LinearLayout identityHeader(LinearLayout parent, PersonSnapshot person, boolean favorite) {
+        OverviewUi.Identity identity = OverviewUi.identity(parent, person.profile, false,
+                (favorite ? "home_favorite:" : "home_recent:") + person.id.value());
+        ProfileViews.presence(identity.view, (favorite ? "home_favorite:" : "home_recent:")
+                + person.id.value(), person.id, person.connection);
+        identity.copy.setTag("home_identity_copy");
+        identity.name.setTag((favorite ? "home_favorite_name:" : "home_recent_name:") + person.id.value());
+        if (person.connection != PersonSnapshot.Connection.LOCAL) {
+            TextView connection = OverviewUi.text(activity, PersonUi.connection(activity, person), 12, false);
+            connection.setTag("home_recent_connection:" + person.id.value());
+            if (person.connection == PersonSnapshot.Connection.CONNECTED)
+                connection.setTextColor(activity.getColor(R.color.home_composition_current));
+            if (person.connection == PersonSnapshot.Connection.CONNECTED
+                    && activity.getResources().getConfiguration().fontScale < 1.3f) {
+                identity.copy.removeView(identity.name);
+                LinearLayout line = new LinearLayout(activity); line.setGravity(Gravity.CENTER_VERTICAL);
+                line.addView(identity.name, new LinearLayout.LayoutParams(0, -2, 1));
+                LinearLayout.LayoutParams statusSize = new LinearLayout.LayoutParams(-2, -2); statusSize.setMarginStart(dp(8));
+                line.addView(connection, statusSize); identity.copy.addView(line, 0);
+            } else identity.copy.addView(connection);
+        }
+        OverviewUi.click(identity.view, () -> openPerson(person));
+        return identity.view;
+    }
+
+    private void openPerson(PersonSnapshot person) {
+        if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked() && homeAccess != null
+                && homeAccess.current(com.subhub.app.relationships.RelationshipUi::provider))
+            PersonRoutes.open(activity, person.id);
+    }
+
+    private String taskSubtitle() {
+        try {
+            com.subhub.app.tasks.TaskRepository repo = new com.subhub.app.tasks.TaskRepository(activity, PersonId.LOCAL);
+            if (!repo.allowed()) return activity.getString(R.string.tasks_disabled);
+            if (!repo.supported()) return activity.getString(R.string.tasks_update_devices);
+            if (taskSummary == null || !taskSummary.scope.equals(repo.target().scope) || taskSummary.active < 0)
+                return activity.getString(R.string.tasks_profile_unavailable);
+            return activity.getResources().getQuantityString(R.plurals.tasks_active_count,
+                    taskSummary.active, taskSummary.active);
+        } catch (RuntimeException unavailable) { return activity.getString(R.string.tasks_profile_unavailable); }
+    }
+
+    private void renderSub(PersonSnapshot person, AssignedDom dom) {
+        subPerson = person; subDom = dom;
+        if (subAchievements == null || subAchievements.getParent() != subBody) ensureSubSections();
+        List<Object> relationSignature = java.util.Arrays.asList(person.contractDom, person.contractDomId, person.contractDomContact,
+                person.sync.contract, person.sync.desiredRevision, person.sync.appliedRevision,
+                dom == null ? null : dom.name, dom == null ? null : dom.profile,
+                dom == null ? null : dom.status, subFormal, subRelationshipUnavailable);
+        boolean assigned = subFormal ? dom != null : person.contractDomId != null || dom != null;
+        if (!relationSignature.equals(renderedRelationship)) {
+            renderedRelationship = relationSignature;
+            relationship.removeAllViews();
+            if (subRelationshipUnavailable) {
+                LinearLayout unavailable = OverviewUi.card(relationship);
+                PersonUi.text(unavailable, activity.getString(R.string.relationships_unavailable), false);
+                PersonUi.action(unavailable, R.string.role_retry, () -> refresh(true), false);
+            } else if (assigned) {
+                LinearLayout linked = OverviewUi.card(relationship);
+                Runnable open = () -> { if (!domWorkspace()) activity.startActivity(new Intent(activity, ContractActivity.class)); };
+                OverviewUi.heading(linked, R.string.overview_your_dom, R.string.overview_open_contract, open, true);
+                // Formal delivery has already selected an identity-bound source; never cross-feed a legacy profile.
+                ProfileData profile = subFormal ? dom.profile
+                        : dom != null && dom.profile != null ? dom.profile : person.contractDom;
+                if (profile == null) profile = ProfileData.empty(dom == null
+                        ? activity.getString(R.string.role_unknown_data) : dom.name);
+                OverviewUi.Identity identity = OverviewUi.identity(linked, profile, true, "home_contract_dom");
+                PersonSnapshot.PeerContact contact = person.contractDomContact;
+                if (profile == person.contractDom && contact != null && contact.id.equals(person.contractDomId))
+                    ProfileViews.inlineLastOnline(identity.view, "home_contract_dom", person.contractDomId,
+                            contact.state, contact.lastOnlineAt);
+                if (!profile.about.isEmpty()) {
+                    TextView about = OverviewUi.text(activity, profile.about, 13, false);
+                    about.setMaxLines(2); about.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    about.setTag("home_dom_about"); identity.copy.addView(about);
+                }
+                OverviewUi.click(identity.view, open);
+                identity.view.setTag("home_assigned_dom_connection");
+                if (person.sync.hasPendingConfiguration()) PersonUi.text(linked, activity.getString(R.string.role_changes_pending), false);
+                if (person.sync.contract != PersonSnapshot.Freshness.CURRENT) PersonUi.text(linked,
+                        activity.getString(person.sync.contract == PersonSnapshot.Freshness.STALE
+                                ? R.string.role_stale_data : R.string.role_unknown_data), false);
+            }
+        }
+        relationship.setVisibility(assigned || subRelationshipUnavailable ? View.VISIBLE : View.GONE);
+        String subtitle = taskSubtitle();
+        if (!android.text.TextUtils.equals(subTasksDetail.getText(), subtitle)) subTasksDetail.setText(subtitle);
+        List<Object> usageSignature = new ArrayList<>();
+        usageSignature.add(selection.allUsage);
+        usageSignature.add(person.id);
+        for (PersonSnapshot.Allowance value : person.allowances) java.util.Collections.addAll(usageSignature,
+                value.packageName, value.label, value.dailyMinutes, value.usedMillis, value.budgetMillis, value.appIcon);
+        if (!usageSignature.equals(renderedUsage)) {
+            renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person, dom);
+        }
+        subAchievements.load(data, "home-achievement-preview");
+        observeAppIcons();
+    }
+
+    private void ensureSubSections() {
+        subBody.removeAllViews();
+        renderedUsage = null; renderedRelationship = null;
+        com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(subBody), false,
+                () -> com.subhub.app.journal.JournalRoutes.own(activity, false));
+        LinearLayout tasks = OverviewUi.row(OverviewUi.compactCard(subBody), R.drawable.ic_nav_tasks,
+                activity.getString(R.string.tasks_title), taskSubtitle(), () -> {
+                    if (!domWorkspace()) activity.startActivity(new Intent(activity, com.subhub.app.tasks.TasksActivity.class)
+                            .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
+                });
+        tasks.setTag("home_tasks"); subTasksDetail = tasks.findViewWithTag("overview_row_value");
+        subUsage = PersonUi.column(activity); subBody.addView(subUsage, new LinearLayout.LayoutParams(-1, -2));
+        subAchievements = achievementPreview(subBody);
+        helpSafety(subBody, "home_help");
+    }
+
+    private void helpSafety(LinearLayout parent, String tag) {
+        OverviewUi.row(OverviewUi.compactCard(parent), R.drawable.ic_tab_help, activity.getString(R.string.role_help_safety), "",
+                () -> activity.startActivity(new Intent(activity, HelpActivity.class))).setTag(tag);
+    }
+
+    private com.subhub.app.stats.AchievementPreviewView achievementPreview(LinearLayout parent) {
+        com.subhub.app.stats.AchievementPreviewView preview = new com.subhub.app.stats.AchievementPreviewView(activity, true);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, -2);
+        size.bottomMargin = activity.getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        parent.addView(preview, size);
+        preview.load(data, "home-achievement-preview");
+        return preview;
+    }
+
+    private void usage(PersonSnapshot person, AssignedDom dom) {
+        if (person.allowances.isEmpty()) return;
+        LinearLayout card = OverviewUi.card(subUsage); card.setTag("home_app_time");
+        List<PersonSnapshot.Allowance> values = PersonSnapshot.Allowance.ordered(person.allowances);
+        OverviewUi.heading(card, R.string.role_app_time, selection.allUsage
+                ? R.string.profile_show_less : R.string.overview_show_all, values.size() <= 3 ? null : () -> {
+                    selection.allUsage = !selection.allUsage; renderSub(subPerson, subDom);
+                });
+        if (values.size() > 3) {
+            android.view.ViewGroup header = (android.view.ViewGroup) card.getChildAt(0);
+            header.getChildAt(header.getChildCount() - 1).setTag("home_usage_all");
+        }
+        int shown = selection.allUsage ? values.size() : Math.min(3, values.size());
+        for (int index = 0; index < shown; index++) {
+            PersonSnapshot.Allowance value = values.get(index);
+            if (index > 0) OverviewUi.divider(card);
+            String copy = value.usedMillis < 0
+                    ? activity.getString(R.string.role_allowance_unknown, value.dailyMinutes)
+                    : activity.getString(R.string.role_allowance_usage, value.usedMillis / 60_000L, value.displayMinutes());
+            LinearLayout row = OverviewUi.row(card, R.drawable.ic_nav_limits, value.label, copy, null);
+            row.setMinimumHeight(dp(32)); row.setPadding(0, dp(4), 0, dp(4));
+            int fallback = value.packageName.isEmpty() ? R.drawable.ic_nav_limits : R.drawable.ic_settings_apps;
+            row.getChildAt(0).setTag("home_app_icon:" + value.packageName);
+            if (value.appIcon != null || !person.id.isLocal())
+                com.subhub.app.remote.RemoteUi.bindAppIcon((android.widget.ImageView) row.getChildAt(0), value.appIcon, fallback);
+            else com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName, fallback);
+            if (value.usedMillis < 0) continue;
+            com.subhub.app.appmode.AllowanceProgress.add(card, value);
+            if (!value.packageName.isEmpty() && value.dailyMinutes > 0
+                    && value.usedMillis >= value.budgetMillis)
+                com.subhub.app.appmode.ExtraTimeEntry.request(card, person.id, value.packageName);
+        }
+    }
+
+    private static AssignedDom assignedDom(android.content.Context context) {
+        try {
+            KeyholderProvider provider = People.keyholder();
+            KeyholderProvider.State state = provider.state();
+            String name = provider.assignedDomName();
+            if (state == KeyholderProvider.State.NONE || state == KeyholderProvider.State.UNAVAILABLE
+                    && (name == null || name.trim().isEmpty())) return null;
+            return new AssignedDom(name == null || name.trim().isEmpty() ? context.getString(R.string.role_your_dom) : name,
+                    state == KeyholderProvider.State.READY ? R.string.role_connection_paired
+                            : state == KeyholderProvider.State.PENDING ? R.string.role_connection_pending
+                                    : R.string.role_connection_error);
+        } catch (RuntimeException unavailable) { return null; }
+    }
+
+    private static AssignedDom formalAssignedDom(android.content.Context context,
+            com.subhub.app.relationships.RelationshipUi.Snapshot snapshot, PersonSnapshot person) {
+        com.subhub.app.relationships.RelationshipUi.Edge edge = snapshot.governingDom;
+        if (edge == null) return null;
+        ProfileData profile = null;
+        boolean localSub = false;
+        for (com.subhub.app.relationships.RelationshipUi.Participant participant : snapshot.localParticipants)
+            if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.SUB
+                    && participant.ref.equals(edge.subParticipantRef)) localSub = true;
+        if (person.id.isLocal() && localSub) {
+            if (edge.delivery == com.subhub.app.relationships.RelationshipUi.Delivery.PEER) {
+                // personId includes the peer generation, independently of the formal relationship generation.
+                if (!edge.personId.isLocal() && edge.personId.equals(person.contractDomId))
+                    profile = person.contractDom;
+            } else if (edge.personId.isLocal()) {
+                for (com.subhub.app.relationships.RelationshipUi.Participant participant : snapshot.localParticipants)
+                    if (participant.role == com.subhub.app.relationships.RelationshipUi.Role.DOM
+                            && participant.ref.equals(edge.domParticipantRef)) profile = participant.profile;
+            }
+        }
+        return new AssignedDom(profile == null ? context.getString(R.string.role_unknown_data) : profile.name,
+                R.string.relationships_linked, profile);
+    }
+
+    private int dp(int value) { return PersonUi.dp(activity, value); }
+
+    private static final class AssignedDom {
+        final String name;
+        final int status;
+        final ProfileData profile;
+        AssignedDom(String name, int status) { this(name, status, null); }
+        AssignedDom(String name, int status, ProfileData profile) {
+            this.name = name; this.status = status; this.profile = profile;
+        }
+    }
+
+    private static final class RelationshipUnavailable extends RuntimeException {
+        RelationshipUnavailable(Exception cause) { super(cause); }
+    }
+
+    private static final class TaskSummary {
+        final String scope;
+        final int active;
+        TaskSummary(String scope, int active) { this.scope = scope; this.active = active; }
+        static TaskSummary read(android.content.Context app) {
+            try {
+                com.subhub.app.tasks.TaskRepository repo = new com.subhub.app.tasks.TaskRepository(app, PersonId.LOCAL);
+                String scope = repo.target().scope;
+                if (!repo.allowed() || !repo.supported()) return new TaskSummary(scope, -1);
+                int count = com.subhub.app.tasks.TaskEngine.activeCount(repo.list(System.currentTimeMillis()));
+                if (!scope.equals(repo.target().scope)) return new TaskSummary("", -1);
+                return new TaskSummary(scope, count);
+            } catch (Exception unavailable) { return new TaskSummary("", -1); }
+        }
+    }
+
+    private static final class HomeData {
+        final List<PersonSnapshot> people;
+        final AssignedDom dom;
+        final TaskSummary tasks;
+        final com.subhub.app.relationships.RelationshipPresentation.Access access;
+        final boolean relationshipUnavailable;
+        HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks,
+                com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable) {
+            this.people = people; this.dom = dom; this.tasks = tasks;
+            this.access = access; this.relationshipUnavailable = relationshipUnavailable;
+        }
+    }
+}

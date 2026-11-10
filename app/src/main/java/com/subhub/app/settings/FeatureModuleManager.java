@@ -3,7 +3,7 @@ package com.subhub.app.settings;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** App-wide switches for optional product areas. Settings is always available. */
+/** Optional effects and compatibility availability; Limits and Wallet use their own rules. */
 public final class FeatureModuleManager {
     public static final String KEY_CENSOR_ENABLED = "module_censor_enabled";
     public static final String KEY_LIMITS_ENABLED = "module_limits_enabled";
@@ -11,44 +11,63 @@ public final class FeatureModuleManager {
     public static final String KEY_SUBLIMINAL_ENABLED = "module_subliminal_enabled";
 
     private final SharedPreferences preferences;
+    private final Context context;
 
     public FeatureModuleManager(Context context) {
-        preferences = context.getApplicationContext().getSharedPreferences(
+        this.context = context.getApplicationContext();
+        preferences = this.context.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        if (preferences.contains(KEY_LIMITS_ENABLED)) synchronized (FeatureModuleManager.class) {
+            if (preferences.contains(KEY_LIMITS_ENABLED)) {
+                SharedPreferences.Editor edit = preferences.edit().remove(KEY_LIMITS_ENABLED);
+                if (!preferences.getBoolean(KEY_LIMITS_ENABLED, true)) {
+                    edit.putBoolean(com.subhub.app.appmode.AppTimerManager.KEY_PER_APP_ENABLED, false)
+                            .putBoolean(com.subhub.app.appmode.AppTimerManager.KEY_TOTAL_ENABLED, false);
+                }
+                edit.apply();
+            }
+        }
     }
 
     public boolean isCensorEnabled() {
-        return preferences.getBoolean(KEY_CENSOR_ENABLED, true);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "censor") && preferences.getBoolean(KEY_CENSOR_ENABLED, true);
     }
 
     public boolean isLimitsEnabled() {
-        return preferences.getBoolean(KEY_LIMITS_ENABLED, true);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits");
     }
 
     public boolean isWalletEnabled() {
-        return preferences.getBoolean(KEY_WALLET_ENABLED, true);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet");
     }
 
     public boolean isSubliminalEnabled() {
-        return preferences.getBoolean(KEY_SUBLIMINAL_ENABLED, false);
+        return com.subhub.app.security.SubFeaturePolicy.allowed(context, "subliminal") && preferences.getBoolean(KEY_SUBLIMINAL_ENABLED, false);
+    }
+
+    public void setCensorEnabled(boolean enabled) {
+        preferences.edit().putBoolean(KEY_CENSOR_ENABLED, enabled).apply();
     }
 
     public void setSubliminalEnabled(boolean enabled) {
-        preferences.edit().putBoolean(KEY_SUBLIMINAL_ENABLED, enabled).commit();
+        preferences.edit().putBoolean(KEY_SUBLIMINAL_ENABLED, enabled).apply();
     }
 
     public boolean hasRuntimeFeature() {
-        return isCensorEnabled() || isLimitsEnabled() || isSubliminalEnabled()
-                || preferences.getBoolean(com.subhub.app.popup.PopupStormSettings.K_ENABLED, false);
+        return isCensorEnabled()
+                || new com.subhub.app.appmode.AppTimerManager(context).loadSettings().anyEnabled()
+                || new com.subhub.app.penance.PenanceManager(context).isEnabled() || isSubliminalEnabled()
+                || com.subhub.app.popup.PopupStormSettings.load(context).isEnabled();
     }
 
     public void save(boolean censor, boolean limits, boolean wallet, boolean subliminal) {
+        // Normalize legacy Wallet state before discarding its retired page switch.
+        new com.subhub.app.penance.PenanceManager(context);
         preferences.edit()
                 .putBoolean(KEY_CENSOR_ENABLED, censor)
-                .putBoolean(KEY_LIMITS_ENABLED, limits)
-                .putBoolean(KEY_WALLET_ENABLED, wallet)
+                .remove(KEY_LIMITS_ENABLED)
                 .putBoolean(KEY_SUBLIMINAL_ENABLED, subliminal)
-                .commit();
+                .apply();
     }
 
     /** Compatibility overload used by older callers; preserves the independent new module. */

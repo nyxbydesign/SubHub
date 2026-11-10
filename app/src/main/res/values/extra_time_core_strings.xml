@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="extra_time_notification_channel">App time requests</string>
+    <string name="extra_time_notification_choice">App time requests</string>
+    <string name="extra_time_notification_action">View request</string>
+    <string name="extra_time_limit_title">App limit reached</string>
+    <string name="extra_time_limit_body">Open SubHub to request a one-time allowance from your Dom.</string>
+    <string name="extra_time_request_title">Time request from %1$s</string>
+    <string name="extra_time_request_body">%1$s has reached its allowance. Review the request to approve extra minutes or decline.</string>
+    <string name="extra_time_approved_title">Extra time approved</string>
+    <string name="extra_time_approved_body">%1$d extra minutes for %2$s, for today only.</string>
+    <string name="extra_time_declined_title">Time request declined</string>
+    <string name="extra_time_declined_body">Your request for %1$s was declined. Its current limit stays in place.</string>
+    <string name="extra_time_tribute_rule_enabled">Extra-time requests</string>
+    <string name="extra_time_tribute_rule_cents">Tribute per extra-time request</string>
+</resources>

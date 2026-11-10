@@ -1,5 +1,7 @@
 package com.subhub.app.popup;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import com.subhub.app.util.PrimaryHeader;
 
 import android.content.Intent;
@@ -46,6 +48,13 @@ public final class PopupStormActivity extends AppCompatActivity {
     private ActivityPopupStormBinding binding;
     private SharedPreferences preferences;
     private ControllerEditMode editMode;
+    private boolean updatingEnabled;
+    private com.subhub.app.capture.CensorImageEditor remoteArtwork;
+    private final ActivityResultLauncher<Intent> enableOverlayPermission = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (Settings.canDrawOverlays(this)) completeEnable();
+                else renderEnabled();
+            });
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable statusUpdater = new Runnable() {
         @Override public void run() {
@@ -64,14 +73,19 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "popup", savedInstanceState)) return;
         binding = ActivityPopupStormBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bindSecondary(binding.getRoot(), R.string.popup_title, true);
-        preferences = PopupStormSettings.preferences(this);
-        PopupStormManager.get().reloadSettings(this);
+        preferences = PopupStormSettings.preferences(FeatureEditorSession.context(this));
+        binding.switchPopupStorm.setOnCheckedChangeListener((button, checked) -> {
+            if (!updatingEnabled) setEffectEnabled(checked);
+        });
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         binding.buttonAddFolder.setOnClickListener(view -> folderPicker.launch(null));
         binding.buttonStop.setOnClickListener(view -> {
+            if (FeatureEditorSession.remote(this)) return;
             PopupStormManager.get().stop();
             refreshStatus();
         });
@@ -103,12 +117,20 @@ public final class PopupStormActivity extends AppCompatActivity {
         });
         editMode = ControllerEditMode.bind(
                 this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
+        if (FeatureEditorSession.remote(this)) {
+            binding.buttonPreview.setVisibility(View.GONE);
+            binding.buttonStop.setVisibility(View.GONE);
+            binding.buttonAddFolder.setText(R.string.custom_images_add);
+            remoteArtwork = new com.subhub.app.capture.CensorImageEditor(this, binding.buttonAddFolder,
+                    binding.libraryCount, binding.foldersList, "popup");
+        }
+        FeatureEditorSession.bind(this, binding.getRoot(), "popup", () -> true);
     }
 
     @Override protected void onResume() {
         super.onResume();
         if (editMode != null) editMode.refresh();
-        PopupStormManager.get().reloadSettings(this);
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         ui.removeCallbacks(statusUpdater);
         ui.post(statusUpdater);
         mainDelayRefresh();
@@ -120,14 +142,15 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestPreview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (FeatureEditorSession.remote(this)) return;
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         if (!preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
             com.subhub.app.util.ThemedDialogs.builder(this)
                     .setTitle(R.string.popup_photosensitivity_title)
                     .setMessage(R.string.popup_photosensitivity_body)
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.popup_acknowledge, (dialog, which) -> {
-                        if (!ControllerPinManager.isSessionUnlocked()) return;
+                        if (!FeatureEditorSession.canEdit(this, "popup")) return;
                         preferences.edit().putBoolean(PopupStormSettings.K_ACK, true).apply();
                         requestOverlayOrPreview();
                     }).show();
@@ -137,7 +160,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestOverlayOrPreview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
             overlayPermission.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -146,7 +169,8 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void preview() {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (FeatureEditorSession.remote(this)) return;
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         PopupStormSettings current = PopupStormSettings.load(this);
         if (!current.isAcknowledged() || !Settings.canDrawOverlays(this)) {
             requestPreview();
@@ -174,11 +198,11 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void applyPreset(int step) {
-        if (!ControllerPinManager.isSessionUnlocked()) return;
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         IntensityPresets.values()[step].apply(this);
         renderPreset();
         rebuildSettings();
-        PopupStormManager.get().reloadSettings(this);
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
     }
 
     private void rebuildSettings() {
@@ -241,13 +265,72 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     private void applyEditState() {
         if (binding == null) return;
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = FeatureEditorSession.canEdit(this, "popup");
+        renderEnabled();
         binding.buttonPreview.setEnabled(editing);
         binding.buttonAddFolder.setEnabled(editing);
         binding.presetSlider.setEnabled(editing);
         setEnabledRecursive(binding.dynamicSettings, editing);
         rebuildFolders();
         // Stop remains available as an unconditional safety action.
+    }
+
+    private void renderEnabled() {
+        if (binding == null) return;
+        updatingEnabled = true;
+        binding.switchPopupStorm.setChecked(preferences.getBoolean(PopupStormSettings.K_ENABLED, false));
+        binding.switchPopupStorm.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
+        updatingEnabled = false;
+    }
+
+    private void setEffectEnabled(boolean enabled) {
+        if (FeatureEditorSession.remote(this)) {
+            if (FeatureEditorSession.canEdit(this, "popup")) preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, enabled).apply();
+            renderEnabled(); return;
+        }
+        if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
+        if (!enabled) {
+            preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, false).apply();
+            PopupStormManager.get().stop();
+            if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
+            renderEnabled();
+            refreshStatus();
+        } else if (!preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
+            renderEnabled();
+            com.subhub.app.util.ThemedDialogs.builder(this)
+                    .setTitle(R.string.popup_photosensitivity_title)
+                    .setMessage(R.string.popup_photosensitivity_body)
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> renderEnabled())
+                    .setPositiveButton(R.string.popup_acknowledge, (dialog, which) -> {
+                        if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
+                        preferences.edit().putBoolean(PopupStormSettings.K_ACK, true).apply();
+                        requestEnableOverlay();
+                    }).show();
+        } else requestEnableOverlay();
+    }
+
+    private void requestEnableOverlay() {
+        if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
+        if (!Settings.canDrawOverlays(this)) {
+            renderEnabled();
+            Toast.makeText(this, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
+            enableOverlayPermission.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+        } else completeEnable();
+    }
+
+    private void completeEnable() {
+        if (!FeatureEditorSession.canEdit(this, "popup") || !Settings.canDrawOverlays(this)
+                || !preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
+            renderEnabled();
+            return;
+        }
+        preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, true).apply();
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
+        if (PopupStormActivationPolicy.shouldStart(ScreenCaptureService.isRunning(),
+                ScreenshotAccessibilityService.isRecognitionActive())) PopupStormManager.get().start(this);
+        renderEnabled();
+        refreshStatus();
     }
 
     private static void setEnabledRecursive(View view, boolean enabled) {
@@ -267,18 +350,23 @@ public final class PopupStormActivity extends AppCompatActivity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         params.topMargin = binding.dynamicSettings.getChildCount() == 0 ? dp(8) : dp(14);
         card.setLayoutParams(params);
-        TextView header = label(getString(title), 12, true, R.color.text_primary);
+        TextView header = (TextView) getLayoutInflater().inflate(R.layout.view_form_label, card, false);
+        header.setText(title);
         card.addView(header);
         binding.dynamicSettings.addView(card);
         return card;
     }
 
+    private TextView formLabel(String text, LinearLayout parent) {
+        TextView label = (TextView) getLayoutInflater().inflate(R.layout.view_form_label, parent, false);
+        label.setText(text);
+        return label;
+    }
+
     private void addToggle(LinearLayout parent, int title, String key, boolean defaultValue) {
         SwitchMaterial toggle = new com.subhub.app.util.StateToggle(this);
         toggle.setText(title);
-        toggle.setTextColor(getColor(R.color.text_primary));
-        toggle.setMinHeight(dp(50));
-        toggle.setEnabled(ControllerPinManager.isSessionUnlocked());
+        toggle.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         toggle.setChecked(preferences.getBoolean(key, defaultValue));
         toggle.setOnCheckedChangeListener((button, checked) -> {
             preferences.edit().putBoolean(key, checked).apply();
@@ -290,14 +378,13 @@ public final class PopupStormActivity extends AppCompatActivity {
     private void addIntSlider(LinearLayout parent, int title, String key,
             int minimum, int maximum, int defaultValue) {
         int stored = Math.max(minimum, Math.min(maximum, preferences.getInt(key, defaultValue)));
-        TextView value = label(getString(title) + ": " + stored, 11, false, R.color.text_secondary);
-        value.setPadding(0, dp(10), 0, 0);
+        TextView value = formLabel(getString(title) + ": " + stored, parent);
         parent.addView(value);
         SeekBar slider = new SeekBar(this);
         slider.setMinimumHeight(dp(48));
         slider.setMax(maximum - minimum);
         slider.setProgress(stored - minimum);
-        slider.setEnabled(ControllerPinManager.isSessionUnlocked());
+        slider.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int actual = minimum + progress;
@@ -313,15 +400,13 @@ public final class PopupStormActivity extends AppCompatActivity {
             float maximum, float defaultValue, float step, String format) {
         float stored = Math.max(minimum, Math.min(maximum, preferences.getFloat(key, defaultValue)));
         int steps = Math.round((maximum - minimum) / step);
-        TextView value = label(getString(title) + ": " + String.format(Locale.ROOT, format, stored),
-                11, false, R.color.text_secondary);
-        value.setPadding(0, dp(10), 0, 0);
+        TextView value = formLabel(getString(title) + ": " + String.format(Locale.ROOT, format, stored), parent);
         parent.addView(value);
         SeekBar slider = new SeekBar(this);
         slider.setMinimumHeight(dp(48));
         slider.setMax(steps);
         slider.setProgress(Math.round((stored - minimum) / step));
-        slider.setEnabled(ControllerPinManager.isSessionUnlocked());
+        slider.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         slider.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 float actual = minimum + progress * step;
@@ -335,13 +420,10 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     private void addChoice(LinearLayout parent, int title, String key, String[] values,
             int[] labels, String defaultValue) {
-        TextView heading = label(getString(title), 11, false, R.color.text_secondary);
-        heading.setPadding(0, dp(10), 0, 0);
+        TextView heading = formLabel(getString(title), parent);
         parent.addView(heading);
-        GridLayout group = new GridLayout(this);
+        com.subhub.app.util.SelectionGrid group = new com.subhub.app.util.SelectionGrid(this, null);
         group.setTag("popup-choice:" + key);
-        int columns = Math.min(3, values.length);
-        group.setColumnCount(columns);
         group.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         String selected = preferences.getString(key, defaultValue);
@@ -350,21 +432,16 @@ public final class PopupStormActivity extends AppCompatActivity {
             option.setId(View.generateViewId());
             option.setTag(values[index]);
             option.setText(labels[index]);
-            option.setTextColor(getColor(R.color.text_primary));
-            option.setTextSize(11);
-            option.setEnabled(ControllerPinManager.isSessionUnlocked());
+            option.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
             option.setSelected(values[index].equals(selected));
             option.setMinHeight(dp(48));
             option.setMinimumHeight(dp(48));
-            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
-                    GridLayout.spec(index / columns, GridLayout.FILL),
-                    GridLayout.spec(index % columns, 1f));
-            params.width = 0;
-            params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             params.setMargins(dp(2), dp(2), dp(2), dp(2));
             group.addView(option, params);
             option.setOnClickListener(view -> {
-                if (!ControllerPinManager.isSessionUnlocked()) return;
+                if (!FeatureEditorSession.canEdit(this, "popup")) return;
                 for (int child = 0; child < group.getChildCount(); child++) {
                     group.getChildAt(child).setSelected(group.getChildAt(child) == view);
                 }
@@ -376,19 +453,18 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void addTextField(LinearLayout parent, int title, String key, String defaultValue) {
-        TextView heading = label(getString(title), 11, false, R.color.text_secondary);
-        heading.setPadding(0, dp(10), 0, 0);
+        TextView heading = formLabel(getString(title), parent);
         parent.addView(heading);
-        EditText input = new EditText(this);
+        EditText input = (EditText) getLayoutInflater().inflate(R.layout.view_preference_input, parent, false);
         input.setId(View.generateViewId());
         heading.setLabelFor(input.getId());
         input.setMinimumHeight(dp(48));
         input.setSingleLine(true);
         input.setMaxLines(1);
+        com.subhub.app.util.InputBounds.limit(input, 32);
         input.setText(preferences.getString(key, defaultValue));
-        input.setTextColor(getColor(R.color.text_primary));
-        input.setTextSize(12);
-        input.setEnabled(ControllerPinManager.isSessionUnlocked());
+        com.subhub.app.util.UiIdentity.textSize(input, R.dimen.ui_text_body);
+        input.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         View.OnFocusChangeListener save = (view, focused) -> {
             if (!focused) saveText(input, key, defaultValue);
@@ -416,7 +492,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     private void settingsChanged() {
         preferences.edit().remove(PopupStormSettings.K_PRESET).apply();
         renderPreset();
-        PopupStormManager.get().reloadSettings(this);
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         refreshStatus();
     }
 
@@ -432,13 +508,14 @@ public final class PopupStormActivity extends AppCompatActivity {
                 PopupStormSettings.K_FOLDERS, Set.of()));
         if (folders.size() < 20) folders.add(uri.toString());
         preferences.edit().putStringSet(PopupStormSettings.K_FOLDERS, folders).apply();
-        PopupStormManager.get().reloadSettings(this);
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         rebuildFolders();
         binding.libraryCount.setText(R.string.popup_library_scanning);
         mainDelayRefresh();
     }
 
     private void rebuildFolders() {
+        if (FeatureEditorSession.remote(this)) { if (remoteArtwork != null) remoteArtwork.refresh(); return; }
         binding.foldersList.removeAllViews();
         Set<String> folders = preferences.getStringSet(PopupStormSettings.K_FOLDERS, Set.of());
         if (folders == null || folders.isEmpty()) {
@@ -455,11 +532,10 @@ public final class PopupStormActivity extends AppCompatActivity {
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                 Button remove = new Button(this);
                 remove.setText(R.string.popup_remove);
-                remove.setTextSize(11);
                 remove.setAllCaps(false);
                 remove.setBackgroundResource(R.drawable.bg_outline_button);
                 remove.setTextColor(getColor(R.color.accent));
-                remove.setEnabled(ControllerPinManager.isSessionUnlocked());
+                remove.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
                 remove.setOnClickListener(view -> removeFolder(value));
                 remove.setMinHeight(dp(48));
                 remove.setMinimumHeight(dp(48));
@@ -482,7 +558,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         try { getContentResolver().releasePersistableUriPermission(
                 Uri.parse(value), Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (Exception ignored) {}
-        PopupStormManager.get().reloadSettings(this);
+        if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         rebuildFolders();
         mainDelayRefresh();
     }
@@ -495,6 +571,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void refreshStatus() {
+        if (FeatureEditorSession.remote(this)) return;
         if (PopupStormManager.get().isPreviewing()) {
             long remaining = PopupStormManager.get().remainingPreviewMillis();
             binding.buttonPreview.setText(getString(R.string.popup_preview_active,
@@ -513,7 +590,8 @@ public final class PopupStormActivity extends AppCompatActivity {
     private TextView label(String text, float size, boolean bold, int color) {
         TextView view = new TextView(this);
         view.setText(text);
-        view.setTextSize(size);
+        com.subhub.app.util.UiIdentity.textSize(view, size == 12
+                ? R.dimen.ui_text_label : R.dimen.ui_text_caption);
         view.setTextColor(getColor(color));
         if (bold) view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         view.setGravity(Gravity.CENTER_VERTICAL);
@@ -526,6 +604,7 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     @Override protected void onDestroy() {
         ui.removeCallbacksAndMessages(null);
+        if (remoteArtwork != null) remoteArtwork.close();
         binding = null;
         super.onDestroy();
     }
@@ -533,4 +612,9 @@ public final class PopupStormActivity extends AppCompatActivity {
     private abstract static class SimpleSeekListener implements SeekBar.OnSeekBarChangeListener {
         @Override public void onStartTrackingTouch(SeekBar seekBar) {}
     }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        super.onSaveInstanceState(state);
+    }
+
 }

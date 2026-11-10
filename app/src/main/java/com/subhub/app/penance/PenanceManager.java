@@ -7,6 +7,7 @@ import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.settings.SettingsRepository;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ public final class PenanceManager {
     public static final String CURRENCY = "EUR";
     private static final String KEY_CURRENCY = "wallet_currency";
     private static final String KEY_ENABLED = "enabled";
+    public static final String KEY_RULE_PARTICIPATION_MIGRATED = "rule_participation_migrated_v1";
     private static final String KEY_STRIKE_CENTS = "strike_cents";
     private static final String KEY_DAILY_CAP_CENTS = "daily_cap_cents";
     private static final String KEY_WEEKLY_CAP_CENTS = "weekly_cap_cents";
@@ -107,10 +109,59 @@ public final class PenanceManager {
         this.context = context.getApplicationContext();
         preferences = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         modules = new FeatureModuleManager(this.context);
+        migrateRuleParticipation();
     }
 
     public boolean isEnabled() {
-        return modules.isWalletEnabled() && preferences.getBoolean(KEY_ENABLED, false);
+        for (PenanceInfraction rule : PenanceInfraction.values())
+            if (rule != PenanceInfraction.PAID_PAUSE && isInfractionEnabled(rule)) return true;
+        return new PaidPauseManager(context).isEnabled();
+    }
+
+    /** Effective saved participation without migrating configuration or expiring active effects. */
+    public static boolean observedEnabled(Context context) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet")) return false;
+        SharedPreferences stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!stored.getBoolean(KEY_RULE_PARTICIPATION_MIGRATED, false)) {
+            SharedPreferences global = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+            if (!stored.getBoolean(KEY_ENABLED, false)
+                    || !global.getBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true)) return false;
+        }
+        for (PenanceInfraction rule : PenanceInfraction.values()) {
+            if (rule == PenanceInfraction.PAID_PAUSE) continue;
+            if (stored.getBoolean(ruleEnabledKey(rule), rule == PenanceInfraction.NEW_DETECTION && rule.enabledByDefault())) return true;
+        }
+        return stored.getBoolean(PaidPauseManager.KEY_ENABLED, false);
+    }
+
+    public static int observedRuleCount(Context context) {
+        if (!observedEnabled(context)) return 0;
+        SharedPreferences stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        int count = 0;
+        for (PenanceInfraction rule : PenanceInfraction.values())
+            if (stored.getBoolean(ruleEnabledKey(rule), rule == PenanceInfraction.NEW_DETECTION && rule.enabledByDefault())) count++;
+        return count;
+    }
+
+    /** Preserve effective off states without retaining a second switch or changing saved costs. */
+    private void migrateRuleParticipation() {
+        synchronized (LOCK) {
+            SharedPreferences global = context.getSharedPreferences(
+                    com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+            if (!preferences.getBoolean(KEY_RULE_PARTICIPATION_MIGRATED, false)) {
+                boolean wasEnabled = preferences.getBoolean(KEY_ENABLED, false)
+                        && global.getBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, true);
+                SharedPreferences.Editor edit = preferences.edit()
+                        .putBoolean(KEY_RULE_PARTICIPATION_MIGRATED, true).remove(KEY_ENABLED);
+                if (!wasEnabled) {
+                    for (PenanceInfraction rule : PenanceInfraction.values())
+                        edit.putBoolean(ruleEnabledKey(rule), false);
+                    edit.putBoolean(PaidPauseManager.KEY_ENABLED, false)
+                            .putInt(KEY_DETECTION_REMAINDER, 0);
+                }
+                edit.apply();
+            }
+        }
     }
 
     public int getStrikeCents() {
@@ -118,12 +169,22 @@ public final class PenanceManager {
     }
 
     public boolean isInfractionEnabled(PenanceInfraction infraction) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "wallet")) return false;
         String key = ruleEnabledKey(infraction);
         if (preferences.contains(key)) {
             return preferences.getBoolean(key, infraction.enabledByDefault());
         }
         return infraction == PenanceInfraction.NEW_DETECTION
                 ? infraction.enabledByDefault() : false;
+    }
+
+    /** Turning a rule off must not depend on validating unrelated editor drafts. */
+    public void disableInfraction(PenanceInfraction infraction) {
+        synchronized (LOCK) {
+            SharedPreferences.Editor edit = preferences.edit().putBoolean(ruleEnabledKey(infraction), false);
+            if (infraction == PenanceInfraction.NEW_DETECTION) edit.putInt(KEY_DETECTION_REMAINDER, 0);
+            edit.apply();
+        }
     }
 
     public int getInfractionCents(PenanceInfraction infraction) {
@@ -188,6 +249,8 @@ public final class PenanceManager {
     }
 
     public void savePayPalLink(String value) {
+        if (value != null && value.length() > 2048 && !value.equals(getPayPalLink()))
+            throw new IllegalArgumentException("PayPal link is too long");
         preferences.edit().putString(KEY_PAYPAL_LINK,
                 value == null ? "" : value.trim()).remove(LEGACY_KEY_BACKEND_URL).commit();
     }
@@ -228,10 +291,10 @@ public final class PenanceManager {
         int boundedDaily = PenancePolicy.clampDailyCapCents(dailyCapCents, largestRule);
         int boundedWeekly = PenancePolicy.clampWeeklyCapCents(weeklyCapCents, boundedDaily);
         int boundedBatch = PenancePolicy.clampDetectionBatch(detectionBatch);
-        boolean resetDetectionProgress = !enabled || !isEnabled()
+        boolean resetDetectionProgress = !enabled || !isInfractionEnabled(PenanceInfraction.NEW_DETECTION)
+                || !rules.containsKey(PenanceInfraction.NEW_DETECTION)
                 || boundedBatch != getDetectionBatch();
         SharedPreferences.Editor editor = preferences.edit()
-                .putBoolean(KEY_ENABLED, enabled)
                 .putInt(KEY_DAILY_CAP_CENTS, boundedDaily)
                 .putInt(KEY_WEEKLY_CAP_CENTS, boundedWeekly)
                 .putInt(KEY_MERCY_MINUTES, PenancePolicy.clampMercyMinutes(mercyMinutes))
@@ -242,8 +305,8 @@ public final class PenanceManager {
                 .remove(LEGACY_KEY_BACKEND_URL);
         if (resetDetectionProgress) editor.putInt(KEY_DETECTION_REMAINDER, 0);
         for (PenanceInfraction infraction : PenanceInfraction.values()) {
-            boolean ruleEnabled = rules.containsKey(infraction);
-            int cents = ruleEnabled && rules.get(infraction) != null
+            boolean ruleEnabled = enabled && rules.containsKey(infraction);
+            int cents = rules.containsKey(infraction) && rules.get(infraction) != null
                     ? PenancePolicy.clampStrikeCents(rules.get(infraction))
                     : getInfractionCents(infraction);
             editor.putBoolean(ruleEnabledKey(infraction), ruleEnabled)
@@ -257,47 +320,246 @@ public final class PenanceManager {
 
     /** Returns the bounded amount added to the ledger in cents. */
     public int recordInfraction(PenanceInfraction infraction, int count, long nowMillis) {
+        return recordInfractionResult(infraction, count, nowMillis, null).chargedCents;
+    }
+
+    /** Atomically records a local failure and its permanent occurrence receipt; never schedules a payment. */
+    public int recordTaskFailure(String occurrence, long nowMillis) {
+        if (occurrence == null || occurrence.length() > 512 || nowMillis <= 0)
+            throw new IllegalArgumentException("Invalid task failure");
+        String receipt = "task_failure_receipt_" + java.util.UUID.nameUUIDFromBytes(
+                occurrence.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) {
+                if (preferences.contains(receipt)) {
+                    // A failed commit can already be visible in SharedPreferences memory.
+                    if (!preferences.edit().commit()) throw new IllegalStateException("Task tribute receipt is not durable");
+                    return 0;
+                }
+                int amount = 0;
+                List<PenanceEvent> events = loadEvents();
+                if (com.subhub.app.security.SubFeaturePolicy.allowed(context, "tasks")
+                        && isInfractionEnabled(PenanceInfraction.TASK_FAILURE)
+                        && new AppModeManager(context).isArmed()) {
+                    trimHistoryForInsertion(events);
+                    if (events.size() < MAX_EVENTS) amount = PenancePolicy.boundedCharge(
+                            currentCurrencyEvents(events), nowMillis, 1,
+                            getInfractionCents(PenanceInfraction.TASK_FAILURE), getDailyCapCents(),
+                            getWeeklyCapCents(), ZoneId.systemDefault());
+                }
+                if (amount > 0) events.add(new PenanceEvent(receipt, nowMillis,
+                        nowMillis + getMercyMinutes() * 60_000L, amount, 1,
+                        PenanceInfraction.TASK_FAILURE, PenanceEvent.Status.OPEN, "", getCurrency()));
+                if (!preferences.edit().putBoolean(receipt, true)
+                        .putString(KEY_EVENTS, encodeEvents(events)).commit())
+                    throw new IllegalStateException("Task tribute was not saved");
+                if (amount > 0) new StatsRepository(context).recordTributeEvent(amount, false, getCurrency());
+                return amount;
+            }
+        }
+    }
+
+    /** The price of requesting time, after the current currency's existing spending caps. */
+    public int quoteExtraTimeRequest(long nowMillis) {
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) { return extraTimeQuoteLocked(nowMillis); }
+        }
+    }
+
+    private int extraTimeQuoteLocked(long nowMillis) {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits")
+                || !isInfractionEnabled(PenanceInfraction.EXTRA_TIME_REQUEST)
+                || !new AppModeManager(context).isArmed()) return 0;
+        List<PenanceEvent> events = loadEvents();
+        trimHistoryForInsertion(events);
+        return events.size() >= MAX_EVENTS ? 0 : PenancePolicy.boundedCharge(
+                currentCurrencyEvents(events), nowMillis, 1,
+                getInfractionCents(PenanceInfraction.EXTRA_TIME_REQUEST), getDailyCapCents(),
+                getWeeklyCapCents(), ZoneId.systemDefault());
+    }
+
+    /** A stable submission receipt and its debit share one acknowledged ledger write. */
+    public int extraTimeRequestReceipt(String request) {
+        if (request == null || request.isEmpty() || request.length() > 512)
+            throw new IllegalArgumentException("Invalid app-time submission");
+        String receipt = "extra_time_receipt_" + UUID.nameUUIDFromBytes(
+                request.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        synchronized (LOCK) {
+            if (!preferences.contains(receipt)) return -1;
+            if (!preferences.edit().commit()) throw new IllegalStateException("App-time tribute is not saved");
+            return preferences.getInt(receipt,0);
+        }
+    }
+
+    /** Only the submission owner may call this; approval and transport receive never debit Wallet. */
+    public int recordExtraTimeRequest(String request, int quotedCents, String quotedCurrency, long nowMillis) {
+        if (request == null || request.isEmpty() || request.length() > 512 || nowMillis <= 0)
+            throw new IllegalArgumentException("Invalid app-time submission");
+        String receipt = "extra_time_receipt_" + UUID.nameUUIDFromBytes(
+                request.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        int amount; String assessedCurrency = quotedCurrency;
+        StatsRepository.SessionStamp source = null;
+        synchronized (com.subhub.app.security.SubFeaturePolicy.LOCK) {
+            synchronized (LOCK) {
+                if (preferences.contains(receipt)) {
+                    // A failed commit may have updated memory. Acknowledge it before publishing a request.
+                    if (!preferences.edit().commit()) throw new IllegalStateException("App-time tribute is not saved");
+                    amount = preferences.getInt(receipt, 0);
+                    assessedCurrency = preferences.getString(receipt + "_currency", quotedCurrency);
+                    if (amount != quotedCents || !assessedCurrency.equals(quotedCurrency))
+                        throw new IllegalArgumentException("The saved request has a different tribute");
+                } else {
+                    amount = extraTimeQuoteLocked(nowMillis);
+                    if (amount != quotedCents || !getCurrency().equals(quotedCurrency))
+                        throw new IllegalArgumentException("The tribute changed. Review the request again.");
+                    List<PenanceEvent> events = loadEvents();
+                    trimHistoryForInsertion(events);
+                    source = new StatsRepository(context).sessionStamp();
+                    if (amount > 0) events.add(new PenanceEvent(receipt, nowMillis,
+                            nowMillis + getMercyMinutes() * 60_000L, amount, 1,
+                            PenanceInfraction.EXTRA_TIME_REQUEST, PenanceEvent.Status.OPEN, "", assessedCurrency));
+                    if (!preferences.edit().putInt(receipt, amount).putString(receipt + "_currency",assessedCurrency).putString(KEY_EVENTS, encodeEvents(events)).commit())
+                        throw new IllegalStateException("App-time tribute was not saved");
+                }
+            }
+        }
+        if (amount > 0) {
+            // Both effects are safe to replay from the stable ledger ID after a process or observer failure.
+            new StatsRepository(context).recordRequestTributeReceipt(receipt,amount,assessedCurrency,source);
+            HardcoreAutoPayManager.schedule(context);
+            com.subhub.app.remote.RemoteActivityRecorder.tribute(receipt);
+        }
+        return amount;
+    }
+
+    public enum SourceDetectionStatus { REJECTED, APPLIED, ACKNOWLEDGED }
+    public static final class SourceDetectionResult {
+        public final SourceDetectionStatus status;
+        public final int chargedCents;
+        private SourceDetectionResult(SourceDetectionStatus status, int chargedCents) {
+            this.status = status; this.chargedCents = chargedCents;
+        }
+    }
+
+    /** Source accounting uses acknowledged local writes; ordinary legacy callers retain apply(). */
+    public int recordSourceDetection(int count, long nowMillis, StatsRepository.SessionStamp expected) {
+        return recordSourceDetectionResult(count, nowMillis, expected).chargedCents;
+    }
+
+    /** Rejection and acknowledged zero-cent batch progress are different outcomes. */
+    public SourceDetectionResult recordSourceDetectionResult(int count, long nowMillis, StatsRepository.SessionStamp expected) {
+        return recordSourceDetectionResult(count, nowMillis, expected, () -> true);
+    }
+
+    public SourceDetectionResult recordSourceDetectionResult(int count, long nowMillis, StatsRepository.SessionStamp expected,
+            java.util.function.BooleanSupplier stillEligible) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            throw new IllegalStateException("Source ledger commit must be off main");
+        }
+        if (expected == null) return new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
+        return recordInfractionResult(PenanceInfraction.NEW_DETECTION, count, nowMillis, expected, stillEligible);
+    }
+
+    /** One admitted viewport episode; same acknowledged/stamped result without detection batching. */
+    public SourceDetectionResult recordSourceDwellResult(long nowMillis, StatsRepository.SessionStamp expected) {
+        return recordSourceDwellResult(1, nowMillis, expected, () -> true);
+    }
+
+    /** Capture may admit several dwell occurrences; preserve their original bounded charge count. */
+    public SourceDetectionResult recordSourceDwellResult(int count, long nowMillis, StatsRepository.SessionStamp expected,
+            java.util.function.BooleanSupplier stillEligible) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            throw new IllegalStateException("Source ledger commit must be off main");
+        }
+        if (expected == null) return new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
+        return recordInfractionResult(PenanceInfraction.CENSORED_DWELL, count, nowMillis, expected, stillEligible);
+    }
+
+    private SourceDetectionResult recordInfractionResult(PenanceInfraction infraction, int count, long nowMillis,
+            StatsRepository.SessionStamp sourceSession) {
+        return recordInfractionResult(infraction, count, nowMillis, sourceSession, () -> true);
+    }
+
+    /** Eligibility is a pure observation; ledger and statistics remain separately acknowledged stores. */
+    private SourceDetectionResult recordInfractionResult(PenanceInfraction infraction, int count, long nowMillis,
+            StatsRepository.SessionStamp sourceSession, java.util.function.BooleanSupplier stillEligible) {
+        java.util.Objects.requireNonNull(stillEligible);
+        SourceDetectionResult rejected = new SourceDetectionResult(SourceDetectionStatus.REJECTED, 0);
+        SourceDetectionStatus written = sourceSession == null ? SourceDetectionStatus.APPLIED : SourceDetectionStatus.ACKNOWLEDGED;
         if ((infraction == PenanceInfraction.NEW_DETECTION
                 || infraction == PenanceInfraction.CENSORED_DWELL
-                || infraction == PenanceInfraction.CENSORED_TAP) && !modules.isCensorEnabled()) return 0;
+                || infraction == PenanceInfraction.CENSORED_TAP) && !modules.isCensorEnabled()) return rejected;
+        if (infraction == PenanceInfraction.TASK_FAILURE || infraction == PenanceInfraction.EXTRA_TIME_REQUEST) return rejected;
         if (infraction == null || !isEnabled() || !isInfractionEnabled(infraction)
-                || !new AppModeManager(context).isArmed() || count <= 0) return 0;
+                || !new AppModeManager(context).isArmed() || count <= 0) return rejected;
+        PenanceEvent assessed;
         synchronized (LOCK) {
+            if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+            SharedPreferences.Editor acknowledged = sourceSession == null ? null : preferences.edit();
             if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
                 HardcoreModeManager hardcore = new HardcoreModeManager(context);
-                if (!hardcore.isRequested()) return 0;
+                if (!hardcore.isRequested()) return rejected;
                 long last = preferences.getLong(KEY_LAST_TAMPER_AT, 0L);
                 long cooldown = getTamperCooldownMinutes() * 60_000L;
-                if (last > 0L && nowMillis >= last && nowMillis - last < cooldown) return 0;
+                if (last > 0L && nowMillis >= last && nowMillis - last < cooldown) return rejected;
             }
             int billableCount = count;
             if (infraction == PenanceInfraction.NEW_DETECTION) {
                 int batch = getDetectionBatch();
                 int accumulated = preferences.getInt(KEY_DETECTION_REMAINDER, 0) + count;
                 billableCount = accumulated / batch;
-                preferences.edit().putInt(
-                        KEY_DETECTION_REMAINDER, accumulated % batch).apply();
-                if (billableCount <= 0) return 0;
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                if (acknowledged == null) preferences.edit().putInt(KEY_DETECTION_REMAINDER, accumulated % batch).apply();
+                else acknowledged.putInt(KEY_DETECTION_REMAINDER, accumulated % batch);
+                if (billableCount <= 0) {
+                    if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                    acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+                }
             }
             List<PenanceEvent> events = loadEvents();
             trimHistoryForInsertion(events);
-            if (events.size() >= MAX_EVENTS) return 0;
+            if (events.size() >= MAX_EVENTS) {
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+            }
             int amount = PenancePolicy.boundedCharge(currentCurrencyEvents(events), nowMillis, billableCount,
                     getInfractionCents(infraction), getDailyCapCents(), getWeeklyCapCents(),
                     ZoneId.systemDefault());
-            if (amount <= 0) return 0;
+            if (amount <= 0) {
+                if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+                acknowledge(acknowledged); return new SourceDetectionResult(written, 0);
+            }
             long mercyEnds = nowMillis + getMercyMinutes() * 60_000L;
-            events.add(new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
-                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency()));
-            saveEvents(events);
-            new StatsRepository(context).recordTributeEvent(amount,
-                    infraction == PenanceInfraction.TAMPER_ATTEMPT, getCurrency());
+            assessed = new PenanceEvent(UUID.randomUUID().toString(), nowMillis, mercyEnds,
+                    amount, billableCount, infraction, PenanceEvent.Status.OPEN, "", getCurrency());
+            events.add(assessed);
+            if (!sourceEligible(sourceSession, stillEligible)) return rejected;
+            if (acknowledged == null) {
+                saveEvents(events);
+                new StatsRepository(context).recordTributeEvent(amount,
+                        infraction == PenanceInfraction.TAMPER_ATTEMPT, getCurrency());
+            } else {
+                acknowledge(acknowledged.putString(KEY_EVENTS, encodeEvents(events)));
+                if (sourceEligible(sourceSession, stillEligible))
+                    new StatsRepository(context).recordSourceTribute(sourceSession, amount, getCurrency());
+            }
             if (infraction == PenanceInfraction.TAMPER_ATTEMPT) {
                 preferences.edit().putLong(KEY_LAST_TAMPER_AT, nowMillis).apply();
             }
-            HardcoreAutoPayManager.schedule(context);
-            return amount;
         }
+        if (sourceEligible(sourceSession, stillEligible)) {
+            HardcoreAutoPayManager.schedule(context);
+            com.subhub.app.remote.RemoteActivityRecorder.tribute(assessed.getId());
+        }
+        return new SourceDetectionResult(written, assessed.getAmountCents());
+    }
+
+    private static boolean sourceEligible(StatsRepository.SessionStamp source, java.util.function.BooleanSupplier eligible) {
+        return (source == null || source.isCurrent()) && eligible.getAsBoolean();
+    }
+
+    private static void acknowledge(SharedPreferences.Editor edit) {
+        if (edit != null && !edit.commit()) throw new IllegalStateException("Source ledger store unacknowledged");
     }
 
     private static int clampTamperCooldown(int minutes) {
@@ -383,6 +645,41 @@ public final class PenanceManager {
         }
     }
 
+    /** Historical statistics never advance checkout, ledger lifecycle or payment accumulators. */
+    public RetainedStatistics retainedStatistics() {
+        return readRetainedStatistics(context);
+    }
+
+    public static RetainedStatistics readRetainedStatistics(Context context) {
+        SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        synchronized (LOCK) {
+            java.util.Map<String, PenanceEvent> unique = new java.util.LinkedHashMap<>();
+            for (PenanceEvent event : decodeEvents(preferences.getString(KEY_EVENTS, ""))) unique.putIfAbsent(event.getId(), event);
+            java.util.Map<String, Long> paid = new java.util.LinkedHashMap<>();
+            for (String currency : new String[]{"EUR", "USD"}) {
+                long retained = 0;
+                for (PenanceEvent event : unique.values()) {
+                    if (event.getStatus() != PenanceEvent.Status.PAID || !currency.equals(event.getCurrency())) continue;
+                    long amount = Math.max(0, event.getAmountCents());
+                    retained = retained > Long.MAX_VALUE - amount ? Long.MAX_VALUE : retained + amount;
+                }
+                Object stored = preferences.getAll().get(totalPaidKey(currency));
+                long accumulator = stored instanceof Number ? Math.max(0, ((Number) stored).longValue()) : 0;
+                paid.put(currency, Math.max(accumulator, retained));
+            }
+            return new RetainedStatistics(new ArrayList<>(unique.values()), paid);
+        }
+    }
+
+    public static final class RetainedStatistics {
+        public final List<PenanceEvent> events;
+        public final java.util.Map<String, Long> paidCents;
+        private RetainedStatistics(List<PenanceEvent> events, java.util.Map<String, Long> paidCents) {
+            this.events = Collections.unmodifiableList(events);
+            this.paidCents = Collections.unmodifiableMap(paidCents);
+        }
+    }
+
     public boolean forgiveLatestInMercy(long nowMillis) {
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
@@ -425,6 +722,8 @@ public final class PenanceManager {
     }
 
     private Settlement beginSettlement(long nowMillis, int minimumCents) {
+        com.subhub.app.remote.RemoteActivityRecorder.PaymentAudience audience =
+                com.subhub.app.remote.RemoteActivityRecorder.paymentAudience(context);
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
             String existingId = "";
@@ -455,7 +754,9 @@ public final class PenanceManager {
                             PenanceEvent.Status.CHECKOUT, settlementId));
                 }
             }
-            saveEvents(events);
+            SharedPreferences.Editor checkout = preferences.edit().putString(KEY_EVENTS, encodeEvents(events));
+            PaymentActivityStore.bind(checkout, settlementId, audience);
+            checkout.apply();
             clearOrderState();
             return settlement(events, settlementId);
         }
@@ -582,39 +883,115 @@ public final class PenanceManager {
     }
 
     public boolean completeSettlement(String settlementId, int paidAmountCents) {
+        return completeSettlement(settlementId, paidAmountCents, null);
+    }
+
+    /** Only a parser-verified provider capture can create a Paid activity fact. */
+    public boolean completeVerifiedSettlement(String settlementId, int paidAmountCents, PayPalOrdersClient.Capture capture) {
+        if (capture == null || !capture.matches(settlementId, paidAmountCents, getCurrency())) return false;
+        boolean completed = completeSettlement(settlementId, paidAmountCents, capture);
+        if (completed) try { com.subhub.app.remote.RemoteActivityRecorder.paymentCommitted(); }
+        catch (RuntimeException unavailable) { /* A wake failure cannot change durable payment completion. */ }
+        return completed;
+    }
+
+    private boolean completeSettlement(String settlementId, int paidAmountCents, PayPalOrdersClient.Capture capture) {
         if (settlementId == null || settlementId.isEmpty() || paidAmountCents <= 0) return false;
         synchronized (LOCK) {
             List<PenanceEvent> events = loadEvents();
+            if (capture != null && !capture.matches(settlementId, paidAmountCents, getCurrency())) return false;
             Settlement selected = settlement(events, settlementId);
-            if (selected == null || !getCurrency().equals(selected.getCurrency())) return false;
+            if (selected == null) return false;
+            // The shared selector returns an empty settlement after all matching rows are PAID.
+            if (selected.getEvents().isEmpty()) {
+                if (capture == null) return false;
+                int paid = 0, tribute = 0;
+                boolean paidPause = false;
+                for (PenanceEvent event : events) if (event.getStatus() == PenanceEvent.Status.PAID
+                        && settlementId.equals(event.getSettlementId()) && capture.currency().equals(event.getCurrency())) {
+                    paid += event.getAmountCents();
+                    if (event.getInfraction() != PenanceInfraction.PAID_PAUSE) tribute += event.getAmountCents();
+                    else paidPause = true;
+                }
+                if (paid != paidAmountCents) return false;
+                // Reconciliation never credits or activates a pause twice. Reuse only the original checkout's audience.
+                try {
+                    org.json.JSONObject audience = new org.json.JSONObject(preferences.getString(PaymentActivityStore.AUDIENCE, "{}"));
+                    if (settlementId.equals(audience.optString("settlement"))) {
+                        SharedPreferences.Editor receipt = preferences.edit();
+                        PaymentActivityStore.append(preferences, receipt, settlementId, capture, tribute, System.currentTimeMillis());
+                        receipt.apply();
+                    }
+                } catch (org.json.JSONException | RuntimeException unavailable) { /* Optional projection cannot undo payment completion. */ }
+                // A refused prior commit may have changed memory. A successful flush is required before acknowledgement.
+                if (!preferences.edit().commit()) return false;
+                if (paidPause) try { new PaidPauseManager(context).reconcileSettlement(settlementId); }
+                catch (RuntimeException unavailable) { android.util.Log.w("PaidPause", "Paid pause effects pending"); }
+                try { com.subhub.app.stats.DailyStatsStore.get(context).syncWallet(); }
+                catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
+                // A delayed retry must not clear the order belonging to a newer checkout.
+                if (getActiveSettlementId().isEmpty()) {
+                    clearOrderState();
+                    HardcoreAutoPayManager.schedule(context);
+                }
+                return true;
+            }
+            if (!getCurrency().equals(selected.getCurrency())) return false;
+            com.subhub.app.stats.DailyStatsStore daily = com.subhub.app.stats.DailyStatsStore.get(context);
+            try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
             long paidBeforeSettlement = totalPaidCentsLocked(events);
-            int expected = 0;
+            int expected = 0, tribute = 0;
             boolean activatesPause = false;
             for (PenanceEvent event : events) {
                 if (event.getStatus() == PenanceEvent.Status.CHECKOUT
                         && settlementId.equals(event.getSettlementId())) {
                     expected += event.getAmountCents();
+                    if (event.getInfraction() != PenanceInfraction.PAID_PAUSE) tribute += event.getAmountCents();
                     activatesPause |= event.getInfraction() == PenanceInfraction.PAID_PAUSE;
                 }
             }
             if (expected != paidAmountCents) return false;
-            if (activatesPause && !new PaidPauseManager(context).activate()) return false;
-            for (int index = 0; index < events.size(); index++) {
-                PenanceEvent event = events.get(index);
-                if (event.getStatus() == PenanceEvent.Status.CHECKOUT
-                        && settlementId.equals(event.getSettlementId())) {
-                    events.set(index, event.withStatus(
-                            PenanceEvent.Status.PAID, settlementId));
-                }
+            if (activatesPause && capture != null) synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+                return completeLedgerPayment(events, settlementId, paidAmountCents, capture, paidBeforeSettlement, tribute, daily, true);
             }
-            saveEvents(events);
-            long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
-                    ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
-            preferences.edit().putLong(totalPaidKey(), updatedTotal).apply();
-            clearOrderState();
-            HardcoreAutoPayManager.schedule(context);
-            return true;
+            if (activatesPause && !new PaidPauseManager(context).activate()) return false;
+            return completeLedgerPayment(events, settlementId, paidAmountCents, capture, paidBeforeSettlement, tribute, daily, false);
         }
+    }
+    private boolean completeLedgerPayment(List<PenanceEvent> events, String settlementId, int paidAmountCents,
+            PayPalOrdersClient.Capture capture, long paidBeforeSettlement, int tribute,
+            com.subhub.app.stats.DailyStatsStore daily, boolean preparePause) {
+        SharedPreferences.Editor completion = preferences.edit();
+        PaidPauseManager.SettlementActivation activation = preparePause
+                ? new PaidPauseManager(context).prepareSettlement(settlementId, completion) : null;
+        if (preparePause && activation == null) return false;
+        for (int index = 0; index < events.size(); index++) {
+            PenanceEvent event = events.get(index);
+            if (event.getStatus() == PenanceEvent.Status.CHECKOUT
+                    && settlementId.equals(event.getSettlementId())) {
+                events.set(index, event.withStatus(
+                        PenanceEvent.Status.PAID, settlementId));
+            }
+        }
+        if (capture == null) saveEvents(events);
+        long updatedTotal = paidBeforeSettlement > Long.MAX_VALUE - paidAmountCents
+                ? Long.MAX_VALUE : paidBeforeSettlement + paidAmountCents;
+        completion.putLong(totalPaidKey(), updatedTotal)
+                .putLong(com.subhub.app.stats.DailyStatsStore.STAMP, System.currentTimeMillis())
+                .putString(com.subhub.app.stats.DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
+        if (capture != null) {
+            completion.putString(KEY_EVENTS, encodeEvents(events));
+            try { PaymentActivityStore.append(preferences, completion, settlementId, capture, tribute, System.currentTimeMillis()); }
+            catch (RuntimeException unavailable) { /* Optional outbox failure cannot change successful credit. */ }
+        }
+        boolean committed = completion.commit();
+        if (capture != null && !committed) return false;
+        if (activation != null) try { new PaidPauseManager(context).finishSettlement(activation); }
+        catch (RuntimeException unavailable) { android.util.Log.w("PaidPause", "Paid pause effects pending"); }
+        try { daily.syncWallet(); } catch (RuntimeException unavailable) { android.util.Log.w("DailyStats", "Wallet checkpoint pending"); }
+        clearOrderState();
+        HardcoreAutoPayManager.schedule(context);
+        return true;
     }
 
     private long totalPaidCentsLocked(List<PenanceEvent> events) {
@@ -627,9 +1004,10 @@ public final class PenanceManager {
             return Math.max(0L, preferences.getLong(key, 0L));
         }
         long migratedTotal = 0L;
+        java.util.Set<String> receipts = new java.util.HashSet<>();
         for (PenanceEvent event : events) {
             if (event.getStatus() != PenanceEvent.Status.PAID
-                    || !currency.equals(event.getCurrency())) continue;
+                    || !currency.equals(event.getCurrency()) || !receipts.add(event.getId())) continue;
             long amount = Math.max(0, event.getAmountCents());
             migratedTotal = migratedTotal > Long.MAX_VALUE - amount
                     ? Long.MAX_VALUE : migratedTotal + amount;
@@ -642,6 +1020,26 @@ public final class PenanceManager {
         if (settlementId == null || settlementId.isEmpty()) return false;
         synchronized (LOCK) {
             return containsPaidPause(loadEvents(), settlementId);
+        }
+    }
+
+    public boolean hasPaymentActivity() {
+        synchronized (LOCK) { return !"[]".equals(preferences.getString(PaymentActivityStore.OUTBOX, "[]")); }
+    }
+    public boolean paymentActivityGap() { synchronized (LOCK) { return preferences.getBoolean(PaymentActivityStore.GAP, false); } }
+    public List<PaymentActivityReceipt> durablePaymentActivity() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Payment activity projection must be off main");
+        synchronized (LOCK) {
+            if (!preferences.edit().commit()) throw new IllegalStateException("Payment activity persistence unavailable");
+            try { return Collections.unmodifiableList(PaymentActivityStore.read(preferences)); }
+            catch (org.json.JSONException invalid) { throw new IllegalStateException("Payment activity unavailable", invalid); }
+        }
+    }
+    public boolean acknowledgePaymentActivity(PaymentActivityReceipt receipt) {
+        synchronized (LOCK) {
+            try { return PaymentActivityStore.acknowledge(preferences, receipt); }
+            catch (org.json.JSONException invalid) { throw new IllegalStateException("Payment activity acknowledgement unavailable", invalid); }
         }
     }
 
@@ -664,8 +1062,21 @@ public final class PenanceManager {
         }
     }
 
+    /** Waits for pending ledger writes before projecting assessed facts to another device. */
+    public List<PenanceEvent> durableActivityEvents() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Ledger projection must be off main");
+        synchronized (LOCK) {
+            if (!preferences.edit().commit()) throw new IllegalStateException("Ledger persistence unavailable");
+            return java.util.Collections.unmodifiableList(new ArrayList<>(loadEvents()));
+        }
+    }
+
     private List<PenanceEvent> loadEvents() {
-        String raw = preferences.getString(KEY_EVENTS, "");
+        return decodeEvents(preferences.getString(KEY_EVENTS, ""));
+    }
+
+    private static List<PenanceEvent> decodeEvents(String raw) {
         List<PenanceEvent> events = new ArrayList<>();
         if (raw == null || raw.trim().isEmpty()) return events;
         for (String line : raw.split(";")) {
@@ -688,6 +1099,10 @@ public final class PenanceManager {
     }
 
     private void saveEvents(List<PenanceEvent> events) {
+        preferences.edit().putString(KEY_EVENTS, encodeEvents(events)).apply();
+    }
+
+    private static String encodeEvents(List<PenanceEvent> events) {
         trimHistory(events);
         List<String> encoded = new ArrayList<>(events.size());
         for (PenanceEvent event : events) {
@@ -699,7 +1114,7 @@ public final class PenanceManager {
                     event.getStatus().name(), event.getSettlementId(),
                     event.getInfraction().name(), event.getCurrency()));
         }
-        preferences.edit().putString(KEY_EVENTS, String.join(";", encoded)).apply();
+        return String.join(";", encoded);
     }
 
     private static void trimHistory(List<PenanceEvent> events) {

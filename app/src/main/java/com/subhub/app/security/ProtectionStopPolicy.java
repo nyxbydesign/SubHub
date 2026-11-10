@@ -26,13 +26,14 @@ public final class ProtectionStopPolicy {
             boolean paidPauseActive) {
         if (paidPauseActive) return Decision.ALLOW;
         if (pactActive && !domMode) return Decision.TIMER_LOCKED;
-        if (hardcoreActive && !domMode) return Decision.REQUIRE_CONTROLLER;
+        if (!domMode) return Decision.REQUIRE_CONTROLLER;
         return Decision.ALLOW;
     }
 
     /** Notification actions cannot present the controller-PIN UI. */
     public static boolean showNotificationStop(Context context) {
-        return !CommitmentManager.isActive(context)
+        return ControllerPinManager.isDomModeActive()
+                && !CommitmentManager.isActive(context)
                 && !new HardcoreModeManager(context).isEnabled();
     }
 }

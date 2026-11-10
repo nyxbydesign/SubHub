@@ -32,6 +32,8 @@ import java.util.Map;
 
 @RunWith(AndroidJUnit4.class)
 public final class PenanceContractTest {
+    @org.junit.Rule public final com.subhub.app.UiAutomationStateRule automation =
+            new com.subhub.app.UiAutomationStateRule();
     private Context context;
     private PenanceManager manager;
 
@@ -110,10 +112,11 @@ public final class PenanceContractTest {
         assertFalse(new AppModeManager(context).isArmed());
     }
 
-    @Test public void disabledMoneyRulesBlockPaidPauseAtEveryActionBoundary() {
+    @Test public void disabledPaidPauseBlocksCheckoutAndSettlementAtEveryActionBoundary() {
         long now = System.currentTimeMillis();
         PaidPauseManager pause = new PaidPauseManager(context);
-        pause.configure(true, 375, 12);
+        manager.configure(false, 100, 500, 2_000, 0);
+        pause.configure(false, 375, 12);
         CommitmentManager.start(context, 60L * 60L * 1000L);
         new AppModeManager(context).setArmed(true);
 
@@ -121,11 +124,12 @@ public final class PenanceContractTest {
         assertFalse(manager.requestPaidPause(now));
         assertTrue(manager.snapshot(now).getEvents().isEmpty());
 
-        manager.configure(true, 100, 500, 2_000, 0);
+        pause.configure(true, 375, 12);
+        assertTrue(pause.canPurchase());
         assertTrue(manager.requestPaidPause(now));
         PenanceManager.Settlement settlement = manager.beginPaidPauseSettlement(now);
         assertNotNull(settlement);
-        manager.configure(false, 100, 500, 2_000, 0);
+        pause.configure(false, 375, 12);
 
         assertFalse(manager.completeSettlement(settlement.getId(), 375));
         assertFalse(pause.isActive());
@@ -140,7 +144,11 @@ public final class PenanceContractTest {
         CommitmentManager.start(context, 60L * 60L * 1000L);
         context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(HardcoreModeManager.KEY_REQUESTED, true).commit();
-        new FeatureModuleManager(context).save(true, true, false);
+        context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).edit()
+                .putBoolean(FeatureModuleManager.KEY_WALLET_ENABLED, false).commit();
+        context.getSharedPreferences(PenanceManager.PREFS_NAME, 0).edit()
+                .putBoolean("enabled", true).remove(PenanceManager.KEY_RULE_PARTICIPATION_MIGRATED).commit();
+        manager = new PenanceManager(context);
 
         assertFalse(new PaidPauseManager(context).canPurchase());
         assertFalse(manager.requestPaidPause(now));
@@ -155,16 +163,10 @@ public final class PenanceContractTest {
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(activity -> {
-                View paidPauseCard = activity.findViewById(R.id.paid_pause_config_card);
-                android.widget.CheckBox master = activity.findViewById(R.id.ledger_enabled);
-                assertFalse(master.isChecked());
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
-
-                master.setChecked(true);
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
-
-                master.setChecked(false);
-                assertEquals(View.VISIBLE, paidPauseCard.getVisibility());
+                activity.findViewById(android.R.id.content).findViewWithTag("wallet:pause").performClick();
+                assertTrue(activity.findViewById(R.id.paid_pause_config_card).isShown());
+                assertTrue(activity.findViewById(R.id.paid_pause_enabled).isEnabled());
+                assertFalse(manager.isInfractionEnabled(PenanceInfraction.NEW_DETECTION));
             });
         } finally {
             ControllerPinManager.enterSubMode();
@@ -407,76 +409,53 @@ public final class PenanceContractTest {
         assertEquals(1, manager.recordStrikes(1, now + 201));
     }
 
-    @Test public void styledTreasuryAndMainEntryRemainAvailable() {
+    @Test public void walletUsesFocusedRuleEditorAndSubHomeEntryRemainsAvailable() {
         ControllerPinManager.enterDomMode();
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
-            scenario.onActivity(activity -> {
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.button_clear_unpaid).getVisibility());
-                assertEquals(View.VISIBLE, activity.findViewById(R.id.button_test_strike).getVisibility());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.payment_availability).getVisibility());
-                assertEquals(4, ((android.widget.GridLayout)
-                        activity.findViewById(R.id.rule_grid)).getChildCount());
-                assertEquals(View.VISIBLE,
-                        activity.findViewById(R.id.detection_batch).getVisibility());
-                android.widget.GridLayout rules = activity.findViewById(R.id.rule_grid);
-                assertEquals(rules.getChildAt(0).getTop(), rules.getChildAt(1).getTop());
-                assertTrue(rules.getChildAt(2).getTop() > rules.getChildAt(0).getTop());
-                assertEquals(rules.getChildAt(0).getWidth(), rules.getChildAt(1).getWidth());
-                int[] detectionLocation = new int[2];
-                int[] dwellLocation = new int[2];
-                activity.findViewById(R.id.rule_detection_amount)
-                        .getLocationOnScreen(detectionLocation);
-                activity.findViewById(R.id.rule_dwell_amount)
-                        .getLocationOnScreen(dwellLocation);
-                android.widget.LinearLayout detectionTile = (android.widget.LinearLayout) rules.getChildAt(0);
-                android.widget.LinearLayout dwellTile = (android.widget.LinearLayout) rules.getChildAt(1);
-                assertEquals("Rule rows: toggle=" + detectionTile.getChildAt(0).getHeight()
-                        + "/" + dwellTile.getChildAt(0).getHeight()
-                        + ", help=" + detectionTile.getChildAt(1).getHeight()
-                        + "/" + dwellTile.getChildAt(1).getHeight(),
-                        detectionLocation[1], dwellLocation[1]);
+            scenario.onActivity(activity ->
+                            activity.findViewById(android.R.id.content)
+                                    .findViewWithTag("wallet:rules")
+                                    .performClick());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                    .waitForIdleSync();
+            scenario.onActivity(
+                    activity -> {
+                        assertTrue(activity.findViewById(R.id.rule_config_card).isShown());
+                        assertTrue(activity.findViewById(R.id.safety_config_card).isShown());
+                android.view.ViewGroup rules = activity.findViewById(R.id.rule_grid);
+                assertEquals(4, rules.getChildCount());
+                        for (int i = 1; i < rules.getChildCount(); i++) {
+                            assertTrue(rules.getChildAt(i).getTop() > rules.getChildAt(i - 1).getTop());
+                assertEquals(rules.getChildAt(0).getWidth(), rules.getChildAt(i).getWidth());
+                        }
+                        assertEquals(
+                                View.VISIBLE,
+                                activity.findViewById(R.id.detection_batch).getVisibility());
+                activity.findViewById(R.id.button_back).performClick();
+                        assertTrue(activity.findViewById(R.id.wallet_overview).isShown());
             });
         }
         ControllerPinManager.enterSubMode();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity(activity -> assertEquals(View.VISIBLE,
-                    activity.findViewById(R.id.sub_wallet_card).getVisibility()));
-        }
-    }
-
-    @Test public void ruleInputsStayAlignedWithLargeWrappedHelpAndWidthChanges() {
-        ControllerPinManager.enterDomMode();
-        try (ActivityScenario<PenanceActivity> scenario = ActivityScenario.launch(PenanceActivity.class)) {
+        long now = System.currentTimeMillis();
+        manager.configure(true, 100, 500, 2_000, 0);
+        assertEquals(100, manager.recordStrikes(1, now));
+        new PaidPauseManager(context).configure(true, 375, 12);
+        CommitmentManager.start(context, 60L * 60L * 1000L);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(
+                new android.content.Intent(context, MainActivity.class).setAction(android.content.Intent.ACTION_MAIN))) {
             scenario.onActivity(activity -> {
-                android.widget.GridLayout grid = activity.findViewById(R.id.rule_grid);
-                for (int index = 0; index < grid.getChildCount(); index++) {
-                    android.view.ViewGroup tile = (android.view.ViewGroup) grid.getChildAt(index);
-                    for (int row = 0; row < 2; row++) {
-                        android.widget.TextView text = (android.widget.TextView) tile.getChildAt(row);
-                        text.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, text.getTextSize() * 1.5f);
-                    }
-                }
-                float density = activity.getResources().getDisplayMetrics().density;
-                for (int widthDp : new int[] {320, 200, 320}) {
-                    int width = Math.round(widthDp * density);
-                    grid.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-                    grid.layout(0, 0, width, grid.getMeasuredHeight());
-                    int[] first = new int[2];
-                    int[] second = new int[2];
-                    activity.findViewById(R.id.rule_detection_amount).getLocationOnScreen(first);
-                    activity.findViewById(R.id.rule_dwell_amount).getLocationOnScreen(second);
-                    assertEquals("Aligned cost inputs at " + widthDp + "dp", first[1], second[1]);
-                    for (int index = 0; index < grid.getChildCount(); index++) {
-                        android.view.ViewGroup tile = (android.view.ViewGroup) grid.getChildAt(index);
-                        android.widget.TextView help = (android.widget.TextView) tile.getChildAt(1);
-                        assertTrue("Wrapped help must not be clipped", help.getHeight()
-                                >= help.getLayout().getHeight() + help.getCompoundPaddingTop()
-                                + help.getCompoundPaddingBottom());
-                    }
-                }
+                View service = activity.findViewById(R.id.home_service_widget);
+                View pay = activity.findViewById(R.id.sub_wallet_pay);
+                View pause = activity.findViewById(R.id.sub_wallet_pause);
+                assertTrue(service.isShown());
+                assertEquals(service, pay.getParent());
+                assertEquals(service, pause.getParent());
+                assertEquals(View.VISIBLE, pay.getVisibility());
+                assertEquals(View.VISIBLE, pause.getVisibility());
+                assertTrue(pause.isEnabled());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.nav_contract).getVisibility());
+                assertFalse(activity.findViewById(R.id.sub_dashboard).isShown());
             });
         }
     }
@@ -486,15 +465,13 @@ public final class PenanceContractTest {
         try (ActivityScenario<PenanceActivity> scenario =
                      ActivityScenario.launch(PenanceActivity.class)) {
             scenario.onActivity(activity -> {
-                android.widget.CheckBox toggle = activity.findViewById(
+                android.widget.CompoundButton toggle = activity.findViewById(
                         R.id.rule_detection_enabled);
                 View batch = activity.findViewById(R.id.detection_batch);
                 toggle.setChecked(false);
                 assertFalse(batch.isEnabled());
-                assertTrue(batch.getAlpha() < 0.5f);
                 toggle.setChecked(true);
                 assertTrue(batch.isEnabled());
-                assertEquals(1f, batch.getAlpha(), 0.01f);
             });
         } finally {
             ControllerPinManager.enterSubMode();

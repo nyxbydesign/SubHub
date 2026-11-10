@@ -1,36 +1,31 @@
 package com.subhub.app.settings;
+import com.subhub.app.configuration.FeatureEditorSession;
 
-import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CompoundButton;
-import android.widget.EditText;
-import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
 import com.subhub.app.capture.CensorImageEditor;
-import com.subhub.app.capture.ExportActivity;
 import com.subhub.app.databinding.ActivitySettingsBinding;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.overlay.CensorPhrases;
+import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.stats.StatsRepository;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
@@ -50,14 +45,15 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "censor", savedInstanceState)) return;
         binding = ActivitySettingsBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_censor,
-                R.string.censor_header_title, 0);
+                R.string.censor_header_title, R.string.role_this_device);
         binding.getRoot().setFocusableInTouchMode(true);
         binding.getRoot().requestFocus();
-        repository = new SettingsRepository(this);
-        stats = new StatsRepository(this);
+        repository = new SettingsRepository(FeatureEditorSession.context(this));
+        stats = new StatsRepository(FeatureEditorSession.context(this));
         images = new CensorImageEditor(this, binding.buttonAddCensorImages,
                 binding.censorImagesStatus, binding.censorImagesList);
         adaptBorderChoices();
@@ -66,19 +62,22 @@ public final class SettingsActivity extends AppCompatActivity {
         bindDisclosures();
         bindValues();
         attachListeners();
+        binding.buttonCensorPresets.setOnClickListener(view -> startActivity(
+                FeatureEditorSession.child(this, CensorPresetsActivity.class)));
         applyLockState();
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setOnClickListener(view -> toggleEditSession());
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
+        FeatureEditorSession.bind(this, binding.getRoot(), "censor", () -> { saveAll(); saveCustomPhrases(); return true; });
     }
 
     private void toggleEditSession() {
-        if (ControllerPinManager.isSessionUnlocked()) {
+        if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
-            ControllerEditMode.enterSubMode(this);
+            FeatureEditorSession.leaveEditor(this);
         } else {
-            ControllerPinGate.require(this, this::applyLockState, false);
+            ControllerPinGate.unlock(this, this::applyLockState, false);
         }
     }
 
@@ -88,6 +87,12 @@ public final class SettingsActivity extends AppCompatActivity {
         page.addView(binding.censorFilterRules, page.indexOfChild(binding.censorAppearance));
         binding.censorFilterRules.removeView(binding.censorCaptureSection);
         binding.censorFilterRules.addView(binding.censorCaptureSection);
+        com.subhub.app.people.PersonUi.row(page, R.drawable.ic_tab_export,
+                getString(R.string.export_workspace_title), "", () -> {
+                    if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")
+                            && com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent()))
+                        startActivity(new android.content.Intent(this, com.subhub.app.capture.ExportActivity.class));
+                }).setId(R.id.censor_photo_tools);
     }
 
     private void bindDisclosures() {
@@ -143,9 +148,11 @@ public final class SettingsActivity extends AppCompatActivity {
             text.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), label.length() + 1, text.length(), flags);
             text.setSpan(new android.text.style.RelativeSizeSpan(.8f), label.length() + 1, text.length(), flags);
             text.setSpan(new android.text.style.ForegroundColorSpan(getColor(R.color.text_secondary)), label.length() + 1, text.length(), flags);
-            choices[index].setTextSize(14f);
+            com.subhub.app.util.UiIdentity.textSize(choices[index], R.dimen.ui_text_row_title);
             choices[index].setText(text);
         }
+        com.subhub.app.util.UiIdentity.textSize(binding.radioPresetOff, R.dimen.ui_text_row_title);
+        binding.radioPresetOff.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 
     private void adaptBorderChoices() {
@@ -158,7 +165,7 @@ public final class SettingsActivity extends AppCompatActivity {
             params.width = stack ? ViewGroup.LayoutParams.MATCH_PARENT : 0;
             params.weight = stack ? 0f : 1f;
             choice.setLayoutParams(params);
-            choice.setTextSize(14f);
+            com.subhub.app.util.UiIdentity.textSize(choice, R.dimen.ui_text_row_title);
             if (stack) {
                 android.graphics.drawable.Drawable icon = choice.getCompoundDrawables()[1];
                 choice.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
@@ -174,6 +181,9 @@ public final class SettingsActivity extends AppCompatActivity {
         CensorAppearance appearance = repository.loadAppearance();
         binding.captureMethodGroup.check(repository.loadCaptureMethod() == CaptureMethod.APP_MODE
                 ? R.id.radio_capture_app_mode : R.id.radio_capture_recording);
+        binding.coverageGroup.check(repository.loadDetectorConfig().getCensorCoverage()
+                == com.subhub.app.detection.CensorCoverage.WHOLE_PERSON
+                ? R.id.radio_coverage_person : R.id.radio_coverage_areas);
         setCheckedStyle(radioFor(appearance.getType()));
         binding.intensitySeek.setProgress(appearance.getIntensity());
         binding.intensityValue.setText(percent(appearance.getIntensity()));
@@ -194,7 +204,8 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.borderPreview.setAppearance(appearance);
 
         DetectionPreset preset = repository.loadDetectionPreset();
-        binding.presetGroup.check(radioFor(preset));
+        binding.presetGroup.check(new FeatureModuleManager(FeatureEditorSession.context(this)).isCensorEnabled()
+                ? radioFor(preset) : R.id.radio_preset_off);
         DetectorConfig detector = repository.loadDetectorConfig();
         int confidence = Math.round(detector.getConfidenceThreshold() * 100);
         binding.confidenceSeek.setProgress(confidence);
@@ -240,6 +251,7 @@ public final class SettingsActivity extends AppCompatActivity {
 
     private void attachListeners() {
         binding.captureMethodGroup.setOnCheckedChangeListener((group, checkedId) -> saveAll());
+        binding.coverageGroup.setOnCheckedChangeListener((group, checkedId) -> saveAll());
         for (int id : styleRadioIds()) {
             RadioButton radio = findViewById(id);
             radio.setOnCheckedChangeListener((button, checked) -> {
@@ -257,6 +269,16 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.smutSensitivityGroup.setOnCheckedChangeListener((group, checkedId) -> saveAll());
         binding.presetGroup.setOnCheckedChangeListener((group, checkedId) -> {
             if (bindingValues) return;
+            if (!FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) {
+                bindValues();
+                applyLockState();
+                return;
+            }
+            if (checkedId == R.id.radio_preset_off) {
+                new FeatureModuleManager(FeatureEditorSession.context(this)).setCensorEnabled(false);
+                SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
+                return;
+            }
             DetectionPreset preset = presetFor(checkedId);
             repository.saveDetectionPreset(preset);
             bindingValues = true;
@@ -265,6 +287,7 @@ public final class SettingsActivity extends AppCompatActivity {
             binding.confidenceValue.setText(percent(confidence));
             bindingValues = false;
             saveAll();
+            new FeatureModuleManager(FeatureEditorSession.context(this)).setCensorEnabled(true);
         });
         binding.intensitySeek.setOnSeekBarChangeListener(new SavingSeekListener() {
             @Override public void update(int progress, boolean fromUser) {
@@ -331,11 +354,9 @@ public final class SettingsActivity extends AppCompatActivity {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
             @Override public void afterTextChanged(android.text.Editable value) {
-                if (!bindingValues && ControllerPinManager.isSessionUnlocked()) saveCustomPhrases();
+                if (!bindingValues && FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) saveCustomPhrases();
             }
         });
-        binding.buttonExport.setOnClickListener(view -> ControllerPinGate.require(this,
-                () -> startActivity(new Intent(this, ExportActivity.class)), false));
         binding.paletteColorOne.setOnClickListener(view -> pickEffectColor(1));
         binding.gradientStart.setOnClickListener(view -> pickGradientColor(true));
         binding.gradientEnd.setOnClickListener(view -> pickGradientColor(false));
@@ -348,17 +369,19 @@ public final class SettingsActivity extends AppCompatActivity {
                             SettingsRepository.KEY_BORDER_COLOR,
                             SettingsRepository.colorString(color)).apply();
                     renderColorButton(binding.borderColor, color);
-                    stats.setBorderColorChanged();
+                    if (!FeatureEditorSession.remote(this)) stats.setBorderColorChanged();
                     refreshBorderPreview();
                 }));
     }
 
     private void applyLockState() {
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = FeatureEditorSession.canEdit(SettingsActivity.this, "censor");
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         setEnabledRecursive(binding.styleGroup,
                 editing);
         setEnabledRecursive(binding.captureMethodGroup,
+                editing);
+        setEnabledRecursive(binding.coverageGroup,
                 editing);
         binding.intensitySeek.setEnabled(
                 editing);
@@ -376,7 +399,6 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.reverseStrengthSeek.setEnabled(
                 editing);
         images.refresh();
-        binding.buttonExport.setEnabled(editing);
         setEnabledRecursive(binding.presetGroup,
                 editing);
         binding.confidenceSeek.setEnabled(
@@ -413,7 +435,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void syncBorderControlState() {
-        boolean editing = ControllerPinManager.isSessionUnlocked();
+        boolean editing = FeatureEditorSession.canEdit(SettingsActivity.this, "censor");
         boolean active = binding.switchBorder.isChecked();
         binding.borderPreview.setAlpha(active ? 1f : .55f);
         binding.borderColor.setEnabled(active && editing);
@@ -425,7 +447,6 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.gradientEnd.setEnabled(active && editing);
         binding.gradientColors.setAlpha(active ? 1f : .5f);
         binding.switchAnimateBorder.setEnabled(active && editing);
-        binding.switchAnimateBorder.setAlpha(active ? 1f : .5f);
         setEnabledRecursive(binding.borderEffectGroup, active && editing);
         binding.borderEffectGroup.setAlpha(active ? 1f : .5f);
     }
@@ -471,13 +492,13 @@ public final class SettingsActivity extends AppCompatActivity {
                             : SettingsRepository.KEY_GRADIENT_END, SettingsRepository.colorString(color)).apply();
                     renderColorButton(start ? binding.gradientStart : binding.gradientEnd, color);
                     binding.borderPreview.setAppearance(repository.loadAppearance());
-                    stats.setBorderColorChanged();
+                    if (!FeatureEditorSession.remote(this)) stats.setBorderColorChanged();
                 });
     }
 
     private void showColorDialog(String title, int current, IntConsumer accepted) {
         com.subhub.app.util.ColorPickerDialog.show(this, title, current, color -> {
-            if (ControllerPinManager.isSessionUnlocked()) accepted.accept(color);
+            if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) accepted.accept(color);
         });
     }
 
@@ -532,7 +553,7 @@ public final class SettingsActivity extends AppCompatActivity {
                         R.string.effect_color_stripe_one, R.string.effect_color_stripe_two};
             case ERROR_POPUP:
                 return new int[]{R.string.effect_color_panel,
-                        R.string.effect_color_alert, R.string.effect_color_action};
+                        R.string.lockpad_color_keys, R.string.lockpad_color_hardware};
             default:
                 return new int[]{R.string.effect_color_fill,
                         R.string.effect_color_light, R.string.effect_color_flash};
@@ -553,7 +574,11 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void saveAll() {
-        if (bindingValues) return;
+        if (bindingValues || !FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) return;
+        if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) {
+            repository.preferences().edit().putString(SettingsRepository.KEY_CENSOR_COVERAGE,
+                    binding.radioCoveragePerson.isChecked() ? "whole_person" : "detected_areas").apply();
+        }
         repository.saveCaptureMethod(binding.radioCaptureAppMode.isChecked()
                 ? CaptureMethod.APP_MODE : CaptureMethod.SCREEN_RECORDING);
         String previousStyle = repository.preferences().getString(
@@ -615,14 +640,15 @@ public final class SettingsActivity extends AppCompatActivity {
                 binding.switchSmutText.isChecked(),
                 textSensitivityFor(binding.smutSensitivityGroup.getCheckedRadioButtonId()),
                 smutCategories));
-        stats.recordCensorStyleTried(selectedStyle);
-        stats.recordBorderEffectTried(selectedBorder);
-        if (!selectedStyle.equals(previousStyle)) stats.incrementCensorStyleChanges();
+        if (!FeatureEditorSession.remote(this)) stats.recordCensorStyleTried(selectedStyle);
+        if (!FeatureEditorSession.remote(this)) stats.recordBorderEffectTried(selectedBorder);
+        if (!FeatureEditorSession.remote(this) && !selectedStyle.equals(previousStyle)) stats.incrementCensorStyleChanges();
         refreshBorderPreview();
         refreshSectionSummaries();
     }
 
     private void saveCustomPhrases() {
+        if (!FeatureEditorSession.canEdit(this, "censor")) return;
         Set<String> values = new LinkedHashSet<>();
         for (String line : binding.customPhrases.getText().toString().split("\\R")) {
             String phrase = line.trim();
@@ -631,7 +657,7 @@ public final class SettingsActivity extends AppCompatActivity {
         repository.preferences().edit()
                 .putStringSet(SettingsRepository.KEY_CUSTOM_PHRASES, values)
                 .apply();
-        stats.setCustomPhrasesCount(values.size());
+        if (!FeatureEditorSession.remote(this)) stats.setCustomPhrasesCount(values.size());
     }
 
     private Set<String> selectedPhraseCategories() {
@@ -750,8 +776,8 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (ControllerPinManager.isDomModeActive()
-                && SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.CENSOR)) {
+        if (!FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) {
+            FeatureEditorSession.leaveEditor(this);
             return;
         }
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.CENSOR);
@@ -776,4 +802,9 @@ public final class SettingsActivity extends AppCompatActivity {
         @Override public void onStartTrackingTouch(SeekBar seekBar) {}
         @Override public void onStopTrackingTouch(SeekBar seekBar) {}
     }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        super.onSaveInstanceState(state);
+    }
+
 }

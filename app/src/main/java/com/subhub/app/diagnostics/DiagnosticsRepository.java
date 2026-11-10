@@ -23,6 +23,20 @@ public final class DiagnosticsRepository {
     private static int lastDetections;
     private static int frameWidth;
     private static int frameHeight;
+    private static long lastPreprocessMs;
+    private static long lastRuntimeMs;
+    private static long lastPostprocessMs;
+    private static long lastFrameAgeMs;
+    private static long lastPublishDelayMs;
+    private static long droppedFrames;
+    private static long ocrRuns;
+    private static long totalOcrMs;
+    private static long lastOcrMs;
+    private static long peakOcrMs;
+    private static long staleOcrResults;
+    private static int lastAccessibilityTextCandidates;
+    private static int lastAccessibilityTextStable;
+    private static int lastOcrTextStable;
     private static String lastFailure = "None";
 
     private DiagnosticsRepository() {}
@@ -43,6 +57,20 @@ public final class DiagnosticsRepository {
         lastDetections = 0;
         frameWidth = 0;
         frameHeight = 0;
+        lastPreprocessMs = 0;
+        lastRuntimeMs = 0;
+        lastPostprocessMs = 0;
+        lastFrameAgeMs = 0;
+        lastPublishDelayMs = 0;
+        droppedFrames = 0;
+        ocrRuns = 0;
+        totalOcrMs = 0;
+        lastOcrMs = 0;
+        peakOcrMs = 0;
+        staleOcrResults = 0;
+        lastAccessibilityTextCandidates = 0;
+        lastAccessibilityTextStable = 0;
+        lastOcrTextStable = 0;
         lastFailure = "None";
     }
 
@@ -57,6 +85,21 @@ public final class DiagnosticsRepository {
 
     public static synchronized Snapshot recordFrame(String captureMode, long inferenceMs,
             int detections, int width, int height) {
+        return recordFrame(captureMode, inferenceMs, 0L, inferenceMs, 0L,
+                0L, 0L, detections, width, height);
+    }
+
+    public static synchronized Snapshot recordFrame(
+            String captureMode,
+            long inferenceMs,
+            long preprocessMs,
+            long runtimeMs,
+            long postprocessMs,
+            long frameAgeMs,
+            long totalDroppedFrames,
+            int detections,
+            int width,
+            int height) {
         if (!running || !mode.equals(captureMode)) return snapshot();
         frames++;
         lastInferenceMs = Math.max(0, inferenceMs);
@@ -66,12 +109,41 @@ public final class DiagnosticsRepository {
         totalDetections += lastDetections;
         frameWidth = Math.max(0, width);
         frameHeight = Math.max(0, height);
+        lastPreprocessMs = Math.max(0L, preprocessMs);
+        lastRuntimeMs = Math.max(0L, runtimeMs);
+        lastPostprocessMs = Math.max(0L, postprocessMs);
+        lastFrameAgeMs = Math.max(0L, frameAgeMs);
+        droppedFrames = Math.max(0L, totalDroppedFrames);
         return snapshot();
     }
 
     public static synchronized void fail(String captureMode, Throwable error) {
         if (!mode.equals(captureMode)) return;
         lastFailure = error == null ? "Unknown failure" : error.getClass().getSimpleName();
+    }
+
+    public static synchronized void recordPublishDelay(String captureMode, long publishDelayMs) {
+        if (!running || !mode.equals(captureMode)) return;
+        lastPublishDelayMs = Math.max(0L, publishDelayMs);
+    }
+
+    public static synchronized void recordAccessibilityText(
+            String captureMode, int candidates, int stable) {
+        if (!running || !mode.equals(captureMode)) return;
+        lastAccessibilityTextCandidates = Math.max(0, candidates);
+        lastAccessibilityTextStable = Math.max(0, stable);
+    }
+
+    public static synchronized void recordOcr(
+            String captureMode, long durationMs, boolean stale, int stable) {
+        if (!running || !mode.equals(captureMode)) return;
+        long boundedDuration = Math.max(0L, durationMs);
+        ocrRuns++;
+        totalOcrMs += boundedDuration;
+        lastOcrMs = boundedDuration;
+        peakOcrMs = Math.max(peakOcrMs, boundedDuration);
+        if (stale) staleOcrResults++;
+        lastOcrTextStable = stale ? 0 : Math.max(0, stable);
     }
 
     public static synchronized void failCode(String captureMode, String family, int code) {
@@ -89,15 +161,22 @@ public final class DiagnosticsRepository {
         long uptime = startedAt == 0 ? 0 : Math.max(0, SystemClock.elapsedRealtime() - startedAt);
         return new Snapshot(mode, running, ready, provider, model, resolution, uptime, frames,
                 totalDetections, totalInferenceMs, lastInferenceMs, peakInferenceMs,
-                lastDetections, frameWidth, frameHeight, lastFailure);
+                lastDetections, frameWidth, frameHeight, lastPreprocessMs, lastRuntimeMs,
+                lastPostprocessMs, lastFrameAgeMs, lastPublishDelayMs,
+                droppedFrames, ocrRuns, totalOcrMs, lastOcrMs, peakOcrMs,
+                staleOcrResults, lastAccessibilityTextCandidates,
+                lastAccessibilityTextStable, lastOcrTextStable, lastFailure);
     }
 
     public static String overlayText(Snapshot value) {
         if (value == null || !value.isRunning()) return "";
         if (!value.isReady()) return value.getMode() + " • INITIALIZING";
-        return String.format(Locale.ROOT, "%s • %d ms (avg %d)\n%d regions • %dx%d",
+        return String.format(Locale.ROOT,
+                "%s • %d ms (avg %d)\nP/R/O %d/%d/%d • age %d / UI %d ms\n%d regions • %d dropped",
                 value.getProvider(), value.getLastInferenceMs(), value.getAverageInferenceMs(),
-                value.getLastDetections(), value.getFrameWidth(), value.getFrameHeight());
+                value.getLastPreprocessMs(), value.getLastRuntimeMs(), value.getLastPostprocessMs(),
+                value.getLastFrameAgeMs(), value.getLastPublishDelayMs(),
+                value.getLastDetections(), value.getDroppedFrames());
     }
 
     private static String filenameOnly(String value) {
@@ -129,12 +208,33 @@ public final class DiagnosticsRepository {
         private final int lastDetections;
         private final int frameWidth;
         private final int frameHeight;
+        private final long lastPreprocessMs;
+        private final long lastRuntimeMs;
+        private final long lastPostprocessMs;
+        private final long lastFrameAgeMs;
+        private final long lastPublishDelayMs;
+        private final long droppedFrames;
+        private final long ocrRuns;
+        private final long totalOcrMs;
+        private final long lastOcrMs;
+        private final long peakOcrMs;
+        private final long staleOcrResults;
+        private final int lastAccessibilityTextCandidates;
+        private final int lastAccessibilityTextStable;
+        private final int lastOcrTextStable;
         private final String lastFailure;
 
         private Snapshot(String mode, boolean running, boolean ready, String provider,
                 String model, int resolution, long uptimeMs, long frames, long totalDetections,
                 long totalInferenceMs, long lastInferenceMs, long peakInferenceMs,
-                int lastDetections, int frameWidth, int frameHeight, String lastFailure) {
+                int lastDetections, int frameWidth, int frameHeight,
+                long lastPreprocessMs, long lastRuntimeMs, long lastPostprocessMs,
+                long lastFrameAgeMs, long lastPublishDelayMs,
+                long droppedFrames, long ocrRuns, long totalOcrMs,
+                long lastOcrMs, long peakOcrMs, long staleOcrResults,
+                int lastAccessibilityTextCandidates,
+                int lastAccessibilityTextStable, int lastOcrTextStable,
+                String lastFailure) {
             this.mode = mode;
             this.running = running;
             this.ready = ready;
@@ -150,6 +250,20 @@ public final class DiagnosticsRepository {
             this.lastDetections = lastDetections;
             this.frameWidth = frameWidth;
             this.frameHeight = frameHeight;
+            this.lastPreprocessMs = lastPreprocessMs;
+            this.lastRuntimeMs = lastRuntimeMs;
+            this.lastPostprocessMs = lastPostprocessMs;
+            this.lastFrameAgeMs = lastFrameAgeMs;
+            this.lastPublishDelayMs = lastPublishDelayMs;
+            this.droppedFrames = droppedFrames;
+            this.ocrRuns = ocrRuns;
+            this.totalOcrMs = totalOcrMs;
+            this.lastOcrMs = lastOcrMs;
+            this.peakOcrMs = peakOcrMs;
+            this.staleOcrResults = staleOcrResults;
+            this.lastAccessibilityTextCandidates = lastAccessibilityTextCandidates;
+            this.lastAccessibilityTextStable = lastAccessibilityTextStable;
+            this.lastOcrTextStable = lastOcrTextStable;
             this.lastFailure = lastFailure;
         }
 
@@ -167,9 +281,27 @@ public final class DiagnosticsRepository {
         public int getLastDetections() { return lastDetections; }
         public int getFrameWidth() { return frameWidth; }
         public int getFrameHeight() { return frameHeight; }
+        public long getLastPreprocessMs() { return lastPreprocessMs; }
+        public long getLastRuntimeMs() { return lastRuntimeMs; }
+        public long getLastPostprocessMs() { return lastPostprocessMs; }
+        public long getLastFrameAgeMs() { return lastFrameAgeMs; }
+        public long getLastPublishDelayMs() { return lastPublishDelayMs; }
+        public long getDroppedFrames() { return droppedFrames; }
+        public long getOcrRuns() { return ocrRuns; }
+        public long getLastOcrMs() { return lastOcrMs; }
+        public long getPeakOcrMs() { return peakOcrMs; }
+        public long getStaleOcrResults() { return staleOcrResults; }
+        public int getLastAccessibilityTextCandidates() {
+            return lastAccessibilityTextCandidates;
+        }
+        public int getLastAccessibilityTextStable() { return lastAccessibilityTextStable; }
+        public int getLastOcrTextStable() { return lastOcrTextStable; }
         public String getLastFailure() { return lastFailure; }
         public long getAverageInferenceMs() {
             return frames == 0 ? 0 : Math.round((double) totalInferenceMs / frames);
+        }
+        public long getAverageOcrMs() {
+            return ocrRuns == 0 ? 0 : Math.round((double) totalOcrMs / ocrRuns);
         }
     }
 }

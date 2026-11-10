@@ -2,10 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -33,17 +44,52 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SubHub">
 
+        <service android:name=".remote.PeerSyncForegroundService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" android:stopWithTask="false" />
+        <service android:name=".remote.PairingForegroundService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <service android:name=".capture.export.ExportService" android:exported="false"
+            android:foregroundServiceType="dataSync|mediaProcessing" />
+        <activity android:name=".people.DummySubPreviewActivity" android:exported="false" />
+        <activity android:name=".tasks.TasksActivity" android:exported="false" />
+        <activity android:name=".journal.JournalActivity" android:exported="false" android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
+        <provider android:name=".journal.JournalProvider" android:authorities="${applicationId}.journal"
+            android:exported="false" android:grantUriPermissions="true" />
+        <activity android:name=".tasks.TasksOverviewActivity" android:exported="false" />
+        <activity android:name=".tasks.TaskMediaActivity" android:exported="false" />
+        <activity android:name=".security.AuthenticatorActivity" android:exported="false" />
+        <activity android:name=".capture.export.ExportAppearanceActivity" android:exported="false" />
+        <activity android:name=".privacy.PrivacyActivity" android:exported="false" />
+        <activity android:name=".privacy.AppUnlockActivity" android:exported="false"
+            android:excludeFromRecents="true" android:launchMode="singleTop" />
+
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true" />
+        <activity android:name=".onboarding.OnboardingActivity" android:exported="false" />
+        <activity android:name=".settings.SetupAppsActivity" android:exported="false" />
+        <activity-alias android:name=".DefaultLauncher" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="true" android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias android:name=".DiscreetLauncher" android:targetActivity=".MainActivity"
+            android:exported="true" android:enabled="false" android:label="@string/privacy_discreet_name"
+            android:icon="@drawable/ic_discreet_filter">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".settings.SettingsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.CensorPresetsActivity"
             android:exported="false" />
 
         <activity
@@ -65,23 +111,30 @@
             android:name=".capture.ExportActivity"
             android:exported="false" />
 
-        <activity
-            android:name=".studio.StudioActivity"
-            android:exported="false" />
-
-        <activity
+<activity
             android:name=".diagnostics.DiagnosticsActivity"
             android:exported="false" />
 
+        <activity android:name=".activity.DomActivityActivity" android:exported="false" />
         <activity android:name=".stats.StatsActivity" android:exported="false" />
+        <activity android:name=".people.ProfileActivity" android:exported="false" />
+        <activity android:name=".people.ProfileEditorActivity" android:exported="false" />
+        <activity android:name=".people.PeopleActivity" android:exported="false" />
+        <activity android:name=".people.PersonActivity" android:exported="false" />
+        <activity android:name=".people.ContractActivity" android:exported="false" />
+        <activity android:name=".people.LocalAppsActivity" android:exported="false" />
+        <activity android:name=".people.ServiceDurationActivity" android:exported="false" />
         <activity android:name=".stats.AchievementsActivity" android:exported="false" />
         <activity android:name=".popup.PopupStormActivity" android:exported="false" />
         <activity android:name=".help.HelpActivity" android:exported="false" />
+        <activity android:name=".help.PermissionSetupActivity" android:exported="false" />
         <activity
             android:name=".update.UpdatesActivity"
             android:exported="false" />
         <activity android:name=".commitment.CommitmentActivity" android:exported="false" />
         <activity android:name=".appmode.AppModeActivity" android:exported="false" />
+        <activity android:name=".appmode.ExtraTimeActivity" android:exported="false"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
         <activity android:name=".penance.PenanceActivity" android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
@@ -113,6 +166,12 @@
 
         <service
             android:name=".service.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="false" />
+
+        <service
+            android:name=".diagnostics.CensorLabRecordingService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection"
             android:stopWithTask="false" />
@@ -185,6 +244,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_file_paths" />
         </provider>
+        <activity android:name=".remote.PairingActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="subhubapp" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".remote.RemoteConnectionActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteContractActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteEndActivity" android:exported="false" />
+        <activity android:name=".remote.RemoteStatsActivity" android:exported="false" />
     </application>
 
 </manifest>

@@ -1,0 +1,55 @@
+<resources>
+    <string name="ux_off">Off</string>
+    <string name="ux_on">On</string>
+    <string name="authenticator_title">Keyholder</string>
+    <string name="authenticator_description">Your Dom keeps Google Authenticator, or a compatible app, on their own phone. It generates short-lived codes they can share with you from anywhere.</string>
+    <string name="authenticator_paired">Keyholder paired</string>
+    <string name="authenticator_unpaired">Not paired</string>
+    <string name="authenticator_pair">Pair authenticator</string>
+    <string name="authenticator_replace">Replace authenticator</string>
+    <string name="authenticator_remove">Remove authenticator</string>
+    <string name="authenticator_remove_message">Remove this authenticator? Your Dom’s codes will stop opening Dom controls. Your Dom PIN will still work.</string>
+    <string name="authenticator_setup_help">On your Dom’s phone: Google Authenticator → + → Scan a QR code.</string>
+    <string name="authenticator_qr">Authenticator pairing QR code</string>
+    <string name="authenticator_manual_help">Enter the displayed key manually in your authenticator.</string>
+    <string name="authenticator_code">Six-digit keyholder code</string>
+    <string name="authenticator_confirm">Pair keyholder</string>
+    <string name="authenticator_pair_success">Keys handed over. Your Dom’s next fresh code can open Dom controls.</string>
+    <string name="authenticator_invalid">Code expired, already used, or incorrect. Check automatic time on both phones and try a fresh code.</string>
+    <string name="authenticator_throttled">Too many attempts. Wait before trying another code, or use the Dom PIN.</string>
+    <string name="authenticator_unavailable">Authenticator unavailable. Use the Dom PIN to pair it again.</string>
+    <string name="authenticator_method_pin">Dom PIN</string>
+    <string name="authenticator_method_code">Keyholder code</string>
+    <item name="authenticator_confirmation" type="id" />
+    <item name="authenticator_confirm_button" type="id" />
+    <string name="pact_time_hidden">Time remaining is hidden</string>
+    <string name="pact_hide_countdown">Hide countdown</string>
+    <string name="pact_minimum_hours">Minimum hours</string>
+    <string name="pact_maximum_hours">Maximum hours</string>
+    <string name="pact_range_invalid">Use an ordered range between 0.5 and 720 hours.</string>
+    <string name="pact_start_unavailable">A Pact is already active, or the new Pact could not be saved.</string>
+    <string name="keyholder_your_key">YOUR DOM</string>
+    <string name="keyholder_paired_help">Your Dom has the setup key in Google Authenticator or their chosen authenticator. Ask for the current six-digit code when you need Dom access.</string>
+    <string name="keyholder_how">The Dom holds the keys</string>
+    <string name="keyholder_step_one">Pair authenticator</string>
+    <string name="keyholder_step_one_help">Your Dom adds the QR code or manual setup key to Google Authenticator (or a compatible app). They do not need SubHub.</string>
+    <string name="keyholder_step_two">Get a code</string>
+    <string name="keyholder_step_two_help">Their authenticator generates a new six-digit code every 30 seconds. Ask them to share the current code when they approve access.</string>
+    <string name="keyholder_step_three">Enter the code</string>
+    <string name="keyholder_step_three_help">Choose Keyholder code at a Dom prompt and enter the code before it expires. It opens the same controls as the PIN.</string>
+    <string name="keyholder_your_lock">Your lock</string>
+    <string name="keyholder_no_lock">No timed Pact is active. Choose your lock on Home, then enter service when you are ready.</string>
+    <string name="keyholder_view_lock">View your lock</string>
+    <string name="keyholder_choose_lock">Choose a lock on Home</string>
+    <string name="keyholder_pin_help">Choose the way that fits your arrangement. PIN and authenticator both open the same Dom controls; codes do not send remote commands.</string>
+    <string name="keyholder_handover_title">Pair authenticator</string>
+    <string name="keyholder_scan_title">Scan QR code</string>
+    <string name="keyholder_manual">Show setup key</string>
+    <string name="keyholder_confirm_title">Enter their six-digit code</string>
+    <string name="keyholder_confirm_help">Ask your Dom for the code showing in their authenticator.</string>
+    <string name="keyholder_pending_help">Nothing changes until you confirm. Keep the pairing key private.</string>
+    <item name="keyholder_pair_button" type="id" />
+    <string name="keyholder_manual_hide">Hide setup key</string>
+    <string name="service_duration_permanent">Permanent</string>
+    <string name="service_duration_random">Random</string>
+</resources>

@@ -37,7 +37,12 @@ public final class UpdateStateStore {
     }
 
     public boolean automaticChecks() { return preferences.getBoolean(AUTO, true); }
-    public void setAutomaticChecks(boolean enabled) { preferences.edit().putBoolean(AUTO, enabled).apply(); }
+    public void setAutomaticChecks(boolean enabled) {
+        synchronized (UpdateStateStore.class) {
+            preferences.edit().putBoolean(AUTO, enabled).apply();
+            if (!enabled) new UpdateDownloadCoordinator(context).cancel();
+        }
+    }
     public boolean devUpdates() { return preferences.getBoolean(DEV, false); }
     public long channelRevision() { return preferences.getLong(CHANNEL_REVISION, 0L); }
 
@@ -73,11 +78,31 @@ public final class UpdateStateStore {
     public void setEtag(String value) { preferences.edit().putString(ETAG, value == null ? "" : value).apply(); }
     public long downloadId() { return preferences.getLong(DOWNLOAD_ID, -1L); }
     public void setDownloadId(long id) { preferences.edit().putLong(DOWNLOAD_ID, id).apply(); }
-    public String verifiedPath() { return preferences.getString(VERIFIED_PATH, ""); }
+    public String verifiedPath() {
+        synchronized (UpdateStateStore.class) {
+            return preferences.getString(VERIFIED_PATH, "");
+        }
+    }
     public void setVerifiedPath(String path) {
         preferences.edit().putString(VERIFIED_PATH, path)
                 .putLong(VERIFIED_AT, path == null || path.isEmpty() ? 0L : System.currentTimeMillis()).apply();
     }
+    /** Ready notices must follow a successful durable publication of the verified private file. */
+    boolean publishVerified(String path) {
+        synchronized (UpdateStateStore.class) {
+            boolean persisted = preferences.edit().putString(VERIFIED_PATH, path)
+                    .putLong(VERIFIED_AT, System.currentTimeMillis()).remove(INSTALL_REQUESTED).commit();
+            if (!persisted) {
+                // A failed commit can still publish its values in memory. Invalidate them before
+                // readers or a concurrent preparation can mistake the file for acknowledged state.
+                preferences.edit().remove(VERIFIED_PATH).remove(VERIFIED_AT)
+                        .remove(INSTALL_REQUESTED).apply();
+                new File(path).delete();
+            }
+            return persisted;
+        }
+    }
+
     public boolean installRequested() {
         return preferences.getBoolean(INSTALL_REQUESTED, false);
     }
@@ -95,13 +120,21 @@ public final class UpdateStateStore {
         catch (JSONException | IllegalArgumentException exception) { return null; }
     }
 
+    static boolean sameCandidate(UpdateCandidate first, UpdateCandidate second) {
+        if (first == null || second == null || first.prerelease != second.prerelease) return false;
+        try { return first.manifest.json().equals(second.manifest.json()); }
+        catch (JSONException invalid) { return false; }
+    }
+
     public void setCandidate(UpdateCandidate candidate) {
-        UpdateCandidate previous = candidate();
-        if (previous != null && previous.manifest.versionCode != candidate.manifest.versionCode) {
-            clearDownload(true);
+        synchronized (UpdateStateStore.class) {
+            if (!sameCandidate(candidate(), candidate)) {
+                new UpdateDownloadCoordinator(context).cancel();
+                preferences.edit().remove(LAST_NOTIFIED).apply();
+            }
+            try { preferences.edit().putString(CANDIDATE, candidate.json()).apply(); }
+            catch (JSONException ignored) { }
         }
-        try { preferences.edit().putString(CANDIDATE, candidate.json()).apply(); }
-        catch (JSONException ignored) { }
     }
 
     public void clearCandidate() {
@@ -120,19 +153,27 @@ public final class UpdateStateStore {
         } catch (JSONException ignored) { }
     }
 
+    boolean wasNotified(String version) {
+        return version.equals(preferences.getString(LAST_NOTIFIED, ""));
+    }
+
     public boolean markNotified(String version) {
-        if (version.equals(preferences.getString(LAST_NOTIFIED, ""))) return false;
+        if (wasNotified(version)) return false;
         preferences.edit().putString(LAST_NOTIFIED, version).apply();
         return true;
     }
 
     public void clearDownload(boolean deleteFile) {
-        if (deleteFile) {
-            String path = verifiedPath();
-            if (!path.isEmpty()) new File(path).delete();
+        synchronized (UpdateStateStore.class) {
+            UpdateNotifications.cancelDownload(context, downloadId());
+            UpdateNotifications.cancelReady(context);
+            if (deleteFile) {
+                String path = verifiedPath();
+                if (!path.isEmpty()) new File(path).delete();
+            }
+            preferences.edit().remove(DOWNLOAD_ID).remove(VERIFIED_PATH).remove(VERIFIED_AT)
+                    .remove(INSTALL_REQUESTED).apply();
         }
-        preferences.edit().remove(DOWNLOAD_ID).remove(VERIFIED_PATH).remove(VERIFIED_AT)
-                .remove(INSTALL_REQUESTED).apply();
     }
 
     public void cleanupInstalled(long installedVersionCode) {

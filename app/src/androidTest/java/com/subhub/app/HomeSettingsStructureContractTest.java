@@ -31,8 +31,17 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class HomeSettingsStructureContractTest {
+    @org.junit.Rule public final com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new com.subhub.app.security.KeyholderPresentationAndroidTest.IntegrationFixture();
+    @org.junit.Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+
+    private static android.content.Intent homeIntent() {
+        return new android.content.Intent(ApplicationProvider.getApplicationContext(), MainActivity.class)
+                .setAction(android.content.Intent.ACTION_MAIN);
+    }
+
     @Test public void helpAndDiagnosticsAreAbsentFromHome() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(homeIntent())) {
             scenario.onActivity(activity -> {
                 assertNull(activity.findViewById(R.id.button_help));
                 assertNull(activity.findViewById(R.id.button_diagnostics));
@@ -56,17 +65,13 @@ public final class HomeSettingsStructureContractTest {
                 .putStringSet(SettingsRepository.KEY_TEXT_SMUT_CATEGORIES,
                         new LinkedHashSet<>(Arrays.asList(TextSmutConfig.CATEGORY_EXPLICIT)))
                 .commit();
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(homeIntent())) {
             scenario.onActivity(activity -> {
-                assertEquals("3 Censors active",
-                        ((TextView) activity.findViewById(R.id.sub_censor_voice))
-                                .getText().toString());
-                for (int id : new int[] {R.id.primary_header_subtitle,
-                        R.id.sub_censor_summary, R.id.sub_limits_detail,
-                        R.id.sub_wallet_summary, R.id.sub_atmosphere_summary}) {
-                    assertEquals(View.GONE, activity.findViewById(id).getVisibility());
-                }
-                assertTrue(activity.findViewById(R.id.sub_censor_card).isClickable());
+                com.subhub.app.people.PersonSnapshot person = new com.subhub.app.people.LocalPersonRepository(activity)
+                        .load(com.subhub.app.people.PersonId.LOCAL);
+                assertEquals("3 active filters", person.sections.stream().filter(value -> "censor".equals(value.key)).findFirst().get().summary);
+                assertFalse(activity.findViewById(R.id.sub_dashboard).isShown());
+                assertEquals(View.GONE, activity.findViewById(R.id.primary_header_subtitle).getVisibility());
             });
         } finally {
             SharedPreferences.Editor restore = preferences.edit();
@@ -85,6 +90,7 @@ public final class HomeSettingsStructureContractTest {
     @Test public void filterArrangementUsesCanonicalDomLabels() {
         Context context = ApplicationProvider.getApplicationContext();
         SettingsRepository repository = new SettingsRepository(context);
+        Map<String, ?> original = repository.preferences().getAll();
         repository.preferences().edit()
                 .putString(SettingsRepository.KEY_CENSOR_TYPE, "box")
                 .putBoolean(SettingsRepository.KEY_SHOW_BORDER, true)
@@ -108,42 +114,71 @@ public final class HomeSettingsStructureContractTest {
                                 TextSmutConfig.CATEGORY_SOLICITATION)))
                 .commit();
 
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity(activity -> {
-                String details = activity.censorArrangementDetails();
-                assertTrue(details.contains("Blackout · Classic Border"));
-                assertTrue(details.contains("High · Maximum Coverage"));
-                assertTrue(details.contains(
-                        "Vagina, Dick & Balls, Tits, Ass, Male Chest, Abs / Tummy"));
-                assertTrue(details.contains(
-                        "Context · Sexual Words, Kink / Fetish Talk, Sexual Invitations"));
-                assertTrue(details.contains("Beta / Cuck, Denial, Findom, Plain"));
-                assertFalse(details.contains("Buttocks"));
-                assertFalse(details.contains("Anus"));
-                assertFalse(details.contains(", Anal,"));
-                assertFalse(details.contains("BLACKOUT"));
-                assertFalse(details.contains("ULTRA · MAXIMUM COVERAGE"));
-                assertFalse(details.contains("Balanced"));
-                assertFalse(details.contains("Explicit language"));
-                assertFalse(details.contains("Humiliation"));
-                assertFalse(details.contains("Short"));
-            });
+        try {
+            String details = new com.subhub.app.people.LocalContractDetails(context).forSection("censor");
+            assertTrue(details.contains("Blackout · Classic Border"));
+            assertTrue(details.contains("High · Maximum Coverage"));
+            assertTrue(details.contains(
+                    "Vagina, Dick & Balls, Tits, Ass, Male Chest, Abs / Tummy"));
+            assertTrue(details.contains(
+                    "Context · Sexual Words, Kink / Fetish Talk, Sexual Invitations"));
+            assertTrue(details.contains("Beta / Cuck, Denial, Findom, Plain"));
+            assertFalse(details.contains("Buttocks"));
+            assertFalse(details.contains("Anus"));
+            assertFalse(details.contains(", Anal,"));
+            assertFalse(details.contains("BLACKOUT"));
+            assertFalse(details.contains("ULTRA · MAXIMUM COVERAGE"));
+            assertFalse(details.contains("Balanced"));
+            assertFalse(details.contains("Explicit language"));
+            assertFalse(details.contains("Humiliation"));
+            assertFalse(details.contains("Short"));
+        } finally {
+            com.subhub.app.settings.SharedPreferenceTestRestore.restore(repository.preferences(), original);
         }
     }
 
-    @Test public void toolsPrecedePaymentsAndHelpDiagnosticsLiveInSettings() {
-        try (ActivityScenario<GlobalSettingsActivity> scenario =
-                     ActivityScenario.launch(GlobalSettingsActivity.class)) {
-            scenario.onActivity(activity -> {
-                ViewGroup sections = activity.findViewById(R.id.settings_sections);
-                View paypal = activity.findViewById(R.id.paypal_card);
-                View appSettings = activity.findViewById(R.id.app_settings_card);
-                assertNotNull(paypal);
-                assertEquals(sections.getChildCount() - 1, sections.indexOfChild(paypal));
-                assertEquals(sections.getChildCount() - 2, sections.indexOfChild(appSettings));
-                assertNotNull(activity.findViewById(R.id.button_help));
-                assertNotNull(activity.findViewById(R.id.button_diagnostics));
-            });
+    @Test public void helpAndDiagnosticsStayInSettingsWhilePaymentsBelongToWallet() {
+        boolean originallyDom = com.subhub.app.security.ControllerPinManager.isDomModeActive();
+        com.subhub.app.security.ControllerPinManager.enterDomMode();
+        try {
+            try (ActivityScenario<GlobalSettingsActivity> scenario =
+                         ActivityScenario.launch(GlobalSettingsActivity.class)) {
+                scenario.onActivity(activity -> {
+                    ViewGroup sections = activity.findViewById(R.id.settings_sections);
+                    View helpHeader = sections.findViewWithTag("settings:help");
+                    assertNotNull(helpHeader);
+                    ViewGroup help = (ViewGroup) helpHeader.getParent();
+                    assertTrue(help.findViewById(R.id.button_help).isShown());
+                    assertTrue(help.findViewById(R.id.button_diagnostics).isShown());
+                    assertNull(activity.findViewById(R.id.paypal_card));
+                    assertNull(activity.findViewById(R.id.apps_card));
+                    assertNull(sections.findViewWithTag("settings:apps"));
+                });
+            }
+            Context context = ApplicationProvider.getApplicationContext();
+            try (ActivityScenario<com.subhub.app.penance.PenanceActivity> wallet = ActivityScenario.launch(
+                    new android.content.Intent(context, com.subhub.app.penance.PenanceActivity.class)
+                            .putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID,
+                                    com.subhub.app.people.PersonId.LOCAL.value()))) {
+                wallet.onActivity(activity -> {
+                    View payment = activity.findViewById(android.R.id.content).findViewWithTag("wallet:paypal");
+                    assertNotNull(payment);
+                    assertTrue(payment.isClickable());
+                    assertFalse(activity.findViewById(R.id.paypal_card).isShown());
+                    assertNull(activity.findViewById(R.id.button_help));
+                    assertNull(activity.findViewById(R.id.button_diagnostics));
+                });
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withTagValue(
+                        org.hamcrest.Matchers.is("wallet:paypal")))
+                        .perform(androidx.test.espresso.action.ViewActions.scrollTo(),
+                                androidx.test.espresso.action.ViewActions.click());
+                wallet.onActivity(activity -> assertTrue(activity.findViewById(R.id.paypal_card).isShown()));
+                wallet.recreate();
+                wallet.onActivity(activity -> assertTrue(activity.findViewById(R.id.paypal_card).isShown()));
+            }
+        } finally {
+            if (originallyDom) com.subhub.app.security.ControllerPinManager.enterDomMode();
+            else com.subhub.app.security.ControllerPinManager.enterSubMode();
         }
     }
 }

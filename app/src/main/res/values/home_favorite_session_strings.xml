@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_favorite_session_active">Session Active</string>
+    <string name="home_favorite_session_inactive">Session Inactive</string>
+    <string name="home_favorite_event_count">%1$d events</string>
+    <string name="home_favorite_session_events">%1$s · %2$s</string>
+</resources>

@@ -67,4 +67,37 @@ public final class PopupRunOwnershipTest {
         assertFalse(ownership.isService(service));
         assertFalse(ownership.isStopped(stop));
     }
+
+    @Test public void changedSessionInvalidatesOldServiceCleanupAndQueuedStart() {
+        PopupRunOwnership ownership = new PopupRunOwnership();
+        long first = ownership.adoptService("pact-a:pause-a:stats-a");
+        long replacement = ownership.adoptService("pact-b:pause-a:stats-a");
+        assertFalse(ownership.isService(first));
+        assertEquals(0, ownership.stopService(first));
+        assertTrue(ownership.isService(replacement));
+        assertEquals(replacement, ownership.serviceToken("pact-b:pause-a:stats-a"));
+    }
+
+    @Test public void unchangedSessionReevaluationKeepsTheParticipationToken() {
+        PopupRunOwnership ownership = new PopupRunOwnership();
+        long token = ownership.adoptService("pact:pause:stats");
+        assertEquals(token, ownership.adoptService("pact:pause:stats"));
+        assertEquals(token, ownership.serviceToken("pact:pause:stats"));
+        assertEquals(0, ownership.serviceToken("pact:other:stats"));
+    }
+
+    @Test public void queuedOldServiceStopCannotRemoveAReplacementOrPreview() {
+        PopupRunOwnership ownership = new PopupRunOwnership();
+        long first = ownership.adoptService("first");
+        long queuedStop = ownership.stopService(first);
+        long later = ownership.adoptService("later");
+        assertFalse(ownership.isStopped(queuedStop));
+        assertEquals(0, ownership.stopService(first));
+        long laterStop = ownership.stopService(later);
+        long preview = ownership.beginPreview(100, 10000);
+        assertFalse(ownership.isStopped(laterStop));
+        assertEquals(0, ownership.stopService(later));
+        assertTrue(ownership.isPreview());
+        assertTrue(ownership.expirePreview(preview, 10100));
+    }
 }

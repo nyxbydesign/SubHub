@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_setup_title">Set up Accessibility</string>
+    <string name="permission_setup_open">Permission setup guide</string>
+    <string name="permission_setup_intro">Android 13 or later may block Accessibility after an APK install. Open these settings pages in order; each button unlocks the next step.</string>
+    <string name="permission_setup_step_one">Find SubHub in Accessibility</string>
+    <string name="permission_setup_step_one_body">Open Installed apps, then SubHub. If it is greyed out, tap it once and dismiss the restricted-setting message.</string>
+    <string name="permission_setup_step_two">Allow restricted settings</string>
+    <string name="permission_setup_step_two_body">Open SubHub’s app settings. Tap the three-dot menu, then Allow restricted settings. Confirm with your device PIN or fingerprint if Android asks.</string>
+    <string name="permission_setup_step_three">Turn on Accessibility</string>
+    <string name="permission_setup_step_three_body">Return to Accessibility → Installed apps → SubHub. Turn on the service and review Android’s access prompt before choosing Allow.</string>
+    <string name="permission_setup_open_accessibility">Open Accessibility</string>
+    <string name="permission_setup_open_app_settings">Open app settings</string>
+    <string name="permission_setup_footer">Some phones call Installed apps Downloaded apps. If Allow restricted settings is missing, try step 1 again. Return to SubHub and allow any remaining permissions.</string>
+    <string name="permission_setup_allowed">Accessibility allowed</string>
+    <string name="permission_setup_not_allowed">Accessibility not yet allowed</string>
+    <string name="permission_setup_settings_unavailable">Open Android Settings manually: Accessibility, or Apps → SubHub.</string>
+    <string name="permission_setup_step_accessibility">Step %1$d. %2$s</string>
+    <string name="permission_setup_number_one" translatable="false">1</string>
+    <string name="permission_setup_number_two" translatable="false">2</string>
+    <string name="permission_setup_number_three" translatable="false">3</string>
+</resources>

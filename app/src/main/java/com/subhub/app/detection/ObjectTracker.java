@@ -13,7 +13,10 @@ import java.util.Set;
 /** Greedy IoU/distance tracker that keeps censor boxes stable between inference frames. */
 public final class ObjectTracker {
     private static final float IOU_THRESHOLD = 0.20f;
-    private static final float MAX_VELOCITY = 120f;
+    private static final float MAX_VELOCITY_PER_MS = 3f;
+    // Settled-model-only coverage must bridge the next settled pass. Aging it with every fast
+    // frame made boxes disappear immediately after scroll and reappear when quality caught up.
+    private static final float QUALITY_ONLY_GRACE_SECONDS = 2.5f;
 
     private final Map<Integer, TrackedObject> tracks = new LinkedHashMap<>();
     private DetectorConfig config;
@@ -27,7 +30,8 @@ public final class ObjectTracker {
         return update(detections, System.nanoTime());
     }
 
-    synchronized List<TrackedObject> update(List<Detection> detections, long nowNanos) {
+    /** Deterministic-time entry point used by capture timestamps and replay verification. */
+    public synchronized List<TrackedObject> update(List<Detection> detections, long nowNanos) {
         List<MatchCandidate> candidates = new ArrayList<>();
         for (int detectionIndex = 0; detectionIndex < detections.size(); detectionIndex++) {
             Detection detection = detections.get(detectionIndex);
@@ -36,7 +40,9 @@ public final class ObjectTracker {
                 // Spatial continuity owns the identity so one stable image cannot create a new
                 // censor (and a new ledger event) merely because its label changed for one frame.
                 if (!track.isActive()) continue;
-                float score = matchScore(detection.getBox(), track);
+                boolean identityHint = detection.getTrackId() == track.getId();
+                float score = identityHint ? 3f : matchScore(detection, track, nowNanos,
+                        config.getMaxExtrapolationMs());
                 if (score >= IOU_THRESHOLD) {
                     candidates.add(new MatchCandidate(detectionIndex, track.getId(), score));
                 }
@@ -53,24 +59,41 @@ public final class ObjectTracker {
             TrackedObject track = tracks.get(candidate.trackId);
             if (track == null) continue;
 
+            float elapsedMs = Math.max(1f,
+                    (nowNanos - track.getLastSeenNanos()) / 1_000_000f);
             float measuredX = clamp(
-                    detection.getBox().getCenterX() - track.getBox().getCenterX(),
-                    -MAX_VELOCITY,
-                    MAX_VELOCITY);
+                    (detection.getBox().getCenterX() - track.getRawBox().getCenterX()) / elapsedMs,
+                    -MAX_VELOCITY_PER_MS,
+                    MAX_VELOCITY_PER_MS);
             float measuredY = clamp(
-                    detection.getBox().getCenterY() - track.getBox().getCenterY(),
-                    -MAX_VELOCITY,
-                    MAX_VELOCITY);
+                    (detection.getBox().getCenterY() - track.getRawBox().getCenterY()) / elapsedMs,
+                    -MAX_VELOCITY_PER_MS,
+                    MAX_VELOCITY_PER_MS);
             float velocitySmoothing = config.getVelocitySmoothing();
             float dx = track.getVelocityX() * (1f - velocitySmoothing)
                     + measuredX * velocitySmoothing;
             float dy = track.getVelocityY() * (1f - velocitySmoothing)
                     + measuredY * velocitySmoothing;
+            boolean qualityCoverage = detection.getSource()
+                    == Detection.ObservationSource.QUALITY_VISUAL;
+            if (qualityCoverage) {
+                // The larger settled model decides that a region deserves coverage, but its
+                // periodically refreshed rectangle must not tug an already visible track. Fast
+                // inference and Accessibility viewport motion remain the geometry authorities.
+                dx = 0f;
+                dy = 0f;
+            }
             // Text geometry is already screen-aligned. Smoothing makes a corrected OCR bar trail
             // behind its text and remain visibly displaced for several frames.
             BBox rendered = "text_smut".equals(detection.getCategory())
                     ? detection.getBox()
-                    : smooth(track.getBox(), detection.getBox(), config.getTrackingSmoothing());
+                    : qualityCoverage
+                            ? track.getBox()
+                    : config.isMotionPrediction()
+                            ? smooth(track.getBox(), detection.getBox(),
+                                    config.getTrackingSmoothing())
+                            : smoothEventOwnedGeometry(track.getBox(), detection.getBox(),
+                                    config.getTrackingSmoothing());
             track.update(detection, rendered, dx, dy, nowNanos);
             detection.setTrackId(track.getId());
             matchedDetections[candidate.detectionIndex] = true;
@@ -81,6 +104,13 @@ public final class ObjectTracker {
             Detection detection = detections.get(index);
             if (!matchedDetections[index]
                     && detection.getConfidence() >= config.getConfidenceThreshold()) {
+                TrackedObject hinted = tracks.get(detection.getTrackId());
+                if (hinted != null && hinted.isActive()) {
+                    // A second observation linked to an identity already consumed this update is
+                    // supporting evidence, never permission to create a parallel censor.
+                    detection.setTrackId(hinted.getId());
+                    continue;
+                }
                 TrackedObject covering = coveringTrack(detection.getBox());
                 if (covering != null) {
                     // Effects such as blur, mosaic, labels, and static can produce several nested
@@ -90,7 +120,15 @@ public final class ObjectTracker {
                     continue;
                 }
                 int id = nextId++;
-                TrackedObject track = new TrackedObject(id, detection, nowNanos);
+                // Visual model results have already passed class-specific confidence and
+                // ambiguity filters, so hiding them until the next expensive screenshot adds a
+                // complete capture interval of latency. Anchored accessibility text has also
+                // already survived TextDetectionStabilizer's two independent classifier scans.
+                // Only unanchored text keeps the tracker's own second-observation gate.
+                boolean visibleImmediately = !"text_smut".equals(detection.getCategory())
+                        || detection.getAnchorKey() != null;
+                TrackedObject track = new TrackedObject(
+                        id, detection, nowNanos, visibleImmediately);
                 tracks.put(id, track);
                 detection.setTrackId(id);
             }
@@ -100,18 +138,23 @@ public final class ObjectTracker {
         while (iterator.hasNext()) {
             TrackedObject track = iterator.next().getValue();
             if (matchedTracks.contains(track.getId()) || track.getLastSeenNanos() == nowNanos) continue;
-            BBox predicted = null;
-            if (config.isMotionPrediction() && track.getFramesMissing() < 4) {
-                predicted = new BBox(
-                        Math.max(0, (int) (track.getBox().getX() + track.getVelocityX())),
-                        Math.max(0, (int) (track.getBox().getY() + track.getVelocityY())),
-                        track.getBox().getWidth(),
-                        track.getBox().getHeight());
-            }
+            BBox predicted = config.isMotionPrediction() && track.getFramesMissing() < 4
+                    ? track.predict(nowNanos, config.getMaxExtrapolationMs())
+                    : null;
             track.miss(predicted);
             float ageSeconds = (nowNanos - track.getLastSeenNanos()) / 1_000_000_000f;
-            if (track.getFramesMissing() >= config.getMinRemoveFrames()
-                    && ageSeconds > config.getTrackMaxAgeSeconds()) {
+            if (track.isQualityOnly()) {
+                // Fast inference is supplemental and may miss regions already confirmed by the
+                // quality model. Detector omission is not proof that the region disappeared;
+                // this asynchronous wall clock is the hard leak-prevention cap.
+                if (ageSeconds > QUALITY_ONLY_GRACE_SECONDS) {
+                    iterator.remove();
+                }
+                continue;
+            }
+            if ((!track.isVisible() && track.getFramesMissing() >= 1)
+                    || (track.getFramesMissing() >= config.getMinRemoveFrames()
+                    && ageSeconds > config.getTrackMaxAgeSeconds())) {
                 iterator.remove();
             }
         }
@@ -121,9 +164,55 @@ public final class ObjectTracker {
     public synchronized List<TrackedObject> activeTracks() {
         List<TrackedObject> active = new ArrayList<>();
         for (TrackedObject track : tracks.values()) {
-            if (track.isActive()) active.add(track);
+            if (track.isActive() && track.isVisible()) active.add(track);
         }
         return Collections.unmodifiableList(active);
+    }
+
+    /**
+     * Adds newly confirmed settled-model coverage without aging or reshaping live tracks.
+     *
+     * <p>The ordinary {@link #update(List, long)} path treats an omitted observation as a miss.
+     * A quality pass is supplemental rather than a complete realtime scene, so using that path
+     * would make fast-only tracks flicker. Linked quality detections are evidence only; unlinked
+     * confirmed detections become immediately visible coverage.</p>
+     */
+    public synchronized int supplementConfirmedQualityCoverage(
+            List<Detection> detections,
+            long nowNanos) {
+        if (detections == null || detections.isEmpty()) return 0;
+        int added = 0;
+        for (Detection detection : detections) {
+            if (detection == null || detection.getSource()
+                    != Detection.ObservationSource.QUALITY_VISUAL) continue;
+            TrackedObject hinted = tracks.get(detection.getTrackId());
+            if (hinted != null && hinted.isActive()) {
+                detection.setTrackId(hinted.getId());
+                refreshQualityOnlyTrack(hinted, detection, nowNanos);
+                continue;
+            }
+            TrackedObject covering = coveringTrack(detection.getBox());
+            if (covering != null) {
+                detection.setTrackId(covering.getId());
+                refreshQualityOnlyTrack(covering, detection, nowNanos);
+                continue;
+            }
+            if (detection.getConfidence() < config.getConfidenceThreshold()) continue;
+            int id = nextId++;
+            TrackedObject track = new TrackedObject(id, detection, nowNanos, true);
+            tracks.put(id, track);
+            detection.setTrackId(id);
+            added++;
+        }
+        return added;
+    }
+
+    private static void refreshQualityOnlyTrack(
+            TrackedObject track,
+            Detection detection,
+            long nowNanos) {
+        if (!track.isQualityOnly()) return;
+        track.update(detection, track.getBox(), 0f, 0f, nowNanos);
     }
 
     public synchronized void clear() {
@@ -133,9 +222,20 @@ public final class ObjectTracker {
 
     /** Keeps tracker identity in the same moving screen coordinate space as the overlay. */
     public synchronized void offsetActiveTracks(int dx, int dy, int frameWidth, int frameHeight) {
-        if (dx == 0 && dy == 0) return;
+        offsetActiveTracks(dx, dy, frameWidth, frameHeight, Collections.emptyMap());
+    }
+
+    /** Combine independently validated source corrections with event motion before clipping. */
+    public synchronized void offsetActiveTracks(int dx, int dy, int frameWidth, int frameHeight,
+            Map<Integer, Integer> sourceCorrections) {
+        if (dx == 0 && dy == 0 && sourceCorrections.isEmpty()) return;
         for (TrackedObject track : tracks.values()) {
-            if (track.isActive()) track.offset(dx, dy, frameWidth, frameHeight);
+            int extra = sourceCorrections.getOrDefault(track.getId(), 0);
+            long combined = (long) dy + extra;
+            if (combined < Integer.MIN_VALUE || combined > Integer.MAX_VALUE) combined = dy;
+            if (track.isActive() && (dx != 0 || combined != 0)) {
+                track.offset(dx, (int) combined, frameWidth, frameHeight);
+            }
         }
     }
 
@@ -147,20 +247,23 @@ public final class ObjectTracker {
         return tracks.size();
     }
 
-    private static float matchScore(BBox detection, TrackedObject track) {
-        float iou = detection.intersectionOverUnion(track.getBox());
-        BBox predicted = new BBox(
-                Math.max(0, (int) (track.getBox().getX() + track.getVelocityX())),
-                Math.max(0, (int) (track.getBox().getY() + track.getVelocityY())),
-                track.getBox().getWidth(),
-                track.getBox().getHeight());
-        iou = Math.max(iou, detection.intersectionOverUnion(predicted));
-        float dx = detection.getCenterX() - track.getBox().getCenterX();
-        float dy = detection.getCenterY() - track.getBox().getCenterY();
+    private static float matchScore(
+            Detection detection,
+            TrackedObject track,
+            long nowNanos,
+            float maxExtrapolationMs) {
+        if (detection.getAnchorKey() != null
+                && detection.getAnchorKey().equals(track.getAnchorKey())) return 2f;
+        BBox detectionBox = detection.getBox();
+        float iou = detectionBox.intersectionOverUnion(track.getBox());
+        BBox predicted = track.predict(nowNanos, maxExtrapolationMs);
+        iou = Math.max(iou, detectionBox.intersectionOverUnion(predicted));
+        float dx = detectionBox.getCenterX() - track.getBox().getCenterX();
+        float dy = detectionBox.getCenterY() - track.getBox().getCenterY();
         float distance = (float) Math.sqrt(dx * dx + dy * dy);
         float limit = Math.min(
                 Math.max(
-                        Math.max(detection.getWidth(), detection.getHeight()),
+                        Math.max(detectionBox.getWidth(), detectionBox.getHeight()),
                         Math.max(track.getBox().getWidth(), track.getBox().getHeight())) * 2f,
                 200f);
         if (distance < limit) iou = Math.max(iou, (1f - distance / limit) * 0.5f);
@@ -192,6 +295,25 @@ public final class ObjectTracker {
                 (int) (current.getY() + (target.getY() - current.getY()) * alpha),
                 (int) (current.getWidth() + (target.getWidth() - current.getWidth()) * alpha),
                 (int) (current.getHeight() + (target.getHeight() - current.getHeight()) * alpha));
+    }
+
+    /**
+     * Accessibility already supplies real viewport motion. Ignore sub-box detector wobble while
+     * still following a genuinely moving/resizing subject once it exits a proportional dead zone.
+     */
+    private static BBox smoothEventOwnedGeometry(BBox current, BBox target, float alpha) {
+        int minimumDimension = Math.max(1,
+                Math.min(current.getWidth(), current.getHeight()));
+        int centerTolerance = Math.max(3, Math.round(minimumDimension * 0.035f));
+        int sizeTolerance = Math.max(4, Math.round(minimumDimension * 0.05f));
+        int centerDelta = Math.max(
+                Math.abs(current.getCenterX() - target.getCenterX()),
+                Math.abs(current.getCenterY() - target.getCenterY()));
+        int sizeDelta = Math.max(
+                Math.abs(current.getWidth() - target.getWidth()),
+                Math.abs(current.getHeight() - target.getHeight()));
+        if (centerDelta <= centerTolerance && sizeDelta <= sizeTolerance) return current;
+        return smooth(current, target, alpha);
     }
 
     private static float clamp(float value, float minimum, float maximum) {

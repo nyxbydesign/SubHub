@@ -20,18 +20,22 @@ import com.subhub.app.MainActivity;
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeActivity;
 import com.subhub.app.atmosphere.AtmosphereActivity;
-import com.subhub.app.penance.PenanceActivity;
-import com.subhub.app.settings.FeatureModuleManager;
+import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.settings.GlobalSettingsActivity;
 import com.subhub.app.settings.SettingsActivity;
-import com.subhub.app.security.ControllerPinManager;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** Feature-aware navigation: Sub Space keeps only Home and its safe Settings surface. */
+/** Role-specific primary destinations; feature editors belong to a person's contracts. */
 public final class SubHubNavigation {
-    public enum Screen { HOME, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+    public static final String EXTRA_SECTION_HOME = "subhub.navigation.section_home";
+    public enum Screen { HOME, PEOPLE, CONTRACT, TASKS, ACTIVITY, STATS, PROFILE, CENSOR, LIMITS, MONEY, ATMOSPHERE, SETTINGS }
+
+    /** Resets presentation within an already selected primary destination. */
+    public interface SectionHome {
+        void showSectionHome();
+    }
 
     private static final AccessibilityDelegateCompat TAB_ACCESSIBILITY =
             new AccessibilityDelegateCompat() {
@@ -45,37 +49,198 @@ public final class SubHubNavigation {
 
     private SubHubNavigation() {}
 
+    /** Use an immediate offset so an in-flight fling cannot undo a tab reselection. */
+    public static void scrollToTop(View root) {
+        if (root == null || root.getVisibility() != View.VISIBLE) return;
+        if (root instanceof ScrollView) {
+            ScrollView scroll = (ScrollView) root;
+            scroll.scrollTo(0, 0);
+            scroll.smoothScrollTo(0, 0);
+        } else if (root instanceof android.widget.ListView) {
+            ((android.widget.ListView) root).setSelection(0);
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int index = 0; index < group.getChildCount(); index++)
+                scrollToTop(group.getChildAt(index));
+        }
+    }
+
+    /** Promotes an existing read-only detail page into a primary role destination. */
+    public static void attachToPage(Activity activity, android.widget.LinearLayout content, Screen active) {
+        View scroll = (View) content.getParent();
+        ((ViewGroup) scroll.getParent()).removeView(scroll);
+        android.widget.FrameLayout root = new android.widget.FrameLayout(activity);
+        root.setBackgroundResource(R.drawable.bg_main);
+        root.addView(scroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        activity.getLayoutInflater().inflate(R.layout.view_bottom_pill_nav, root, true);
+        activity.setContentView(root);
+        TextView role = PrimaryHeader.editLockButton(root);
+        role.setVisibility(View.VISIBLE);
+        role.setOnClickListener(view -> {
+            if (ControllerPinManager.isDomWorkspaceUnlocked()) {
+                com.subhub.app.security.ControllerEditMode.enterSubMode(activity);
+            } else com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(activity, () -> {
+                activity.startActivity(new Intent(activity, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                activity.finish();
+            }, false);
+        });
+        bind(activity, root, active);
+    }
+
     public static void bind(Activity activity, View root, Screen active) {
         View navigation = root.findViewById(R.id.bottom_navigation);
-        boolean domMode = ControllerPinManager.isDomModeActive();
+        boolean domMode = com.subhub.app.security.DeviceRolePreferences.supportsDom(activity)
+                && com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(activity);
         setVisible(navigation, true);
-        FeatureModuleManager modules = new FeatureModuleManager(activity);
         setVisible(root.findViewById(R.id.nav_home), true);
-        setVisible(root.findViewById(R.id.nav_censor), domMode && modules.isCensorEnabled());
-        setVisible(root.findViewById(R.id.nav_limits), domMode && modules.isLimitsEnabled());
-        setVisible(root.findViewById(R.id.nav_money), domMode && modules.isWalletEnabled());
-        setVisible(root.findViewById(R.id.nav_atmosphere), domMode);
-        setVisible(root.findViewById(R.id.nav_settings), true);
+        setVisible(root.findViewById(R.id.nav_censor), false);
+        setVisible(root.findViewById(R.id.nav_limits), false);
+        setVisible(root.findViewById(R.id.nav_money), false);
+        setVisible(root.findViewById(R.id.nav_atmosphere), false);
+        setVisible(root.findViewById(R.id.nav_people), domMode);
+        setVisible(root.findViewById(R.id.nav_tasks), true);
+        boolean activityAvailable = com.subhub.app.activity.ActivitySources.repository().supports(null);
+        setVisible(root.findViewById(R.id.nav_activity), false);
+        setVisible(root.findViewById(R.id.nav_contract), !domMode);
+        setVisible(root.findViewById(R.id.nav_stats), true);
+        PrimaryHeader.settings(activity, root, active == Screen.SETTINGS);
+        Screen selected = active;
+        if (active == Screen.STATS) selected = Screen.PROFILE;
+        if (active == Screen.ACTIVITY) selected = domMode ? Screen.PEOPLE : Screen.HOME;
+        if (active == Screen.CENSOR || active == Screen.LIMITS || active == Screen.MONEY
+                || active == Screen.ATMOSPHERE || domMode && active == Screen.CONTRACT) {
+            selected = domMode ? Screen.PEOPLE : Screen.CONTRACT;
+        }
+        ((TextView) root.findViewById(R.id.nav_home_label)).setText(R.string.role_overview);
         bindTab(activity, root.findViewById(R.id.nav_home),
                 root.findViewById(R.id.nav_home_icon), root.findViewById(R.id.nav_home_label),
-                active, Screen.HOME, MainActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_censor),
-                root.findViewById(R.id.nav_censor_icon), root.findViewById(R.id.nav_censor_label),
-                active, Screen.CENSOR, SettingsActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_limits),
-                root.findViewById(R.id.nav_limits_icon), root.findViewById(R.id.nav_limits_label),
-                active, Screen.LIMITS, AppModeActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_money),
-                root.findViewById(R.id.nav_money_icon), root.findViewById(R.id.nav_money_label),
-                active, Screen.MONEY, PenanceActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_atmosphere),
-                root.findViewById(R.id.nav_atmosphere_icon),
-                root.findViewById(R.id.nav_atmosphere_label),
-                active, Screen.ATMOSPHERE, AtmosphereActivity.class);
-        bindTab(activity, root.findViewById(R.id.nav_settings),
-                root.findViewById(R.id.nav_settings_icon), root.findViewById(R.id.nav_settings_label),
-                active, Screen.SETTINGS, GlobalSettingsActivity.class);
+                selected, Screen.HOME, MainActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_people),
+                root.findViewById(R.id.nav_people_icon), root.findViewById(R.id.nav_people_label),
+                selected, Screen.PEOPLE, com.subhub.app.people.PeopleActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_tasks),
+                root.findViewById(R.id.nav_tasks_icon), root.findViewById(R.id.nav_tasks_label),
+                selected, Screen.TASKS, domMode ? com.subhub.app.tasks.TasksOverviewActivity.class
+                        : com.subhub.app.tasks.TasksActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_activity),
+                root.findViewById(R.id.nav_activity_icon), root.findViewById(R.id.nav_activity_label),
+                selected, Screen.ACTIVITY, com.subhub.app.activity.DomActivityActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_contract),
+                root.findViewById(R.id.nav_contract_icon), root.findViewById(R.id.nav_contract_label),
+                selected, Screen.CONTRACT, com.subhub.app.people.ContractActivity.class);
+        bindTab(activity, root.findViewById(R.id.nav_stats),
+                root.findViewById(R.id.nav_stats_icon), root.findViewById(R.id.nav_stats_label),
+                selected, Screen.PROFILE, com.subhub.app.people.ProfileActivity.class);
         bindNavigationLayout(navigation);
+        bindActivityUnread(activity, root, domMode && activityAvailable && ControllerPinManager.isDomWorkspaceUnlocked());
+    }
+
+    private static void bindActivityUnread(Activity activity, View root, boolean domMode) {
+        View tab = root.findViewById(R.id.nav_people);
+        if (tab == null || !(activity instanceof androidx.lifecycle.LifecycleOwner)) return;
+        ActivityUnread binding = (ActivityUnread) tab.getTag(R.id.nav_activity);
+        if (binding == null) {
+            binding = new ActivityUnread((androidx.lifecycle.LifecycleOwner) activity, tab);
+            tab.setTag(R.id.nav_activity, binding);
+        }
+        binding.bind(domMode);
+    }
+
+    /** Event-driven reads belong to the attached page, never the Home refresh timer. */
+    private static final class ActivityUnread implements androidx.lifecycle.DefaultLifecycleObserver,
+            View.OnAttachStateChangeListener {
+        private final androidx.lifecycle.LifecycleOwner owner;
+        private final View tab;
+        private final AsyncUiScope data;
+        private final String job;
+        private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        private AutoCloseable observation;
+        private boolean dom, started, dirty, closed;
+        private long unread = -1;
+
+        ActivityUnread(androidx.lifecycle.LifecycleOwner owner, View tab) {
+            this.owner = owner;
+            this.tab = tab;
+            data = AsyncUiScope.forPage(owner);
+            job = "navigation-activity-unread:" + System.identityHashCode(tab);
+            tab.addOnAttachStateChangeListener(this);
+            owner.getLifecycle().addObserver(this);
+        }
+
+        void bind(boolean domMode) {
+            dom = domMode;
+            render();
+            if (dom) start(); else stop();
+        }
+
+        private void start() {
+            if (closed || started || !allowed() || !tab.isAttachedToWindow()
+                    || !owner.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return;
+            started = true;
+            observation = com.subhub.app.activity.ActivitySources.observe(() -> main.post(this::reload));
+            reload();
+        }
+
+        private void stop() {
+            started = false;
+            dirty = false;
+            data.cancel(job);
+            if (observation != null) {
+                try { observation.close(); } catch (Exception ignored) { }
+                observation = null;
+            }
+        }
+
+        private void reload() {
+            if (!started || closed || !allowed()) return;
+            if (data.isPending(job)) { dirty = true; return; }
+            dirty = false;
+            android.content.Context application = tab.getContext().getApplicationContext();
+            data.load(job, () -> {
+                if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(application)
+                        || !ControllerPinManager.isDomWorkspaceUnlocked()) return 0;
+                return com.subhub.app.activity.ActivitySources.repository().unreadCount();
+            }, count -> {
+                if (!started || closed) return;
+                unread = Math.max(0, count.longValue());
+                render();
+                if (dirty) reload();
+            }, failure -> {
+                unread = -1;
+                render();
+                if (dirty) reload();
+            });
+        }
+
+        private void render() {
+            boolean show = allowed() && unread > 0;
+            View indicator = tab.findViewById(R.id.nav_activity_unread);
+            indicator.setVisibility(show ? View.VISIBLE : View.GONE);
+            String label = tab.getResources().getString(R.string.role_your_subs);
+            CharSequence description = show ? label + ", "
+                    + tab.getResources().getString(R.string.dom_activity_unread_count, unread) : label;
+            tab.setContentDescription(description);
+            androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, description);
+        }
+
+        private boolean allowed() {
+            return dom && ControllerPinManager.isDomWorkspaceUnlocked()
+                    && com.subhub.app.security.DeviceRolePreferences.supportsDom(tab.getContext());
+        }
+
+        @Override public void onStart(androidx.lifecycle.LifecycleOwner owner) { render(); start(); }
+        @Override public void onStop(androidx.lifecycle.LifecycleOwner owner) { stop(); }
+        @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
+            closed = true;
+            stop();
+            main.removeCallbacksAndMessages(null);
+            tab.removeOnAttachStateChangeListener(this);
+            owner.getLifecycle().removeObserver(this);
+        }
+        @Override public void onViewAttachedToWindow(View view) { start(); }
+        @Override public void onViewDetachedFromWindow(View view) { stop(); }
     }
 
     private static void bindNavigationLayout(View navigation) {
@@ -104,60 +269,54 @@ public final class SubHubNavigation {
                 : navigation.getResources().getDisplayMetrics().widthPixels;
         int minimumTarget = navigation.getResources()
                 .getDimensionPixelSize(R.dimen.control_min_height);
-        int desiredMargin = navigation.getResources()
-                .getDimensionPixelSize(R.dimen.bottom_nav_margin);
-        int minimumMargin = navigation.getResources()
-                .getDimensionPixelSize(R.dimen.bottom_nav_min_margin);
         int horizontalPadding = navigation.getPaddingLeft() + navigation.getPaddingRight();
-        int available = Math.max(0, pageWidth - horizontalPadding - 2 * minimumMargin);
-        int[] targetWidths = new int[visibleTabs.size()];
+        int margin = Math.min(navigation.getResources().getDimensionPixelSize(R.dimen.bottom_nav_margin),
+                Math.max(0, (pageWidth - 3 * minimumTarget) / 2));
+        int contentWidth = Math.max(0, pageWidth - horizontalPadding - 2 * margin);
+        int[] naturalWidths = new int[visibleTabs.size()];
         for (int index = 0; index < visibleTabs.size(); index++) {
             ViewGroup tab = (ViewGroup) visibleTabs.get(index);
             TextView label = (TextView) tab.getChildAt(1);
-            targetWidths[index] = Math.max(minimumTarget,
-                    (int) Math.ceil(label.getPaint().measureText(label.getText().toString()))
-                            + 2 * minimumMargin);
+            naturalWidths[index] = Math.max(minimumTarget, (int) Math.ceil(android.text.Layout.getDesiredWidth(
+                    label.getText(), label.getPaint())) + label.getCompoundPaddingLeft()
+                    + label.getCompoundPaddingRight() + tab.getPaddingLeft() + tab.getPaddingRight());
         }
-
-        // Give long names their natural width. Enlarge the grid before splitting words
-        // or shrinking the user's font setting; child order remains the navigation order.
+        // Keep one rail while the actual scaled labels fit. Additional balanced rows
+        // preserve complete words and touch targets when the viewport cannot contain it.
         int columns = visibleTabs.size();
-        int[] columnWidths;
-        int naturalWidth;
-        while (true) {
+        int[] columnWidths = null;
+        int naturalWidth = 0;
+        for (int candidateRows = 1; candidateRows <= visibleTabs.size(); candidateRows++) {
+            columns = (visibleTabs.size() + candidateRows - 1) / candidateRows;
             columnWidths = new int[columns];
-            for (int index = 0; index < targetWidths.length; index++) {
-                columnWidths[index % columns] = Math.max(columnWidths[index % columns],
-                        targetWidths[index]);
-            }
+            for (int index = 0; index < naturalWidths.length; index++)
+                columnWidths[index % columns] = Math.max(columnWidths[index % columns], naturalWidths[index]);
             naturalWidth = 0;
             for (int width : columnWidths) naturalWidth += width;
-            if (naturalWidth <= available || columns == 1) break;
-            columns = columns == visibleTabs.size() && columns > 3
-                    ? (columns + 1) / 2 : columns - 1;
+            if (naturalWidth <= contentWidth || columns == 1) break;
         }
+        int rows = (visibleTabs.size() + columns - 1) / columns;
+        if (tabs.getColumnCount() < columns) tabs.setColumnCount(columns);
+        if (tabs.getRowCount() < rows) tabs.setRowCount(rows);
         ViewGroup.MarginLayoutParams params =
                 (ViewGroup.MarginLayoutParams) navigation.getLayoutParams();
-        int margin = Math.min(desiredMargin, Math.max(minimumMargin,
-                (pageWidth - horizontalPadding - naturalWidth) / 2));
-        if (params.leftMargin != margin || params.rightMargin != margin) {
+        int bottomMargin = navigation.getResources().getDimensionPixelSize(R.dimen.bottom_nav_bottom_margin);
+        if (params.leftMargin != margin || params.rightMargin != margin || params.bottomMargin != bottomMargin) {
             params.leftMargin = margin;
             params.rightMargin = margin;
+            params.bottomMargin = bottomMargin;
             navigation.setLayoutParams(params);
         }
-        int contentWidth = pageWidth - horizontalPadding - 2 * margin;
         int extra = contentWidth - naturalWidth;
-        for (int column = 0; column < columns; column++) {
-            columnWidths[column] = extra >= 0
-                    ? columnWidths[column] + extra / columns + (column < extra % columns ? 1 : 0)
-                    : contentWidth / columns;
-        }
+        for (int column = 0; column < columns; column++) columnWidths[column] = extra >= 0
+                ? columnWidths[column] + extra / columns + (column < extra % columns ? 1 : 0)
+                : contentWidth / columns;
         int visibleIndex = 0;
         for (int index = 0; index < tabs.getChildCount(); index++) {
             View tab = tabs.getChildAt(index);
             boolean visible = tab.getVisibility() == View.VISIBLE;
-            int row = visible ? visibleIndex / columns : 0;
             int column = visible ? visibleIndex % columns : 0;
+            int row = visible ? visibleIndex / columns : 0;
             int width = visible ? columnWidths[column] : 0;
             GridLayout.LayoutParams tabParams = (GridLayout.LayoutParams) tab.getLayoutParams();
             GridLayout.Spec rowSpec = GridLayout.spec(row, GridLayout.FILL);
@@ -171,8 +330,10 @@ public final class SubHubNavigation {
             }
             if (visible) visibleIndex++;
         }
+        if (tabs.getColumnCount() != columns) tabs.setColumnCount(columns);
+        if (tabs.getRowCount() != rows) tabs.setRowCount(rows);
 
-        // Reserve the measured pill, including labels enlarged by the system font setting.
+        // Reserve the measured rail, including labels enlarged by the system font setting.
         // Padding belongs to the scroll content so the final control can scroll above it.
         int pillHeight = Math.max(navigation.getHeight(), navigation.getResources()
                 .getDimensionPixelSize(R.dimen.bottom_nav_height));
@@ -193,23 +354,18 @@ public final class SubHubNavigation {
                         content.getPaddingEnd(), clearance);
             }
         }
-    }
-
-    public static boolean redirectIfDisabled(Activity activity, Screen current) {
-        FeatureModuleManager modules = new FeatureModuleManager(activity);
-        boolean enabled = current == Screen.HOME || current == Screen.SETTINGS
-                || current == Screen.ATMOSPHERE && ControllerPinManager.isDomModeActive()
-                || current == Screen.CENSOR && modules.isCensorEnabled()
-                || current == Screen.LIMITS && modules.isLimitsEnabled()
-                || current == Screen.MONEY && modules.isWalletEnabled();
-        if (enabled) return false;
-        Class<? extends Activity> target = MainActivity.class;
-        activity.startActivity(new Intent(activity, target)
-                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
-        activity.finish();
-        activity.overridePendingTransition(R.anim.subhub_page_pop_enter,
-                R.anim.subhub_page_pop_exit);
-        return true;
+        // Subs keeps its roster below a fixed header, inside a nested pane.
+        View roster = page.findViewById(R.id.people_roster_scroll);
+        if (roster instanceof ScrollView && ((ScrollView) roster).getChildCount() > 0) {
+            View content = ((ScrollView) roster).getChildAt(0);
+            if (content.getPaddingBottom() != clearance)
+                content.setPaddingRelative(content.getPaddingStart(), content.getPaddingTop(),
+                        content.getPaddingEnd(), clearance);
+        }
+        View activityList = page.findViewById(R.id.dom_activity_list);
+        if (activityList instanceof android.widget.ListView && activityList.getPaddingBottom() != clearance)
+            activityList.setPaddingRelative(activityList.getPaddingStart(), activityList.getPaddingTop(),
+                    activityList.getPaddingEnd(), clearance);
     }
 
     private static void setVisible(View view, boolean visible) {
@@ -228,14 +384,30 @@ public final class SubHubNavigation {
         ViewCompat.setAccessibilityDelegate(tab, TAB_ACCESSIBILITY);
         if (label != null) label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         if (icon != null) icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        if (label != null) label.setTextColor(activity.getColor(R.color.text_primary));
+        if (label != null) label.setTextColor(activity.getColor(selected
+                ? R.color.accent_text : R.color.text_secondary));
         if (icon != null) ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(
-                activity.getColor(selected ? R.color.accent : R.color.text_primary)));
+                activity.getColor(selected ? R.color.accent_text : R.color.text_secondary)));
         tab.setBackgroundResource(R.drawable.bg_bottom_tab_active);
+        if (label != null) {
+            label.setSingleLine(false);
+            label.setEllipsize(null);
+            label.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY);
+            tab.setContentDescription(label.getText());
+            androidx.appcompat.widget.TooltipCompat.setTooltipText(tab, label.getText());
+        }
         tab.setOnClickListener(view -> {
-            if (selected) return;
+            if (destination == Screen.ACTIVITY && (!ControllerPinManager.isDomWorkspaceUnlocked()
+                    || !com.subhub.app.security.DeviceRolePreferences.supportsDom(activity))) return;
+            if (selected && target.isInstance(activity)) {
+                if (activity instanceof SectionHome) ((SectionHome) activity).showSectionHome();
+                else scrollToTop(activity.findViewById(android.R.id.content));
+                return;
+            }
             activity.startActivity(new Intent(activity, target)
-                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+                    .putExtra(EXTRA_SECTION_HOME, selected)
+                    .addFlags(selected ? Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            : Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
             boolean movingForward = destination.ordinal() > active.ordinal();
             activity.overridePendingTransition(
                     movingForward ? R.anim.subhub_page_enter : R.anim.subhub_page_pop_enter,

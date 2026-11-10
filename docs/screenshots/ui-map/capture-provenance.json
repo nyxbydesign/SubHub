@@ -1,29 +1,5 @@
 {
   "capturedOn": "2026-10-08",
-  "metadataScope": "Original metadata applies unless a capture names a snapshot override.",
-  "snapshotOverrides": {
-    "stable-product-port": {
-      "appSourceCommit": "98bd79c439a0409f01596e7f6561eb4c681615b9",
-      "captureSourceCommit": "98bd79c439a0409f01596e7f6561eb4c681615b9",
-      "sourceTree": "0193f6c805bb0cd0c09d8b946bfc1443c4a0f552",
-      "versionName": "0.6.5",
-      "versionCode": 21,
-      "apiLevel": 35,
-      "captureWidth": 1080,
-      "captureHeight": 2340,
-      "densityDpi": 440,
-      "pairedAppAndTestApks": true,
-      "appApkSha256": "aa6ca78d5e2ff644b3ca3e6b2e08e56922b9ec6f11526b7bae6c7df37506ee93",
-      "testApkSha256": "c6b9e2b5912e2f5b85d43685d5d993499aadaac99625c4ff8d8f83b4b94b5452",
-      "captureCasesPassed": 2,
-      "stableBoundaryCasesPassed": 2,
-      "screenshotCount": 5,
-      "allCapturesVisuallyReviewed": true,
-      "wholePersonAndLabExcluded": true,
-      "performanceBenchmark": false,
-      "paymentExecutionProof": false
-    }
-  },
   "appSourceCommit": "64ba54df8a9538423a75f71dccc3928be634a71b",
   "captureSourceCommit": "64ba54df8a9538423a75f71dccc3928be634a71b",
   "captureSourceTree": "0dda1af29d276f5a3a5faa026bd11aef38614e1d",
@@ -100,10 +76,9 @@
     },
     {
       "file": "03b-wallet-rules-and-safety.png",
-      "snapshot": "stable-product-port",
       "width": 1080,
-      "height": 2340,
-      "sha256": "a86fefa08ef2081040ce9650a618977dc775a2f19bb7155aded4d8da40ce69bd"
+      "height": 2400,
+      "sha256": "4de6744161c50e27ab735e9693e67bbde9d7ee15f8de678aace77df3f52b66bc"
     },
     {
       "file": "03c-wallet-checkout-and-history.png",
@@ -125,10 +100,9 @@
     },
     {
       "file": "05-censor-settings.png",
-      "snapshot": "stable-product-port",
       "width": 1080,
-      "height": 2340,
-      "sha256": "0de57143f0ecd0127139e3610ffa2519d69fed649b287ef070ca3c452b2c8a39"
+      "height": 2400,
+      "sha256": "554e9a821c7749d6d207b4834e5cfef1019c854cf710d614127802fe1e194833"
     },
     {
       "file": "05a-settings-appearance.png",
@@ -222,10 +196,9 @@
     },
     {
       "file": "19-diagnostics.png",
-      "snapshot": "stable-product-port",
       "width": 1080,
-      "height": 2340,
-      "sha256": "67569b054231ae6bd06006e6393cefc14f7f3ffc95dde8eab4f943b95458f118"
+      "height": 2400,
+      "sha256": "eec92755b516262a9c6e5e1bfd470ee1bcf13f0c75cfc9636ede72c3b09112c3"
     },
     {
       "file": "20-service-lock.png",
@@ -265,10 +238,9 @@
     },
     {
       "file": "26-pack-section-editor.png",
-      "snapshot": "stable-product-port",
       "width": 1080,
-      "height": 2340,
-      "sha256": "903f6a92a097150e02252c9b6ddbc4f3cacb8fab153719f2154a7e8b95453cb9"
+      "height": 2400,
+      "sha256": "bd1fd37eab268b2d47772eb8b46c970147245c837da12ba4bbfd5ab33d6985e1"
     },
     {
       "file": "foundation-01-dom-home.png",
@@ -278,10 +250,9 @@
     },
     {
       "file": "foundation-02-censor.png",
-      "snapshot": "stable-product-port",
       "width": 1080,
-      "height": 2340,
-      "sha256": "2631130067b83934dee675f498b30f85a236c164b479a4940f267be22ea20aed"
+      "height": 2400,
+      "sha256": "d921591ceb872853e413c132ddeb985cfd48e659377302cfc9157ef7bfe3a6ce"
     },
     {
       "file": "foundation-03-limits.png",

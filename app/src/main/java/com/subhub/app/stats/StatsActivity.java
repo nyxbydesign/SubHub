@@ -1,125 +1,768 @@
 package com.subhub.app.stats;
 
-import com.subhub.app.util.PrimaryHeader;
-
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.View;
-import android.widget.TextView;
-
-import androidx.appcompat.app.AppCompatActivity;
+import android.widget.*;
 
 import com.subhub.app.R;
-import com.subhub.app.databinding.ActivityStatsBinding;
-import com.subhub.app.penance.PenanceManager;
+import com.subhub.app.penance.*;
+import com.subhub.app.util.PreferencePage;
 
 import java.text.DateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
 
-/** Full local statistics, trends, and milestones. */
-public final class StatsActivity extends AppCompatActivity {
-    private ActivityStatsBinding binding;
-
-    @Override protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        binding = ActivityStatsBinding.inflate(getLayoutInflater());
-        setContentView(binding.getRoot());
-        PrimaryHeader.bindSecondary(binding.getRoot(), R.string.statistics_title, false);
-        PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
-    }
-
-    @Override protected void onResume() {
-        super.onResume();
-        render();
-    }
-
-    private void render() {
-        StatsRepository repository = new StatsRepository(this);
-        StatsSnapshot stats = repository.load();
-        binding.totalBlocks.setText(String.valueOf(stats.getActivityEvents()));
-        binding.totalTime.setText(StatsSnapshot.formatDuration(stats.getTotalProtectedSeconds()));
-        binding.totalSessions.setText(String.valueOf(stats.getSessions()));
-        binding.detailStats.setText(featureTotals(stats));
-
-        int next = MilestoneManager.next(stats.getTotalBlocks());
-        binding.milestoneLabel.setText(getString(
-                R.string.milestone_next, next, Math.min(stats.getTotalBlocks(), next)));
-        binding.milestoneProgress.setMax(next);
-        binding.milestoneProgress.setProgress((int) Math.min(stats.getTotalBlocks(), next));
-
-        List<StatsRepository.SessionEntry> history = repository.getSessionHistory();
-        binding.sessionTrend.setEntries(history);
-        binding.historyList.removeAllViews();
-        List<StatsRepository.SessionEntry> reverse = new ArrayList<>(history);
-        Collections.reverse(reverse);
-        for (int index = 0; index < Math.min(10, reverse.size()); index++) {
-            StatsRepository.SessionEntry entry = reverse.get(index);
-            TextView row = new TextView(this);
-            row.setText(getString(R.string.statistics_session_row,
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                            .format(new Date(entry.getStartMillis())),
-                    StatsSnapshot.formatDuration(entry.getDurationSeconds()),
-                    sessionSummary(entry)));
-            row.setTextColor(getColor(R.color.text_secondary));
-            row.setTextSize(11);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setMinHeight(dp(42));
-            binding.historyList.addView(row);
+/** Current service, lifetime totals, dated activity and recorded sessions share one page. */
+public class StatsActivity extends PreferencePage implements com.subhub.app.util.SubHubNavigation.SectionHome {
+    private LinearLayout shell;
+    private ScrollView scroll;
+    private AchievementsPane catalog;
+    private boolean catalogSelected, resumed, hasSections;
+    private boolean profileSelected, statisticsBuilt;
+    private final Bundle statisticsState = new Bundle();
+    private com.subhub.app.people.SelfProfilePane profile;
+    private int statisticsScroll, catalogScroll, profileScroll;
+    private DailyStatsPanel daily;
+    private RemoteStatsSource remote;
+    private AutoCloseable appIconObserver;
+    private long appIconEpoch;
+    private AchievementRole workspace;
+    private boolean domOverview;
+    private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refreshRemote = new Runnable() {
+        @Override public void run() {
+            if (!resumed || catalogSelected || remote == null && !domOverview || isFinishing()) return;
+            try {
+                if (remote != null) remote.requireAccess();
+                if (!workspace.accessible(StatsActivity.this)) { finish(); return; }
+                bindTotals();
+                daily.refreshIfNeeded();
+            }
+            catch (RuntimeException unavailable) { finish(); return; }
+            remoteClock.postDelayed(this, domOverview ? 5000 : 2000);
         }
-        binding.historyEmpty.setVisibility(history.isEmpty() ? View.VISIBLE : View.GONE);
+    };
+    private LinearLayout totalsDetails, sessionList, currentSession, currentSessionDetails, allowances;
+    private android.view.View sessionAllowanceDivider;
+    private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
+    private AchievementPreviewView achievements;
+    private LocalRetainedStatistics localFacts;
+    private android.view.View statisticsUnlock;
+    private int sessionLimit = 3;
+    private com.subhub.app.util.AsyncUiScope data;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        hasSections = !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        catalogSelected = hasSections && (state == null ? initiallyShowAchievements()
+                : state.getBoolean("stats_catalog_selected", initiallyShowAchievements()));
+        profileSelected = hasSections && !catalogSelected;
+        workspace = AchievementRole.current(this);
+        if (!workspaceReadable()) { finish(); return; }
+        domOverview = workspace == AchievementRole.DOM
+                && !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        if (!domOverview && !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+            try { remote = new RemoteStatsSource(this, com.subhub.app.people.PersonRoutes.requireId(getIntent())); }
+            catch (RuntimeException unavailable) { finish(); return; }
+        }
+        if (state != null) {
+            sessionLimit = Math.max(3, Math.min(30, state.getInt("stats_session_limit", 3)));
+        }
+        page(R.string.role_stats);
+        shell = page;
+        scroll = (ScrollView) shell.getParent();
+        if (state != null) {
+            statisticsScroll = state.getInt("stats_scroll");
+            catalogScroll = state.getInt("catalog_scroll");
+            profileScroll = state.getInt("profile_scroll");
+        }
+        if (hasSections) StatsSections.add(this, shell, catalogSelected, profileSelected);
+        page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        shell.addView(page, new LinearLayout.LayoutParams(-1, -2));
+        if (domOverview) page.setTag("dom_statistics");
+        data = com.subhub.app.util.AsyncUiScope.forPage(this);
+        restoreStatisticsState(state);
+        com.subhub.app.util.SubHubNavigation.attachToPage(this, shell,
+                com.subhub.app.util.SubHubNavigation.Screen.STATS);
+        renderSection();
     }
 
-    @Override protected void onDestroy() {
-        binding = null;
-        super.onDestroy();
+    private void buildStatistics() {
+        if (statisticsBuilt) return;
+        if (!workspace.accessible(this)) throw new SecurityException("Statistics unavailable");
+        statisticsBuilt = true;
+        currentSession = card(page);
+        currentSession.setId(R.id.profile_stats_current);
+        currentSessionDetails = com.subhub.app.people.PersonUi.column(this);
+        currentSessionDetails.setTag("profile_current_session_details");
+        currentSession.addView(currentSessionDetails, new LinearLayout.LayoutParams(-1, -2));
+        sessionAllowanceDivider = new android.view.View(this);
+        sessionAllowanceDivider.setBackgroundColor(getColor(R.color.outline_subtle));
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, dp(1));
+        dividerParams.topMargin = dp(16);
+        dividerParams.bottomMargin = dp(12);
+        currentSession.addView(sessionAllowanceDivider, dividerParams);
+        sessionAllowanceDivider.setVisibility(android.view.View.GONE);
+        LinearLayout summary = card(page);
+        summary.setId(R.id.stats_lifetime_summary);
+        heading(summary, R.string.stats_all_time);
+        LinearLayout numbers = new LinearLayout(this);
+        numbers.setOrientation(getResources().getConfiguration().screenWidthDp < 360
+                || getResources().getConfiguration().fontScale >= 1.3f
+                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        summary.addView(numbers, new LinearLayout.LayoutParams(-1, -2));
+        lifetimeTime = metric(numbers, domOverview ? R.string.dom_stats_time : R.string.stats_time);
+        lifetimeCensors = metric(numbers, domOverview ? R.string.home_subs_total : R.string.stats_censors);
+        lifetimeSessions = metric(numbers, domOverview ? R.string.dom_stats_sessions : R.string.stats_sessions);
+        if (domOverview) {
+            lifetimeTime.setTag("dom_stats_time");
+            lifetimeCensors.setTag("dom_stats_paired");
+            lifetimeSessions.setTag("dom_stats_sessions");
+        }
+        daily = new DailyStatsPanel(this, false, statisticsState,
+                domOverview ? new DomDailyStatsSource(this) : remote);
+        page.addView(daily, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams activityParams =
+                (LinearLayout.LayoutParams) daily.getLayoutParams();
+        activityParams.bottomMargin = getResources().getDimensionPixelSize(R.dimen.ui_gap_group);
+        allowances = new LinearLayout(this);
+        allowances.setOrientation(LinearLayout.VERTICAL);
+        allowances.setId(R.id.profile_stats_allowances);
+        allowances.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(android.view.View view) {
+                observeAppIcons();
+                if (remote == null || !resumed || catalogSelected || profileSelected) return;
+                RemoteStatsSource expected = remote;
+                String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+                com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+                com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+                long request = appIconEpoch;
+                // Late attachment advances the observer epoch after onResume's original load was queued.
+                view.post(() -> {
+                    if (currentAppIconTarget(request, expected, route, provider, authority)) bindAllowances();
+                });
+            }
+            @Override public void onViewDetachedFromWindow(android.view.View view) { stopAppIcons(); }
+        });
+        currentSession.addView(allowances, new LinearLayout.LayoutParams(-1, -2));
+        sessionList = card(page);
+        sessionList.setTag("stats_session_history");
+        totalsDetails = card(page);
+        totalsDetails.setId(R.id.stats_totals_details);
+        achievements = new AchievementPreviewView(this);
+        achievements.setId(R.id.stats_achievements);
+        if (hasSections) achievements.setOnClickListener(view -> showAchievements(true));
+        page.addView(achievements, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-
-    private String featureTotals(StatsSnapshot stats) {
-        List<String> lines = new ArrayList<>();
-        lines.add(getString(R.string.statistics_current_streak) + ": "
-                + stats.getCurrentStreak() + " days");
-        lines.add(getString(R.string.statistics_longest) + ": "
-                + StatsSnapshot.formatDuration(stats.getLongestSessionSeconds()));
-        lines.add(getString(R.string.stats_censors) + ": " + stats.getTotalBlocks());
-        lines.add(getString(R.string.stats_limited_app_time) + ": "
-                + StatsSnapshot.formatDuration(stats.getLimitedAppMillis() / 1_000L));
-        lines.add(getString(R.string.stats_limit_stops) + ": "
-                + stats.getLimitInterventions());
-        lines.add(getString(R.string.stats_tributes) + ": " + stats.getTributeEvents()
-                + " · " + new PenanceManager(this).money(new StatsRepository(this).tributeCents(
-                new PenanceManager(this).getCurrency(), false)) + " added");
-        lines.add(getString(R.string.stats_paid) + ": "
-                + new PenanceManager(this).money(new PenanceManager(this).getTotalPaidCents()));
-        lines.add(getString(R.string.stats_whispers) + ": "
-                + stats.getSubliminalImpressions());
-        lines.add(getString(R.string.stats_popups) + ": " + stats.getPopupImpressions());
-        lines.add(getString(R.string.statistics_active_days) + ": "
-                + stats.getActiveDates().size());
-        return String.join("\n", lines);
+    private void restoreStatisticsState(Bundle state) {
+        if (state == null) return;
+        Bundle nested = state.getBundle("profile_statistics_state");
+        if (nested != null) { statisticsState.putAll(nested); return; }
+        for (String key : new String[]{"daily_range", "daily_metric", "daily_month", "daily_year", "daily_selected"}) {
+            Object value = state.get(key);
+            if (value instanceof Integer) statisticsState.putInt(key, (Integer) value);
+            else if (value instanceof String) statisticsState.putString(key, (String) value);
+        }
     }
 
-    private String sessionSummary(StatsRepository.SessionEntry entry) {
-        List<String> values = new ArrayList<>();
-        if (entry.getBlocks() > 0) values.add(getString(
-                R.string.stats_history_censors, entry.getBlocks()));
-        if (entry.getLimitedAppMillis() > 0) values.add(getString(
-                R.string.stats_history_limited,
-                StatsSnapshot.formatDuration(entry.getLimitedAppMillis() / 1_000L)));
-        if (entry.getLimitInterventions() > 0) values.add(getString(
-                R.string.stats_history_stops, entry.getLimitInterventions()));
-        if (entry.getTributeEvents() > 0) values.add(getString(
-                R.string.stats_history_tributes, entry.getTributeEvents()));
-        if (entry.getSubliminals() > 0) values.add(getString(
-                R.string.stats_history_whispers, entry.getSubliminals()));
-        if (entry.getPopupImpressions() > 0) values.add(getString(
-                R.string.stats_history_popups, entry.getPopupImpressions()));
-        return values.isEmpty() ? getString(R.string.stats_history_no_activity)
-                : String.join(" · ", values);
+    protected boolean initiallyShowAchievements() { return false; }
+    protected boolean initiallyShowProfile() { return false; }
+
+    private boolean workspaceReadable() {
+        return workspace != null && (workspace.accessible(this) || lockedOwnProfile());
+    }
+
+    private boolean lockedOwnProfile() {
+        return hasSections && profileSelected && workspace == AchievementRole.DOM
+                && com.subhub.app.security.DeviceRolePreferences.get(this)
+                        == com.subhub.app.security.DeviceRolePreferences.Mode.DOM_ONLY;
+    }
+
+    public final void showProfile() {
+        if (!hasSections || profileSelected || !workspace.accessible(this)) return;
+        rememberScroll(); pauseSection();
+        profileSelected = true; catalogSelected = false;
+        renderSection();
+        if (resumed) resumeSection();
+    }
+
+    @Override public final void showSectionHome() {
+        showProfile();
+        profileScroll = 0;
+        if (profile != null) {
+            com.subhub.app.people.ProfilePreview preview = profile.view().findViewById(R.id.profile_preview);
+            if (preview != null) preview.collapse();
+        }
+        com.subhub.app.util.SubHubNavigation.scrollToTop(scroll);
+        // Explicit navigation cancels any pending section restoration.
+    }
+
+    public final void showAchievements(boolean selected) {
+        if (!hasSections || selected == catalogSelected && !profileSelected) return;
+        if (!workspace.accessible(this)) {
+            if (lockedOwnProfile()) com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, () -> {
+                com.subhub.app.security.ControllerEditMode.renderButton(this,
+                        com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+                showAchievements(selected);
+            }, false);
+            return;
+        }
+        rememberScroll();
+        pauseSection();
+        catalogSelected = selected;
+        profileSelected = !selected;
+        renderSection();
+        if (resumed) resumeSection();
+    }
+
+    private void rememberScroll() {
+        if (scroll == null) return;
+        if (profileSelected) profileScroll = scroll.getScrollY();
+        else if (catalogSelected) catalogScroll = scroll.getScrollY();
+        else statisticsScroll = scroll.getScrollY();
+    }
+
+    private void renderSection() {
+        if (!catalogSelected && workspace.accessible(this)) buildStatistics();
+        if (profileSelected && profile == null) {
+            profile = new com.subhub.app.people.SelfProfilePane(this);
+            shell.addView(profile.view(), shell.indexOfChild(page), new LinearLayout.LayoutParams(-1, -2));
+        }
+        if (catalogSelected && catalog == null) {
+            catalog = new AchievementsPane(this);
+            shell.addView(catalog.view(), new LinearLayout.LayoutParams(-1, -2));
+        }
+        page.setVisibility(catalogSelected || !workspace.accessible(this) ? android.view.View.GONE : android.view.View.VISIBLE);
+        if (lockedOwnProfile() && statisticsUnlock == null) {
+            LinearLayout unlock = card(shell);
+            unlock.setTag("profile_stats_locked");
+            heading(unlock, R.string.role_stats);
+            button(unlock, getString(R.string.controller_pin_unlock), () ->
+                    com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, () -> {
+                        com.subhub.app.security.ControllerEditMode.renderButton(this,
+                                com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content)));
+                        renderSection();
+                        if (resumed) resumeSection();
+                    }, false)).setTag("profile_stats_unlock");
+            statisticsUnlock = unlock;
+            shell.removeView(unlock);
+            shell.addView(unlock, shell.indexOfChild(page));
+        }
+        if (statisticsUnlock != null) statisticsUnlock.setVisibility(lockedOwnProfile()
+                ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (profile != null) profile.view().setVisibility(profileSelected ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (catalog != null) catalog.view().setVisibility(catalogSelected ? android.view.View.VISIBLE : android.view.View.GONE);
+        StatsSections.select(shell, catalogSelected, profileSelected);
+        com.subhub.app.util.PrimaryHeader.bindPrimary(findViewById(android.R.id.content),
+                hasSections ? (profileSelected ? R.drawable.ic_nav_profile : R.drawable.ic_nav_stats) : 0,
+                profileSelected ? R.string.role_profile : catalogSelected ? R.string.achievements_title : R.string.role_stats, 0);
+        int target = profileSelected ? profileScroll : catalogSelected ? catalogScroll : statisticsScroll;
+        ((com.subhub.app.util.PageScrollView) scroll).restorePosition(target);
+    }
+
+    private void pauseSection() {
+        if (catalog != null) catalog.pause();
+        if (data != null) {
+            data.cancel("dom-statistics");
+            data.cancel("local-statistics");
+            data.cancel("stats-app-allowances");
+        }
+        remoteClock.removeCallbacks(refreshRemote);
+    }
+
+    private void resumeSection() {
+        if (profileSelected) profile.refresh();
+        if (catalogSelected) { catalog.resume(); return; }
+        if (!workspace.accessible(this)) return;
+        if (remote != null || domOverview) remoteClock.post(refreshRemote);
+        bindTotals(); bindSessions(); bindAllowances(); daily.refreshIfNeeded();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (this instanceof com.subhub.app.people.ProfileActivity && hasSections && workspace != null
+                && workspace != AchievementRole.current(this)) {
+            page.setVisibility(android.view.View.GONE);
+            if (profile != null) profile.view().setVisibility(android.view.View.GONE);
+            if (catalog != null) catalog.view().setVisibility(android.view.View.GONE);
+            recreate();
+            return;
+        }
+        if (!workspaceReadable()) { finish(); return; }
+        resumed = true;
+        observeAppIcons();
+        renderSection();
+        if (!catalogSelected && workspace.accessible(this) && (remote != null || domOverview)) {
+            try { if (remote != null) remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
+            remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
+        }
+        if (isFinishing()) return;
+        com.subhub.app.util.SubHubNavigation.bind(this, findViewById(android.R.id.content),
+                com.subhub.app.util.SubHubNavigation.Screen.STATS);
+        boolean targetProfile = getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        boolean dom = workspace == AchievementRole.DOM && targetProfile;
+        android.view.View root = findViewById(android.R.id.content);
+        android.widget.TextView role = com.subhub.app.util.PrimaryHeader.editLockButton(root);
+        role.setVisibility(dom ? android.view.View.GONE : android.view.View.VISIBLE);
+        com.subhub.app.security.ControllerEditMode.renderButton(this, role);
+        com.subhub.app.util.PrimaryHeader.backButton(root).setVisibility(
+                dom ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (hasSections) role.setOnClickListener(view -> {
+            if (com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()) {
+                com.subhub.app.security.ControllerPinManager.enterSubMode();
+                recreate();
+            } else com.subhub.app.security.ControllerPinGate.unlockDomWorkspace(this, this::recreate, false);
+        });
+        com.subhub.app.util.PrimaryHeader.bindPrimary(root,
+                hasSections ? (profileSelected ? R.drawable.ic_nav_profile : R.drawable.ic_nav_stats) : 0,
+                profileSelected ? R.string.role_profile : catalogSelected ? R.string.achievements_title : R.string.role_stats,
+                dom ? R.string.role_this_device : 0);
+        if (remote != null) {
+            try {
+                com.subhub.app.people.PersonSnapshot person = remote.person();
+                com.subhub.app.util.PrimaryHeader.subtitle(root).setText(person.name + " · " + com.subhub.app.people.ProfileViews.targetDiscriminator(this, person));
+                com.subhub.app.util.PrimaryHeader.subtitle(root).setVisibility(android.view.View.VISIBLE);
+                android.view.View nav = root.findViewById(R.id.bottom_navigation); if (nav != null) nav.setVisibility(android.view.View.GONE);
+            } catch (Exception unavailable) { finish(); return; }
+        } else if (dom) com.subhub.app.util.PrimaryHeader.subtitle(root).setText(com.subhub.app.people.ProfileNames.get(this, false));
+        if (profileSelected) profile.refresh();
+        if (!workspace.accessible(this)) { return; }
+        if (catalogSelected) { catalog.resume(); return; }
+        bindTotals();
+        bindSessions();
+        bindAllowances();
+        daily.refreshIfNeeded();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        rememberScroll();
+        state.putBoolean("stats_catalog_selected", catalogSelected);
+        state.putBoolean("profile_selected", profileSelected);
+        state.putInt("profile_scroll", profileScroll);
+        state.putInt("stats_scroll", statisticsScroll);
+        state.putInt("catalog_scroll", catalogScroll);
+        if (daily != null) daily.save(statisticsState);
+        state.putBundle("profile_statistics_state", new Bundle(statisticsState));
+        state.putInt("stats_session_limit", sessionLimit);
+        super.onSaveInstanceState(state);
+    }
+
+    private TextView metric(LinearLayout parent, int name) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        boolean horizontal = parent.getOrientation() == LinearLayout.HORIZONTAL;
+        parent.addView(cell, new LinearLayout.LayoutParams(horizontal ? 0 : -1, -2, horizontal ? 1 : 0));
+        TextView value = text(cell, "", 22, false);
+        value.setTag("stats:metric-value");
+        value.setTypeface(null, Typeface.BOLD);
+        text(cell, getString(name), 12, true).setTag("stats:metric-label");
+        return value;
+    }
+
+    @Override protected void onPause() {
+        rememberScroll();
+        resumed = false;
+        stopAppIcons();
+        pauseSection();
+        if (workspace == AchievementRole.DOM && page != null) page.setVisibility(android.view.View.INVISIBLE);
+        if (data != null) data.cancel("dom-statistics");
+        if (data != null) data.cancel("local-statistics");
+        remoteClock.removeCallbacks(refreshRemote);
+        super.onPause();
+    }
+
+    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+
+    private void observeAppIcons() {
+        if (appIconObserver != null || remote == null || !resumed || allowances == null || !allowances.isAttachedToWindow()) return;
+        RemoteStatsSource expected = remote;
+        String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+        long request = ++appIconEpoch;
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
+            bindAllowances();
+        });
+    }
+
+    private boolean currentAppIconTarget(long request, RemoteStatsSource expected, String route,
+            com.subhub.app.relationships.RelationshipUi.Provider provider, com.subhub.app.security.KeyholderProvider authority) {
+        return request == appIconEpoch && resumed && !catalogSelected && !profileSelected && remote == expected
+                && !isFinishing() && !isDestroyed() && allowances != null && allowances.isAttachedToWindow()
+                && getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                && java.util.Objects.equals(route, getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID))
+                && com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
+                && com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
+                && provider == com.subhub.app.relationships.RelationshipUi.provider()
+                && authority == com.subhub.app.people.People.keyholder();
+    }
+
+    private void stopAppIcons() {
+        ++appIconEpoch; AutoCloseable old = appIconObserver; appIconObserver = null;
+        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
+    }
+
+    private void bindTotals() {
+        if (domOverview) { bindDomTotals(); return; }
+        if (remote != null) { bindRemoteTotals(); return; }
+        if (data.isPending("local-statistics")) return;
+        android.content.Context app = getApplicationContext();
+        data.load("local-statistics", () -> {
+            LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
+            HomeAchievementPreview preview = null;
+            if (workspace == AchievementRole.SUB) preview = HomeAchievementPreview.loadLocal(app, facts);
+            else HistoricalAchievementBackfill.local(app, new AchievementManager(app), facts);
+            return new LocalOverview(facts, preview);
+        }, loaded -> {
+            if (!workspace.accessible(this)) { finish(); return; }
+            localFacts = loaded.facts;
+            if (loaded.achievements != null) achievements.render(loaded.achievements);
+            else achievements.setVisibility(android.view.View.GONE);
+            bindLocalTotals(loaded.facts);
+            bindSessions();
+        }, failure -> {
+            lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
+            totalsDetails.removeAllViews(); text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+        });
+    }
+
+    private static final class LocalOverview {
+        final LocalRetainedStatistics facts;
+        final HomeAchievementPreview achievements;
+        LocalOverview(LocalRetainedStatistics facts, HomeAchievementPreview achievements) {
+            this.facts = facts; this.achievements = achievements;
+        }
+    }
+
+    private void bindLocalTotals(LocalRetainedStatistics facts) {
+        StatsRepository repository = facts.repository;
+        StatsSnapshot stats = facts.stats;
+        lifetimeTime.setText(duration(stats.getTotalProtectedSeconds()));
+        lifetimeCensors.setText(number(stats.getTotalBlocks()));
+        lifetimeSessions.setText(number(stats.getSessions()));
+        bindCurrent(repository, stats);
+        totalsDetails.removeAllViews();
+        heading(totalsDetails, R.string.profile_stats_feature_totals);
+        row(totalsDetails, R.string.statistics_longest, duration(stats.getLongestSessionSeconds()));
+        row(
+                totalsDetails,
+                R.string.statistics_current_streak,
+                getString(R.string.stats_days_value, stats.getCurrentStreak()));
+        row(
+                totalsDetails,
+                R.string.stats_limited_app_time,
+                duration(stats.getLimitedAppMillis() / 1000));
+        row(totalsDetails, R.string.stats_limit_stops, number(stats.getLimitInterventions()));
+        row(totalsDetails, R.string.stats_whispers, number(stats.getSubliminalImpressions()));
+        row(totalsDetails, R.string.stats_popups, number(stats.getPopupImpressions()));
+        row(totalsDetails, R.string.daily_photos, number(stats.getExportedImages()));
+        row(totalsDetails, R.string.stats_tributes, number(stats.getTributeEvents()));
+        for (String currency : new String[] {"EUR", "USD"}) {
+            text(totalsDetails, currency, 13, true).setTypeface(null, Typeface.BOLD);
+            row(
+                    totalsDetails,
+                    R.string.stats_assessed,
+                    WalletCurrency.format(currency, facts.assessed.get(currency)));
+            row(
+                    totalsDetails,
+                    R.string.stats_paid,
+                    WalletCurrency.format(currency, facts.paid.get(currency)));
+        }
+    }
+
+    private void bindDomTotals() {
+        if (data.isPending("dom-statistics")) return;
+        android.content.Context app = getApplicationContext();
+        data.load("dom-statistics", () -> {
+            DomStatsRepository.Loaded value = new DomStatsRepository(app).loadWithHistory();
+            return new DomOverview(value.stats, HomeAchievementPreview.loadDom(app, value));
+        }, loaded -> {
+            if (!workspace.accessible(this)) { page.setVisibility(android.view.View.INVISIBLE); finish(); return; }
+            DomStatsSnapshot value = loaded.stats;
+            lifetimeTime.setText(value.hasTotals() ? duration(value.sessionSeconds) : unknown());
+            lifetimeCensors.setText(number(value.subs));
+            lifetimeSessions.setText(value.hasTotals() ? number(value.sessions) : unknown());
+            currentSessionDetails.removeAllViews();
+            heading(currentSessionDetails, R.string.dom_stats_current);
+            row(currentSessionDetails, R.string.dom_stats_active,
+                    gauge(value.activeSubs, value.activeKnown, value.subs)).setTag("dom_stats_active");
+            row(currentSessionDetails, R.string.dom_stats_hardcore,
+                    gauge(value.hardcoreSubs, value.hardcoreKnown, value.subs)).setTag("dom_stats_hardcore");
+            if (value.activeKnown < value.subs)
+                text(currentSessionDetails, getString(R.string.dom_stats_runtime_coverage, value.activeKnown, value.subs), 12, true);
+            if (value.hardcoreKnown < value.subs)
+                text(currentSessionDetails, getString(R.string.dom_stats_hardcore_coverage, value.hardcoreKnown, value.subs), 12, true);
+            totalsDetails.removeAllViews();
+            heading(totalsDetails, R.string.profile_stats_feature_totals);
+            for (String currency : value.paidCents.keySet()) {
+                text(totalsDetails, currency, 13, true).setTypeface(null, Typeface.BOLD);
+                row(totalsDetails, R.string.stats_assessed,
+                        value.hasWalletTotals() ? WalletCurrency.format(currency, value.assessedCents.get(currency)) : unknown())
+                        .setTag("dom_assessed_" + currency);
+                row(totalsDetails, R.string.stats_paid,
+                        value.hasWalletTotals() ? WalletCurrency.format(currency, value.paidCents.get(currency)) : unknown())
+                        .setTag("dom_paid_" + currency);
+            }
+            if (value.totalsKnown < value.subs)
+                text(totalsDetails, getString(R.string.dom_stats_totals_coverage, value.totalsKnown, value.subs), 12, true);
+            if (value.totalsFresh < value.totalsKnown)
+                text(totalsDetails, getString(R.string.dom_stats_stale_totals, value.totalsKnown - value.totalsFresh), 12, true);
+            if (value.walletKnown < value.subs)
+                text(totalsDetails, getString(R.string.dom_stats_wallet_coverage, value.walletKnown, value.subs), 12, true);
+            text(totalsDetails, getString(R.string.dom_stats_scope), 12, true);
+            achievements.render(loaded.achievements);
+            updateCurrentSessionVisibility();
+        }, failure -> {
+            if (!workspace.accessible(this)) { finish(); return; }
+            lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
+            currentSessionDetails.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
+            text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+            updateCurrentSessionVisibility();
+        });
+    }
+
+    private String unknown() { return getString(R.string.role_unknown_data); }
+    private String gauge(int active, int known, int total) {
+        if (total > 0 && known == 0) return unknown();
+        return known < total ? getString(R.string.dom_stats_confirmed_count, active) : number(active);
+    }
+    private static final class DomOverview {
+        final DomStatsSnapshot stats;
+        final HomeAchievementPreview achievements;
+        DomOverview(DomStatsSnapshot stats, HomeAchievementPreview achievements) {
+            this.stats = stats; this.achievements = achievements;
+        }
+    }
+
+    private long factsObservedAt() { return localFacts == null ? System.currentTimeMillis() : localFacts.observedAt; }
+
+    private void bindCurrent(StatsRepository repository, StatsSnapshot stats) {
+        currentSessionDetails.removeAllViews();
+        boolean active = repository.observedSessionActive();
+        currentSessionDetails.setVisibility(active ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (!active) { updateCurrentSessionVisibility(); return; }
+        heading(currentSessionDetails, R.string.profile_stats_current_session);
+        row(currentSessionDetails, R.string.stats_session_elapsed, duration(stats.getCurrentSessionSeconds()));
+        text(currentSessionDetails, getString(R.string.stats_session_as_of,
+                DateFormat.getDateTimeInstance().format(new Date(factsObservedAt()))), 12, true);
+        row(currentSessionDetails, R.string.stats_censors, number(stats.getCurrentSessionBlocks()));
+        row(currentSessionDetails, R.string.stats_limited_app_time, duration(stats.getCurrentSessionLimitedAppMillis() / 1000));
+        row(currentSessionDetails, R.string.stats_limit_stops, number(stats.getCurrentSessionLimitInterventions()));
+        row(currentSessionDetails, R.string.stats_tributes, number(stats.getCurrentSessionTributeEvents()));
+        for (String currency : new String[] {"EUR", "USD"}) {
+            row(currentSessionDetails, R.string.stats_assessed,
+                    WalletCurrency.format(currency, repository.tributeCents(currency, true)) + " " + currency);
+        }
+        updateCurrentSessionVisibility();
+    }
+
+    private void bindRemoteTotals() {
+        org.json.JSONObject stats = remote.summary();
+        achievements.setVisibility(android.view.View.GONE);
+        lifetimeTime.setText(remoteMetric(stats,"protectedSeconds",true));
+        lifetimeCensors.setText(remoteMetric(stats,"censors",false));
+        lifetimeSessions.setText(remoteMetric(stats,"sessions",false));
+        totalsDetails.removeAllViews(); heading(totalsDetails,R.string.profile_stats_feature_totals);
+        try {
+            com.subhub.app.people.PersonSnapshot person = remote.person();
+            text(totalsDetails,getString(R.string.role_last_synced,person.lastSyncedAt <= 0 ? getString(R.string.role_unknown_data)
+                    : DateFormat.getDateTimeInstance().format(new Date(person.lastSyncedAt))),13,true);
+            if (person.sync.stats != com.subhub.app.people.PersonSnapshot.Freshness.CURRENT)
+                text(totalsDetails,getString(R.string.role_stale_data),13,true);
+            currentSessionDetails.removeAllViews();currentSessionDetails.setVisibility(person.serviceActive?android.view.View.VISIBLE:android.view.View.GONE);
+            if(person.serviceActive){heading(currentSessionDetails,R.string.profile_stats_current_session);
+                row(currentSessionDetails,R.string.stats_session_elapsed,remoteMetric(stats,"currentSeconds",true));
+                row(currentSessionDetails,R.string.stats_censors,remoteMetric(stats,"currentCensors",false));
+                row(currentSessionDetails,R.string.stats_limit_stops,remoteMetric(stats,"currentLimitStops",false));
+                row(currentSessionDetails,R.string.stats_tributes,remoteMetric(stats,"currentTributes",false));}
+        } catch (Exception unavailable) { currentSessionDetails.setVisibility(android.view.View.GONE); }
+        updateCurrentSessionVisibility();
+        row(totalsDetails,R.string.statistics_longest,getString(R.string.role_unknown_data));
+        row(totalsDetails,R.string.statistics_current_streak,getString(R.string.role_unknown_data));
+        row(totalsDetails,R.string.stats_limited_app_time,stats==null?getString(R.string.role_unknown_data):duration(stats.optLong("limitMillis")/1000));
+        row(totalsDetails,R.string.stats_limit_stops,remoteMetric(stats,"limitStops",false));
+        row(totalsDetails,R.string.stats_whispers,remoteMetric(stats,"whispers",false));
+        row(totalsDetails,R.string.stats_popups,remoteMetric(stats,"popups",false));
+        row(totalsDetails,R.string.stats_tributes,remoteMetric(stats,"tributes",false));
+        for(String currency:new String[]{"EUR","USD"}){
+            text(totalsDetails,currency,13,true).setTypeface(null,Typeface.BOLD);
+            row(totalsDetails,R.string.stats_assessed,stats==null?getString(R.string.role_unknown_data):WalletCurrency.format(currency,stats.optLong("assessed"+currency)));
+            row(totalsDetails,R.string.stats_paid,stats==null?getString(R.string.role_unknown_data):WalletCurrency.format(currency,stats.optLong("paid"+currency)));
+        }
+    }
+    private String remoteMetric(org.json.JSONObject stats,String key,boolean time) {
+        if(stats==null||!stats.has(key))return getString(R.string.role_unknown_data);
+        return time?duration(stats.optLong(key)):number(stats.optLong(key));
+    }
+
+    private void bindAllowances() {
+        if (domOverview) { allowances.setVisibility(android.view.View.GONE); updateCurrentSessionVisibility(); return; }
+        if (remote != null) {
+            RemoteStatsSource expected = remote;
+            String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
+            com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+            com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+            long request = appIconEpoch;
+            data.load("stats-app-allowances",expected::person,person->{
+                if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
+                allowances.removeAllViews();com.subhub.app.people.PersonUi.allowances(allowances,person);
+                updateCurrentSessionVisibility();
+            },failure->{
+                if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
+                allowances.removeAllViews();text(allowances,getString(R.string.role_unknown_data),13,true);
+                updateCurrentSessionVisibility();
+            });
+            return;
+        }
+        android.content.Context app = getApplicationContext();
+        com.subhub.app.people.PersonRepository repository = com.subhub.app.people.People.repository(app);
+        data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
+            allowances.removeAllViews();
+            com.subhub.app.people.PersonUi.allowances(allowances, person);
+            updateCurrentSessionVisibility();
+        }, failure -> {
+            allowances.removeAllViews();
+            text(allowances, getString(R.string.role_unknown_data), 13, true);
+            updateCurrentSessionVisibility();
+        });
+    }
+
+    /** Neither an idle session nor a metric refresh may hide or discard daily allowances. */
+    private void updateCurrentSessionVisibility() {
+        boolean sessionVisible = currentSessionDetails.getVisibility() == android.view.View.VISIBLE
+                && currentSessionDetails.getChildCount() > 0;
+        boolean appTimeVisible = allowances.getVisibility() == android.view.View.VISIBLE
+                && allowances.getChildCount() > 0;
+        sessionAllowanceDivider.setVisibility(sessionVisible && appTimeVisible
+                ? android.view.View.VISIBLE : android.view.View.GONE);
+        currentSession.setVisibility(sessionVisible || appTimeVisible
+                ? android.view.View.VISIBLE : android.view.View.GONE);
+    }
+
+    private void bindSessions() {
+        sessionList.removeAllViews();
+        heading(sessionList, R.string.stats_recent_sessions);
+        if (remote != null || domOverview) { text(sessionList,getString(R.string.stats_remote_history_private),13,true);return; }
+        if (localFacts == null) { text(sessionList, getString(R.string.role_loading), 13, true); return; }
+        List<StatsRepository.SessionEntry> entries = new ArrayList<>(localFacts.history.sessions());
+        Collections.reverse(entries);
+        entries.removeIf(
+                e ->
+                        e.getDurationSeconds() == 0
+                                && e.getActivityEvents() == 0
+                                && e.getLimitedAppMillis() == 0);
+        if (entries.isEmpty()) {
+            text(sessionList, getString(R.string.statistics_no_history), 13, true);
+            return;
+        }
+        for (int i = 0; i < Math.min(sessionLimit, entries.size()); i++)
+            session(sessionList, entries.get(i));
+        if (entries.size() > 3) {
+            Button more =
+                    button(
+                            sessionList,
+                            getString(
+                                    sessionLimit >= entries.size()
+                                            ? R.string.stats_fewer_sessions
+                                            : R.string.stats_more_sessions),
+                            () -> {
+                                sessionLimit =
+                                        sessionLimit >= entries.size()
+                                                ? 3
+                                                : Math.min(entries.size(), sessionLimit + 3);
+                                bindSessions();
+                            });
+            more.setId(R.id.stats_sessions_more);
+        }
+    }
+
+    private void session(LinearLayout parent, StatsRepository.SessionEntry entry) {
+        LinearLayout record = new LinearLayout(this);
+        record.setOrientation(LinearLayout.VERTICAL);
+        record.setPadding(0, dp(6), 0, dp(6));
+        record.setTag("stats:session");
+        parent.addView(record, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        record.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        TextView date =
+                text(
+                        header,
+                        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                .format(new Date(entry.getStartMillis())),
+                        14,
+                        false);
+        date.setTypeface(null, Typeface.BOLD);
+        date.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        TextView time = text(header, duration(entry.getDurationSeconds()), 14, true);
+        time.setGravity(Gravity.END);
+        time.setPadding(dp(8), dp(5), 0, dp(7));
+        time.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+        List<String> brief = new ArrayList<>();
+        if (entry.getBlocks() > 0)
+            brief.add(getString(R.string.stats_history_censors, entry.getBlocks()));
+        if (entry.getSubliminals() > 0)
+            brief.add(getString(R.string.stats_history_whispers, entry.getSubliminals()));
+        if (entry.getLimitInterventions() > 0)
+            brief.add(getString(R.string.stats_history_stops, entry.getLimitInterventions()));
+        if (entry.getTributeEvents() > 0)
+            brief.add(getString(R.string.stats_history_tributes, entry.getTributeEvents()));
+        if (entry.getPopupImpressions() > 0)
+            brief.add(getString(R.string.stats_history_popups, entry.getPopupImpressions()));
+        if (!brief.isEmpty()) text(record, String.join(" · ", brief), 12, true);
+        boolean hasDetails = entry.getLimitedAppMillis() > 0 || entry.getTributeCents() > 0;
+        if (hasDetails) {
+            LinearLayout details = new LinearLayout(this);
+            details.setOrientation(LinearLayout.VERTICAL);
+            record.addView(details);
+            if (entry.getLimitedAppMillis() > 0)
+                row(
+                        details,
+                        R.string.stats_limited_app_time,
+                        duration(entry.getLimitedAppMillis() / 1000));
+            if (entry.getTributeCents() > 0)
+                row(
+                        details,
+                        R.string.stats_assessed,
+                        WalletCurrency.format("EUR", entry.getTributeCents()));
+        }
+    }
+
+    private void heading(LinearLayout parent, int title) {
+        TextView label = text(parent, getString(title), 16, false);
+        int icon = title == R.string.stats_recent_sessions || title == R.string.profile_stats_current_session
+                || title == R.string.dom_stats_current ? R.drawable.ic_overview_clock
+                : R.drawable.ic_nav_stats;
+        com.subhub.app.util.UiIdentity.sectionIcon(label, icon);
+        label.setTypeface(null, Typeface.BOLD);
+        androidx.core.view.ViewCompat.setAccessibilityHeading(label, true);
+    }
+
+    private LinearLayout row(LinearLayout parent, int label, String value) {
+        LinearLayout line = new LinearLayout(this);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        parent.addView(line, new LinearLayout.LayoutParams(-1, -2));
+        TextView name = text(line, getString(label), 13, true);
+        name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        TextView amount = text(line, value, 15, false);
+        amount.setGravity(Gravity.END);
+        amount.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+        return line;
+    }
+
+    private String duration(long seconds) {
+        return seconds > 0 && seconds < 60
+                ? getString(R.string.stats_seconds_value, seconds)
+                : StatsSnapshot.formatDuration(seconds);
+    }
+
+    private String number(long value) {
+        return java.text.NumberFormat.getIntegerInstance().format(value);
     }
 }

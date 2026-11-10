@@ -1,0 +1,21 @@
+<resources>
+<string name="stats_period_week">Last 7 days</string><string name="stats_period_month">Last 30 days</string><string name="stats_period_year">This year</string>
+<string name="stats_no_activity_period">No activity recorded for this measure.</string>
+<string name="stats_history_from">Dated history from %1$s.</string>
+<string name="stats_previous_month">Previous month</string><string name="stats_next_month">Next month</string><string name="stats_no_daily_month">No daily records for this month.</string>
+<string name="stats_assessed">Assessed</string><string name="stats_days_value">%1$d days</string>
+<item type="id" name="stats_empty_activity"/>
+<string name="stats_seconds_value">%1$d s</string>
+<string name="stats_all_time">All time</string>
+<string name="stats_more_totals">More totals</string>
+<string name="stats_fewer_totals">Fewer totals</string>
+<string name="stats_recent_sessions">Recent sessions</string>
+<string name="stats_more_sessions">Show more</string>
+<string name="stats_fewer_sessions">Show fewer</string>
+<item type="id" name="stats_lifetime_summary"/>
+<item type="id" name="stats_totals_details"/>
+<item type="id" name="stats_sessions_more"/>
+<item type="id" name="stats_totals_toggle"/>
+<string name="settings_apps_unavailable">Could not load installed apps.</string>
+<string name="custom_images_unavailable">Could not load images.</string>
+</resources>

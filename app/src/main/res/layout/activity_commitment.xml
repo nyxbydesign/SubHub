@@ -17,15 +17,32 @@
             android:layout_marginTop="@dimen/primary_header_top" />
 
         <LinearLayout
+            android:id="@+id/inactive_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/page_margin"
+            android:layout_marginTop="@dimen/ui_gap_section"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
+            <com.subhub.app.commitment.ServiceDurationView
+                android:id="@+id/duration_selection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+            <Button android:id="@+id/duration_open_home"
+                style="@style/Widget.SubHub.CompactOutlineButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/ui_gap_control" android:text="@string/tour_open_home" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/active_panel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/page_margin"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="@dimen/ui_gap_section"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="18dp"
-            android:visibility="gone">
+            android:visibility="gone" android:paddingStart="@dimen/ui_card_padding" android:paddingEnd="@dimen/ui_card_padding" android:paddingTop="@dimen/ui_card_padding_vertical" android:paddingBottom="@dimen/ui_card_padding_vertical">
 
             <TextView style="@style/Widget.SubHub.SectionHeader" android:text="@string/commitment_pact_sealed" />
 
@@ -33,7 +50,7 @@
                 android:id="@+id/countdown"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="@dimen/ui_gap_group"
                 android:gravity="center"
                 android:letterSpacing="0.08"
                 android:textColor="@color/text_primary"
@@ -43,28 +60,21 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/ui_gap_control"
                 android:gravity="center"
                 android:text="@string/commitment_active_body"
                 android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:textSize="@dimen/ui_text_caption" />
 
             <TextView
                 android:id="@+id/button_emergency_release"
                 style="@style/Widget.SubHub.DangerAction"
                 android:layout_height="wrap_content"
                 android:minHeight="52dp"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="@dimen/ui_gap_section"
                 android:text="@string/commitment_emergency_release"
                 android:visibility="gone" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/commitment_safety_note"
-                android:textColor="@color/text_muted"
-                android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

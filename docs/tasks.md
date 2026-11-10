@@ -1,0 +1,52 @@
+# Tasks
+
+Open **Tasks** in the bottom navigation. In the Dom workspace, choose a Sub profile to see its active, pending and scheduled tasks. Select a task card for instructions, attachments, completion requests and review. Back returns from a form to the task, then to its list. The Sub workspace opens its own Tasks list.
+
+The summary row shows **Completed**, **Active**, **Pending** and **Scheduled**, in that order, on both the Sub's task list and each Dom task-overview card. Completed counts only accepted occurrences in that relationship's recorded history, including when History is hidden. Each accepted day of a recurring task counts once. Pending, denied, refused, skipped, expired and cancelled occurrences do not count; repeated sync or reload does not add another completion.
+
+Open a Sub profile and choose **Tasks** in the Contract group. A Sub can also open Tasks from Home, where the subtitle shows the number of currently active occurrences. Pending reviews and completed, failed, refused, skipped or cancelled occurrences are excluded. Repeated delivery does not increase the count.
+
+A Dom creates a task with a title, instructions, a start time, duration, and optionally one image, audio track or video. Select weekdays from Monday through Sunday for a recurring task; leave them unselected for a single task.
+
+Recurring tasks keep their chosen local time and time zone when either device changes zones. A spring DST gap moves the start forward by the gap. An autumn overlap uses the earlier offset once. Duration is elapsed time from that resolved start. Each occurrence has a stable identity based on the task and its calendar date in the task's zone.
+
+New tasks use the target Sub device timezone received over the authenticated Tasks connection. The timezone is read-only; sync with the Sub if it is unavailable or more than 30 minutes old. The Dom device timezone is never used for a remote Sub. Existing tasks retain their recorded timezone when either device travels or changes timezone, preserving deadlines, weekday repeats and occurrence identities. New tasks use the latest confirmed Sub timezone. Local tasks use this device timezone.
+
+Task detail shows the description and status, the instruction attachment, then the completion request. A request with one proof attachment embeds it below the proof text. Multiple proof attachments open a dedicated Attachments page; Back returns to the task detail. Images fit within the page; inline audio and video have play, pause and seek controls. Playback stops when leaving the page, switching roles or losing access. Missing or incomplete media can be retried after syncing.
+
+## Completion and refusal
+
+During an active task, the Sub can request completion with text and up to five media attachments, or request review outside the app without proof. Both requests remain pending until the Dom explicitly accepts or denies them. A timely pending request does not expire while awaiting review. Denial ends that occurrence.
+
+History lists finished occurrences newest first by their first recorded transition into History, independently of their creation, schedule or completion-request time. Equal entry times use stable occurrence identities. Existing history is reconstructed from the action journal in its recorded order, without assigning a new time on reload. Later cancellation changes an already finished outcome without moving it; cancelling pending work enters it into History at cancellation time.
+
+Entry times use the original action timestamps from the paired devices. Clock differences can affect their relative order. If an offline review or timeout races with cancellation, both devices retain the cancelled outcome, but their History position can differ: a device that recorded the earlier outcome keeps that entry time, while a device that received cancellation first ignores the stale outcome and uses cancellation time. Reloading preserves each device's recorded transitions.
+
+Reviewed preview cards show **Approved** or **Declined**. Finished previews and task details show **Completion requested** with the recorded submission time in the task's timezone, including requests for review outside the app. This is the Sub's request time, separate from the Dom's later review and History ordering. Refused, skipped and expired tasks have no completion request time. Cancelled tasks continue hiding their completion request and its time.
+
+If the author enables refusal, the Sub can refuse an occurrence before its deadline. A recurring task also offers refusal of the entire series. A refusal does not count as failure or create a tribute. Refusing a series stops future occurrences and survives reconnects; previously submitted work still receives its explicit review.
+
+## Cancellation
+
+The Dom can cancel a single occurrence or an entire recurring series from the task detail after confirmation. Cancellation archives the task outcome while retaining its audit history, ends pending completion review and prevents new timeout or failure effects. A series stays cancelled after reconnect; a late offline proof or review cannot reopen it. Cancellation does not create a failure tribute or reverse an already recorded tribute.
+
+Both devices must advertise cancellation support. If an older paired device lacks it, update both devices before cancelling. A device with cancellation history pauses Tasks exchange with an older peer until support is restored; existing non-Tasks sync continues. The Sub can keep Tasks disabled while the Dom archives tasks locally; the cancellation transfers when Tasks is enabled again.
+
+## Failure tributes
+
+Enable **Task failure** in the profile's Tributes settings and choose its amount, then enable **Failure tribute** for the task. A denied request or timeout can add one local tribute when protection is armed and the receiving device permits both Tasks and Tributes. Existing daily and weekly caps and the correction window apply. The task failure path does not schedule a payment.
+
+An occurrence has a permanent failure receipt, including when eligibility or spending caps produce a zero amount. Replays, later settings changes and history trimming cannot assess it a second time. Permitted refusals, accepted work, pending reviews and skipped occurrences do not qualify.
+
+## Local choices and pairing
+
+The Sub can disable Tasks on the Tasks page. This choice remains on that device and stops task actions and attachment transfers. Hardcore respects this choice. Re-enabling Tasks skips occurrences that expired during the disabled period rather than assessing them retroactively. Unpairing revokes further actions and transfers for that relationship; a new pairing has a separate identity and history.
+
+Tasks and proof media remain on the paired devices. Both peers must support the Tasks capability; an older peer continues its existing sync without receiving task data. Offline actions are retained and acknowledged after reconnect. The Dom receives one private notification for each completion request when Android notification permission is available; task instructions and proof are omitted from notification copy.
+
+## Limits
+
+- One instruction attachment and up to five completion attachments, each at most 25 MiB. Supported formats are JPEG, PNG, WebP, GIF, MP3, Ogg, WAV, MP4 audio/video and WebM video.
+- Attachments use a separate private store per pairing, bounded to 256 MiB and 512 attachments. Playback requires an available, fully received attachment; larger transfers resume across sync windows.
+- The local journal is bounded to 250 task definitions and 20,000 actions per relationship. A full store rejects additional work without discarding existing history.
+- Foreground deadlines are checked when SubHub becomes visible and every 30 seconds while it stays visible. That foreground timer stops when the app is hidden. Background checks use Android scheduling, normally at least 15 minutes apart, and can be delayed by battery restrictions or a stopped app. A delayed check preserves the task's original deadline and any timely completion request.

@@ -6,31 +6,31 @@ import java.util.Set;
 
 /** Pure foreground-package decision policy for battery-aware accessibility capture. */
 public final class AppModePolicy {
-    public enum Mode { ALWAYS, SELECTED_APPS }
-
     private AppModePolicy() {}
 
-    public static boolean shouldRecognize(boolean armed, Mode mode, Set<String> selectedPackages,
+    public static boolean shouldRecognize(boolean armed,
+            Set<String> includedPackages,
             String foregroundPackage, String ownPackage, String inputMethodPackage) {
         if (!armed) return false;
         String foreground = clean(foregroundPackage);
-        if (foreground.equals(clean(ownPackage)) || foreground.equals(clean(inputMethodPackage))) {
+        if ("com.android.settings".equals(foreground)
+                || "com.google.android.settings".equals(foreground)
+                || isTransientSystemSurface(foreground)
+                || foreground.equals(clean(ownPackage)) || foreground.equals(clean(inputMethodPackage))) {
             return false;
         }
-        if (mode == Mode.ALWAYS) {
-            return !foreground.isEmpty() && !isSystemSurface(foreground);
-        }
-        return !foreground.isEmpty() && selectedPackages != null
-                && selectedPackages.contains(foreground);
+        return !foreground.isEmpty() && includedPackages != null
+                && includedPackages.contains(foreground);
     }
 
     /** Never enforce time limits on device escape and permission surfaces. */
-    public static boolean shouldLimit(boolean armed, Mode mode, Set<String> selectedPackages,
+    public static boolean shouldLimit(boolean armed,
+            Set<String> includedPackages,
             String foregroundPackage, String ownPackage, String inputMethodPackage, String homePackage) {
         String foreground = clean(foregroundPackage);
         if (foreground.equals(clean(homePackage)) || isTransientSystemSurface(foreground)
                 || "com.android.settings".equals(foreground) || "com.google.android.settings".equals(foreground)) return false;
-        return shouldRecognize(armed, mode, selectedPackages, foreground,
+        return shouldRecognize(armed, includedPackages, foreground,
                 ownPackage, inputMethodPackage);
     }
 
@@ -48,9 +48,9 @@ public final class AppModePolicy {
     }
 
     /**
-     * A package reported by the active Accessibility root is stronger evidence than an event.
-     * The app's own non-focusable overlay cannot own that root, so the own package here means the
-     * user actually opened SubHub and recognition must sleep. System chrome and keyboards remain
+     * A package reported by the active Accessibility root is stronger evidence than an event. The
+     * app's own non-focusable overlay cannot own that root, so the own package here means the user
+     * actually opened SubHub and recognition must sleep. System chrome and keyboards remain
      * transient surfaces over the app underneath them.
      */
     public static boolean shouldAcceptLiveForegroundPackage(

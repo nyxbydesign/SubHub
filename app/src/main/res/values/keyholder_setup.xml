@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keyholder_local_control">On this device</string>
+    <string name="keyholder_local_help">Use a PIN to unlock Dom controls on this device.</string>
+    <string name="keyholder_remote_control">Remote Dom</string>
+    <string name="keyholder_remote_help">Pair with your Dom’s device. Their SubHub app receives your keyholder token automatically.</string>
+    <string name="keyholder_remote_code_help">Your Dom can provide a current code to unlock this device.</string>
+    <string name="keyholder_pairing_in_progress">Finishing keyholder setup</string>
+    <string name="keyholder_unavailable">Keyholder unavailable</string>
+    <string name="keyholder_remote_unlock">Unlock with keyholder code</string>
+    <string name="keyholder_remote_unlock_help">Ask your Dom for the current six-digit code.</string>
+    <string name="keyholder_remote_throttled">Too many attempts. Wait before trying a fresh code.</string>
+    <string name="keyholder_remote_code_unavailable">Keyholder code unavailable. Check your connection and keyholder setup.</string>
+    <item name="keyholder_setup_local" type="id" />
+    <item name="keyholder_setup_remote" type="id" />
+    <item name="keyholder_assigned_dom" type="id" />
+    <item name="keyholder_setup_status" type="id" />
+</resources>

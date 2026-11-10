@@ -488,7 +488,9 @@ public final class PayPalOrdersClient {
         if (payerAccountId.isEmpty() && payer != null) {
             payerAccountId = payer.optString("payer_id", "");
         }
-        return new Capture(capture.optString("id"),
+        String captureId = capture.optString("id");
+        if (!captureId.matches("[A-Za-z0-9_-]{1,128}")) throw new IllegalStateException("PayPal capture ID is unavailable");
+        return new Capture(captureId, settlementId, expectedAmountCents, currency,
                 vault == null ? "" : vault.optString("status"),
                 vault == null ? "" : vault.optString("id"),
                 customer == null ? "" : customer.optString("id"),
@@ -912,14 +914,16 @@ public final class PayPalOrdersClient {
 
     public static final class Capture {
         private final String id;
+        private final String settlementId, currency;
+        private final int amountCents;
         private final String vaultStatus;
         private final String vaultId;
         private final String customerId;
         private final String payerEmail;
         private final String payerAccountId;
-        private Capture(String id, String vaultStatus, String vaultId, String customerId,
-                String payerEmail, String payerAccountId) {
-            this.id = id;
+        private Capture(String id, String settlementId, int amountCents, String currency,
+                String vaultStatus, String vaultId, String customerId, String payerEmail, String payerAccountId) {
+            this.id = id; this.settlementId = settlementId; this.amountCents = amountCents; this.currency = currency;
             this.vaultStatus = vaultStatus;
             this.vaultId = vaultId;
             this.customerId = customerId;
@@ -927,6 +931,12 @@ public final class PayPalOrdersClient {
             this.payerAccountId = payerAccountId;
         }
         public String id() { return id; }
+        public String settlementId() { return settlementId; }
+        public int amountCents() { return amountCents; }
+        public String currency() { return currency; }
+        public boolean matches(String settlement, int amount, String currency) {
+            return settlementId.equals(settlement) && amountCents == amount && this.currency.equals(currency) && !id.isEmpty();
+        }
         public String vaultStatus() { return vaultStatus; }
         public String vaultId() { return vaultId; }
         public String customerId() { return customerId; }

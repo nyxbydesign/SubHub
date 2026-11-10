@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /** Safe, bounded reconstruction of the licensed multi-window popup renderer. */
 public final class PopupStormManager {
@@ -45,6 +46,7 @@ public final class PopupStormManager {
     private final CopyOnWriteArrayList<LivePopup> popups = new CopyOnWriteArrayList<>();
     private final Random random = new Random();
     private volatile List<RectF> detections = List.of();
+    private final ScopedDetectionHints<RectF> detectionHints = new ScopedDetectionHints<>();
     private Context context;
     private PopupBitmapCache bitmapCache;
     private PopupLibrary library;
@@ -77,8 +79,15 @@ public final class PopupStormManager {
     /** Foreground/service reevaluation must not reset a preview or restart image I/O each event. */
     public void syncServiceParticipation(Context source, boolean eligible) {
         if (eligible) {
-            if (!ownership.isService()) start(source);
-        } else if (ownership.isService()) stop();
+            startOwned(source);
+        } else {
+            long stopped;
+            synchronized (ownership) {
+                stopped = ownership.isService() ? ownership.stop() : 0;
+                if (stopped != 0) startRequested = false;
+            }
+            if (stopped != 0) stopAfterClaim(stopped);
+        }
     }
     public long remainingPreviewMillis() {
         return ownership.remainingPreviewMillis(SystemClock.uptimeMillis());
@@ -105,23 +114,58 @@ public final class PopupStormManager {
     }
 
     public void start(Context source) {
+        startOwned(source);
+    }
+
+    /** An opaque participation token cannot acquire a replacement runtime during late cleanup. */
+    public static final class ServiceParticipation {
+        private final long token;
+        private final String signature;
+        private ServiceParticipation(long token, String signature) { this.token = token; this.signature = signature; }
+    }
+
+    public ServiceParticipation startOwned(Context source) {
+        return startOwned(source, com.subhub.app.appmode.RuntimeSessionIdentity.componentSignature(source));
+    }
+
+    /** A capture instance passes its original signature rather than adopting whatever replaced it. */
+    public ServiceParticipation startOwned(Context source, String expectedSignature) {
         // Claim before posting so an already queued preview timeout cannot stop
         // an effect that a real service has adopted from another thread.
         long token;
+        com.subhub.app.appmode.RuntimeSessionIdentity.ComponentObservation observed =
+                com.subhub.app.appmode.RuntimeSessionIdentity.componentObservation(source);
+        if (!observed.signature.equals(expectedSignature)) return null;
         synchronized (ownership) {
-            token = ownership.adoptService();
+            // Runtime is released before this lock, which also guards Android rendering callbacks.
+            if (!observed.isCurrent()) return null;
+            token = ownership.serviceToken(expectedSignature);
+            if (token != 0) return new ServiceParticipation(token, expectedSignature);
+            token = ownership.adoptService(expectedSignature);
             startRequested = true;
         }
+        ServiceParticipation participation = new ServiceParticipation(token, expectedSignature);
         initialize(source);
         settings = PopupStormSettings.load(source);
         rescanAsync();
         main.post(() -> {
             synchronized (ownership) {
-                if (!ownership.isService(token)) return;
+                if (!ownership.isService(participation.token)) return;
                 cancelPreviewTimeout();
                 startIfReady();
             }
         });
+        return participation;
+    }
+
+    public void stopOwnedService(ServiceParticipation participation) {
+        if (participation == null) return;
+        long stopped;
+        synchronized (ownership) {
+            stopped = ownership.stopService(participation.token);
+            if (stopped != 0) startRequested = false;
+        }
+        if (stopped != 0) stopAfterClaim(stopped);
     }
 
     /** Starts at most ten seconds of editor preview without changing service state. */
@@ -159,6 +203,10 @@ public final class PopupStormManager {
             token = ownership.stop();
             startRequested = false;
         }
+        stopAfterClaim(token);
+    }
+
+    private void stopAfterClaim(long token) {
         Runnable stopRequest = () -> {
             synchronized (ownership) {
                 // An older queued stop must not remove a newly owned effect.
@@ -184,6 +232,13 @@ public final class PopupStormManager {
         List<RectF> copies = new ArrayList<>();
         for (RectF box : boxes) copies.add(new RectF(box));
         detections = Collections.unmodifiableList(copies);
+    }
+
+    /** Replacement metadata is queried at placement, not copied into the legacy detection cache. */
+    public ScopedDetectionHints<RectF>.Binding bindDetectionHints(Supplier<List<RectF>> source) {
+        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Main hint ownership required");
+        detections = List.of(); // Do not resurrect a former legacy window after this owner closes.
+        return detectionHints.bind(source);
     }
 
     public void updateTrackedObjects(List<TrackedObject> tracks, int frameWidth, int frameHeight) {
@@ -354,7 +409,7 @@ public final class PopupStormManager {
     }
 
     private float[] choosePosition(PopupStormSettings current, int width, int height) {
-        List<RectF> boxes = detections;
+        List<RectF> boxes = detectionHints.read(detections);
         if ("cover".equals(current.getDetectionMode()) && !boxes.isEmpty()) {
             RectF box = boxes.get(random.nextInt(boxes.size()));
             return clampPosition(box.centerX() - width / 2f, box.centerY() - height / 2f, width, height);
@@ -443,7 +498,7 @@ public final class PopupStormManager {
         TextView stop = new TextView(context);
         stop.setText(R.string.popup_stop_now);
         stop.setTextColor(Color.WHITE);
-        stop.setTextSize(13);
+        com.subhub.app.util.UiIdentity.textSize(stop, R.dimen.ui_text_body);
         stop.setGravity(Gravity.CENTER);
         stop.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         stop.setPadding(dp(18), 0, dp(18), 0);

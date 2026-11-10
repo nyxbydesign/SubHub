@@ -1,0 +1,481 @@
+package com.subhub.app.people;
+
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.longClick;
+import static androidx.test.espresso.matcher.ViewMatchers.withTagValue;
+import static com.subhub.app.NativeUiActions.revealAboveNavigation;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.*;
+
+import android.app.Activity;
+import android.app.Instrumentation;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.os.SystemClock;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.filters.SdkSuppress;
+import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.R;
+import com.subhub.app.relationships.RelationshipUi;
+import com.subhub.app.relationships.RelationshipPanel;
+import java.util.concurrent.CompletableFuture;
+import com.subhub.app.UiAutomationStateRule;
+import com.subhub.app.onboarding.OnboardingState;
+import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.security.DeviceRolePreferences;
+import com.subhub.app.security.KeyholderPresentationAndroidTest;
+import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.settings.SharedPreferenceTestRestore;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+
+public final class SubsRosterPreviewAndroidTest {
+    @Rule public final KeyholderPresentationAndroidTest.IntegrationFixture integration =
+            new KeyholderPresentationAndroidTest.IntegrationFixture();
+    @Rule public final UiAutomationStateRule automation = new UiAutomationStateRule();
+    private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    private Map<String, ?> favoritesBefore, profilesBefore;
+    private RelationshipUi.Provider originalRelationships;
+    private java.util.function.Supplier<List<PersonSnapshot>> fixturePeople = Collections::emptyList;
+    private Map<String, ?> relationshipPreferences;
+    private Object journalLock, originalJournalState;
+    private Map<Object, Object> journalStates;
+    private String journalKey;
+    private boolean journalStateExisted;
+    private static final int AVATAR_COLOR = Color.rgb(67, 135, 208);
+
+    @Before @SuppressWarnings("unchecked") public void prepare() throws Exception {
+        assertFalse(LocalSessionControls.isActive(context));
+        originalRelationships = RelationshipUi.provider();
+        relationshipPreferences = new LinkedHashMap<>(context.getSharedPreferences("subhub_relationship_presentation", 0).getAll());
+        java.lang.reflect.Field lock = RelationshipPanel.class.getDeclaredField("JOURNAL_LOCK"); lock.setAccessible(true);
+        java.lang.reflect.Field states = RelationshipPanel.class.getDeclaredField("JOURNAL_STATES"); states.setAccessible(true);
+        journalLock = lock.get(null); journalStates = (Map<Object, Object>) states.get(null);
+        journalKey = context.getApplicationInfo().dataDir + "/subhub_relationship_presentation";
+        synchronized (journalLock) { journalStateExisted = journalStates.containsKey(journalKey); originalJournalState = journalStates.remove(journalKey); }
+        assertTrue(context.getSharedPreferences("subhub_relationship_presentation", 0).edit().clear().commit());
+        RelationshipUi.install(new RelationshipUi.Provider() {
+            public CompletableFuture<RelationshipUi.Snapshot> snapshot() { return CompletableFuture.completedFuture(rosterSnapshot()); }
+            public CompletableFuture<RelationshipUi.LocalReview> prepareLocal(String key, String dom, String sub, String revision) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> confirmLocal(String id, String digest) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> resume(String id) { return forbiddenRelationshipMutation(); }
+            public CompletableFuture<RelationshipUi.Operation> cancel(String id) { return forbiddenRelationshipMutation(); }
+        });
+        favoritesBefore = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
+        profilesBefore = new LinkedHashMap<>(context.getSharedPreferences(ProfileNames.STORE, 0).getAll());
+        assertTrue(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).edit().clear().commit());
+        assertTrue(new SettingsRepository(context).preferences().edit().putString(DeviceRolePreferences.KEY_MODE,
+                DeviceRolePreferences.Mode.DOM_ONLY.name()).commit());
+        assertTrue(ControllerPinManager.setPin(context, "2468")); ControllerPinManager.enterDomMode();
+        OnboardingState.complete(context);
+    }
+
+    @After public void restore() {
+        try {
+            if (originalRelationships != null) RelationshipUi.install(originalRelationships);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), favoritesBefore);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(ProfileNames.STORE, 0), profilesBefore);
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences("subhub_relationship_presentation", 0), relationshipPreferences);
+        } finally {
+            if (journalLock != null) synchronized (journalLock) {
+                if (journalStateExisted) journalStates.put(journalKey, originalJournalState); else journalStates.remove(journalKey);
+            }
+        }
+    }
+
+    private RelationshipUi.Snapshot rosterSnapshot() {
+        java.util.ArrayList<RelationshipUi.Edge> edges = new java.util.ArrayList<>(); int index = 0;
+        for (PersonSnapshot person : fixturePeople.get()) {
+            if (person.connection == PersonSnapshot.Connection.REVOKED) continue;
+            edges.add(new RelationshipUi.Edge("roster-edge-" + index, person.id.value().substring(72), "fixture-dom", "fixture-sub-" + index,
+                    RelationshipUi.Delivery.PEER, "ACTIVE", ++index, person.id, RelationshipUi.Availability.AVAILABLE, person.freshness));
+        }
+        return new RelationshipUi.Snapshot(true, "roster-fixture-revision",
+                List.of(new RelationshipUi.Participant("fixture-dom", RelationshipUi.Role.DOM, ProfileData.empty("Fixture Dom"))),
+                edges, null, Collections.emptyList());
+    }
+
+    private static <T> CompletableFuture<T> forbiddenRelationshipMutation() {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        result.completeExceptionally(new AssertionError("Roster fixture must not mutate relationship authority")); return result;
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void actualRosterCardKeepsIdentityFavoriteAndReadOnlyTapThroughWithLongProfileData() throws Exception {
+        PersonId id = new PersonId("remote_" + "a".repeat(64) + "_roster1");
+        String gender = "Non-binary / gender nonconforming person";
+        assertEquals(ProfileData.MAX_GENDER_LENGTH, gender.length());
+        ProfileData profile = new ProfileData("Alexandra Morgan with a long display name",
+                "I value clear communication, shared plans, and a steady routine. ".repeat(5).trim(), image(), gender, 32);
+        PersonSnapshot person = person(id, profile, PersonSnapshot.Connection.CONNECTED);
+        install(new AtomicReference<>(person));
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "person:" + id.value()) != null);
+            await(() -> ((ViewGroup) tagged(host.get(), prefix(id) + "_avatar")).getChildAt(1).getVisibility() == View.VISIBLE);
+            scenario.onActivity(a -> {
+                View header = tagged(a, prefix(id) + "_identity"); android.widget.ScrollView scroll = scroll(header);
+                Rect target = new Rect(); header.getDrawingRect(target); scroll.offsetDescendantRectToMyCoords(header, target);
+                scroll.scrollTo(0, Math.max(0, target.top - scroll.getHeight() / 3));
+            });
+            capture(host.get(), "subs-roster-header-before-clearance").recycle();
+            onView(tag(prefix(id) + "_identity")).perform(revealWholeIdentity());
+            scenario.onActivity(a -> {
+                ViewGroup card = tagged(a, "person:" + id.value());
+                assertTrue(card.findViewWithTag("profile_preview:sub") instanceof ProfilePreview);
+                assertEquals(profile.name, ((TextView) card.findViewWithTag(prefix(id) + "_name")).getText().toString());
+                assertTrue(((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString().contains("Non-binary"));
+                assertDetailsBelowName(card, prefix(id));
+                assertEquals(2, ((TextView) card.findViewWithTag(prefix(id) + "_about")).getMaxLines());
+                assertNull(card.findViewWithTag(prefix(id) + "_about_expand"));
+                assertNull(card.findViewWithTag("profile_journal_preview"));
+                assertFalse(card.findViewWithTag(prefix(id) + "_name").isClickable());
+                assertFalse(card.findViewWithTag(prefix(id) + "_about").isClickable());
+                assertTrue(card.isClickable()); assertTrue(card.isLongClickable());
+                assertNull(card.findViewWithTag(prefix(id) + "_target"));
+                assertNull(card.findViewWithTag(prefix(id) + "_contract"));
+                assertNoFiller(card);
+            });
+            Bitmap pixels = capture(host.get(), "subs-roster-long-top");
+            Rect avatar = new Rect();
+            scenario.onActivity(a -> {
+                View image = tagged(a, prefix(id) + "_avatar"); assertTrue(image.getGlobalVisibleRect(avatar));
+                assertEquals(image.getWidth(), avatar.width()); assertEquals(image.getHeight(), avatar.height());
+            });
+            try {
+                assertTrue(distance(AVATAR_COLOR, pixels.getPixel(avatar.centerX(), avatar.centerY())) < 18);
+                assertTrue(distance(AVATAR_COLOR, pixels.getPixel(avatar.left + avatar.width() / 12,
+                        avatar.top + avatar.height() / 12)) > 60);
+            } finally { pixels.recycle(); }
+            onView(tag(prefix(id) + "_connection")).perform(revealAboveNavigation());
+            capture(host.get(), "subs-roster-long-summary").recycle();
+            onView(tag(prefix(id) + "_name")).perform(revealAboveNavigation(), longClick());
+            await(() -> tagged(host.get(), "people_favorite:" + id.value()) != null);
+            assertEquals(FavoriteSubStore.identity(id), new FavoriteSubStore(context).identity());
+            scenario.recreate(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "people_favorite:" + id.value()) != null);
+            onView(tag("people_favorite:" + id.value())).perform(revealAboveNavigation());
+            capture(host.get(), "subs-roster-favorite-restored").recycle();
+            Instrumentation.ActivityMonitor monitor = InstrumentationRegistry.getInstrumentation()
+                    .addMonitor(PersonActivity.class.getName(), null, false);
+            PersonActivity opened = null;
+            try {
+                onView(tag(prefix(id) + "_name")).perform(revealAboveNavigation(), click());
+                opened = (PersonActivity) InstrumentationRegistry.getInstrumentation().waitForMonitorWithTimeout(monitor, 5000);
+                assertNotNull(opened); PersonActivity selected = opened;
+                await(() -> tagged(selected, "person_name") != null);
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    assertEquals(id, PersonRoutes.requireId(selected.getIntent()));
+                    assertEquals(profile.name, ((TextView) tagged(selected, "person_name")).getText().toString());
+                    assertEquals(profile.about, ((TextView) tagged(selected, "person_about:" + id.value())).getText().toString());
+                    assertDetailsBelowName(selected.findViewById(android.R.id.content), "person");
+                    assertNull(tagged(selected, "person_target:" + id.value()));
+                    assertNull(tagged(selected, "person_allowed_features"));
+                    assertNoFiller(selected.findViewById(android.R.id.content));
+                    assertNull(tagged(selected, "profile_edit"));
+                    assertNull(selected.findViewById(R.id.profile_gender_input));
+                    assertNull(selected.findViewById(R.id.profile_age_input));
+                });
+                capture(opened, "subs-roster-tap-person").recycle();
+                onView(tag("person_details")).perform(revealAboveNavigation());
+                capture(opened, "subs-roster-tap-person-complete-details").recycle();
+                onView(tag("person_about_expand")).perform(revealAboveNavigation(), click());
+                onView(tag("person_about_expand")).perform(revealAboveNavigation());
+                capture(opened, "subs-roster-tap-person-expanded-end").recycle();
+            } finally {
+                if (opened != null) { PersonActivity selected = opened;
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync(selected::finish); }
+                InstrumentationRegistry.getInstrumentation().removeMonitor(monitor);
+            }
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void legacyOfflineRosterKeepsFallbackAndUnknownHistoryAndHidesAfterAuthorityLoss() throws Exception {
+        PersonId id = new PersonId("remote_" + "b".repeat(64) + "_legacy1");
+        AtomicReference<PersonSnapshot> current = new AtomicReference<>(person(id, ProfileData.empty("Sam Taylor"), PersonSnapshot.Connection.OFFLINE));
+        install(current);
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "person:" + id.value()) != null);
+            scenario.onActivity(a -> {
+                ViewGroup card = tagged(a, "person:" + id.value());
+                assertNull(card.findViewWithTag(prefix(id) + "_about"));
+                assertEquals("", ((TextView) card.findViewWithTag(prefix(id) + "_details")).getText().toString());
+                assertEquals(View.GONE, card.findViewWithTag(prefix(id) + "_details").getVisibility());
+                assertNoFiller(card);
+                assertEquals(a.getString(R.string.role_connection_offline),
+                        ((TextView) card.findViewWithTag(prefix(id) + "_connection")).getText().toString());
+                assertNotEquals(View.VISIBLE, ((ViewGroup) card.findViewWithTag(prefix(id) + "_avatar")).getChildAt(1).getVisibility());
+            });
+            onView(tag(prefix(id) + "_name")).perform(revealAboveNavigation());
+            capture(host.get(), "subs-roster-legacy-offline").recycle();
+            onView(tag(prefix(id) + "_connection")).perform(revealAboveNavigation());
+            capture(host.get(), "subs-roster-legacy-offline-context").recycle();
+            Instrumentation.ActivityMonitor monitor = InstrumentationRegistry.getInstrumentation()
+                    .addMonitor(PersonActivity.class.getName(), null, false);
+            PersonActivity opened = null;
+            try {
+                onView(tag(prefix(id) + "_name")).perform(revealAboveNavigation(), click());
+                opened = (PersonActivity) InstrumentationRegistry.getInstrumentation().waitForMonitorWithTimeout(monitor, 5000);
+                assertNotNull(opened); PersonActivity selected = opened;
+                await(() -> tagged(selected, "person_name") != null);
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    assertEquals(id, PersonRoutes.requireId(selected.getIntent()));
+                    assertNull(tagged(selected, "person_about:" + id.value()));
+                    assertNull(tagged(selected, "profile_edit"));
+                });
+                capture(opened, "subs-roster-legacy-offline-person").recycle();
+            } finally {
+                if (opened != null) { PersonActivity selected = opened;
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync(selected::finish); }
+                InstrumentationRegistry.getInstrumentation().removeMonitor(monitor);
+            }
+            assertTrue(ControllerPinManager.isDomModeActive());
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            await(() -> androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getLifecycleStageOf(host.get()) == androidx.test.runner.lifecycle.Stage.RESUMED);
+            current.set(person(id, ProfileData.empty("Sam Taylor"), PersonSnapshot.Connection.REVOKED));
+            scenario.recreate(); scenario.onActivity(host::set);
+            awaitRosterIdle(host.get());
+            scenario.onActivity(a -> assertNull(tagged(a, "person:" + id.value())));
+            capture(host.get(), "subs-roster-revoked").recycle();
+            View roster = host.get().findViewById(R.id.people_roster_scroll);
+            ControllerPinManager.enterSubMode(); await(() -> !roster.isShown());
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void bothOwnedProfileModesKeepEnteredDetailsImmediatelyBelowTheirNames() throws Exception {
+        assertTrue(new SettingsRepository(context).preferences().edit().putString(DeviceRolePreferences.KEY_MODE,
+                DeviceRolePreferences.Mode.BOTH.name()).commit());
+        for (boolean dom : new boolean[]{false, true}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            String role = context.getString(dom ? R.string.role_dom : R.string.role_sub);
+            assertTrue(ProfileStore.save(context, dom, role, "Clear communication and shared plans.", "", dom ? "Woman" : "Non-binary", dom ? 34 : 32));
+            try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+                AtomicReference<ProfileActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
+                await(() -> tagged(host.get(), "self_profile_details") != null);
+                scenario.onActivity(a -> {
+                    assertDetailsBelowName(a.findViewById(android.R.id.content), "self_profile");
+                    String details = ((TextView) tagged(a, "self_profile_details")).getText().toString();
+                    assertTrue(details.startsWith(context.getString(R.string.profile_role_switch) + " · ")); assertTrue(details.contains(dom ? "34" : "32"));
+                    assertTrue(details.contains(dom ? "Woman" : "Non-binary"));
+                    assertNoFiller(tagged(a, "self_profile"));
+                });
+                capture(host.get(), dom ? "owned-dom-name-details" : "owned-sub-name-details").recycle();
+            }
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void asyncRosterRefreshKeepsScrollAndUnchangedViewsWhileOnlyChangedProfileRebinds() throws Exception {
+        java.util.ArrayList<PersonSnapshot> initial = new java.util.ArrayList<>();
+        for (int index = 0; index < 12; index++) {
+            PersonId id = new PersonId("remote_" + "c".repeat(64) + "_scroll" + index);
+            initial.add(person(id, ProfileData.empty("Synthetic Sub " + index), PersonSnapshot.Connection.CONNECTED));
+        }
+        AtomicReference<List<PersonSnapshot>> current = new AtomicReference<>(initial);
+        fixturePeople = current::get;
+        AtomicBoolean blockNext = new AtomicBoolean();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { java.util.ArrayList<PersonId> ids = new java.util.ArrayList<>(); for (PersonSnapshot value : current.get()) ids.add(value.id); return ids; }
+            public PersonSnapshot load(PersonId id) {
+                if (blockNext.compareAndSet(true, false)) {
+                    entered.countDown();
+                    try { if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Owned deferred roster fixture expired"); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
+                }
+                for (PersonSnapshot value : current.get()) if (value.id.equals(id)) return value;
+                throw new IllegalArgumentException("Unknown fixture person");
+            }
+        });
+        try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+            AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
+            await(() -> tagged(host.get(), "person:" + initial.get(11).id.value()) != null);
+            android.widget.ScrollView viewport = host.get().findViewById(R.id.people_roster_scroll);
+            View body = host.get().findViewById(R.id.role_page_body), add = host.get().findViewById(R.id.people_add_sub);
+            View panel = tagged(host.get(), "relationship_panel"), unchanged = tagged(host.get(), "person:" + initial.get(5).id.value());
+            View changed = tagged(host.get(), "person:" + initial.get(0).id.value());
+            swipeRoster(host.get(), viewport); await(() -> viewport.getScrollY() > 0); awaitScrollSettled(viewport);
+            java.util.ArrayList<PersonSnapshot> updated = new java.util.ArrayList<>(initial);
+            updated.set(0, person(initial.get(0).id, ProfileData.empty("Updated Sub 0"), PersonSnapshot.Connection.CONNECTED));
+            current.set(updated); blockNext.set(true); scenario.onActivity(PeopleActivity::refresh);
+            assertTrue("Roster read did not reach deferred fixture", entered.await(8, TimeUnit.SECONDS));
+            scenario.onActivity(activity -> {
+                assertSame(body, activity.findViewById(R.id.role_page_body)); assertSame(add, activity.findViewById(R.id.people_add_sub));
+                assertSame(panel, tagged(activity, "relationship_panel")); assertSame(unchanged, tagged(activity, "person:" + initial.get(5).id.value()));
+            });
+            swipeRoster(host.get(), viewport); awaitScrollSettled(viewport); int afterGesture = viewport.getScrollY();
+            assertTrue(afterGesture > 0); release.countDown();
+            await(() -> tagged(host.get(), "person:" + initial.get(0).id.value()) != changed);
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                assertSame(viewport, activity.findViewById(R.id.people_roster_scroll)); assertEquals(afterGesture, viewport.getScrollY());
+                assertSame(body, activity.findViewById(R.id.role_page_body)); assertSame(add, activity.findViewById(R.id.people_add_sub));
+                assertSame(panel, tagged(activity, "relationship_panel")); assertSame(unchanged, tagged(activity, "person:" + initial.get(5).id.value()));
+                assertEquals("Updated Sub 0", ((TextView) tagged(activity, prefix(initial.get(0).id) + "_name")).getText().toString());
+            });
+            // Repeated unchanged source notifications must not detach the preserved card or rewind scrolling.
+            View rebound = tagged(host.get(), "person:" + initial.get(0).id.value());
+            for (int update = 0; update < 3; update++) {
+                scenario.onActivity(PeopleActivity::refresh); awaitRosterIdle(host.get());
+                scenario.onActivity(activity -> { assertSame(rebound, tagged(activity, "person:" + initial.get(0).id.value())); assertEquals(afterGesture, viewport.getScrollY()); });
+            }
+        } finally { release.countDown(); }
+    }
+
+    private static void swipeRoster(Activity host, android.widget.ScrollView viewport) throws Exception {
+        AtomicReference<Rect> bounds = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Rect area = new Rect(), navigation = new Rect(); assertTrue(viewport.getGlobalVisibleRect(area));
+            View nav = host.findViewById(R.id.bottom_navigation);
+            if (nav != null && nav.getGlobalVisibleRect(navigation)) area.bottom = Math.min(area.bottom, navigation.top - PersonUi.dp(host, 12));
+            assertTrue(area.height() > PersonUi.dp(host, 120)); bounds.set(area);
+        });
+        Rect area = bounds.get();
+        assertTrue(androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).swipe(
+                area.centerX(), area.top + area.height() * 3 / 4, area.centerX(), area.top + area.height() / 4, 30));
+    }
+
+    private static void awaitScrollSettled(android.widget.ScrollView viewport) throws Exception {
+        java.util.concurrent.atomic.AtomicInteger previous = new java.util.concurrent.atomic.AtomicInteger(-1), stable = new java.util.concurrent.atomic.AtomicInteger();
+        await(() -> { int now = viewport.getScrollY(); if (previous.getAndSet(now) == now) return stable.incrementAndGet() >= 5; stable.set(0); return false; });
+    }
+
+    private static void awaitRosterIdle(PeopleActivity host) throws Exception {
+        java.lang.reflect.Field field = PeopleActivity.class.getDeclaredField("data"); field.setAccessible(true);
+        com.subhub.app.util.AsyncUiScope scope = (com.subhub.app.util.AsyncUiScope) field.get(host);
+        await(() -> !scope.isPending("people"));
+    }
+
+    private static String prefix(PersonId id) { return "roster:" + id.value(); }
+    private void install(AtomicReference<PersonSnapshot> value) {
+        fixturePeople = () -> List.of(value.get());
+        People.installRemoteRepository(new PersonRepository() {
+            public List<PersonId> people() { return List.of(value.get().id); }
+            public PersonSnapshot load(PersonId id) { assertEquals(value.get().id, id); return value.get(); }
+        });
+    }
+    private PersonSnapshot person(PersonId id, ProfileData profile, PersonSnapshot.Connection connection) {
+        return new PersonSnapshot(id, profile.name, "Pixel 8 Pro", "Current configuration", "Until released",
+                connection, connection == PersonSnapshot.Connection.CONNECTED ? PersonSnapshot.Freshness.CURRENT : PersonSnapshot.Freshness.STALE,
+                0, EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT, PersonSnapshot.Capability.VIEW_STATS,
+                        PersonSnapshot.Capability.MANAGE_CONNECTION), Collections.emptyList(), Collections.emptyList(),
+                "EUR", 0, 0, 0, 0, false).withProfile(profile, Collections.emptyMap());
+    }
+    private static String image() throws java.io.IOException {
+        Bitmap bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888); bitmap.eraseColor(AVATAR_COLOR);
+        try { return ProfileImages.encode(bitmap); } finally { bitmap.recycle(); }
+    }
+    private static void assertDetailsBelowName(View root, String prefix) {
+        TextView name = root.findViewWithTag(prefix + "_name"), details = root.findViewWithTag(prefix + "_details");
+        assertNotNull(name); assertNotNull(details); assertSame(name.getParent(), details.getParent());
+        assertEquals(name.getBottom(), details.getTop());
+        assertEquals(PersonUi.dp(root.getContext(), 4), details.getPaddingTop());
+        assertNotNull(details.getLayout());
+        int width = details.getWidth() - details.getCompoundPaddingLeft() - details.getCompoundPaddingRight();
+        for (int line = 0; line < details.getLineCount(); line++) {
+            assertEquals(0, details.getLayout().getEllipsisCount(line));
+            assertTrue(details.getLayout().getLineMax(line) <= width + 1);
+        }
+    }
+    private static void assertNoFiller(View view) {
+        if (view instanceof TextView) {
+            String text = ((TextView) view).getText().toString();
+            for (String filler : new String[]{"Pixel 8 Pro", "On this device", "Current configuration"})
+                assertFalse(text, text.contains(filler));
+        }
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            assertNoFiller(((ViewGroup) view).getChildAt(i));
+    }
+    @SuppressWarnings("unchecked") private static <T extends View> T tagged(Activity activity, String tag) {
+        return (T) activity.findViewById(android.R.id.content).findViewWithTag(tag);
+    }
+    private static org.hamcrest.Matcher<View> tag(String value) { return withTagValue(is((Object) value)); }
+    private static android.widget.ScrollView scroll(View view) {
+        android.view.ViewParent parent = view.getParent();
+        while (!(parent instanceof android.widget.ScrollView)) parent = parent.getParent();
+        return (android.widget.ScrollView) parent;
+    }
+    private androidx.test.espresso.ViewAction revealWholeIdentity() {
+        return new androidx.test.espresso.ViewAction() {
+            public org.hamcrest.Matcher<View> getConstraints() {
+                return androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA(org.hamcrest.Matchers.instanceOf(android.widget.ScrollView.class));
+            }
+            public String getDescription() { return "fit the complete identity block above navigation before sampling or input"; }
+            public void perform(androidx.test.espresso.UiController ui, View view) {
+                android.widget.ScrollView parent = scroll(view); Rect viewport = new Rect(), nav = new Rect(), before = new Rect();
+                assertTrue(parent.getGlobalVisibleRect(viewport)); assertTrue(view.getGlobalVisibleRect(before));
+                assertTrue(view.getRootView().findViewById(R.id.bottom_navigation).getGlobalVisibleRect(nav));
+                int bottom = Math.min(viewport.bottom, nav.top);
+                try {
+                    String run = InstrumentationRegistry.getArguments().getString("evidence_run", "subs-roster");
+                    File directory = new File(context.getFilesDir(), "ui-v3/" + run);
+                    org.json.JSONObject record = new org.json.JSONObject().put("tag", view.getTag()).put("before", before.toShortString())
+                            .put("viewport", viewport.toShortString()).put("navigation", nav.toShortString())
+                            .put("identityHeight", view.getHeight()).put("availableHeight", bottom - viewport.top)
+                            .put("contentPaddingBottom", parent.getChildAt(0).getPaddingBottom()).put("navigationOverlap", viewport.bottom - bottom);
+                    java.nio.file.Files.write(new File(directory, "identity-clearance-before.json").toPath(),
+                            record.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                } catch (Exception failure) { throw new AssertionError(failure); }
+                assertTrue("Roster tail must reserve the measured navigation overlap",
+                        parent.getChildAt(0).getPaddingBottom() >= viewport.bottom - bottom);
+                assertTrue("Identity must fit the actual unobscured viewport", view.getHeight() <= bottom - viewport.top);
+                Rect target = new Rect(); view.getDrawingRect(target); parent.offsetDescendantRectToMyCoords(view, target);
+                parent.scrollTo(0, target.top); ui.loopMainThreadUntilIdle();
+                Rect actual = new Rect(); assertTrue(view.getGlobalVisibleRect(actual));
+                assertEquals(view.getWidth(), actual.width()); assertEquals(view.getHeight(), actual.height());
+                assertTrue(actual.top >= viewport.top); assertTrue("Complete identity must clear navigation", actual.bottom <= bottom);
+            }
+        };
+    }
+    private static void await(BooleanSupplier condition) {
+        long end = SystemClock.uptimeMillis() + 10_000;
+        while (SystemClock.uptimeMillis() < end) { AtomicBoolean ready = new AtomicBoolean();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> ready.set(condition.getAsBoolean()));
+            if (ready.get()) return; SystemClock.sleep(40); }
+        fail("Subs roster did not settle");
+    }
+    @androidx.annotation.RequiresApi(29)
+    private Bitmap capture(Activity activity, String label) throws Exception {
+        for (int i = 0; i < 3; i++) {
+            CountDownLatch frame = new CountDownLatch(1);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> { View root = activity.getWindow().getDecorView();
+                assertTrue(root.isHardwareAccelerated()); root.getViewTreeObserver().registerFrameCommitCallback(frame::countDown); root.invalidate(); });
+            assertTrue(frame.await(5, TimeUnit.SECONDS));
+        }
+        Bitmap image = InstrumentationRegistry.getInstrumentation().getUiAutomation(android.app.UiAutomation.FLAG_DONT_USE_ACCESSIBILITY).takeScreenshot();
+        assertNotNull(image); String run = InstrumentationRegistry.getArguments().getString("evidence_run", "subs-roster");
+        assertTrue(run.matches("[a-zA-Z0-9-]+")); File directory = new File(context.getFilesDir(), "ui-v3/" + run);
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        try (FileOutputStream output = new FileOutputStream(new File(directory, label + ".png"))) {
+            assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, output));
+        }
+        return image;
+    }
+    private static int distance(int a, int b) {
+        return Math.abs(Color.red(a) - Color.red(b)) + Math.abs(Color.green(a) - Color.green(b)) + Math.abs(Color.blue(a) - Color.blue(b));
+    }
+}

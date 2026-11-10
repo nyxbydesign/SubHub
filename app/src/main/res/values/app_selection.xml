@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_selection_all">All Apps</string>
+    <string name="app_selection_all_help">Overrides the selection while on, including newly installed apps. Your selection is kept.</string>
+    <string name="tour_select_apps">Choose Apps</string>
+    <plurals name="apps_selected_count">
+        <item quantity="one">%d selected app</item>
+        <item quantity="other">%d selected apps</item>
+    </plurals>
+    <item type="id" name="all_apps" />
+    <item type="id" name="app_list_content" />
+    <item type="id" name="app_list" />
+    <item type="id" name="loading_apps" />
+    <item type="id" name="selected_count" />
+</resources>

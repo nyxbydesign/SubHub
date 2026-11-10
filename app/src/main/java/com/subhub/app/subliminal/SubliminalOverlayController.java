@@ -122,7 +122,7 @@ public final class SubliminalOverlayController implements AutoCloseable {
         root.post(() -> {
             if (!eligible || !added) return;
             placeInSafeRandomPosition();
-            float targetAlpha = settings.getOpacityPercent() / 100f;
+            float targetAlpha = opacityAlpha(settings);
             long hold = Math.max(0L, settings.getVisibleMillis() - (FADE_MILLIS * 2L));
             message.animate().alpha(targetAlpha).setDuration(FADE_MILLIS)
                     .withEndAction(() -> message.animate().alpha(0f).setStartDelay(hold)
@@ -131,6 +131,12 @@ public final class SubliminalOverlayController implements AutoCloseable {
             stats.recordSubliminalImpression();
             new AchievementManager(context).checkAchievements(stats.load());
         });
+    }
+
+    static float opacityAlpha(SubliminalSettings settings) {
+        int opacity = Math.max(1, Math.min(SubliminalSettings.MAX_OPACITY_PERCENT,
+                settings.getOpacityPercent()));
+        return opacity / 100f;
     }
 
     private void placeInSafeRandomPosition() {

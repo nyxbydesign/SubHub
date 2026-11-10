@@ -81,9 +81,16 @@ public final class AppTimerManager {
     private final SharedPreferences settingsPreferences;
     private final SharedPreferences usagePreferences;
     private final StatsRepository stats;
+    private final Context context;
+    private final com.subhub.app.stats.DailyAppUsageStore suppliedHistory;
 
     public AppTimerManager(Context context) {
+        this(context,null);
+    }
+    AppTimerManager(Context context,com.subhub.app.stats.DailyAppUsageStore history) {
         Context application = context.getApplicationContext();
+        this.context = application;
+        suppliedHistory=history;
         settingsPreferences = application.getSharedPreferences(
                 SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
         usagePreferences = application.getSharedPreferences(
@@ -92,6 +99,8 @@ public final class AppTimerManager {
     }
 
     public Settings loadSettings() {
+        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits"))
+            return new Settings(false, DEFAULT_PER_APP_MINUTES, false, DEFAULT_TOTAL_MINUTES);
         return new Settings(
                 settingsPreferences.getBoolean(KEY_PER_APP_ENABLED, false),
                 sanitizeMinutes(settingsPreferences.getInt(
@@ -101,6 +110,11 @@ public final class AppTimerManager {
                         KEY_TOTAL_MINUTES, DEFAULT_TOTAL_MINUTES)));
     }
 
+    /** Disable an individual budget without requiring valid drafts in the other editor. */
+    public void disableBudget(boolean perApp) {
+        settingsPreferences.edit().putBoolean(perApp ? KEY_PER_APP_ENABLED : KEY_TOTAL_ENABLED, false).apply();
+    }
+
     public void saveSettings(boolean perAppEnabled, int perAppMinutes,
             boolean totalEnabled, int totalMinutes) {
         settingsPreferences.edit()
@@ -108,7 +122,7 @@ public final class AppTimerManager {
                 .putInt(KEY_PER_APP_MINUTES, sanitizeMinutes(perAppMinutes))
                 .putBoolean(KEY_TOTAL_ENABLED, totalEnabled)
                 .putInt(KEY_TOTAL_MINUTES, sanitizeMinutes(totalMinutes))
-                .commit();
+                .apply();
     }
 
     public int allowanceMinutes(String packageName) {
@@ -153,7 +167,18 @@ public final class AppTimerManager {
                         sanitizeMinutes(minutes == null ? DEFAULT_PER_APP_MINUTES : minutes));
             }
         }
-        editor.commit();
+        editor.apply();
+    }
+
+    /** Editing visible apps must not erase a retained allowance for an excluded app. */
+    public void updateAllowances(Map<String, Integer> allowances) {
+        SharedPreferences.Editor editor = settingsPreferences.edit();
+        for (Map.Entry<String, Integer> entry : allowances.entrySet()) {
+            String name = safePackage(entry.getKey());
+            if (!name.isEmpty() && entry.getValue() != null)
+                editor.putInt(ALLOWANCE_PREFIX + name, sanitizeMinutes(entry.getValue()));
+        }
+        editor.apply();
     }
 
     public synchronized void recordUsage(String packageName, long elapsedMillis,
@@ -170,6 +195,9 @@ public final class AppTimerManager {
                 .putLong(KEY_TOTAL_USED, totalUsed)
                 .apply();
         stats.recordLimitedAppUsage(elapsedMillis);
+        queueHistory(packageName,appUsed);
+        queueHistory("",totalUsed);
+        com.subhub.app.remote.RemoteDeviceData.changed(context);
     }
 
     public synchronized UsageSnapshot snapshot(String packageName, long nowMillis) {
@@ -179,18 +207,37 @@ public final class AppTimerManager {
                 usagePreferences.getLong(KEY_TOTAL_USED, 0L));
     }
 
+    /** One day check and one consistent aggregate for a visible list of app budgets. */
+    public synchronized Map<String, UsageSnapshot> snapshots(Set<String> packages, long nowMillis) {
+        ensureCurrentDay(nowMillis);
+        long total = usagePreferences.getLong(KEY_TOTAL_USED, 0L);
+        Map<String, UsageSnapshot> result = new LinkedHashMap<>();
+        result.put("", new UsageSnapshot(0L, total));
+        if (packages != null)
+            for (String name : packages) {
+                if (name != null && !name.isEmpty())
+                    result.put(
+                            name,
+                            new UsageSnapshot(
+                                    usagePreferences.getLong(packageKey(name), 0L), total));
+            }
+        return java.util.Collections.unmodifiableMap(result);
+    }
+
     public synchronized LimitStatus limitStatus(String packageName,
             Set<String> selectedPackages, long nowMillis) {
         if (!isSelected(packageName, selectedPackages)) return LimitStatus.NONE;
         Settings settings = loadSettings();
         if (!settings.anyEnabled()) return LimitStatus.NONE;
         UsageSnapshot usage = snapshot(packageName, nowMillis);
+        ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
         if (settings.perAppEnabled
-                && usage.appUsedMillis >= minutesToMillis(allowanceMinutes(packageName))) {
+                && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(allowanceMinutes(packageName)))) {
             return LimitStatus.PER_APP;
         }
         if (settings.totalEnabled
-                && usage.totalUsedMillis >= minutesToMillis(settings.totalMinutes)) {
+                && usage.totalUsedMillis >= minutesToMillis(settings.totalMinutes)
+                && !extra.permitsSharedException(usage.appUsedMillis)) {
             return LimitStatus.COMBINED;
         }
         return LimitStatus.NONE;
@@ -211,8 +258,53 @@ public final class AppTimerManager {
 
     private void ensureCurrentDay(long nowMillis) {
         String today = dayKey(nowMillis);
-        if (today.equals(usagePreferences.getString(KEY_DAY, ""))) return;
-        usagePreferences.edit().clear().putString(KEY_DAY, today).commit();
+        String previous=usagePreferences.getString(KEY_DAY, "");
+        if(today.equals(previous)) {
+            if(!usagePreferences.contains("history_epoch"))usagePreferences.edit()
+                    .putString("history_epoch",java.util.UUID.randomUUID().toString())
+                    .putString("history_zone","").commit();
+            return;
+        }
+        if(!previous.isEmpty()) {
+            String epoch=usagePreferences.getString("history_epoch","");
+            if(epoch.isEmpty()) {
+                epoch=java.util.UUID.randomUUID().toString();
+                if(!usagePreferences.edit().putString("history_epoch",epoch).putString("history_zone","").commit())return;
+            }
+            java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
+            String zone=usagePreferences.getString("history_zone",java.time.ZoneId.systemDefault().getId());
+            for(Map.Entry<String,?> item:usagePreferences.getAll().entrySet()) {
+                String name=item.getKey();if(!(item.getValue() instanceof Long))continue;
+                if(name.startsWith(PACKAGE_PREFIX) || name.equals(KEY_TOTAL_USED))rows.add(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                        epoch,previous,zone,name.equals(KEY_TOTAL_USED)?"":name.substring(PACKAGE_PREFIX.length()),Math.max(0,(Long)item.getValue())));
+            }
+            history().checkpoint(rows);
+        }
+        usagePreferences.edit().clear().putString(KEY_DAY,today).putString("history_epoch",java.util.UUID.randomUUID().toString())
+                .putString("history_zone",java.time.ZoneId.systemDefault().getId()).commit();
+    }
+
+    private void queueHistory(String packageName,long millis) {
+        history().queue(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                usagePreferences.getString("history_epoch",""),usagePreferences.getString(KEY_DAY,""),
+                usagePreferences.getString("history_zone",java.time.ZoneId.systemDefault().getId()),packageName,millis));
+    }
+
+    /** Reconciles a durable current-day source after process restart, without waiting for more usage. */
+    public synchronized void checkpointHistory(long nowMillis) {
+        ensureCurrentDay(nowMillis);
+        java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
+        String epoch=usagePreferences.getString("history_epoch",""),day=usagePreferences.getString(KEY_DAY,""),zone=usagePreferences.getString("history_zone","");
+        for(Map.Entry<String,?> item:usagePreferences.getAll().entrySet()) {
+            String name=item.getKey();if(!(item.getValue() instanceof Long))continue;
+            if(name.startsWith(PACKAGE_PREFIX) || name.equals(KEY_TOTAL_USED))rows.add(new com.subhub.app.stats.DailyAppUsageStore.Entry(
+                    epoch,day,zone,name.equals(KEY_TOTAL_USED)?"":name.substring(PACKAGE_PREFIX.length()),Math.max(0,(Long)item.getValue())));
+        }
+        history().checkpoint(rows);
+    }
+
+    private com.subhub.app.stats.DailyAppUsageStore history() {
+        return suppliedHistory==null?com.subhub.app.stats.DailyAppUsageStore.get(context):suppliedHistory;
     }
 
     private static boolean isSelected(String packageName, Set<String> selectedPackages) {

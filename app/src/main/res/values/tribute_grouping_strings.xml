@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tribute_rules_title">Tribute rules</string>
+    <string name="tribute_group_censoring">Censoring</string>
+    <string name="tribute_group_apps">Apps &amp; requests</string>
+    <string name="tribute_group_tasks">Tasks</string>
+    <string name="tribute_group_protection">Control protection</string>
+    <string name="tribute_spending_limits_title">Spending limits</string>
+    <string name="tribute_paid_pauses_title">Paid pauses</string>
+    <string name="tribute_spending_limits_summary">%1$s daily · %2$s weekly</string>
+    <plurals name="tribute_rules_enabled_summary">
+        <item quantity="one">%d rule enabled</item>
+        <item quantity="other">%d rules enabled</item>
+    </plurals>
+    <string name="tribute_adjustments_title">Balance adjustments</string>
+    <string name="tribute_extra_time_request_title">Extra-time request</string>
+    <string name="tribute_extra_time_request_help">Adds tribute when a request is sent, whether it is approved or declined. Existing spending caps apply.</string>
+</resources>

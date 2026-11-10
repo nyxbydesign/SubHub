@@ -1,5 +1,7 @@
 package com.subhub.app.appmode;
 
+import com.subhub.app.configuration.FeatureEditorSession;
+
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -8,9 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
-import android.text.InputType;
 import android.text.TextWatcher;
-import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -21,9 +21,10 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityAppModeBinding;
+import com.subhub.app.security.ControllerEditMode;
 import com.subhub.app.security.ControllerPinGate;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.ControllerEditMode;
+import com.subhub.app.util.AsyncUiScope;
 import com.subhub.app.util.PrimaryHeader;
 import com.subhub.app.util.SubHubNavigation;
 
@@ -35,57 +36,102 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Styled launcher-app picker and lifecycle controls for accessibility app mode. */
+/** Daily recorded usage and independent app allowances for the shared included-app scope. */
 public final class AppModeActivity extends AppCompatActivity {
     private ActivityAppModeBinding binding;
     private AppModeManager manager;
     private AppTimerManager timers;
     private boolean editingUnlocked;
-    private boolean populatingTimers;
+    private boolean populatingTimers, dirtyTimers;
+    private AsyncUiScope appData;
+    private final Map<String, AppLimitRow> appRows = new LinkedHashMap<>();
+    private Set<String> displayedPackages = java.util.Collections.emptySet(),
+            loadingPackages,
+            failedPackages;
+    private Bundle restoredDrafts;
+    private final Handler usageHandler = new Handler(Looper.getMainLooper());
+    private final Runnable usageTick =
+            new Runnable() {
+                @Override
+                public void run() {
+                    if (binding == null || manager == null) return;
+                    if (editingUnlocked != editingAllowed()) applyEditState();
+                    renderPerAppAllowances();
+                    renderTimerUsage();
+                    usageHandler.postDelayed(this, 1000L);
+                }
+            };
     private final Map<String, EditText> allowanceInputs = new LinkedHashMap<>();
     private final Handler autoSaveHandler = new Handler(Looper.getMainLooper());
     private final Runnable persistTimers = () -> save(false);
-    private final TextWatcher autoSaveWatcher = new TextWatcher() {
-        @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
-        @Override public void onTextChanged(CharSequence value, int start, int before, int count) {}
-        @Override public void afterTextChanged(Editable value) { scheduleAutoSave(); }
-    };
+    private final TextWatcher autoSaveWatcher =
+            new TextWatcher() {
+                @Override
+                public void beforeTextChanged(
+                        CharSequence value, int start, int count, int after) {}
 
-    @Override protected void onCreate(Bundle savedInstanceState) {
+                @Override
+                public void onTextChanged(CharSequence value, int start, int before, int count) {}
+
+                @Override
+                public void afterTextChanged(Editable value) {
+                    scheduleAutoSave();
+                    renderTimerUsage();
+                }
+            };
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!FeatureEditorSession.attach(this, "limits", savedInstanceState)) return;
         binding = ActivityAppModeBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits,
-                R.string.app_mode_title, 0);
-        if (SubHubNavigation.redirectIfDisabled(this, SubHubNavigation.Screen.LIMITS)) return;
-        manager = new AppModeManager(this);
-        timers = new AppTimerManager(this);
+        PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_limits, R.string.app_mode_title, R.string.role_this_device);
+        manager = new AppModeManager(FeatureEditorSession.context(this));
+        timers = new AppTimerManager(FeatureEditorSession.context(this));
+        appData = AsyncUiScope.forPage(this);
+        if (savedInstanceState != null) {
+            restoredDrafts = savedInstanceState.getBundle("allowance_drafts");
+            dirtyTimers = savedInstanceState.getBoolean("timer_drafts_dirty", false);
+        }
+        binding.limitsManageApps.setOnClickListener(view -> {
+            if (FeatureEditorSession.canEdit(this, "apps")) startActivity(FeatureEditorSession.child(this,
+                    com.subhub.app.people.LocalAppsActivity.class));
+        });
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
         AppTimerManager.Settings timerSettings = timers.loadSettings();
         binding.perAppLimitEnabled.setChecked(timerSettings.perAppEnabled);
         binding.totalLimitEnabled.setChecked(timerSettings.totalEnabled);
         binding.totalLimitMinutes.setText(String.valueOf(timerSettings.totalMinutes));
-        binding.defaultLimitMinutes.setText(String.valueOf(timerSettings.perAppMinutes));
-        binding.perAppLimitEnabled.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && rejectUnassignedLimit()) return;
-            renderTimerControls();
-            scheduleAutoSave();
-            if (checked) promptForAccessibility();
-        });
-        binding.totalLimitEnabled.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && rejectUnassignedLimit()) return;
-            renderTimerControls();
-            scheduleAutoSave();
-            if (checked) promptForAccessibility();
-        });
+        binding.perAppLimitEnabled.setOnCheckedChangeListener(
+                (button, checked) -> {
+                    if (populatingTimers) return;
+                    if (!editingAllowed() || checked && rejectUnassignedLimit()) {
+                        restoreTimerValues();
+                        return;
+                    }
+                    if (!checked) timers.disableBudget(true);
+                    renderTimerControls();
+                    scheduleAutoSave();
+                    if (checked) promptForAccessibility();
+                });
+        binding.totalLimitEnabled.setOnCheckedChangeListener(
+                (button, checked) -> {
+                    if (populatingTimers) return;
+                    if (!editingAllowed() || checked && rejectUnassignedLimit()) {
+                        restoreTimerValues();
+                        return;
+                    }
+                    if (!checked) timers.disableBudget(false);
+                    renderTimerControls();
+                    scheduleAutoSave();
+                    if (checked) promptForAccessibility();
+                });
         binding.totalLimitMinutes.addTextChangedListener(autoSaveWatcher);
-        binding.defaultLimitMinutes.addTextChangedListener(autoSaveWatcher);
-        binding.defaultLimitMinutes.setOnFocusChangeListener((view, focused) -> {
-            if (!focused) commitTimers(true);
-        });
-        binding.totalLimitMinutes.setOnFocusChangeListener((view, focused) -> {
-            if (!focused) commitTimers(true);
-        });
+        binding.totalLimitMinutes.setOnFocusChangeListener(
+                (view, focused) -> {
+                    if (!focused) commitTimers(true);
+                });
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         PrimaryHeader.editLockButton(binding.getRoot())
                 .setOnClickListener(view -> toggleEditSession());
@@ -93,95 +139,122 @@ public final class AppModeActivity extends AppCompatActivity {
         renderTimerControls();
         renderTimerUsage();
         applyEditState();
+        FeatureEditorSession.bind(this, binding.getRoot(), "limits", () -> save(true));
     }
 
-    @Override protected void onResume() {
+    @Override
+    protected void onResume() {
         super.onResume();
+        if (manager == null) return;
+        if (!editingAllowed()) {
+            FeatureEditorSession.leaveEditor(this);
+            return;
+        }
+        failedPackages = null;
+        if (!dirtyTimers || !editingAllowed()) restoreTimerValues();
         renderPerAppAllowances();
         applyEditState();
+        usageHandler.removeCallbacks(usageTick);
+        usageHandler.post(usageTick);
     }
 
-    @Override protected void onPause() {
+    @Override
+    protected void onPause() {
         autoSaveHandler.removeCallbacks(persistTimers);
-        if (editingUnlocked) save(false);
+        if (editingAllowed()) save(false);
+        usageHandler.removeCallbacks(usageTick);
         super.onPause();
     }
 
     private void toggleEditSession() {
         if (ControllerPinManager.isSessionUnlocked()) {
-            ControllerEditMode.enterSubMode(this);
-        } else ControllerPinGate.require(this, this::applyEditState, false);
+            FeatureEditorSession.leaveEditor(this);
+        } else ControllerPinGate.unlock(this, this::applyEditState, false);
     }
 
     private void applyEditState() {
         if (binding == null) return;
-        editingUnlocked = ControllerPinManager.isSessionUnlocked();
+        boolean wasEditing = editingUnlocked;
+        editingUnlocked = editingAllowed();
+        if (wasEditing && !editingUnlocked) {
+            autoSaveHandler.removeCallbacks(persistTimers);
+            restoreTimerValues();
+        }
         ControllerEditMode.renderButton(this, PrimaryHeader.editLockButton(binding.getRoot()));
         View[] editable = {binding.perAppLimitEnabled, binding.totalLimitEnabled};
         for (View view : editable) view.setEnabled(editingUnlocked);
         renderTimerControls();
+        SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
+    }
+
+    private boolean editingAllowed() {
+        return FeatureEditorSession.canEdit(this, "limits");
     }
 
     private boolean rejectUnassignedLimit() {
-        if (populatingTimers || !editingUnlocked
-                || manager.getMode() != AppModePolicy.Mode.SELECTED_APPS
-                || !manager.getTimerPackages().isEmpty()) return false;
+        if (populatingTimers || !editingAllowed() || !manager.getIncludedPackages().isEmpty())
+            return false;
         restoreTimerValues();
         return true;
     }
 
     private boolean save(boolean showInvalid) {
-        boolean watchedAppsRequired = binding.perAppLimitEnabled.isChecked()
-                || binding.totalLimitEnabled.isChecked();
-        if (watchedAppsRequired && manager.getMode() == AppModePolicy.Mode.SELECTED_APPS
-                && manager.getTimerPackages().isEmpty()) {
-            if (showInvalid) Toast.makeText(this, R.string.app_mode_select_one,
-                    Toast.LENGTH_SHORT).show();
+        if (binding == null || timers == null || manager == null || !editingAllowed()) return false;
+        if (!dirtyTimers) return true;
+        Set<String> included = manager.getIncludedPackages();
+        if (binding.perAppLimitEnabled.isChecked() && !included.equals(displayedPackages))
+            return false;
+        boolean watchedAppsRequired =
+                binding.perAppLimitEnabled.isChecked() || binding.totalLimitEnabled.isChecked();
+        if (watchedAppsRequired && manager.getIncludedPackages().isEmpty()) {
+            if (showInvalid)
+                Toast.makeText(this, R.string.app_mode_select_one, Toast.LENGTH_SHORT).show();
             return false;
         }
-        Integer totalMinutes = readMinutes(binding.totalLimitMinutes,
-                binding.totalLimitEnabled.isChecked());
+        Integer totalMinutes =
+                readMinutes(binding.totalLimitMinutes, binding.totalLimitEnabled.isChecked());
         AppTimerManager.Settings existing = timers.loadSettings();
-        Integer defaultMinutes = manager.getMode() == AppModePolicy.Mode.ALWAYS
-                ? readMinutes(binding.defaultLimitMinutes, binding.perAppLimitEnabled.isChecked())
-                : existing.perAppMinutes;
-        if (defaultMinutes == null) {
-            if (showInvalid) Toast.makeText(this, R.string.app_timer_invalid_minutes, Toast.LENGTH_SHORT).show();
-            return false;
-        }
+        int defaultMinutes = existing.perAppMinutes;
+        if (!binding.totalLimitEnabled.isChecked()) totalMinutes = existing.totalMinutes;
         Map<String, Integer> allowances = new LinkedHashMap<>();
         if (binding.perAppLimitEnabled.isChecked()) {
             for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet()) {
                 Integer minutes = readMinutes(entry.getValue(), true);
                 if (minutes == null) {
-                    if (showInvalid) Toast.makeText(this, R.string.app_timer_invalid_minutes,
-                            Toast.LENGTH_SHORT).show();
+                    if (showInvalid)
+                        Toast.makeText(this, R.string.app_timer_invalid_minutes, Toast.LENGTH_SHORT)
+                                .show();
                     return false;
                 }
                 allowances.put(entry.getKey(), minutes);
             }
         }
         if (totalMinutes == null) {
-            if (showInvalid) Toast.makeText(this, R.string.app_timer_invalid_minutes,
-                    Toast.LENGTH_SHORT).show();
+            if (showInvalid)
+                Toast.makeText(this, R.string.app_timer_invalid_minutes, Toast.LENGTH_SHORT).show();
             return false;
         }
-        timers.saveSettings(binding.perAppLimitEnabled.isChecked(), defaultMinutes,
-                binding.totalLimitEnabled.isChecked(), totalMinutes);
+        timers.saveSettings(
+                binding.perAppLimitEnabled.isChecked(),
+                defaultMinutes,
+                binding.totalLimitEnabled.isChecked(),
+                totalMinutes);
         if (binding.perAppLimitEnabled.isChecked()) {
-            timers.saveAllowances(manager.getTimerPackages(), allowances);
+            timers.updateAllowances(allowances);
         }
+        dirtyTimers = false;
         return true;
     }
 
     private void scheduleAutoSave() {
-        if (populatingTimers || !editingUnlocked) return;
+        if (populatingTimers || !editingAllowed()) return;
+        dirtyTimers = true;
         autoSaveHandler.removeCallbacks(persistTimers);
         autoSaveHandler.postDelayed(persistTimers, 450L);
     }
 
     private void commitTimers(boolean restoreIfInvalid) {
-        if (populatingTimers || !editingUnlocked) return;
+        if (populatingTimers || !editingAllowed()) return;
         autoSaveHandler.removeCallbacks(persistTimers);
         if (!save(restoreIfInvalid) && restoreIfInvalid) restoreTimerValues();
     }
@@ -192,107 +265,169 @@ public final class AppModeActivity extends AppCompatActivity {
         binding.perAppLimitEnabled.setChecked(saved.perAppEnabled);
         binding.totalLimitEnabled.setChecked(saved.totalEnabled);
         binding.totalLimitMinutes.setText(String.valueOf(saved.totalMinutes));
-        binding.defaultLimitMinutes.setText(String.valueOf(saved.perAppMinutes));
+        Map<String, Integer> allowances = timers.loadAllowances(manager.getIncludedPackages());
+        for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet()) {
+            Integer minutes = allowances.get(entry.getKey());
+            if (minutes != null) entry.getValue().setText(String.valueOf(minutes));
+        }
         renderPerAppAllowances();
         populatingTimers = false;
+        dirtyTimers = false;
+        restoredDrafts = null;
         renderTimerControls();
     }
 
     private void promptForAccessibility() {
-        if (populatingTimers || !editingUnlocked || accessibilityEnabled()) return;
+        if (FeatureEditorSession.remote(this)) return;
+        if (populatingTimers || !editingAllowed() || accessibilityEnabled()) return;
         Toast.makeText(this, R.string.app_mode_enable_prompt, Toast.LENGTH_LONG).show();
         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
     }
 
     private void renderTimerControls() {
         boolean perAppEnabled = binding.perAppLimitEnabled.isChecked();
-        boolean allApps = manager.getMode() == AppModePolicy.Mode.ALWAYS;
-        binding.defaultAllowanceGroup.setVisibility(allApps ? View.VISIBLE : View.GONE);
-        binding.defaultLimitMinutes.setEnabled(editingUnlocked && perAppEnabled && allApps);
         for (EditText input : allowanceInputs.values()) {
             input.setEnabled(editingUnlocked && perAppEnabled);
-            input.setAlpha(perAppEnabled ? 1f : 0.5f);
         }
         binding.totalLimitMinutes.setEnabled(
                 editingUnlocked && binding.totalLimitEnabled.isChecked());
-        binding.totalLimitMinutes.setAlpha(binding.totalLimitEnabled.isChecked() ? 1f : 0.5f);
+        renderTimerUsage();
     }
 
     private void renderPerAppAllowances() {
         if (binding == null || manager == null || timers == null) return;
-        Set<String> packages = manager.getTimerPackages();
-        Map<String, Integer> saved = timers.loadAllowances(packages);
-        List<String> ordered = new ArrayList<>(packages);
-        Collator collator = Collator.getInstance(Locale.getDefault());
-        ordered.sort((left, right) -> collator.compare(appLabel(left), appLabel(right)));
-        binding.perAppAllowancesList.removeAllViews();
-        allowanceInputs.clear();
-        if (ordered.isEmpty()) {
-            if (manager.getMode() == AppModePolicy.Mode.ALWAYS) return;
-            TextView empty = new TextView(this);
-            empty.setText(R.string.app_timer_no_limited_apps);
-            empty.setTextColor(getColor(R.color.text_muted));
-            empty.setTextSize(11f);
-            empty.setPadding(0, dp(8), 0, dp(5));
-            binding.perAppAllowancesList.addView(empty);
-            TextView chooseApps = new TextView(this, null, 0,
-                    R.style.Widget_SubHub_OutlineAction);
-            chooseApps.setText(R.string.app_timer_choose_apps);
-            chooseApps.setTag("limits_choose_apps");
-            chooseApps.setMinHeight(dp(48));
-            chooseApps.setGravity(Gravity.CENTER);
-            chooseApps.setOnClickListener(view -> startActivity(new Intent(this,
-                    com.subhub.app.settings.GlobalSettingsActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                    .putExtra("show_app_assignments", true)));
-            binding.perAppAllowancesList.addView(chooseApps,
-                    new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT));
+        Set<String> requested =
+                java.util.Collections.unmodifiableSet(
+                        new java.util.LinkedHashSet<>(manager.getIncludedPackages()));
+        if (requested.equals(loadingPackages)
+                || requested.equals(failedPackages)
+                || requested.equals(displayedPackages) && !appRows.isEmpty()) return;
+        if (requested.isEmpty()) {
+            if (!appRows.isEmpty() || binding.perAppAllowancesList.getChildCount() == 0) {
+                boolean previous = populatingTimers;
+                populatingTimers = true;
+                binding.perAppAllowancesList.removeAllViews();
+                appRows.clear();
+                allowanceInputs.clear();
+                populatingTimers = previous;
+                message(R.string.limits_no_apps);
+            }
+            displayedPackages = requested;
+            loadingPackages = null;
+            appData.cancel("limits-apps");
             return;
         }
-        for (String packageName : ordered) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(3), 0, dp(3));
-            TextView label = new TextView(this);
-            label.setText(appLabel(packageName));
-            label.setTextColor(getColor(R.color.text_primary));
-            label.setTextSize(12f);
-            label.setMaxLines(2);
-            row.addView(label, new LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-            EditText input = new EditText(this);
-            input.setId(View.generateViewId());
-            label.setLabelFor(input.getId());
-            input.setContentDescription(getString(R.string.app_timer_allowance_accessibility,
-                    appLabel(packageName)));
-            input.setHint(R.string.app_timer_allowance_minutes);
-            input.setText(String.valueOf(saved.get(packageName)));
-            input.setInputType(InputType.TYPE_CLASS_NUMBER);
-            input.setSingleLine(true);
-            input.setTextColor(getColor(R.color.text_primary));
-            input.setHintTextColor(getColor(R.color.text_muted));
-            input.setTextSize(12f);
-            input.setGravity(Gravity.CENTER);
-            input.addTextChangedListener(autoSaveWatcher);
-            input.setOnFocusChangeListener((view, focused) -> {
-                if (!focused) commitTimers(true);
-            });
-            row.addView(input, new LinearLayout.LayoutParams(dp(104), dp(46)));
-            allowanceInputs.put(packageName, input);
-            binding.perAppAllowancesList.addView(row);
+        loadingPackages = requested;
+        if (appRows.isEmpty()) {
+            binding.perAppAllowancesList.removeAllViews();
+            message(R.string.limits_loading_apps);
         }
+        android.content.Context app = FeatureEditorSession.context(this);
+        appData.load(
+                "limits-apps",
+                () -> loadApps(app, requested),
+                models -> {
+                    loadingPackages = null;
+                    if (binding == null || !manager.getIncludedPackages().equals(requested)) return;
+                    Map<String, String> drafts = new LinkedHashMap<>();
+                    for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet())
+                        drafts.put(entry.getKey(), entry.getValue().getText().toString());
+                    boolean previous = populatingTimers;
+                    populatingTimers = true;
+                    binding.perAppAllowancesList.removeAllViews();
+                    appRows.clear();
+                    allowanceInputs.clear();
+                    for (AppInfo model : models) {
+                        if (!appRows.isEmpty()) {
+                            View line = new View(this);
+                            line.setBackgroundResource(R.color.outline_subtle);
+                            binding.perAppAllowancesList.addView(
+                                    line, new LinearLayout.LayoutParams(-1, dp(1)));
+                        }
+                        String value =
+                                drafts.getOrDefault(
+                                        model.packageName, String.valueOf(model.allowance));
+                        if (restoredDrafts != null && restoredDrafts.containsKey(model.packageName))
+                            value = restoredDrafts.getString(model.packageName);
+                        AppLimitRow row =
+                                new AppLimitRow(
+                                        this, model.packageName, model.name, model.icon, value);
+                        EditText input = row.allowance;
+                        input.addTextChangedListener(autoSaveWatcher);
+                        input.setOnFocusChangeListener(
+                                (view, focused) -> {
+                                    if (!focused) commitTimers(true);
+                                });
+                        allowanceInputs.put(model.packageName, input);
+                        appRows.put(model.packageName, row);
+                        binding.perAppAllowancesList.addView(
+                                row, new LinearLayout.LayoutParams(-1, -2));
+                    }
+                    restoredDrafts = null;
+                    displayedPackages = requested;
+                    populatingTimers = previous;
+                    renderTimerControls();
+                    renderTimerUsage();
+                    if (dirtyTimers) scheduleAutoSave();
+                },
+                failure -> {
+                    loadingPackages = null;
+                    failedPackages = requested;
+                    if (binding != null && appRows.isEmpty()) {
+                        binding.perAppAllowancesList.removeAllViews();
+                        message(R.string.limits_apps_unavailable);
+                    }
+                });
     }
 
-    private String appLabel(String packageName) {
-        try {
-            PackageManager packages = getPackageManager();
-            ApplicationInfo info = packages.getApplicationInfo(packageName, 0);
-            CharSequence label = packages.getApplicationLabel(info);
-            return label == null ? packageName : label.toString();
-        } catch (PackageManager.NameNotFoundException ignored) {
-            return packageName;
+    private void message(int label) {
+        TextView empty = new TextView(this);
+        empty.setText(label);
+        com.subhub.app.util.UiIdentity.textSize(empty, R.dimen.ui_text_body);
+        empty.setTextColor(getColor(R.color.text_secondary));
+        empty.setPadding(0, dp(8), 0, dp(8));
+        binding.perAppAllowancesList.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private static List<AppInfo> loadApps(android.content.Context app, Set<String> included)
+            throws InterruptedException {
+        PackageManager packages = app.getPackageManager();
+        Map<String, Integer> allowances = new AppTimerManager(app).loadAllowances(included);
+        List<AppInfo> models = new ArrayList<>();
+        for (String name : included) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            String label = com.subhub.app.configuration.FeatureEditorSession.remote(app)
+                    ? com.subhub.app.configuration.FeatureEditorSession.scope(app).appLabel(name) : name;
+            android.graphics.drawable.Drawable icon = null;
+            try {
+                if (FeatureEditorSession.remote(app)) throw new PackageManager.NameNotFoundException(name);
+                ApplicationInfo info = packages.getApplicationInfo(name, 0);
+                CharSequence display = packages.getApplicationLabel(info);
+                if (display != null) label = display.toString();
+                icon = packages.getApplicationIcon(info);
+            } catch (PackageManager.NameNotFoundException | RuntimeException removed) {
+            }
+            models.add(new AppInfo(name, label, icon, allowances.get(name)));
+        }
+        Collator collator = Collator.getInstance(Locale.getDefault());
+        models.sort((left, right) -> collator.compare(left.name, right.name));
+        return models;
+    }
+
+    private static final class AppInfo {
+        final String packageName, name;
+        final android.graphics.drawable.Drawable icon;
+        final int allowance;
+
+        AppInfo(
+                String packageName,
+                String name,
+                android.graphics.drawable.Drawable icon,
+                int allowance) {
+            this.packageName = packageName;
+            this.name = name;
+            this.icon = icon;
+            this.allowance = allowance;
         }
     }
 
@@ -300,13 +435,130 @@ public final class AppModeActivity extends AppCompatActivity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private void renderRemoteUsage() {
+        com.subhub.app.people.PersonSnapshot person = FeatureEditorSession.scope(this).person();
+        binding.limitsTodayAmount.setText(R.string.role_unknown_data);
+        binding.timerUsageStatus.setText(person == null ? getString(R.string.role_unknown_data) : person.serviceLabel);
+        binding.limitsTodayScope.setText(getString(R.string.limits_today_scope, manager.getIncludedPackages().size()));
+        binding.limitsCombinedUsage.setText(R.string.role_unknown_data);
+        binding.limitsCombinedProgress.setVisibility(View.GONE);
+        java.util.Map<String,com.subhub.app.people.PersonSnapshot.Allowance> values = new java.util.HashMap<>();
+        if (person != null) for (com.subhub.app.people.PersonSnapshot.Allowance value : person.allowances) values.put(value.packageName, value);
+        Map<String, Double> order = new LinkedHashMap<>();
+        for (java.util.Map.Entry<String,AppLimitRow> row : appRows.entrySet()) {
+            row.getValue().refreshAppIcon();
+            com.subhub.app.people.PersonSnapshot.Allowance value = values.get(row.getKey());
+            String usage = value == null || value.usedMillis < 0 ? getString(R.string.role_unknown_data) : getString(R.string.limits_usage_only, formatUsage(value.usedMillis));
+            row.getValue().renderUsage(usage, 0, false);
+            order.put(row.getKey(), value == null ? Double.POSITIVE_INFINITY
+                    : AppTimeOrder.remainingFraction(value.usedMillis, value.budgetMillis));
+        }
+        orderRows(order);
+    }
+
     private void renderTimerUsage() {
-        AppTimerManager.UsageSnapshot usage = timers.snapshot("", System.currentTimeMillis());
-        if (usage.totalUsedMillis <= 0L) {
-            binding.timerUsageStatus.setText(R.string.app_timer_usage_none);
-        } else {
-            binding.timerUsageStatus.setText(getString(R.string.app_timer_usage_total,
-                    formatUsage(usage.totalUsedMillis)));
+        if (binding == null || timers == null || manager == null) return;
+        if (FeatureEditorSession.remote(this)) { renderRemoteUsage(); return; }
+        long now = System.currentTimeMillis();
+        Set<String> included = manager.getIncludedPackages();
+        Map<String, AppTimerManager.UsageSnapshot> usage = timers.snapshots(included, now);
+        long totalUsed = usage.get("").totalUsedMillis;
+        AppTimerManager.Settings saved = timers.loadSettings();
+        Integer totalDraft = readMinutes(binding.totalLimitMinutes, true);
+        int totalMinutes = totalDraft == null ? saved.totalMinutes : totalDraft;
+        boolean combined = binding.totalLimitEnabled.isChecked(),
+                individual = binding.perAppLimitEnabled.isChecked();
+        long totalBudget = AppTimerManager.minutesToMillis(totalMinutes);
+        long sharedRemaining = Math.max(0L, totalBudget - totalUsed);
+        binding.limitsTodayAmount.setText(formatUsage(totalUsed));
+        binding.limitsTodayScope.setText(getString(R.string.limits_today_scope, included.size()));
+        binding.timerUsageStatus.setText(
+                !combined && !individual
+                        ? R.string.limits_off
+                        : included.isEmpty()
+                                ? R.string.limits_no_apps
+                                : !manager.isEffectivelyArmed(now)
+                                        ? R.string.limits_protection_off
+                                        : !accessibilityEnabled()
+                                                ? R.string.limits_access_needed
+                                                : !com.subhub.app.service
+                                                                .ScreenshotAccessibilityService
+                                                                .isRunning()
+                                                        ? R.string.limits_waiting_service
+                                                        : R.string.limits_tracking);
+        binding.limitsCombinedUsage.setText(
+                combined
+                        ? sharedRemaining == 0L
+                                ? getString(R.string.limits_shared_reached)
+                                : getString(
+                                        R.string.limits_usage_remaining,
+                                        formatUsage(totalUsed),
+                                        formatUsage(sharedRemaining))
+                        : getString(R.string.limits_usage_only, formatUsage(totalUsed)));
+        binding.limitsCombinedProgress.setVisibility(combined ? View.VISIBLE : View.GONE);
+        binding.limitsCombinedProgress.setProgress(LimitsUsage.percent(totalUsed, totalBudget));
+        Map<String, Double> order = new LinkedHashMap<>();
+        for (Map.Entry<String, AppLimitRow> entry : appRows.entrySet()) {
+            AppTimerManager.UsageSnapshot current = usage.get(entry.getKey());
+            if (current == null) continue;
+            Integer draft = readMinutes(entry.getValue().allowance, true);
+            int minutes = draft == null ? timers.allowanceMinutes(entry.getKey()) : draft;
+            long budget = AppTimerManager.minutesToMillis(minutes);
+            ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(
+                    FeatureEditorSession.context(this), entry.getKey(), now);
+            long effectiveBudget = extra.individualBudget(budget);
+            LimitsUsage state =
+                    LimitsUsage.forApp(
+                            current.appUsedMillis,
+                            effectiveBudget,
+                            totalUsed,
+                            totalBudget,
+                            individual,
+                            combined);
+            long remaining = state.limited ? extra.remaining(current.appUsedMillis, budget, totalUsed, totalBudget, individual, combined)
+                    : state.remainingMillis;
+            boolean limited = state.limited;
+            String description =
+                    limited
+                            ? remaining == 0L
+                                    ? getString(R.string.limits_reached)
+                                    : getString(
+                                            R.string.limits_usage_remaining,
+                                            formatUsage(current.appUsedMillis),
+                                            formatUsage(remaining))
+                            : getString(
+                                    R.string.limits_usage_only, formatUsage(current.appUsedMillis));
+            double fraction = AppTimeOrder.forApp(current.appUsedMillis,budget,totalUsed,totalBudget,
+                    individual,combined,extra);
+            order.put(entry.getKey(),fraction);
+            entry.getValue().renderUsage(description, state.progressPercent, limited);
+        }
+        orderRows(order);
+    }
+
+    private void orderRows(Map<String, Double> fractions) {
+        // Keep the focused editor under the user's finger. Reorder after its draft is committed.
+        for (EditText input : allowanceInputs.values()) if (input.hasFocus()) return;
+        List<String> names = new ArrayList<>(appRows.keySet());
+        names.sort((a,b) -> {
+            double left=fractions.containsKey(a)?fractions.get(a):Double.POSITIVE_INFINITY;
+            double right=fractions.containsKey(b)?fractions.get(b):Double.POSITIVE_INFINITY;
+            return AppTimeOrder.compareFractions(left,appRows.get(a).appLabel,a,right,appRows.get(b).appLabel,b);
+        });
+        List<AppLimitRow> current = new ArrayList<>();
+        for(int i=0;i<binding.perAppAllowancesList.getChildCount();i++)
+            if(binding.perAppAllowancesList.getChildAt(i) instanceof AppLimitRow)
+                current.add((AppLimitRow)binding.perAppAllowancesList.getChildAt(i));
+        boolean same=current.size()==names.size();
+        for(int i=0;same&&i<names.size();i++)same=current.get(i)==appRows.get(names.get(i));
+        if(same)return;
+        binding.perAppAllowancesList.removeAllViews();
+        for(String name:names) {
+            if(binding.perAppAllowancesList.getChildCount()>0) {
+                View divider=new View(this);divider.setBackgroundResource(R.color.outline_subtle);
+                binding.perAppAllowancesList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+            }
+            binding.perAppAllowancesList.addView(appRows.get(name),new LinearLayout.LayoutParams(-1,-2));
         }
     }
 
@@ -328,6 +580,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private String formatUsage(long millis) {
+        if (millis > 0L && millis < 60_000L) return getString(R.string.limits_less_than_minute);
         long totalMinutes = Math.max(0L, millis) / 60_000L;
         long hours = totalMinutes / 60L;
         long minutes = totalMinutes % 60L;
@@ -338,7 +591,20 @@ public final class AppModeActivity extends AppCompatActivity {
         return manager.isAccessibilityEnabled();
     }
 
-    @Override protected void onDestroy() {
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        Bundle drafts = restoredDrafts == null ? new Bundle() : new Bundle(restoredDrafts);
+        for (Map.Entry<String, EditText> entry : allowanceInputs.entrySet())
+            drafts.putString(entry.getKey(), entry.getValue().getText().toString());
+        state.putBundle("allowance_drafts", drafts);
+        state.putBoolean("timer_drafts_dirty", dirtyTimers);
+        super.onSaveInstanceState(state);
+    }
+
+    @Override
+    protected void onDestroy() {
+        usageHandler.removeCallbacksAndMessages(null);
         autoSaveHandler.removeCallbacksAndMessages(null);
         binding = null;
         super.onDestroy();

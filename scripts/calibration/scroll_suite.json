@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "referenceDisplay": { "width": 1344, "height": 2992 },
+  "targets": [
+    { "id": "chromium_images", "package": "org.chromium.chrome.stable", "kind": "webview" },
+    { "id": "x_feed", "package": "com.twitter.android", "kind": "custom_feed" },
+    { "id": "instagram_feed", "package": "com.instagram.android", "kind": "custom_feed" },
+    { "id": "reddit_feed", "package": "com.reddit.frontpage", "kind": "recycler_or_compose" },
+    { "id": "youtube_feed", "package": "com.google.android.youtube", "kind": "recycler_or_compose" },
+    { "id": "android_settings", "package": "com.android.settings", "kind": "native_list" }
+  ],
+  "gestures": [
+    { "id": "slow_up", "from": [672, 2320], "to": [672, 980], "durationMs": 1200, "afterMs": 500 },
+    { "id": "medium_up", "from": [672, 2320], "to": [672, 820], "durationMs": 520, "afterMs": 550 },
+    { "id": "fling_up", "from": [672, 2380], "to": [672, 700], "durationMs": 150, "afterMs": 1400 },
+    { "id": "short_reverse", "from": [672, 900], "to": [672, 1860], "durationMs": 360, "afterMs": 550 },
+    { "id": "jitter_up", "from": [672, 1600], "to": [672, 1320], "durationMs": 95, "afterMs": 65 },
+    { "id": "jitter_down", "from": [672, 1320], "to": [672, 1610], "durationMs": 95, "afterMs": 65 },
+    { "id": "jitter_up_2", "from": [672, 1610], "to": [672, 1300], "durationMs": 95, "afterMs": 65 },
+    { "id": "jitter_down_2", "from": [672, 1300], "to": [672, 1600], "durationMs": 95, "afterMs": 900 },
+    { "id": "return_down", "from": [672, 850], "to": [672, 2320], "durationMs": 620, "afterMs": 1200 }
+  ]
+}

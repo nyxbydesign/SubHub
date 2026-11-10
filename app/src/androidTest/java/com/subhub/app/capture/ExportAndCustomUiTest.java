@@ -21,8 +21,8 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
-import com.subhub.app.R;
 import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.subhub.app.R;
 
 import org.junit.After;
 import org.junit.Test;
@@ -33,6 +33,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(AndroidJUnit4.class)
 public final class ExportAndCustomUiTest {
+    @org.junit.Before public void enterControllerForEditableScreens() {
+        com.subhub.app.security.ControllerPinManager.enterDomMode();
+    }
     @After public void clearCustomImages() {
         Context context = ApplicationProvider.getApplicationContext();
         CustomImageManager manager = new CustomImageManager(context);
@@ -42,12 +45,12 @@ public final class ExportAndCustomUiTest {
     @Test public void exportShowsCurrentStyleAndRequiresSecondDeleteConfirmation() {
         try (ActivityScenario<ExportActivity> scenario = ActivityScenario.launch(ExportActivity.class)) {
             scenario.onActivity(activity -> {
-                assertNotNull(activity.findViewById(R.id.export_settings_summary));
+                assertNotNull(activity.findViewById(R.id.export_look_button));
                 assertTrue(activity.findViewById(R.id.button_pick_images).isEnabled());
                 assertFalse(((SwitchMaterial) activity.findViewById(
                         R.id.switch_delete_originals)).isChecked());
             });
-            onView(withId(R.id.switch_delete_originals)).perform(click());
+            onView(withId(R.id.switch_delete_originals)).perform(androidx.test.espresso.action.ViewActions.scrollTo(), click());
             onView(withText(R.string.export_delete_warning_title)).check(matches(isDisplayed()));
             onView(withText(R.string.export_delete_warning_enable)).perform(click());
             scenario.onActivity(activity -> assertTrue(((SwitchMaterial) activity.findViewById(

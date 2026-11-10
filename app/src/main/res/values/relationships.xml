@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="relationships_local_title">Link on this device</string>
+    <string name="relationships_review_title">Review link</string>
+    <string name="relationships_review">Review</string>
+    <string name="relationships_link">Link</string>
+    <string name="relationships_resume">Resume</string>
+    <string name="relationships_retry">Retry</string>
+    <string name="relationships_preparing">Preparing link</string>
+    <string name="relationships_prepared">Prepared</string>
+    <string name="relationships_pending">Pending</string>
+    <string name="relationships_linked">Linked</string>
+    <string name="relationships_cancelled">Cancelled</string>
+    <string name="relationships_expired">Expired</string>
+    <string name="relationships_refused">Link refused</string>
+    <string name="relationships_unavailable">Relationships unavailable</string>
+    <string name="relationships_controller_required">Use Dom with controller access to link profiles.</string>
+    <string name="relationships_governing_dom">A Dom is linked.</string>
+    <string name="relationships_no_subs">No linked Subs.</string>
+    <string name="relationships_participant">%1$s: %2$s</string>
+</resources>

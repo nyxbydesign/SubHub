@@ -22,13 +22,14 @@ import androidx.core.content.FileProvider;
 import com.subhub.app.BuildConfig;
 import com.subhub.app.R;
 import com.subhub.app.databinding.ActivityUpdatesBinding;
-import com.subhub.app.security.ControllerPinManager;
 
 import java.io.File;
 import java.text.DateFormat;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,16 +42,17 @@ public final class UpdatesActivity extends AppCompatActivity {
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean checking;
+    private boolean resumed;
     private boolean changingAutomatic;
     private boolean installAfterPermission;
     private boolean finalizingDownload;
-    private boolean installPromptQueued;
+    private boolean verifyingInstall;
     private String historyFingerprint = "";
     private final Set<String> expandedHistory = new HashSet<>();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             render();
-            if (binding != null && state.downloadId() >= 0) main.postDelayed(this, 750L);
+            if (binding != null && resumed) main.postDelayed(this, 750L);
         }
     };
     private final ActivityResultLauncher<Intent> installPermission = registerForActivityResult(
@@ -79,25 +81,37 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.automaticChecks.setChecked(state.automaticChecks());
         changingAutomatic = false;
         binding.automaticChecks.setOnCheckedChangeListener((button, checked) -> {
-            if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
+            if (changingAutomatic) return;
             state.setAutomaticChecks(checked);
             UpdateScheduler.synchronize(this);
         });
         binding.devUpdates.setChecked(state.devUpdates());
         binding.devUpdates.setOnCheckedChangeListener((button, checked) -> {
-            if (changingAutomatic || !ControllerPinManager.isDomModeActive()) return;
+            if (changingAutomatic) return;
             state.setDevUpdates(checked);
+            UpdateScheduler.synchronize(this, false);
             render();
             checkNow();
         });
         render();
     }
 
+    @Override protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        changingAutomatic = true;
+        try {
+            super.onRestoreInstanceState(savedInstanceState);
+        } finally {
+            changingAutomatic = false;
+        }
+        render();
+    }
+
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         render();
         main.removeCallbacks(poll);
-        if (state.downloadId() >= 0) main.post(poll);
+        main.post(poll);
     }
 
     private void checkNow() {
@@ -108,6 +122,7 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.updateStatus.setText(R.string.update_checking);
         network.execute(() -> {
             GitHubReleaseRepository.Result result = new GitHubReleaseRepository(this).check();
+            if (result.succeeded() && result.candidate != null) downloads.prepare(result.candidate, false);
             main.post(() -> {
                 if (binding == null) return;
                 checking = false;
@@ -116,6 +131,8 @@ public final class UpdatesActivity extends AppCompatActivity {
                 else binding.updateStatus.setText(result.candidate == null
                         ? R.string.update_none_available : R.string.update_available_body);
                 render();
+                main.removeCallbacks(poll);
+                if (resumed) main.post(poll);
             });
         });
     }
@@ -143,17 +160,16 @@ public final class UpdatesActivity extends AppCompatActivity {
                 : getString(R.string.update_last_checked,
                         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(new Date(last))));
-        boolean dom = ControllerPinManager.isDomModeActive();
-        binding.automaticChecks.setEnabled(dom);
-        binding.devUpdates.setEnabled(dom && !checking);
-        binding.automaticHelp.setText(dom
-                ? R.string.update_automatic_help : R.string.update_automatic_dom_help);
+        binding.automaticChecks.setText(state.devUpdates()
+                ? R.string.update_automatic_dev_toggle : R.string.update_automatic_toggle);
+        binding.automaticChecks.setEnabled(true);
+        binding.devUpdates.setEnabled(!checking);
+        binding.automaticHelp.setText(R.string.update_automatic_help);
         changingAutomatic = true;
         binding.automaticChecks.setChecked(state.automaticChecks());
         binding.devUpdates.setChecked(state.devUpdates());
         changingAutomatic = false;
-        binding.devUpdatesHelp.setText(dom
-                ? R.string.update_dev_help : R.string.update_dev_dom_help);
+        binding.devUpdatesHelp.setText(R.string.update_dev_help);
         List<ReleaseHistoryItem> history = state.releaseHistory();
         if (history.isEmpty()) history = ReleaseHistoryCatalog.bundled(this);
         history = ReleaseHistoryCatalog.withCandidate(history, candidate);
@@ -173,14 +189,6 @@ public final class UpdatesActivity extends AppCompatActivity {
             binding.buttonAction.setOnClickListener(view -> installVerified());
             binding.buttonCancel.setVisibility(View.GONE);
             if (!checking) binding.updateStatus.setText(R.string.update_ready_body);
-            if (state.installRequested() && !installAfterPermission && !installPromptQueued) {
-                state.setInstallRequested(false);
-                installPromptQueued = true;
-                main.post(() -> {
-                    installPromptQueued = false;
-                    installVerified();
-                });
-            }
             return;
         }
         UpdateDownloadCoordinator.Status download = downloads.status();
@@ -221,8 +229,11 @@ public final class UpdatesActivity extends AppCompatActivity {
         binding.releaseNotesCard.setVisibility(history.isEmpty() ? View.GONE : View.VISIBLE);
         if (history.isEmpty()) return;
         StringBuilder fingerprint = new StringBuilder();
+        fingerprint.append(getResources().getConfiguration().getLocales().toLanguageTags())
+                .append(':').append(ZoneId.systemDefault().getId()).append(';');
         for (ReleaseHistoryItem item : history) {
-            fingerprint.append(item.tag).append(':').append(item.notes.hashCode()).append(';');
+            fingerprint.append(item.tag).append(':').append(item.notes.hashCode())
+                    .append(':').append(item.publishedAt).append(':').append(item.prerelease).append(';');
         }
         String value = fingerprint.toString();
         if (value.equals(historyFingerprint)) return;
@@ -237,19 +248,23 @@ public final class UpdatesActivity extends AppCompatActivity {
             TextView version = row.findViewById(R.id.release_version);
             TextView meta = row.findViewById(R.id.release_meta);
             TextView details = row.findViewById(R.id.release_details);
-            TextView chevron = row.findViewById(R.id.release_chevron);
+            android.widget.ImageView chevron = row.findViewById(R.id.release_chevron);
             version.setText(getString(R.string.update_history_version, item.versionName));
             meta.setText(historyMeta(item, candidate));
             details.setText(ReleaseNotesFormatter.forView(details,
                     item.notes, getString(R.string.update_notes_unavailable)));
             boolean expanded = expandedHistory.contains(item.tag);
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            chevron.setText(expanded ? "⌄" : "›");
+            chevron.setRotation(expanded ? 90f : 0f);
+            androidx.core.view.ViewCompat.setStateDescription(row,
+                    getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
             row.setContentDescription(getString(R.string.update_history_open, item.versionName));
             row.setOnClickListener(view -> {
                 boolean show = details.getVisibility() != View.VISIBLE;
                 details.setVisibility(show ? View.VISIBLE : View.GONE);
-                chevron.setText(show ? "⌄" : "›");
+                chevron.setRotation(show ? 90f : 0f);
+                androidx.core.view.ViewCompat.setStateDescription(row,
+                        getString(show ? R.string.section_expanded : R.string.section_collapsed));
                 if (show) expandedHistory.add(item.tag);
                 else expandedHistory.remove(item.tag);
             });
@@ -264,12 +279,15 @@ public final class UpdatesActivity extends AppCompatActivity {
         if (item.versionName.equals(BuildConfig.VERSION_NAME)) {
             return getString(R.string.update_history_installed);
         }
+        if (item.prerelease) {
+            Locale locale = getResources().getConfiguration().getLocales().get(0);
+            String timestamp = ReleaseTimestampFormatter.preview(item.publishedAt,
+                    locale == null ? Locale.getDefault() : locale, ZoneId.systemDefault());
+            return timestamp.isEmpty() ? getString(R.string.update_history_preview)
+                    : getString(R.string.update_history_preview_date, timestamp);
+        }
         String date = item.publishedAt.length() >= 10
                 ? item.publishedAt.substring(0, 10) : "";
-        if (item.prerelease && !date.isEmpty()) {
-            return getString(R.string.update_history_preview_date, date);
-        }
-        if (item.prerelease) return getString(R.string.update_history_preview);
         return date.isEmpty() ? getString(R.string.update_history_published) : date;
     }
 
@@ -306,6 +324,34 @@ public final class UpdatesActivity extends AppCompatActivity {
     }
 
     private void installVerified() {
+        if (verifyingInstall) return;
+        final UpdateCandidate candidate = state.candidate();
+        final String path = state.verifiedPath();
+        final long revision = state.channelRevision();
+        UpdateManifest.Asset asset = candidate == null ? null : candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
+        if (asset == null || path.isEmpty()) { render(); return; }
+        verifyingInstall = true;
+        network.execute(() -> {
+            boolean verified = UpdateVerifier.verify(this, new File(path), candidate.manifest, asset).succeeded();
+            main.post(() -> {
+                verifyingInstall = false;
+                if (binding == null) return;
+                synchronized (UpdateStateStore.class) {
+                    if (revision != state.channelRevision() || !path.equals(state.verifiedPath())
+                            || !UpdateStateStore.sameCandidate(candidate, state.candidate())) { render(); return; }
+                    if (!verified) {
+                        downloads.cancel();
+                        binding.updateStatus.setText(R.string.update_verification_failed);
+                        render();
+                        return;
+                    }
+                    launchInstaller();
+                }
+            });
+        });
+    }
+
+    private void launchInstaller() {
         if (state.candidate() == null) {
             downloads.cancel();
             render();
@@ -331,6 +377,12 @@ public final class UpdatesActivity extends AppCompatActivity {
         startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,
                         "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        main.removeCallbacks(poll);
+        super.onPause();
     }
 
     @Override protected void onDestroy() {

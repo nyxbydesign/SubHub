@@ -1,6 +1,6 @@
 # Current UI gallery
 
-Real Android UI captures from October 8, 2026. These use synthetic emulator data, not a personal phone or live payment account. Most show development build 0.6.4 (20), based on `64ba54df`. Censor settings (including the repeated foundation capture), Diagnostics, the Wallet rule grid, and the native pack-section editor were refreshed from the stable product port `98bd79c4`, build 0.6.5 (21), without Whole person or Censor Lab. Captures may differ from the latest published APK.
+Real Android UI captures from October 8, 2026. These use synthetic emulator data, not a personal phone or live payment account. They show development build 0.6.4 (20), based on `64ba54df`, and may differ from the latest published APK.
 
 The capture suite covers 42 screenshots: 34 distinct page/state captures below and eight repeated foundation/navigation checks. Screenshots document appearance and navigation, not live detection accuracy, scrolling performance, or payment execution.
 
@@ -48,20 +48,6 @@ The capture suite covers 42 screenshots: 34 distinct page/state captures below a
   <a href="page-map/16-popup-storm.png"><img src="page-map/16-popup-storm.png" alt="popup storm" width="30%" /></a>
 </p>
 
-## Pack Maker
-
-<p>
-  <a href="page-map/00c-sub-arrangements.png"><img src="page-map/00c-sub-arrangements.png" alt="sub arrangements" width="30%" /></a>
-  <a href="page-map/17-studio-library.png"><img src="page-map/17-studio-library.png" alt="studio library" width="30%" /></a>
-  <a href="page-map/17b-studio-drafts.png"><img src="page-map/17b-studio-drafts.png" alt="studio drafts" width="30%" /></a>
-  <a href="page-map/17c-studio-create.png"><img src="page-map/17c-studio-create.png" alt="studio create" width="30%" /></a>
-  <a href="page-map/22-wizard-details.png"><img src="page-map/22-wizard-details.png" alt="wizard details" width="30%" /></a>
-  <a href="page-map/23-wizard-features.png"><img src="page-map/23-wizard-features.png" alt="wizard features" width="30%" /></a>
-  <a href="page-map/24-wizard-images.png"><img src="page-map/24-wizard-images.png" alt="wizard images" width="30%" /></a>
-  <a href="page-map/25-wizard-review.png"><img src="page-map/25-wizard-review.png" alt="wizard review" width="30%" /></a>
-  <a href="page-map/26-pack-section-editor.png"><img src="page-map/26-pack-section-editor.png" alt="pack section editor" width="30%" /></a>
-</p>
-
 ## Progress & support
 
 <p>
@@ -77,6 +63,6 @@ The capture suite covers 42 screenshots: 34 distinct page/state captures below a
 
 Use meaningful synthetic configurations in every future documentation pass. Limits must show one or two selected installed apps with distinct custom daily allowances, seeded and asserted by the reusable capture test. This set shows Chrome at 20 minutes, Instagram at 10 minutes, and a 45-minute shared allowance.
 
-Application and instrumentation APKs were built together for both source snapshots. The capture runner asserts named panels/dialogs, waits for asynchronous app rows and compositor settling, and scrolls to named sections. Each published image was visually reviewed. See [capture provenance](capture-provenance.json) for the original capture metadata, the five stable-port overrides, and each image's dimensions and SHA-256.
+Both the application and instrumentation APK were built together from an exact, isolated source snapshot. The capture runner asserts named panels/dialogs, waits for asynchronous app rows and compositor settling, and scrolls to named sections. Each published image was visually reviewed. See [capture provenance](capture-provenance.json) for the source tree, emulator, dimensions, capture checks, and SHA-256 inventory.
 
 Foundation checks: [Dom Home](page-map/foundation-01-dom-home.png), [Censor](page-map/foundation-02-censor.png), [Limits](page-map/foundation-03-limits.png), [Wallet](page-map/foundation-04-wallet.png), [Atmosphere](page-map/foundation-05-atmosphere.png), [Dom Settings](page-map/foundation-06-settings.png), [Sub Home](page-map/foundation-07-sub-home.png), and [Sub Settings](page-map/foundation-08-sub-settings.png).

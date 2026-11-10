@@ -85,4 +85,84 @@ public final class InferenceBitmapPreparerAndroidTest {
             software.recycle();
         }
     }
+
+    @Test public void portraitQualityTilePreservesAdditionalHorizontalPixels() {
+        Bitmap software = Bitmap.createBitmap(1080, 2400, Bitmap.Config.ARGB_8888);
+        new Canvas(software).drawColor(Color.rgb(35, 80, 120));
+        Bitmap hardware = software.copy(Bitmap.Config.HARDWARE, false);
+        assertNotNull(hardware);
+        InferenceBitmapPreparer.Prepared prepared = null;
+        try {
+            QualityTilePlanner.Tile tile = QualityTilePlanner.select(1080, 2400, 0L);
+            prepared = InferenceBitmapPreparer.prepareRegion(hardware, tile, 512);
+            assertNotNull(prepared);
+            assertEquals(281, prepared.bitmap.getWidth());
+            assertEquals(512, prepared.bitmap.getHeight());
+            assertTrue(prepared.bitmap.getWidth() > 230);
+            assertEquals(Bitmap.Config.ARGB_8888, prepared.bitmap.getConfig());
+        } finally {
+            if (prepared != null && !prepared.bitmap.isRecycled()) prepared.bitmap.recycle();
+            hardware.recycle();
+            software.recycle();
+        }
+    }
+
+    @Test public void comparesSingleTransformAndTwoStageQualityTileReadback() {
+        Bitmap software = Bitmap.createBitmap(1344, 2992, Bitmap.Config.ARGB_8888);
+        new Canvas(software).drawColor(Color.rgb(55, 40, 95));
+        Bitmap hardware = software.copy(Bitmap.Config.HARDWARE, false);
+        assertNotNull(hardware);
+        QualityTilePlanner.Tile tile = QualityTilePlanner.select(1344, 2992, 0L);
+        long[] singleTransform = new long[7];
+        long[] twoStage = new long[7];
+        try {
+            for (int index = 0; index < singleTransform.length; index++) {
+                long started = SystemClock.elapsedRealtimeNanos();
+                InferenceBitmapPreparer.Prepared prepared =
+                        InferenceBitmapPreparer.prepareRegion(hardware, tile, 512);
+                singleTransform[index] = SystemClock.elapsedRealtimeNanos() - started;
+                assertNotNull(prepared);
+                prepared.bitmap.recycle();
+
+                started = SystemClock.elapsedRealtimeNanos();
+                Bitmap alternative = prepareRegionTwoStage(hardware, tile, 512);
+                twoStage[index] = SystemClock.elapsedRealtimeNanos() - started;
+                assertNotNull(alternative);
+                alternative.recycle();
+            }
+            Arrays.sort(singleTransform);
+            Arrays.sort(twoStage);
+            Log.i(TAG, "quality tile median singleTransform="
+                    + singleTransform[singleTransform.length / 2] / 1_000_000f
+                    + " ms, twoStage="
+                    + twoStage[twoStage.length / 2] / 1_000_000f + " ms");
+        } finally {
+            hardware.recycle();
+            software.recycle();
+        }
+    }
+
+    private static Bitmap prepareRegionTwoStage(
+            Bitmap source,
+            QualityTilePlanner.Tile tile,
+            int inferenceResolution) {
+        Bitmap cropped = null;
+        Bitmap scaled = null;
+        Bitmap readable = null;
+        try {
+            int[] dimensions = InferenceBitmapPreparer.targetDimensions(
+                    tile.width(), tile.height(), inferenceResolution);
+            cropped = Bitmap.createBitmap(
+                    source, tile.left(), tile.top(), tile.width(), tile.height());
+            scaled = Bitmap.createScaledBitmap(
+                    cropped, dimensions[0], dimensions[1], true);
+            readable = scaled.getConfig() == Bitmap.Config.HARDWARE
+                    ? scaled.copy(Bitmap.Config.ARGB_8888, false) : scaled;
+            if (readable == scaled) scaled = null;
+            return readable;
+        } finally {
+            if (scaled != null && scaled != cropped && !scaled.isRecycled()) scaled.recycle();
+            if (cropped != null && cropped != source && !cropped.isRecycled()) cropped.recycle();
+        }
+    }
 }

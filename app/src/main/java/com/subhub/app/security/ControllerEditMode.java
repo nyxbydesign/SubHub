@@ -25,7 +25,9 @@ public final class ControllerEditMode {
         this.button = button;
         this.listener = listener;
         boolean activePactSurface = supportsSubSurface();
-        if (!ControllerPinManager.isDomModeActive() && !(activity instanceof MainActivity)
+        if ((!ControllerPinManager.isDomModeActive()
+                || !com.subhub.app.people.People.isLocalConfigurationAllowed()
+                || !com.subhub.app.people.PersonRoutes.isLocalTarget(activity.getIntent())) && !(activity instanceof MainActivity)
                 && !activePactSurface) {
             button.setVisibility(View.GONE);
             listener.onEditStateChanged(false);
@@ -42,18 +44,25 @@ public final class ControllerEditMode {
     }
 
     public static void renderButton(Activity activity, TextView button) {
-        boolean editing = ControllerPinManager.isDomModeActive();
-        button.setText(editing
-                ? R.string.controller_edit_unlocked : R.string.controller_edit_locked);
+        boolean unlocked = ControllerPinManager.isDomWorkspaceUnlocked();
+        DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(activity);
+        boolean both = mode == DeviceRolePreferences.Mode.BOTH;
+        boolean domWorkspace = DeviceRolePreferences.isDomWorkspace(activity);
+        button.setText(both ? unlocked ? R.string.role_dom : R.string.role_sub
+                : unlocked ? R.string.device_role_lock : R.string.device_role_unlock);
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0);
-        button.setContentDescription(activity.getString(editing
-                ? R.string.controller_edit_unlocked_description
-                : R.string.controller_edit_locked_description));
-        button.setSelected(editing);
+        button.setContentDescription(activity.getString(both ? unlocked ? R.string.role_enter_sub : R.string.role_enter_dom
+                : unlocked ? R.string.device_role_lock : R.string.device_role_unlock));
+        androidx.appcompat.widget.TooltipCompat.setTooltipText(button, button.getContentDescription());
+        button.setSelected(unlocked);
+        TextView badge = activity.findViewById(R.id.header_role_badge);
+        if (badge != null) badge.setText(domWorkspace ? R.string.role_dom : R.string.role_sub);
     }
 
     public boolean isEditing() {
-        return ControllerPinManager.isDomModeActive();
+        return ControllerPinManager.isDomModeActive()
+                && com.subhub.app.people.People.isLocalConfigurationAllowed()
+                && com.subhub.app.people.PersonRoutes.isLocalTarget(activity.getIntent());
     }
 
     public void refresh() {
@@ -77,7 +86,7 @@ public final class ControllerEditMode {
                 enterSubMode(activity);
             }
         } else {
-            ControllerPinGate.require(activity, this::refresh, false);
+            ControllerPinGate.unlock(activity, this::refresh, false);
         }
     }
 
@@ -87,7 +96,7 @@ public final class ControllerEditMode {
                 || activity instanceof CommitmentActivity && CommitmentManager.isActive(activity);
     }
 
-    /** Leaves all configuration surfaces and returns to the single Sub dashboard. */
+    /** Locks controller access and returns to the configured device workspace. */
     public static void enterSubMode(Activity activity) {
         ControllerPinManager.enterSubMode();
         if (activity instanceof MainActivity) return;

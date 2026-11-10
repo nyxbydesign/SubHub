@@ -7,6 +7,7 @@ final class PopupRunOwnership {
     private Owner owner = Owner.NONE;
     private long generation;
     private long previewDeadline;
+    private String serviceSignature = "";
 
     synchronized long beginPreview(long now, long durationMillis) {
         if (durationMillis <= 0) throw new IllegalArgumentException("Preview duration must be positive");
@@ -17,14 +18,29 @@ final class PopupRunOwnership {
     }
 
     synchronized long adoptService() {
-        if (owner != Owner.SERVICE) ++generation;
+        return adoptService("");
+    }
+
+    synchronized long adoptService(String signature) {
+        if (signature == null) throw new IllegalArgumentException("Missing service signature");
+        if (owner != Owner.SERVICE || !serviceSignature.equals(signature)) ++generation;
         owner = Owner.SERVICE;
+        serviceSignature = signature;
         previewDeadline = 0;
         return generation;
     }
 
+    synchronized long serviceToken(String signature) {
+        return owner == Owner.SERVICE && serviceSignature.equals(signature) ? generation : 0;
+    }
+
+    synchronized long stopService(long token) {
+        return isService(token) ? stop() : 0;
+    }
+
     synchronized long stop() {
         owner = Owner.NONE;
+        serviceSignature = "";
         previewDeadline = 0;
         return ++generation;
     }
