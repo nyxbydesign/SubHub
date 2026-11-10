@@ -26,6 +26,7 @@ public final class PairingActivity extends RemotePage {
     private RemoteFeature.PairingOperation operation;
     private String operationId,operationGeneration;
     private boolean resumed,operationBusy,preparingStart,statusUnavailable;
+    private com.subhub.app.util.FiveSecondBackGesture dummyBackGesture;
     private long visibleRevision;
     private long selectionRevision;
     private String startingObservationKey;
@@ -42,6 +43,18 @@ public final class PairingActivity extends RemotePage {
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         boolean asDom=requiresDom();
         if(asDom?!com.subhub.app.security.DeviceRolePreferences.supportsDom(this):!com.subhub.app.security.DeviceRolePreferences.supportsSub(this)){finish();return;}
+        if(directInvitation())dummyBackGesture=com.subhub.app.util.FiveSecondBackGesture.bind(
+                com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content)),
+                ()->visible()&&hasWindowFocus()&&directInvitation()
+                        &&com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
+                        &&com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked(),
+                ()->{
+                    try {
+                        boolean added=com.subhub.app.people.DummySubPreview.toggle(this);
+                        Toast.makeText(this,added?R.string.dummy_sub_added:R.string.dummy_sub_removed,Toast.LENGTH_SHORT).show();
+                        finish();
+                    } catch(RuntimeException unavailable) { notice(R.string.remote_failure); }
+                });
         if(asDom) {
             creation=new androidx.lifecycle.ViewModelProvider(this).get(InvitationCreation.class);
             if(state!=null)creation.directAttempted|=state.getBoolean("pairingDirectAttempted",false)||state.containsKey("invitationId");
@@ -153,8 +166,9 @@ public final class PairingActivity extends RemotePage {
         } else if(requiresDom()&&invitation==null&&!restoringInvitation&&creation.request!=null)observeCreation();
         clock.removeCallbacks(poll);clock.post(poll);clock.post(this::showCreationAction);
     }
-    @Override protected void onPause(){resumed=false;visibleRevision++;clock.removeCallbacks(poll);super.onPause();}
-    @Override protected void onDestroy(){clock.removeCallbacksAndMessages(null);super.onDestroy();}
+    @Override protected void onPause(){if(dummyBackGesture!=null)dummyBackGesture.cancel();resumed=false;visibleRevision++;clock.removeCallbacks(poll);super.onPause();}
+    @Override protected void onDestroy(){if(dummyBackGesture!=null)dummyBackGesture.cancel();clock.removeCallbacksAndMessages(null);super.onDestroy();}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(!focused&&dummyBackGesture!=null)dummyBackGesture.cancel();}
     private boolean visible(){return resumed&&!isFinishing()&&!isDestroyed()
             &&getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED);}
     private boolean asDom(){return requiresDom();}

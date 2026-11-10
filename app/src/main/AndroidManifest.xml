@@ -50,6 +50,7 @@
             android:foregroundServiceType="connectedDevice" />
         <service android:name=".capture.export.ExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
+        <activity android:name=".people.DummySubPreviewActivity" android:exported="false" />
         <activity android:name=".tasks.TasksActivity" android:exported="false" />
         <activity android:name=".journal.JournalActivity" android:exported="false" android:windowSoftInputMode="stateAlwaysHidden|adjustResize" />
         <provider android:name=".journal.JournalProvider" android:authorities="${applicationId}.journal"

@@ -17,6 +17,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private int rosterPosition;
     private boolean restoreRosterPosition = true;
     private LinearLayout roster;
+    private LinearLayout dummyPreview;
     private TextView favoriteGuidance;
     private LinearLayout activityCard;
     private com.subhub.app.relationships.RelationshipPanel relationships;
@@ -59,6 +60,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     protected void refresh() {
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
         ensureContent();
+        refreshDummyPreview();
         refreshActivityPreview();
         if (snapshotUnavailable) { snapshotUnavailable = false; relationships.refresh(); }
         PersonRepository repository = People.repository(getApplicationContext());
@@ -113,6 +115,20 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
         PersonUi.text(roster, getString(R.string.role_loading), false);
+    }
+
+    /** Separate presentation row: never participates in roster, favorites or presence. */
+    private void refreshDummyPreview() {
+        if (dummyPreview != null) { body.removeView(dummyPreview); dummyPreview = null; }
+        if (!DummySubPreview.isEnabled(this)) return;
+        dummyPreview = PersonUi.card(body);
+        PersonUi.row(dummyPreview, R.drawable.ic_nav_people, getString(R.string.dummy_sub_title),
+                getString(R.string.dummy_sub_view_only), () -> {
+                    if (mayManagePeople()) DummySubPreview.open(this);
+                }).setTag("dummy_sub_card");
+        // Keep the skeleton adjacent to, but outside, the real roster.
+        body.removeView(dummyPreview);
+        body.addView(dummyPreview, body.indexOfChild(roster) + 1);
     }
 
     private void refreshActivityPreview() {
