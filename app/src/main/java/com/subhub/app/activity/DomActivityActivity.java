@@ -97,12 +97,12 @@ public final class DomActivityActivity extends AppCompatActivity {
         public String cursor;
         public String nextCursor;
         public String focusKey;
-        public int position, offset, unread;
-        public boolean loaded;
+        public int position, offset, unread, entryOffset;
+        public boolean loaded, resetOnLoad, entryAnchor;
         public String anchorKey, pageCursor;
         public Object relationshipProvider, keyholder;
         public ActivityRepository source;
-        public long workspaceRevision;
+        public long workspaceRevision, authorityRevision;
         public List<ActivityEntry> entries = Collections.emptyList();
         public final Set<String> expanded = new HashSet<>();
     }

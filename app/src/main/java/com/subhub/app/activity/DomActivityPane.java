@@ -51,7 +51,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private final FeedAdapter adapter = new FeedAdapter();
     private AutoCloseable observer;
     private boolean resumed, reading, markingAll, refreshQueued;
-    private long readSequence, renderGeneration;
+    private long readSequence, renderGeneration, positionGeneration;
     public DomActivityPane(androidx.appcompat.app.AppCompatActivity host, Bundle saved) {
         super(host);
         this.host = host;
@@ -68,6 +68,10 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             state.cursor = saved.getString("activity_cursor");
             state.position = saved.getInt("activity_position");
             state.offset = saved.getInt("activity_offset");
+            state.resetOnLoad = saved.getBoolean("activity_reset_on_load");
+            state.anchorKey = saved.getString("activity_anchor");
+            state.entryOffset = saved.getInt("activity_entry_offset");
+            state.entryAnchor = saved.getBoolean("activity_entry_anchor");
             ArrayList<String> expanded = saved.getStringArrayList("activity_expanded");
             if (expanded != null) state.expanded.addAll(expanded);
         }
@@ -113,7 +117,10 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             PersonRoutes.open(host, groups.get(position).latest().personId);
         });
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
-            public void onScrollStateChanged(AbsListView view, int scrollState) { markVisibleRead(); }
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+                if (scrollState != SCROLL_STATE_IDLE) ++positionGeneration;
+                markVisibleRead();
+            }
             public void onScroll(AbsListView view, int first, int visible, int total) { list.post(DomActivityPane.this::markVisibleRead); }
         });
         View nav = host.findViewById(R.id.bottom_navigation);
@@ -137,17 +144,16 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             if (resumed && mayRead()) refresh(false);
         }));
         updateNotificationAction();
-        if (retainedSourceCurrent()) {
-            rebuildGroups();
-            renderStoredPage();
-            restorePosition();
-        }
+        // A paused page may have missed same-provider relationship changes. Keep its
+        // memory snapshot, but revalidate membership before making private rows visible.
+        if (retainedSourceCurrent()) rebuildGroups();
         refresh(false);
     }
 
     public void pause() {
         ++renderGeneration;
-        rememberPosition();
+        ++positionGeneration;
+        if (!state.resetOnLoad) rememberPosition();
         resumed = false;
         work.cancel("activity-page");
         refreshQueued = false;
@@ -173,12 +179,16 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     }
 
     public void save(Bundle output) {
-        rememberPosition();
+        if (!state.resetOnLoad) rememberPosition();
         output.putBoolean("activity_local", state.local);
         output.putString("activity_cursor", state.cursor);
         output.putString("activity_focus", state.focusKey);
         output.putInt("activity_position", state.position);
         output.putInt("activity_offset", state.offset);
+        output.putBoolean("activity_reset_on_load", state.resetOnLoad);
+        output.putString("activity_anchor", state.anchorKey);
+        output.putInt("activity_entry_offset", state.entryOffset);
+        output.putBoolean("activity_entry_anchor", state.entryAnchor);
         output.putStringArrayList("activity_expanded", new ArrayList<>(state.expanded));
     }
 
@@ -199,6 +209,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private boolean retainedSourceCurrent() {
         return state.loaded && state.source == ActivitySources.repository()
                 && state.workspaceRevision == ControllerPinManager.domWorkspaceRevision()
+                && state.authorityRevision == ActivitySources.authorityRevision()
                 && state.relationshipProvider == com.subhub.app.relationships.RelationshipUi.provider()
                 && state.keyholder == com.subhub.app.people.People.keyholder();
     }
@@ -208,6 +219,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         state.loaded = false;
         state.unread = 0;
         state.anchorKey = null;
+        state.entryAnchor = false;
         state.nextCursor = null;
         rebuildGroups();
         list.setVisibility(View.INVISIBLE);
@@ -246,11 +258,14 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         if (!reset && work.isPending("activity-page")) { refreshQueued = true; return; }
         long generation = ++renderGeneration;
         refreshQueued = false;
-        if (reset) { state.position = 0; state.offset = 0; state.anchorKey = null; }
+        if (reset) state.resetOnLoad = true;
+        boolean resetPosition = state.resetOnLoad;
+        if (resetPosition) { state.position = 0; state.offset = 0; state.anchorKey = null; state.entryAnchor = false; }
         boolean local = state.local;
         String cursor = state.cursor;
         String requestedFocus = state.focusKey;
         long workspaceRevision = ControllerPinManager.domWorkspaceRevision();
+        long authorityRevision = ActivitySources.authorityRevision();
         Object relationshipProvider = com.subhub.app.relationships.RelationshipUi.provider();
         Object keyholder = com.subhub.app.people.People.keyholder();
         if (!state.loaded) status.setVisibility(View.GONE);
@@ -261,17 +276,21 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             if (!resumed || !mayRead() || generation != renderGeneration) return;
             if (repository != ActivitySources.repository()
                     || workspaceRevision != ControllerPinManager.domWorkspaceRevision()
+                    || authorityRevision != ActivitySources.authorityRevision()
                     || relationshipProvider != com.subhub.app.relationships.RelationshipUi.provider()
                     || keyholder != com.subhub.app.people.People.keyholder()) { refresh(false); return; }
             // Capture the user's current position at delivery, not where the request began.
-            if (!reset) rememberPosition();
+            boolean revealing = !list.isShown();
+            if (!resetPosition) rememberPosition();
             boolean changed = !ActivityFeedSnapshot.same(state.entries, result.page.entries);
             state.entries = result.page.entries;
             state.source = repository;
             state.workspaceRevision = workspaceRevision;
+            state.authorityRevision = authorityRevision;
             state.relationshipProvider = relationshipProvider;
             state.keyholder = keyholder;
             state.loaded = true;
+            state.resetOnLoad = false;
             state.unread = result.unread;
             if (requestedFocus != null) state.cursor = result.page.cursor;
             state.pageCursor = state.cursor;
@@ -282,6 +301,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
                 for (int i = 0; i < groups.size(); i++) if (groups.get(i).contains(focused)) {
                     state.position = i;
                     state.anchorKey = null;
+                    state.entryAnchor = false;
                     state.expanded.add(groups.get(i).key);
                     adapter.notifyDataSetChanged();
                     break;
@@ -290,7 +310,7 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             }
             renderStoredPage();
             if (requestedFocus != null && state.entries.isEmpty()) status.setText(R.string.dom_activity_entry_unavailable);
-            if (changed || reset || focused != null) restorePosition();
+            if (changed || revealing || resetPosition || focused != null) restorePosition();
             reserveNavigation();
             if (focused == null) list.post(this::markVisibleRead);
             else revealFocusedEntry(focused, state.position, generation);
@@ -298,9 +318,9 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         }, failure -> {
             if (!resumed || !mayRead() || generation != renderGeneration) return;
             // Authority failures must never fall back to private cached facts.
-            if (repository != ActivitySources.repository() || failure instanceof SecurityException
-                    || failure instanceof IllegalStateException) clearStoredPage();
-            if (state.loaded) state.cursor = state.pageCursor;
+            if (!list.isShown() || !retainedSourceCurrent() || authorityObservationFailed(failure)) clearStoredPage();
+            state.resetOnLoad = false;
+            if (state.loaded) { state.cursor = state.pageCursor; rememberPosition(); }
             status.setText(state.loaded ? R.string.dom_activity_refresh_failed : R.string.dom_activity_unavailable);
             // Keep failures out of the list viewport when saved content is still available.
             status.setVisibility(state.loaded && !state.entries.isEmpty() ? View.GONE : View.VISIBLE);
@@ -310,11 +330,45 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         });
     }
 
+    static boolean authorityObservationFailed(Throwable failure) {
+        // Snapshot timeouts and failed futures are unknown authority, never offline-data evidence.
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SecurityException || cause instanceof IllegalStateException
+                    || cause instanceof java.util.concurrent.ExecutionException
+                    || cause instanceof java.util.concurrent.TimeoutException
+                    || cause instanceof java.util.concurrent.CompletionException) return true;
+            if (cause.getCause() == cause) break;
+        }
+        return false;
+    }
+
     private void restorePosition() {
         if (state.anchorKey != null) for (int index = 0; index < groups.size(); index++) {
             if (groups.get(index).contains(state.anchorKey)) { state.position = index; break; }
         }
         list.setSelectionFromTop(state.position, state.offset);
+        if (!state.entryAnchor || state.anchorKey == null) return;
+        String key = state.anchorKey;
+        int targetOffset = state.entryOffset, position = state.position;
+        long generation = ++positionGeneration;
+        list.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                list.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (!resumed || !mayRead() || generation != positionGeneration || !retainedSourceCurrent()) return true;
+                View target = list.findViewWithTag("activity_entry:" + key);
+                int child = position - list.getFirstVisiblePosition();
+                if (target == null || child < 0 || child >= list.getChildCount()) return true;
+                Rect bounds = new Rect(0, 0, target.getWidth(), target.getHeight());
+                list.offsetDescendantRectToMyCoords(target, bounds);
+                int adjusted = list.getChildAt(child).getTop() + targetOffset - bounds.top - list.getPaddingTop();
+                if (adjusted == list.getChildAt(child).getTop() - list.getPaddingTop()) return true;
+                state.offset = adjusted;
+                list.setSelectionFromTop(position, adjusted);
+                list.post(DomActivityPane.this::markVisibleRead);
+                return false;
+            }
+        });
+        list.invalidate();
     }
 
     private void markAllRead() {
@@ -360,12 +414,28 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private void rememberPosition() {
         if (list == null || !list.isShown() || list.getChildCount() == 0) return;
         state.position = list.getFirstVisiblePosition();
-        state.offset = list.getChildAt(0).getTop();
+        state.offset = list.getChildAt(0).getTop() - list.getPaddingTop();
         state.anchorKey = state.position < groups.size() ? groups.get(state.position).latest().key : null;
+        state.entryAnchor = false;
+        if (state.position >= groups.size()) return;
+        // An expanded group may span multiple viewports. Anchor the visible fact rather than
+        // its group's old top, which changes when newer facts are inserted into that group.
+        for (ActivityEntry entry : groups.get(state.position).entries) {
+            View row = list.findViewWithTag("activity_entry:" + entry.key);
+            if (row == null) continue;
+            Rect bounds = new Rect(0, 0, row.getWidth(), row.getHeight());
+            list.offsetDescendantRectToMyCoords(row, bounds);
+            if (bounds.bottom > list.getPaddingTop() && bounds.top < list.getHeight()) {
+                state.anchorKey = entry.key;
+                state.entryOffset = bounds.top;
+                state.entryAnchor = true;
+                break;
+            }
+        }
     }
 
     private void markVisibleRead() {
-        if (!resumed || reading || markingAll || !mayRead() || !list.isShown()) return;
+        if (!resumed || reading || markingAll || !mayRead() || !list.isShown() || !retainedSourceCurrent()) return;
         List<ActivityEntry> visible = new ArrayList<>();
         for (ActivityEntry entry : state.entries) {
             View row = list.findViewWithTag("activity_entry:" + entry.key);

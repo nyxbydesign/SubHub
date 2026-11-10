@@ -92,6 +92,7 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
 
     void received(RemoteStore.Peer peer) { changed();dispatchNotifications(); }
     void revoked(RemoteStore.Peer peer) {
+        ActivitySources.authorityChanged();
         refreshSource();notifications.cancelPeer(context, RemotePersonRepository.id(peer));changed();
     }
 
@@ -439,25 +440,32 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         DomSubjectScope scope = readScope();
         scope.revalidate();
         List<ActivityEntry> acknowledged = new ArrayList<>();
-        synchronized (store) {
-            SQLiteDatabase db = store.getWritableDatabase();
-            db.beginTransaction();
-            try {
-                List<String> args = new ArrayList<>();
-                String selection = eligible(scope, args);
-                // The transaction is the cutoff: later receipts remain unread.
-                try (Cursor rows = db.rawQuery("SELECT a.entry_key,a.peer,a.generation,a.body,a.received FROM "
-                        + JOIN + " WHERE " + selection + " AND a.is_read=0", args.toArray(new String[0]))) {
-                    while (rows.moveToNext()) acknowledged.add(entry(store.peer(rows.getString(1), rows.getString(2)),
-                            rows.getString(0), StoredPayloads.read(rows, 3), rows.getLong(4), false));
-                }
-                requireRead();
-                scope.requireCurrent();
-                db.execSQL("UPDATE activity_receipts SET is_read=1 WHERE entry_key IN (SELECT a.entry_key FROM "
-                        + JOIN + " WHERE " + selection + " AND a.is_read=0)", args.toArray(new String[0]));
-                db.setTransactionSuccessful();
-            } finally { db.endTransaction(); }
-        }
+        // Enter the verified continuity gate before acquiring the store or opening SQL.
+        // Provider observations remain outside the gate to avoid waiting on its worker.
+        store.authorityObservation(() -> {
+            requireRead();
+            scope.requireCurrent();
+            synchronized (store) {
+                SQLiteDatabase db = store.getWritableDatabase();
+                db.beginTransaction();
+                try {
+                    List<String> args = new ArrayList<>();
+                    String selection = eligible(scope, args);
+                    // The transaction is the cutoff: later receipts remain unread.
+                    try (Cursor rows = db.rawQuery("SELECT a.entry_key,a.peer,a.generation,a.body,a.received FROM "
+                            + JOIN + " WHERE " + selection + " AND a.is_read=0", args.toArray(new String[0]))) {
+                        while (rows.moveToNext()) acknowledged.add(entry(store.peer(rows.getString(1), rows.getString(2)),
+                                rows.getString(0), StoredPayloads.read(rows, 3), rows.getLong(4), false));
+                    }
+                    // This is the pure captured-context fence, not a nested continuity observation.
+                    scope.requireCurrent();
+                    db.execSQL("UPDATE activity_receipts SET is_read=1 WHERE entry_key IN (SELECT a.entry_key FROM "
+                            + JOIN + " WHERE " + selection + " AND a.is_read=0)", args.toArray(new String[0]));
+                    db.setTransactionSuccessful();
+                } finally { db.endTransaction(); }
+            }
+            return null;
+        });
         for (ActivityEntry entry : acknowledged) notifications.cancel(context, entry);
         if (!acknowledged.isEmpty()) changed();
     }

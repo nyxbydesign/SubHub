@@ -139,6 +139,15 @@ public class RemoteActivityAndroidTest {
         }
     }
 
+    @Test public void peerRevocationInvalidatesRetainedActivityBeforeOrdinaryRefresh() throws Exception {
+        receiver.receive(SUB, publish("retained_peer", System.currentTimeMillis()));
+        assertEquals(1, receiving.load(null, 20).entries.size());
+        long before = ActivitySources.authorityRevision();
+        receiver.revoke(SUB, generation);
+        assertTrue(ActivitySources.authorityRevision() > before);
+        assertTrue(receiving.load(null, 20).entries.isEmpty());
+    }
+
     @Test public void markAllDoesNotAcknowledgePeersOutsideTheCurrentDomScope() throws Exception {
         receiver.receive(SUB, publish("bulk_outside_scope", System.currentTimeMillis()));
         assertEquals(1, receiving.unreadCount());
