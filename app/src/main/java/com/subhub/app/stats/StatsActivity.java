@@ -538,7 +538,6 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         row(currentSession, R.string.stats_session_elapsed, duration(stats.getCurrentSessionSeconds()));
         text(currentSession, getString(R.string.stats_session_as_of,
                 DateFormat.getDateTimeInstance().format(new Date(factsObservedAt()))), 12, true);
-        text(currentSession, getString(R.string.stats_session_elapsed_explanation), 12, true);
         row(currentSession, R.string.stats_censors, number(stats.getCurrentSessionBlocks()));
         row(currentSession, R.string.stats_limited_app_time, duration(stats.getCurrentSessionLimitedAppMillis() / 1000));
         row(currentSession, R.string.stats_limit_stops, number(stats.getCurrentSessionLimitInterventions()));
@@ -564,7 +563,6 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                 text(totalsDetails,getString(R.string.role_stale_data),13,true);
             currentSession.removeAllViews();currentSession.setVisibility(person.serviceActive?android.view.View.VISIBLE:android.view.View.GONE);
             if(person.serviceActive){heading(currentSession,R.string.profile_stats_current_session);
-                text(currentSession, getString(R.string.stats_session_remote_observed), 12, true);
                 row(currentSession,R.string.stats_session_elapsed,remoteMetric(stats,"currentSeconds",true));
                 row(currentSession,R.string.stats_censors,remoteMetric(stats,"currentCensors",false));
                 row(currentSession,R.string.stats_limit_stops,remoteMetric(stats,"currentLimitStops",false));

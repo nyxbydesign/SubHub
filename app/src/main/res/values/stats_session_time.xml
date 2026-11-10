@@ -2,6 +2,4 @@
 <resources>
     <string name="stats_session_elapsed">Session elapsed</string>
     <string name="stats_session_as_of">As of %1$s</string>
-    <string name="stats_session_elapsed_explanation">Time since this session started, including when the screen is off or the app is closed. Updated when statistics are opened or refreshed, without a background timer. This does not measure screen use or confirm that capture is running.</string>
-    <string name="stats_session_remote_observed">Recorded at the last update. The session may have changed since then.</string>
 </resources>
