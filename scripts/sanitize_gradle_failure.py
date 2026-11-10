@@ -15,6 +15,12 @@ FAILURE_EXIT = 70
 
 EXCEPTIONS = {
     b"org.gradle.api.tasks.TaskExecutionException": "task_execution",
+    b"org.gradle.api.internal.tasks.compile.CompilationFailedException": "java_compilation",
+    b"org.jetbrains.kotlin.gradle.tasks.CompilationErrorException": "kotlin_compilation",
+    b"com.android.builder.internal.aapt.v2.Aapt2Exception": "android_resources",
+    b"com.android.ide.common.resources.ResourceCompilationException": "resource_compilation",
+    b"org.gradle.api.tasks.VerificationException": "verification",
+    b"org.gradle.api.internal.exceptions.MarkedVerificationException": "verification",
     b"org.gradle.workers.internal.DefaultWorkerExecutor$WorkExecutionException": "worker_execution",
     b"org.gradle.internal.exceptions.DefaultMultiCauseException": "multiple_causes",
     b"org.gradle.execution.MultipleBuildFailures": "multiple_failures",
@@ -46,6 +52,17 @@ RESOURCE_EXCEPTIONS = {
     b"java.nio.file.FileSystemException", b"java.nio.file.AccessDeniedException",
 }
 TASKS = {
+    # Fixed build-stage labels locate pre-test failures without forwarding task paths,
+    # compiler messages, source names, resource values, or nested exception text.
+    b":app:compileDebugJavaWithJavac": "java_compile",
+    b":app:compileDebugUnitTestJavaWithJavac": "unit_java_compile",
+    b":app:compileDebugKotlin": "kotlin_compile",
+    b":app:compileDebugUnitTestKotlin": "unit_kotlin_compile",
+    b":app:mergeDebugResources": "resource_merge",
+    b":app:processDebugResources": "resource_link",
+    b":app:parseDebugLocalResources": "resource_parse",
+    b":app:lintAnalyzeDebug": "lint_analysis",
+    b":app:lintReportDebug": "lint_report",
     b":app:testDebugUnitTest": "unit_tests",
     b":app:lintDebug": "lint",
     b":app:assembleDebug": "assemble",
