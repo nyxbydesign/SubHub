@@ -68,6 +68,11 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
 
     @Override protected void onResume() {
         super.onResume();
+        if (DummySubPreview.isRequested(getIntent()) && !DummySubPreview.isAllowed(this)) {
+            if (body != null) body.removeAllViews();
+            finish();
+            return;
+        }
         if (body == null) return;
         if (domOnly && !ControllerPinManager.isDomWorkspaceUnlocked()) {
             ControllerEditMode.enterSubMode(this);

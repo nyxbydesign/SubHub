@@ -40,7 +40,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (!FeatureEditorSession.attach(this, "subliminal", savedInstanceState)) return;
-        if (!FeatureEditorSession.canEdit(SubliminalSettingsActivity.this, "subliminal")) {
+        if (!FeatureEditorSession.canView(SubliminalSettingsActivity.this, "subliminal")) {
             finish();
             return;
         }
@@ -143,6 +143,9 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
             binding.customPhrases.setText(settings.getCustomPhrases());
         }
         updateAdvancedLabels();
+        boolean editing = FeatureEditorSession.canEdit(this, "subliminal");
+        binding.presetSlider.setEnabled(editing);
+        binding.buttonPreview.setEnabled(editing);
         loading = false;
     }
 
@@ -171,6 +174,7 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     }
 
     private void preview() {
+        if (!FeatureEditorSession.canEdit(this, "subliminal")) return;
         binding.previewStage.setVisibility(View.VISIBLE);
         main.removeCallbacks(saveCustom);
         saveCustom.run();
@@ -212,6 +216,14 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
         return getString(labels[step]);
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (binding == null) return;
+        if (!FeatureEditorSession.canView(this, "subliminal")) { finish(); return; }
+        render(repository.load());
+        FeatureEditorSession.decorate(this);
+    }
+
     @Override protected void onPause() {
         main.removeCallbacks(saveCustom);
         saveCustom.run();
@@ -226,6 +238,11 @@ public final class SubliminalSettingsActivity extends AppCompatActivity {
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

@@ -22,14 +22,14 @@ class DummyPreviewInventoryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.native_workflow_path("unknown")
 
-    def test_all_four_methods_are_explicit_and_present(self):
+    def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(4, len(selected))
-            self.assertEqual(4, len(set(selected)))
+            self.assertEqual(14, len(selected))
+            self.assertEqual(14, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
-            self.assertEqual(1, len(inventory))
-            self.assertEqual(4, len(next(iter(inventory.values()))["selectedMethods"]))
+            self.assertEqual(3, len(inventory))
+            self.assertEqual(5, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
             self.assertTrue(set(selected).isdisjoint(native.DEVICE_PASS_SELECTORS))
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
             self.assertEqual(54, len(native.suite_selectors("device-pass")))

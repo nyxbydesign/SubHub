@@ -83,7 +83,10 @@ public final class PopupStormActivity extends AppCompatActivity {
         });
         if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
-        binding.buttonAddFolder.setOnClickListener(view -> folderPicker.launch(null));
+        binding.buttonAddFolder.setOnClickListener(view -> {
+            if (!FeatureEditorSession.remote(this) && FeatureEditorSession.canEdit(this, "popup"))
+                folderPicker.launch(null);
+        });
         binding.buttonStop.setOnClickListener(view -> {
             if (FeatureEditorSession.remote(this)) return;
             PopupStormManager.get().stop();
@@ -109,14 +112,16 @@ public final class PopupStormActivity extends AppCompatActivity {
         binding.buttonAdvancedDetails.setText(getString(R.string.popup_advanced) + "  +");
         androidx.core.view.ViewCompat.setStateDescription(binding.buttonAdvancedDetails, getString(R.string.section_collapsed));
         binding.buttonAdvancedDetails.setOnClickListener(view -> {
+            if (!FeatureEditorSession.canView(this, "popup")) return;
             boolean expanded = binding.dynamicSettings.getVisibility() != View.VISIBLE;
             binding.dynamicSettings.setVisibility(expanded ? View.VISIBLE : View.GONE);
             binding.buttonAdvancedDetails.setText(getString(R.string.popup_advanced) + (expanded ? "  −" : "  +"));
             androidx.core.view.ViewCompat.setStateDescription(binding.buttonAdvancedDetails,
                     getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
         });
-        editMode = ControllerEditMode.bind(
-                this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
+        if (!FeatureEditorSession.preview(this))
+            editMode = ControllerEditMode.bind(
+                    this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
         if (FeatureEditorSession.remote(this)) {
             binding.buttonPreview.setVisibility(View.GONE);
             binding.buttonStop.setVisibility(View.GONE);
@@ -129,7 +134,13 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (binding == null) return;
+        if (FeatureEditorSession.preview(this) && !FeatureEditorSession.canView(this, "popup")) {
+            finish(); return;
+        }
         if (editMode != null) editMode.refresh();
+        else applyEditState();
+        FeatureEditorSession.decorate(this);
         if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
         ui.removeCallbacks(statusUpdater);
         ui.post(statusUpdater);
@@ -369,6 +380,7 @@ public final class PopupStormActivity extends AppCompatActivity {
         toggle.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
         toggle.setChecked(preferences.getBoolean(key, defaultValue));
         toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (!FeatureEditorSession.canEdit(this, "popup")) return;
             preferences.edit().putBoolean(key, checked).apply();
             settingsChanged();
         });
@@ -389,7 +401,7 @@ public final class PopupStormActivity extends AppCompatActivity {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int actual = minimum + progress;
                 value.setText(getString(title) + ": " + actual);
-                if (fromUser) preferences.edit().putInt(key, actual).apply();
+                if (fromUser && FeatureEditorSession.canEdit(PopupStormActivity.this, "popup")) preferences.edit().putInt(key, actual).apply();
             }
             @Override public void onStopTrackingTouch(SeekBar seekBar) { settingsChanged(); }
         });
@@ -411,7 +423,7 @@ public final class PopupStormActivity extends AppCompatActivity {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 float actual = minimum + progress * step;
                 value.setText(getString(title) + ": " + String.format(Locale.ROOT, format, actual));
-                if (fromUser) preferences.edit().putFloat(key, actual).apply();
+                if (fromUser && FeatureEditorSession.canEdit(PopupStormActivity.this, "popup")) preferences.edit().putFloat(key, actual).apply();
             }
             @Override public void onStopTrackingTouch(SeekBar seekBar) { settingsChanged(); }
         });
@@ -482,6 +494,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void saveText(EditText input, String key, String defaultValue) {
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         String value = input.getText().toString().trim();
         if (value.isEmpty()) value = defaultValue;
         if (value.length() > 32) value = value.substring(0, 32);
@@ -490,6 +503,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void settingsChanged() {
+        if (!FeatureEditorSession.canEdit(this, "popup")) return;
         preferences.edit().remove(PopupStormSettings.K_PRESET).apply();
         renderPreset();
         if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
@@ -497,7 +511,8 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void onFolderPicked(Uri uri) {
-        if (uri == null) return;
+        if (uri == null || FeatureEditorSession.remote(this)
+                || !FeatureEditorSession.canEdit(this, "popup")) return;
         try {
             getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException ignored) {
@@ -551,6 +566,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void removeFolder(String value) {
+        if (FeatureEditorSession.remote(this) || !FeatureEditorSession.canEdit(this, "popup")) return;
         Set<String> folders = new LinkedHashSet<>(preferences.getStringSet(
                 PopupStormSettings.K_FOLDERS, Set.of()));
         folders.remove(value);
@@ -615,6 +631,11 @@ public final class PopupStormActivity extends AppCompatActivity {
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

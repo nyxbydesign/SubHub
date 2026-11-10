@@ -20,7 +20,7 @@ public final class LocalAppsActivity extends RolePage {
         if (!FeatureEditorSession.attach(this, "apps", state)) return;
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
-        if (!mayEdit()) { finish(); return; }
+        if (!mayView()) { finish(); return; }
         page(R.string.person_apps_title, SubHubNavigation.Screen.PEOPLE, true);
         secondaryBack(this::finish);
         PersonUi.text(body, FeatureEditorSession.targetName(this), false).setId(R.id.person_editor_target);
@@ -61,6 +61,13 @@ public final class LocalAppsActivity extends RolePage {
         return view.getHeight() + params.topMargin + params.bottomMargin;
     }
 
+    private boolean mayView() {
+        try {
+            return personId != null && personId.equals(PersonRoutes.requireId(getIntent()))
+                    && FeatureEditorSession.canView(this, "apps");
+        } catch (IllegalArgumentException invalid) { return false; }
+    }
+
     private boolean mayEdit() {
         try {
             return personId != null && personId.equals(PersonRoutes.requireId(getIntent()))
@@ -76,12 +83,17 @@ public final class LocalAppsActivity extends RolePage {
 
     @Override protected void refresh() {
         if (selection == null) return;
-        if (!mayEdit()) { selection.refresh(); finish(); return; }
+        if (!mayView()) { selection.refresh(); finish(); return; }
         selection.reload();
     }
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

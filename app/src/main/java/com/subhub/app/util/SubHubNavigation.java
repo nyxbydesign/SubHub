@@ -91,6 +91,19 @@ public final class SubHubNavigation {
 
     public static void bind(Activity activity, View root, Screen active) {
         View navigation = root.findViewById(R.id.bottom_navigation);
+        // A preview reuses native screens, but never subscribes to the real activity feed
+        // or offers a route from its synthetic identity into the user's live workspace.
+        if (com.subhub.app.people.DummySubPreview.isRequested(activity.getIntent())) {
+            setVisible(navigation, false);
+            View settings = root.findViewById(R.id.primary_header_settings);
+            if (settings != null) { settings.setOnClickListener(null); settings.setVisibility(View.GONE); }
+            View role = PrimaryHeader.editLockButton(root);
+            if (role != null) { role.setOnClickListener(null); role.setVisibility(View.GONE); }
+            View people = root.findViewById(R.id.nav_people);
+            if (people != null && people.getTag(R.id.nav_activity) instanceof ActivityUnread)
+                ((ActivityUnread) people.getTag(R.id.nav_activity)).bind(false);
+            return;
+        }
         boolean domMode = com.subhub.app.security.DeviceRolePreferences.supportsDom(activity)
                 && com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(activity);
         setVisible(navigation, true);

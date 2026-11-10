@@ -39,7 +39,8 @@ public final class AtmosphereActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (!FeatureEditorSession.canEdit(this, "atmosphere")) {
+        if (binding == null || isFinishing()) return;
+        if (!FeatureEditorSession.canView(this, "atmosphere")) {
             FeatureEditorSession.leaveEditor(this);
             return;
         }
@@ -48,23 +49,28 @@ public final class AtmosphereActivity extends AppCompatActivity {
                 ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
         binding.popupStormStatus.setText(PopupStormSettings.load(FeatureEditorSession.context(this)).isEnabled()
                 ? R.string.ritual_effect_enabled : R.string.ritual_effect_disabled);
-        binding.whispersCard.setEnabled(FeatureEditorSession.canEdit(this, "subliminal"));
-        binding.buttonWhispers.setEnabled(FeatureEditorSession.canEdit(this, "subliminal"));
-        binding.popupStormCard.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
-        binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canEdit(this, "popup"));
+        binding.whispersCard.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
+        binding.buttonWhispers.setEnabled(FeatureEditorSession.canView(this, "subliminal"));
+        binding.popupStormCard.setEnabled(FeatureEditorSession.canView(this, "popup"));
+        binding.buttonPopupStorm.setEnabled(FeatureEditorSession.canView(this, "popup"));
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.ATMOSPHERE);
         FeatureEditorSession.decorate(this);
     }
 
     private void open(Class<? extends android.app.Activity> destination) {
-        if (!FeatureEditorSession.canEdit(this, "atmosphere")) return;
+        if (!FeatureEditorSession.canView(this, "atmosphere")) return;
         String section = destination == SubliminalSettingsActivity.class ? "subliminal" : "popup";
-        if (!FeatureEditorSession.canEdit(this, section)) return;
+        if (!FeatureEditorSession.canView(this, section)) return;
         startActivity(FeatureEditorSession.child(this, destination));
     }
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

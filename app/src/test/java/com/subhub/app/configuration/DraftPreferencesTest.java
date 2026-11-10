@@ -22,4 +22,29 @@ public class DraftPreferencesTest {
         draft.edit().putBoolean("enabled",true).putInt("minutes",73).apply();
         assertEquals(new HashSet<>(Arrays.asList("enabled","minutes")),new HashSet<>(events));
     }
+    @Test public void frozenDraftRejectsExistingAndNewEditorsWithoutNotifications() {
+        DraftPreferences draft=new DraftPreferences();
+        draft.edit().putString("name","sample").putBoolean("enabled",true).putInt("minutes",45)
+                .putLong("duration",3600000L).putFloat("ratio",0.5f)
+                .putStringSet("selected",new HashSet<>(Arrays.asList("preview.reader"))).commit();
+        Map<String,?> before=draft.getAll();
+        android.content.SharedPreferences.Editor acquiredBeforeFreeze=draft.edit().putInt("minutes",99);
+        List<String> events=new ArrayList<>();
+        draft.registerOnSharedPreferenceChangeListener((preferences,key)->events.add(key));
+        draft.freeze();
+        assertFalse(acquiredBeforeFreeze.commit());
+        assertFalse(draft.edit().clear().putString("injected","value").commit());
+        draft.edit().remove("name").putBoolean("enabled",false).putLong("duration",0L).apply();
+        assertEquals(before,draft.getAll());
+        assertEquals("sample",draft.getString("name",""));
+        assertTrue(draft.getBoolean("enabled",false));
+        assertEquals(45,draft.getInt("minutes",0));
+        assertEquals(3600000L,draft.getLong("duration",0L));
+        assertEquals(0.5f,draft.getFloat("ratio",0f),0f);
+        assertFalse(draft.contains("injected"));
+        draft.getStringSet("selected",Collections.emptySet()).clear();
+        ((Set<?>)draft.getAll().get("selected")).clear();
+        assertEquals(Collections.singleton("preview.reader"),draft.getStringSet("selected",Collections.emptySet()));
+        assertTrue(events.isEmpty());
+    }
 }

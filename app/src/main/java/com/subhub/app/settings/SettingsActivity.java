@@ -53,7 +53,8 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.getRoot().setFocusableInTouchMode(true);
         binding.getRoot().requestFocus();
         repository = new SettingsRepository(FeatureEditorSession.context(this));
-        stats = new StatsRepository(FeatureEditorSession.context(this));
+        stats = FeatureEditorSession.preview(this) ? null
+                : new StatsRepository(FeatureEditorSession.context(this));
         images = new CensorImageEditor(this, binding.buttonAddCensorImages,
                 binding.censorImagesStatus, binding.censorImagesList);
         adaptBorderChoices();
@@ -62,8 +63,10 @@ public final class SettingsActivity extends AppCompatActivity {
         bindDisclosures();
         bindValues();
         attachListeners();
-        binding.buttonCensorPresets.setOnClickListener(view -> startActivity(
-                FeatureEditorSession.child(this, CensorPresetsActivity.class)));
+        binding.buttonCensorPresets.setOnClickListener(view -> {
+            if (FeatureEditorSession.canView(this, "censor"))
+                startActivity(FeatureEditorSession.child(this, CensorPresetsActivity.class));
+        });
         applyLockState();
         PrimaryHeader.backButton(binding.getRoot()).setOnClickListener(view -> finish());
         PrimaryHeader.editLockButton(binding.getRoot())
@@ -73,6 +76,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
+        if (FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
             FeatureEditorSession.leaveEditor(this);
@@ -99,6 +103,7 @@ public final class SettingsActivity extends AppCompatActivity {
         bindDisclosure(binding.buttonAppearanceDetails, binding.appearanceContent);
         bindDisclosure(binding.buttonCaptureDetails, binding.captureOptionsContent);
         binding.buttonOtherAreas.setOnClickListener(view -> {
+            if (!FeatureEditorSession.canView(this, "censor")) return;
             binding.otherAreaGrid.setVisibility(binding.otherAreaGrid.getVisibility() == View.VISIBLE
                     ? View.GONE : View.VISIBLE);
             refreshSectionSummaries();
@@ -111,6 +116,7 @@ public final class SettingsActivity extends AppCompatActivity {
         header.setText(title + "  +");
         header.setFocusable(true);
         header.setOnClickListener(view -> {
+            if (!FeatureEditorSession.canView(this, "censor")) return;
             boolean expanded = content.getVisibility() != View.VISIBLE;
             content.setVisibility(expanded ? View.VISIBLE : View.GONE);
             header.setText(title + (expanded ? "  −" : "  +"));
@@ -497,6 +503,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void showColorDialog(String title, int current, IntConsumer accepted) {
+        if (!FeatureEditorSession.canEdit(this, "censor")) return;
         com.subhub.app.util.ColorPickerDialog.show(this, title, current, color -> {
             if (FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) accepted.accept(color);
         });
@@ -776,7 +783,8 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (!FeatureEditorSession.canEdit(SettingsActivity.this, "censor")) {
+        if (binding == null || isFinishing()) return;
+        if (!FeatureEditorSession.canView(SettingsActivity.this, "censor")) {
             FeatureEditorSession.leaveEditor(this);
             return;
         }
@@ -784,6 +792,7 @@ public final class SettingsActivity extends AppCompatActivity {
         if (binding != null) {
             bindValues();
             applyLockState();
+            FeatureEditorSession.decorate(this);
         }
     }
 
@@ -805,6 +814,11 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
         super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

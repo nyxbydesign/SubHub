@@ -90,12 +90,12 @@ public final class AppModeActivity extends AppCompatActivity {
         manager = new AppModeManager(FeatureEditorSession.context(this));
         timers = new AppTimerManager(FeatureEditorSession.context(this));
         appData = AsyncUiScope.forPage(this);
-        if (savedInstanceState != null) {
+        if (savedInstanceState != null && !FeatureEditorSession.preview(this)) {
             restoredDrafts = savedInstanceState.getBundle("allowance_drafts");
             dirtyTimers = savedInstanceState.getBoolean("timer_drafts_dirty", false);
         }
         binding.limitsManageApps.setOnClickListener(view -> {
-            if (FeatureEditorSession.canEdit(this, "apps")) startActivity(FeatureEditorSession.child(this,
+            if (FeatureEditorSession.canView(this, "apps")) startActivity(FeatureEditorSession.child(this,
                     com.subhub.app.people.LocalAppsActivity.class));
         });
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
@@ -146,7 +146,7 @@ public final class AppModeActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (manager == null) return;
-        if (!editingAllowed()) {
+        if (!FeatureEditorSession.canView(this, "limits")) {
             FeatureEditorSession.leaveEditor(this);
             return;
         }
@@ -167,6 +167,7 @@ public final class AppModeActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
+        if (FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isSessionUnlocked()) {
             FeatureEditorSession.leaveEditor(this);
         } else ControllerPinGate.unlock(this, this::applyEditState, false);
@@ -185,6 +186,7 @@ public final class AppModeActivity extends AppCompatActivity {
         for (View view : editable) view.setEnabled(editingUnlocked);
         renderTimerControls();
         SubHubNavigation.bind(this, binding.getRoot(), SubHubNavigation.Screen.LIMITS);
+        FeatureEditorSession.decorate(this);
     }
 
     private boolean editingAllowed() {
@@ -609,4 +611,9 @@ public final class AppModeActivity extends AppCompatActivity {
         binding = null;
         super.onDestroy();
     }
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+    }
+
 }

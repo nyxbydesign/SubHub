@@ -401,6 +401,27 @@ DUMMY_PREVIEW_NATIVE = {
         "cancelledAndUnscopedBackGesturesNeverToggle",
         "rosterPreviewBrowsesEverySectionWithoutRealStateMutation",
         "previewRecreationAndRoleLossStayGuarded",
+        "nativeEditorsRecreateWithoutAutosaveAndRejectStaleOrForgedTargets",
+    ],
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
+        "sharedCensorNativeSelectionAppliesOnlyToItsPairedIdentity",
+        "sharedWhispersEnableIsQueuedWithoutChangingTheDomModule",
+        "sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime",
+        "sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials",
+        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets",
+    ],
+    "com.subhub.app.people.PersonRefreshAndroidTest": [
+        "telemetryAndDeferredRefreshKeepTheProfileDraftAndDeliveryTimeScroll",
+        "changedIdentityRecreationAndBackRetainPositionButRoleRevocationClosesPage",
+        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft",
+    ],
+}
+DUMMY_PREVIEW_SOURCE_ONLY = {
+    "com.subhub.app.remote.RemoteEditorAndroidTest": [
+        method for method in (SUBHUB_PASS_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
+                              + SUBHUB_PASS_SOURCE_ONLY["com.subhub.app.remote.RemoteEditorAndroidTest"])
+        if method not in DUMMY_PREVIEW_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
     ],
 }
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
@@ -417,7 +438,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54, "dummy-preview": 4}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54, "dummy-preview": 14}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -427,7 +448,10 @@ MAX_PR_BODY_BYTES = 64 * 1024
 # Keep their required visual artifacts distinct from the stronger UI_WITNESSES contract.
 UI_SCREENSHOTS = {
     "com.subhub.app.people.DummySubPreviewAndroidTest#rosterPreviewBrowsesEverySectionWithoutRealStateMutation": [
-        "dummy-preview-roster", "dummy-preview-settings"],
+        "dummy-preview-profile", "dummy-preview-censor", "dummy-preview-limits",
+        "dummy-preview-wallet", "dummy-preview-atmosphere", "dummy-preview-apps",
+        "dummy-preview-duration", "dummy-preview-subliminal", "dummy-preview-popup",
+        "dummy-preview-presets"],
     "com.subhub.app.people.ProfileStatsActivityAndroidTest#profileAppTimeSharesSessionCardAcrossRefreshAndRecreation": [
         "local-session-app-time-active", "local-session-app-time-idle"],
     "com.subhub.app.people.ProfileAndroidTest#profileEditorPairsActionsAndKeepsAvatarRemovalAsDraft": [
@@ -570,6 +594,7 @@ def source_inventory(suite="extra-time"):
         source_only = DEVICE_PASS_SOURCE_ONLY
     elif suite == "dummy-preview":
         native = DUMMY_PREVIEW_NATIVE
+        source_only = DUMMY_PREVIEW_SOURCE_ONLY
     inventory = {}
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"

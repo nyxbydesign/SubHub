@@ -26,4 +26,27 @@ public final class FeatureEditorSessionTest {
         assertFalse(FeatureEditorSession.configurationKey(main,"app_include_all_packages_v1"));
         assertFalse(FeatureEditorSession.configurationKey("credentials","password"));
     }
+    @Test public void previewDocumentsAreCompleteValidAndFresh() throws Exception {
+        org.json.JSONObject first=com.subhub.app.remote.DummyPreviewConfiguration.create();
+        org.json.JSONObject checked=RemoteConfiguration.active(first);
+        org.json.JSONObject sections=checked.getJSONObject("contract").getJSONObject("sections");
+        for(String section:ConfigurationSchema.SECTIONS){
+            assertEquals(ConfigurationSettingCatalog.fields(section).size(),sections.getJSONObject(section).length());
+            for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section))
+                assertTrue(field.key,sections.getJSONObject(section).has(field.key));
+        }
+        assertEquals(45,first.getJSONObject("apps").getJSONObject("allowances").getInt("preview.reader"));
+        assertEquals(60,first.getJSONObject("apps").getJSONObject("allowances").getInt("preview.music"));
+        assertEquals(-2L,first.getJSONObject("service").getLong("duration"));
+        assertEquals(0,first.getJSONObject("contract").getJSONArray("assets").length());
+        first.getJSONObject("contract").put("name","mutated");
+        first.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits").put("app_timer_per_app_enabled",false);
+        first.getJSONObject("apps").getJSONObject("allowances").put("preview.reader",1);
+        first.getJSONObject("service").put("duration",0);
+        org.json.JSONObject second=RemoteConfiguration.active(com.subhub.app.remote.DummyPreviewConfiguration.create());
+        assertEquals("Dummy Sub",second.getJSONObject("contract").getString("name"));
+        assertTrue(second.getJSONObject("contract").getJSONObject("sections").getJSONObject("limits").getBoolean("app_timer_per_app_enabled"));
+        assertEquals(45,second.getJSONObject("apps").getJSONObject("allowances").getInt("preview.reader"));
+        assertEquals(-2L,second.getJSONObject("service").getLong("duration"));
+    }
 }

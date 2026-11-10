@@ -4,9 +4,9 @@
     <string name="dummy_sub_added">Dummy Sub added</string>
     <string name="dummy_sub_removed">Dummy Sub removed</string>
     <string name="dummy_sub_view_only">View-only settings preview</string>
-    <string name="dummy_sub_description">No real profile or session. These are example defaults, not anyone’s settings. Nothing here can be saved, started or charged.</string>
+    <string name="dummy_sub_description">No real profile or session. These are read-only example settings, not anyone’s settings. Nothing here can be saved, started or charged.</string>
     <string name="dummy_sub_remove_help">To remove Dummy Sub, hold Back for 5 seconds on the Add a Sub connection page.</string>
-    <string name="dummy_sub_defaults">Read-only defaults</string>
+    <string name="dummy_sub_defaults">Read-only example settings</string>
     <string name="dummy_sub_modules">Modules</string>
     <string name="dummy_sub_censor">Censor</string>
     <string name="dummy_sub_limits">Limits</string>
@@ -21,8 +21,9 @@
     <string name="dummy_sub_default_value">Default: %1$s</string>
     <string name="dummy_sub_choices">Available options: %1$s</string>
     <string name="dummy_sub_range">Range: %1$s to %2$s</string>
+    <string name="dummy_sub_apps_examples">Reader (sample): 45 minutes/day · Music (sample): 60 minutes/day</string>
     <string name="dummy_sub_apps_scope">App assignment</string>
-    <string name="dummy_sub_apps_scope_value">Include / exclude apps · read-only skeleton</string>
+    <string name="dummy_sub_apps_scope_value">Include / exclude apps · read-only preview</string>
     <string name="dummy_sub_apps_selection">Selected apps</string>
     <string name="dummy_sub_apps_selection_value">None. No installed-app list or device data is loaded.</string>
     <string name="dummy_sub_duration_length">Session duration</string>

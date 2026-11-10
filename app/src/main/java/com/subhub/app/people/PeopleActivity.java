@@ -121,12 +121,11 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private void refreshDummyPreview() {
         if (dummyPreview != null) { body.removeView(dummyPreview); dummyPreview = null; }
         if (!DummySubPreview.isEnabled(this)) return;
-        dummyPreview = PersonUi.card(body);
-        PersonUi.row(dummyPreview, R.drawable.ic_nav_people, getString(R.string.dummy_sub_title),
-                getString(R.string.dummy_sub_view_only), () -> {
-                    if (mayManagePeople()) DummySubPreview.open(this);
-                }).setTag("dummy_sub_card");
-        // Keep the skeleton adjacent to, but outside, the real roster.
+        dummyPreview = ProfileViews.person(body, DummySubPreview.snapshot(this), () -> {
+            if (mayManagePeople()) DummySubPreview.open(this);
+        });
+        dummyPreview.setTag("dummy_sub_card");
+        // Reuse the normal card while keeping the preview outside the real roster.
         body.removeView(dummyPreview);
         body.addView(dummyPreview, body.indexOfChild(roster) + 1);
     }
