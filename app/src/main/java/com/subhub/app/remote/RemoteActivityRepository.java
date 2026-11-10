@@ -432,6 +432,36 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         if (!cancel.isEmpty()) changed();
     }
 
+    @Override public boolean supportsMarkAllRead() { return true; }
+
+    @Override public void markAllRead() throws Exception {
+        requireRead();
+        DomSubjectScope scope = readScope();
+        scope.revalidate();
+        List<ActivityEntry> acknowledged = new ArrayList<>();
+        synchronized (store) {
+            SQLiteDatabase db = store.getWritableDatabase();
+            db.beginTransaction();
+            try {
+                List<String> args = new ArrayList<>();
+                String selection = eligible(scope, args);
+                // The transaction is the cutoff: later receipts remain unread.
+                try (Cursor rows = db.rawQuery("SELECT a.entry_key,a.peer,a.generation,a.body,a.received FROM "
+                        + JOIN + " WHERE " + selection + " AND a.is_read=0", args.toArray(new String[0]))) {
+                    while (rows.moveToNext()) acknowledged.add(entry(store.peer(rows.getString(1), rows.getString(2)),
+                            rows.getString(0), StoredPayloads.read(rows, 3), rows.getLong(4), false));
+                }
+                requireRead();
+                scope.requireCurrent();
+                db.execSQL("UPDATE activity_receipts SET is_read=1 WHERE entry_key IN (SELECT a.entry_key FROM "
+                        + JOIN + " WHERE " + selection + " AND a.is_read=0)", args.toArray(new String[0]));
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+        }
+        for (ActivityEntry entry : acknowledged) notifications.cancel(context, entry);
+        if (!acknowledged.isEmpty()) changed();
+    }
+
     private ActivityEntry entry(RemoteStore.Peer peer, String key, String body, long received, boolean unread) throws Exception {
         ActivityEvent event = RemoteActivityWire.decode(new JSONObject(body));String device = "", label = event.packageName;
         JSONObject runtime = store.mirrored(peer.identity, peer.generation, RemoteProtocol.Stream.RUNTIME, "current");

@@ -115,6 +115,40 @@ public class RemoteActivityAndroidTest {
         drain(receiving);assertFalse(receiving.load(null,20).entries.get(0).unread);receiving.dispatchNotifications();drain(receiving);
         assertEquals(1,notifications.calls.get());assertFalse(notifications.insideTransaction);
     }
+    @Test public void markAllAcknowledgesAllPagesButNotFutureReceiptsAndRequiresDomAuthority() throws Exception {
+        long time = System.currentTimeMillis();
+        for (int index = 0; index < 123; index++) sender.publish(DOM, generation, RemoteProtocol.Stream.EVENTS,
+                "bulk_" + index, event("bulk_" + index, time + index), false, time + index);
+        receiver.receive(SUB, sender.nextBatch(DOM, generation, RemoteProtocol.Stream.EVENTS));
+        assertEquals(123, receiving.unreadCount());
+        receiving.markAllRead();
+        assertEquals(0, receiving.unreadCount());
+        assertEquals(123, count(receiver, "activity_receipts"));
+        assertEquals(123, notifications.cancelled.size());
+        receiver.receive(SUB, publish("bulk_later", time + 1000));
+        assertEquals(1, receiving.unreadCount());
+        ControllerPinManager.enterSubMode();
+        assertThrows(SecurityException.class, receiving::markAllRead);
+        authenticateDom();
+        assertEquals(1, receiving.unreadCount());
+        receiver.revoke(SUB, generation);
+        receiving.markAllRead();
+        try (Cursor rows = receiver.getReadableDatabase().rawQuery(
+                "SELECT is_read FROM activity_receipts WHERE event_id='bulk_later'", null)) {
+            assertTrue(rows.moveToFirst()); assertEquals(0, rows.getInt(0));
+        }
+    }
+
+    @Test public void markAllDoesNotAcknowledgePeersOutsideTheCurrentDomScope() throws Exception {
+        receiver.receive(SUB, publish("bulk_outside_scope", System.currentTimeMillis()));
+        assertEquals(1, receiving.unreadCount());
+        scope.outgoing();
+        receiving.markAllRead();
+        assertEquals(0, receiving.unreadCount());
+        scope.outgoing(DomScopeObserverFixture.peer(targetPeer, 1));
+        assertEquals(1, receiving.unreadCount());
+    }
+
     @Test public void perKindSuppressionIsConsumedBeforeReenableOrTransportReplay() throws Exception {
         assertTrue("The coordinator must provision POST_NOTIFICATIONS and an enabled Activity channel before this OS-delivery fixture",
                 ActivityNotifications.enabled(context));

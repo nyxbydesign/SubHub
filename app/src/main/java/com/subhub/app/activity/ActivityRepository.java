@@ -15,6 +15,9 @@ public interface ActivityRepository {
     List<ActivityEntry> recent(com.subhub.app.people.PersonId person, int limit) throws Exception;
     int unreadCount() throws Exception;
     void markRead(List<String> keys) throws Exception;
+    default boolean supportsMarkAllRead() { return false; }
+    /** Acknowledge the current eligible receipt snapshot, including pages not on screen. */
+    default void markAllRead() throws Exception { throw new UnsupportedOperationException("Bulk read unavailable"); }
 
     final class Page {
         public final List<ActivityEntry> entries;
