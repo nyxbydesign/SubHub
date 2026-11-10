@@ -10,37 +10,50 @@ import org.junit.After;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import com.subhub.app.security.ControllerPinManager;
-import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.settings.SharedPreferenceTestRestore;
 
 /** Failures in diagnostic assertions must not retain live adapter redirects or owned resources. */
 public final class DummyPreviewEndpointFixtureAndroidTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-    private Map<String, ?> settings;
+    private Map<String, ?> settings, controllerAuth;
     private boolean wasDom;
 
-    @Before public void authorizeOwnedGuest() {
-        settings = new LinkedHashMap<>(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getAll());
+    @Before public void captureAuthorization() {
         wasDom = ControllerPinManager.isDomModeActive();
-        // The runner deliberately leaves an explicitly unkeyed guest without a PIN.
-        // Prepare only that credential-free state; never overwrite existing credentials
-        // or bypass a remote keyholder. The exact settings snapshot is restored below.
-        if (!ControllerPinManager.hasCredentials(context) && ControllerPinManager.allowsUnkeyedAccess(context)) {
-            assertTrue("Prepare a temporary PIN only for the unkeyed guest",
-                    ControllerPinManager.setPin(context, "2468"));
-        }
-        assertTrue("Verify the existing or owned guest PIN before changing role capabilities",
-                ControllerPinManager.verify(context, "2468"));
-        assertTrue("Use the guarded device-role transition", DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
+        settings = new LinkedHashMap<>(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getAll());
+        controllerAuth = new LinkedHashMap<>(context.getSharedPreferences("subhub_controller_auth", 0).getAll());
+        // These contracts exercise owned adapter cleanup, not authenticated mutation commands.
+        // The normal constructor's snapshot uses observeRead/requireRead for the current role.
     }
-    @After public void restoreAuthorization() {
+    @After public void restoreAuthorization() throws Throwable {
+        Throwable failure = null;
         try {
-            if (settings != null) SharedPreferenceTestRestore.restore(
-                    context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0), settings);
+            if (settings != null) assertTrue("Cleanup preserves original settings and role preferences",
+                    settings.equals(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getAll()));
+            if (controllerAuth != null) assertTrue("Cleanup preserves original controller authentication preferences",
+                    controllerAuth.equals(context.getSharedPreferences("subhub_controller_auth", 0).getAll()));
+            assertEquals("Cleanup preserves the original Dom session", wasDom, ControllerPinManager.isDomModeActive());
+        } catch (Throwable assertion) {
+            failure = assertion;
         } finally {
-            if (wasDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            // Restore unexpected changes without replacing the original assertion or skipping
+            // later restoration if a preference restore itself fails. Never rewind revisions.
+            try {
+                if (settings != null && !settings.equals(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getAll()))
+                    SharedPreferenceTestRestore.restore(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0), settings);
+            } catch (Throwable restore) { if (failure == null) failure = restore; else failure.addSuppressed(restore); }
+            try {
+                if (controllerAuth != null && !controllerAuth.equals(context.getSharedPreferences("subhub_controller_auth", 0).getAll()))
+                    SharedPreferenceTestRestore.restore(context.getSharedPreferences("subhub_controller_auth", 0), controllerAuth);
+            } catch (Throwable restore) { if (failure == null) failure = restore; else failure.addSuppressed(restore); }
+            try {
+                if (wasDom != ControllerPinManager.isDomModeActive()) {
+                    if (wasDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+                }
+            } catch (Throwable restore) { if (failure == null) failure = restore; else failure.addSuppressed(restore); }
         }
+        if (failure != null) throw failure;
     }
 
     @Test public void constructorFailureRestoresRealAdaptersAndDeletesOwnedStore() throws Exception {
