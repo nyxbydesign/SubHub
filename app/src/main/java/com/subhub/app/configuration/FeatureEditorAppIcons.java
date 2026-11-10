@@ -11,7 +11,8 @@ public final class FeatureEditorAppIcons {
     private FeatureEditorAppIcons() { }
     public static void bind(ImageView view, String packageName, Drawable localIcon) {
         FeatureEditorSession scope = FeatureEditorSession.scope(view.getContext());
-        if (scope == null) AppIcons.bind(view, packageName, R.drawable.ic_settings_apps, localIcon);
+        if (FeatureEditorSession.preview(view.getContext())) view.setImageResource(R.drawable.ic_settings_apps);
+        else if (scope == null) AppIcons.bind(view, packageName, R.drawable.ic_settings_apps, localIcon);
         else RemoteUi.bindAppIcon(view, RemoteUi.appIcon(view.getContext(), scope.peer.identity,
                 scope.peer.generation, packageName), R.drawable.ic_settings_apps);
     }

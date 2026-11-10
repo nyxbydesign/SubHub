@@ -16,12 +16,13 @@ public final class DummyPreviewEndpointFixture implements AutoCloseable {
     private final RemoteFeature original, fixture;
     private final Field singleton, endpoint;
     private final AtomicInteger leases;
+    private final AtomicInteger transportCalls = new AtomicInteger();
     private final String database = "dummy-preview-" + UUID.randomUUID() + ".db";
     private final PeerTransport transport = new PeerTransport() {
-        public String localIdentity() { return new String(new char[64]).replace('\0', 'a'); }
-        public String inviteRoute() throws IOException { throw new IOException("Owned preview fixture is offline"); }
-        public Connection connect(String peer, String route, long timeout) throws IOException { throw new IOException("No network in preview fixture"); }
-        public Connection accept(long timeout) throws IOException { throw new IOException("No network in preview fixture"); }
+        public String localIdentity() { transportCalls.incrementAndGet(); return new String(new char[64]).replace('\0', 'a'); }
+        public String inviteRoute() throws IOException { transportCalls.incrementAndGet(); throw new IOException("Owned preview fixture is offline"); }
+        public Connection connect(String peer, String route, long timeout) throws IOException { transportCalls.incrementAndGet(); throw new IOException("No network in preview fixture"); }
+        public Connection accept(long timeout) throws IOException { transportCalls.incrementAndGet(); throw new IOException("No network in preview fixture"); }
         public void close() { }
     };
     private final Map<String, List<String>> originalRows;
@@ -35,6 +36,7 @@ public final class DummyPreviewEndpointFixture implements AutoCloseable {
                     public void kick(Context selected) { }
                 });
         assertTrue(fixture.recoveryReady());
+        installWriteAudit();
         Field leaseField = RemoteFeature.class.getDeclaredField("leases"); leaseField.setAccessible(true);
         leases = (AtomicInteger) leaseField.get(fixture); assertEquals(1, leases.incrementAndGet());
         endpoint = RemoteFeature.class.getDeclaredField("endpoint"); endpoint.setAccessible(true); endpoint.set(fixture, transport);
@@ -44,6 +46,49 @@ public final class DummyPreviewEndpointFixture implements AutoCloseable {
             SubFeaturePolicy.unregisterHardcoreAuthority(context, original.store);
             SubFeaturePolicy.registerHardcoreAuthority(context, fixture.store);
         }
+    }
+    /** SQLite triggers count actual writes, including a write later undone by another write. */
+    private void installWriteAudit() {
+        android.database.sqlite.SQLiteDatabase db = fixture.store.getWritableDatabase();
+        List<String> tables = new ArrayList<>();
+        try (Cursor cursor = db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", null)) {
+            while (cursor.moveToNext()) tables.add(cursor.getString(0));
+        }
+        db.execSQL("CREATE TABLE preview_write_audit (operation TEXT NOT NULL)");
+        for (String table : tables) {
+            assertTrue(table.matches("[A-Za-z0-9_]+"));
+            for (String operation : new String[]{"INSERT", "UPDATE", "DELETE"})
+                db.execSQL("CREATE TRIGGER preview_audit_" + table + "_" + operation
+                        + " AFTER " + operation + " ON \"" + table + "\" BEGIN INSERT INTO preview_write_audit VALUES ('"
+                        + operation + "'); END");
+        }
+    }
+    public int transportCalls() { return transportCalls.get(); }
+    public long writeCount() {
+        try (Cursor cursor = fixture.store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM preview_write_audit", null)) {
+            assertTrue(cursor.moveToFirst()); return cursor.getLong(0);
+        }
+    }
+    /** A direct preview must never acquire an endpoint lease or submit endpoint work. */
+    public long completedEndpointWork() throws Exception {
+        List<java.util.concurrent.ThreadPoolExecutor> pools = new ArrayList<>();
+        for (String name : new String[]{"operations", "sessions"}) {
+            Field field = RemoteFeature.class.getDeclaredField(name); field.setAccessible(true);
+            pools.add((java.util.concurrent.ThreadPoolExecutor) field.get(fixture));
+        }
+        long deadline = android.os.SystemClock.uptimeMillis() + 5000;
+        while ((leases.get() != 1 || pools.stream().anyMatch(pool -> pool.getActiveCount() != 0))
+                && android.os.SystemClock.uptimeMillis() < deadline) Thread.sleep(20);
+        long completed = 0;
+        for (java.util.concurrent.ThreadPoolExecutor pool : pools) {
+            assertEquals("No preview endpoint work may be running", 0, pool.getActiveCount());
+            assertEquals("No preview endpoint work may be queued", 0, pool.getQueue().size());
+            completed += pool.getCompletedTaskCount();
+        }
+        assertEquals("Only the fixture owns an endpoint lease", 1, leases.get());
+        assertSame("No replacement transport was opened", transport, endpoint.get(fixture));
+        assertSame("Preview must not replace the application singleton", fixture, singleton.get(null));
+        return completed;
     }
     public Map<String, List<String>> snapshot() throws Exception {
         fixture.submit(() -> null).get(10, TimeUnit.SECONDS);

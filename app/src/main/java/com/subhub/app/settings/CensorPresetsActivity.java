@@ -46,6 +46,9 @@ public final class CensorPresetsActivity extends PreferencePage {
 
     private void render() {
         if (isFinishing() || isDestroyed()) return;
+        if ((com.subhub.app.people.DummySubPreview.isRequested(getIntent())
+                || FeatureEditorSession.preview(this))
+                && !FeatureEditorSession.canView(this, "censor")) { finish(); return; }
         if (page != null && page.getParent() instanceof android.widget.ScrollView)
             scrollPosition = ((android.widget.ScrollView) page.getParent()).getScrollY();
         page(R.string.censor_presets_title);
@@ -53,6 +56,7 @@ public final class CensorPresetsActivity extends PreferencePage {
         TextView edit = PrimaryHeader.editLockButton(page);
         ControllerEditMode.renderButton(this, edit);
         edit.setOnClickListener(view -> {
+            if (FeatureEditorSession.preview(this)) return;
             if (ControllerPinManager.isSessionUnlocked()) {
                 ControllerPinManager.enterSubMode();
                 render();
@@ -178,4 +182,9 @@ public final class CensorPresetsActivity extends PreferencePage {
                 }));
         dialog.show();
     }
+    @Override protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+    }
+
 }
