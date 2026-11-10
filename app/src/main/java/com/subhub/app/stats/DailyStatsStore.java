@@ -108,6 +108,18 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         return result;
     }
 
+    /** Retained origin clocks also fence ambiguous pre-upgrade censor-date copies. */
+    synchronized long earliestIdentifiedSessionStart() {
+        long first = 0;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM metadata WHERE name LIKE 'session-duration:%'", null)) {
+            while (c.moveToNext()) try {
+                String value = c.getString(0);
+                first = ActivityDateHistory.earliest(first, Long.parseLong(value.substring(0, value.indexOf(';'))));
+            } catch (RuntimeException invalid) { /* Closed markers and invalid origins are not clocks. */ }
+        }
+        return first;
+    }
+
     /** An absent checkpoint is migration, not evidence that old totals happened today. */
     synchronized void checkpoint(String source, Map<String, Long> totals, long wall, String zone) {
         if(totals.equals(cachedTotals.get(source)))return;

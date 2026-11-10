@@ -23,6 +23,7 @@ final class RetainedStatistics {
     private final Map<String, StatsRepository.SessionEntry> sessions = new LinkedHashMap<>();
     private final Set<String> activeDates = new java.util.TreeSet<>();
     private Set<String> legacyServiceDates;
+    private final Set<String> legacyActiveDates = new java.util.TreeSet<>();
     private final Map<ZoneId, Set<LocalDate>> sessionDates = new LinkedHashMap<>();
     private Map<String, Map<String, Long>> materialized;
     private final Map<String, Long> undated = new LinkedHashMap<>();
@@ -49,8 +50,8 @@ final class RetainedStatistics {
         for (String day : dates) if (validDay(day)) legacyServiceDates.add(day);
     }
 
-    /** Persisted duration checkpoints retain their session calendar, unlike display aggregates. */
-    void sessionDates(String calendar, Set<String> dates) {
+    /** Persisted duration checkpoints and censor events retain their calendar, unlike display aggregates. */
+    void calendarDates(String calendar, Set<String> dates) {
         final ZoneId clock;
         try { clock = ZoneId.of(calendar); }
         catch (RuntimeException invalid) { return; }
@@ -62,6 +63,11 @@ final class RetainedStatistics {
         } catch (RuntimeException invalid) { /* Invalid checkpoint labels do not prove activity. */ }
     }
 
+    void legacyActivityDates(Set<String> dates) {
+        for (String day : dates) if (validDay(day)) legacyActiveDates.add(day);
+    }
+
+    /** Presentation labels alone never prove a historical streak. */
     void activeDates(Set<String> dates) {
         for (String day : dates) if (validDay(day)) activeDates.add(day);
     }
@@ -261,7 +267,7 @@ final class RetainedStatistics {
         // to prove a streak: project timestamps into one clock, independently for each known
         // calendar. Bare legacy dates remain eligible on their own, without borrowing days
         // from timestamped sessions or their materialized daily copies.
-        Set<String> legacy = new java.util.TreeSet<>(activeDates);
+        Set<String> legacy = new java.util.TreeSet<>(legacyActiveDates);
         if (legacyServiceDates != null) legacy.addAll(legacyServiceDates);
         else for (Map.Entry<String, Map<String, Long>> date : recorded.entrySet())
             if (date.getValue().getOrDefault("service_ms", 0L) > 0) legacy.add(date.getKey());

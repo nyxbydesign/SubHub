@@ -54,8 +54,8 @@ final class LocalRetainedStatistics {
                 daily.days("0000-01-01", "9999-12-31"));
         history.legacyServiceDates(daily.legacyServiceDates());
         for (Map.Entry<String, Set<String>> dates : daily.sessionActivityDates().entrySet())
-            history.sessionDates(dates.getKey(), dates.getValue());
-        history.activeDates(original.getActiveDates());
+            history.calendarDates(dates.getKey(), dates.getValue());
+        repository.addActivityHistory(history, daily.earliestIdentifiedSessionStart());
         for (StatsRepository.SessionEntry session : repository.getSessionHistory()) history.session(session);
         if (context.getDatabasePath("daily_app_usage.db").isFile()) {
             try (DailyAppUsageStore usage = new DailyAppUsageStore(context, "daily_app_usage.db")) {

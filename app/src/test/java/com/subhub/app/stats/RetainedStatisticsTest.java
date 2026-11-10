@@ -95,7 +95,7 @@ public final class RetainedStatisticsTest {
     @Test public void historicStreakWeekendAndHolidayNeedRecordedDays() {
         RetainedStatistics history = empty(); java.util.Set<String> dates = new LinkedHashSet<>();
         for (int day = 0; day < 30; day++) dates.add(LocalDate.of(2026, 8, 1).plusDays(day).toString());
-        history.activeDates(dates);
+        history.activeDates(dates); history.legacyActivityDates(dates);
         history.mergeRecorded(Map.of("2025-12-25", Map.of("censors", 1L)));
         Map<String, Long> awards = history.awards(false);
         assertTrue(awards.get("streak_30") > 0); assertTrue(awards.get("weekend_warrior") > 0);
@@ -291,13 +291,13 @@ public final class RetainedStatisticsTest {
                 time("2026-11-12T01:00:00Z"), Collections.emptyMap());
         java.util.Set<String> tokyo = new LinkedHashSet<>();
         for (int i = 0; i < 6; i++) tokyo.add(LocalDate.parse("2026-11-05").plusDays(i).toString());
-        history.sessionDates("Asia/Tokyo", tokyo);
-        history.sessionDates("America/Los_Angeles", Collections.singleton("2026-11-11"));
+        history.calendarDates("Asia/Tokyo", tokyo);
+        history.calendarDates("America/Los_Angeles", Collections.singleton("2026-11-11"));
         assertFalse(history.awards(false).containsKey("streak_7"));
-        history.sessionDates("invalid", Collections.singleton("2026-11-11"));
-        history.sessionDates("Asia/Tokyo", Collections.singleton("bad-date"));
+        history.calendarDates("invalid", Collections.singleton("2026-11-11"));
+        history.calendarDates("Asia/Tokyo", Collections.singleton("bad-date"));
         assertFalse(history.awards(false).containsKey("streak_7"));
-        history.sessionDates("Asia/Tokyo", Collections.singleton("2026-11-11"));
+        history.calendarDates("Asia/Tokyo", Collections.singleton("2026-11-11"));
         assertTrue("A valid stored calendar remains eligible after session-history pruning", history.awards(false).get("streak_7") > 0);
     }
 

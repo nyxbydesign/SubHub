@@ -199,6 +199,8 @@ public final class HistoryBackfillAndroidTest {
             StatsRepository.NativeSession first = new StatsRepository.NativeSession(UUID.randomUUID().toString(), start, "Asia/Tokyo");
             assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(StatsRepository.NATIVE_OWNER_KEY, first.identity).commit());
             assertTrue(repository.ensureNativeSession(first));
+            for (int i = 0; i < 6; i++) assertEquals(1, repository.recordTrackIds(Collections.singletonList(i), null,
+                    start + i * 86_400_000L + 1_800_000));
             assertTrue(repository.endSessionForIdentity(first.identity, end, (end - start) / 1000));
             assertEquals(6, LocalRetainedStatistics.load(context, end).stats.getCurrentStreak());
             TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"));
@@ -206,7 +208,14 @@ public final class HistoryBackfillAndroidTest {
             StatsRepository.NativeSession next = new StatsRepository.NativeSession(UUID.randomUUID().toString(), restart, "America/Los_Angeles");
             assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(StatsRepository.NATIVE_OWNER_KEY, next.identity).commit());
             assertTrue(repository.ensureNativeSession(next));
+            assertEquals(1, repository.recordTrackIds(Collections.singletonList(10), null, restart + 30_000));
             assertTrue(repository.endSessionForIdentity(next.identity, restart + 60_000, 60));
+            Set<String> raw = new LinkedHashSet<>(prefs(StatsRepository.PREFS_NAME).getStringSet("active_dates", Collections.emptySet()));
+            Set<String> clocks = new LinkedHashSet<>(prefs(StatsRepository.PREFS_NAME).getStringSet(StatsRepository.ACTIVE_DATE_CLOCKS, Collections.emptySet()));
+            assertEquals(7, raw.size()); assertEquals(7, clocks.size());
+            assertTrue(clocks.contains("Asia/Tokyo;2025-11-05"));
+            assertTrue(clocks.contains("America/Los_Angeles;2025-11-11"));
+            assertEquals(start, prefs(StatsRepository.PREFS_NAME).getLong(StatsRepository.ACTIVE_DATE_PROVENANCE_SINCE, 0));
             AchievementManager manager = new AchievementManager(context);
             assertFalse(manager.isUnlocked("streak_7"));
             for (int i = 0; i < 3; i++) {
@@ -220,6 +229,19 @@ public final class HistoryBackfillAndroidTest {
                 assertTrue(manager.takePendingNotifications().isEmpty());
                 manager = new AchievementManager(context);
             }
+            // Upgrading an earlier identified-session install cannot promote its unlabelled
+            // modern censor dates into legacy authority. The retained origin ledger fences them.
+            String storedHistory = prefs(StatsRepository.PREFS_NAME).getString("session_history", "");
+            assertTrue(prefs(StatsRepository.PREFS_NAME).edit().remove(StatsRepository.ACTIVE_DATE_CLOCKS)
+                    .remove(StatsRepository.ACTIVE_DATE_PROVENANCE_SINCE).putString("session_history", "").commit());
+            assertEquals(start, daily.earliestIdentifiedSessionStart());
+            LocalRetainedStatistics pruned = LocalRetainedStatistics.load(context, restart + 60_000);
+            assertTrue(pruned.history.sessions().isEmpty());
+            HistoricalAchievementBackfill.local(context, manager, pruned);
+            assertFalse(manager.isUnlocked("streak_7"));
+            assertEquals(raw, prefs(StatsRepository.PREFS_NAME).getStringSet("active_dates", Collections.emptySet()));
+            assertTrue(prefs(StatsRepository.PREFS_NAME).edit().putStringSet(StatsRepository.ACTIVE_DATE_CLOCKS, clocks)
+                    .putLong(StatsRepository.ACTIVE_DATE_PROVENANCE_SINCE, start).putString("session_history", storedHistory).commit());
             // An already earned receipt is never revoked or redated by ambiguous history.
             Set<String> earned = new LinkedHashSet<>(prefs("betablocker_achievements").getStringSet("unlocked", Collections.emptySet()));
             earned.add("streak_7"); long earnedAt = end - 1234;
@@ -266,6 +288,27 @@ public final class HistoryBackfillAndroidTest {
         assertTrue(pruned.history.sessions().isEmpty());
         assertTrue(pruned.history.awards(false).get("streak_7") > 0);
         assertFalse(pruned.history.awards(false).containsKey("streak_30"));
+    }
+
+    @Test public void legacyCensorRunRemainsEligibleBeforePrunedModernSessionOrigins() throws Exception {
+        Set<String> old = new LinkedHashSet<>(), raw = new LinkedHashSet<>();
+        for (int i = 0; i < 30; i++) old.add(LocalDate.parse("2025-07-01").plusDays(i).toString());
+        raw.addAll(old);
+        for (int i = 0; i < 7; i++) raw.add(LocalDate.parse("2025-11-05").plusDays(i).toString());
+        assertTrue(prefs(StatsRepository.PREFS_NAME).edit().putStringSet("active_dates", raw).commit());
+        long origin = Instant.parse("2025-11-05T00:00:00Z").toEpochMilli();
+        daily.getWritableDatabase().execSQL("INSERT INTO metadata VALUES(?,?)", new Object[]{
+                "session-duration:" + UUID.randomUUID(), origin + ";Asia/Tokyo"});
+        assertEquals(origin, daily.earliestIdentifiedSessionStart());
+        LocalRetainedStatistics facts = LocalRetainedStatistics.load(context);
+        assertTrue(facts.history.sessions().isEmpty());
+        AchievementManager manager = new AchievementManager(context);
+        HistoricalAchievementBackfill.local(context, manager, facts);
+        assertTrue(manager.isUnlocked("streak_30"));
+        long earnedAt = manager.getUnlockedAt("streak_30"); assertTrue(earnedAt > 0);
+        HistoricalAchievementBackfill.local(context, manager, LocalRetainedStatistics.load(context));
+        assertEquals(earnedAt, manager.getUnlockedAt("streak_30"));
+        assertEquals(raw, prefs(StatsRepository.PREFS_NAME).getStringSet("active_dates", Collections.emptySet()));
     }
 
     @Test public void localOnlyBothCountsOnceAndNeverImportsSourceRows() throws Exception {
