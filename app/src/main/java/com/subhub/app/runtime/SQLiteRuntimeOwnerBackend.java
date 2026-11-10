@@ -207,7 +207,11 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
     private static void syncDirectory(File directory) throws IOException {
         FileDescriptor descriptor = null;
         try {
-            descriptor = Os.open(directory.getPath(), OsConstants.O_RDONLY | OsConstants.O_DIRECTORY | OsConstants.O_CLOEXEC, 0);
+            descriptor = Os.open(directory.getPath(), OsConstants.O_RDONLY | OsConstants.O_CLOEXEC, 0);
+            // O_DIRECTORY is not part of Android's public OsConstants API. Verify the actual
+            // opened descriptor with the supported stat API before treating it as a directory.
+            if (!OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode))
+                throw new IOException("Owner synchronization target is not a directory");
             Os.fsync(descriptor);
         } catch (ErrnoException failed) { throw new IOException("Owner directory synchronization failed", failed); }
         finally {

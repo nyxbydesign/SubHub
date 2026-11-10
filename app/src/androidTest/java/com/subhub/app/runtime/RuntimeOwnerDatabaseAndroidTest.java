@@ -285,6 +285,22 @@ public final class RuntimeOwnerDatabaseAndroidTest {
         }
     }
 
+    @Test public void directoryAcknowledgementChecksTheOpenedDescriptor() throws Exception {
+        try (Fixture fixture = new Fixture(false)) {
+            java.lang.reflect.Method sync = SQLiteRuntimeOwnerBackend.class.getDeclaredMethod("syncDirectory", File.class);
+            sync.setAccessible(true);
+            sync.invoke(null, fixture.marker().getParentFile());
+            write(fixture.marker(), new byte[]{1});
+            try {
+                sync.invoke(null, fixture.marker());
+                fail("A regular file was acknowledged as a directory");
+            } catch (java.lang.reflect.InvocationTargetException rejected) {
+                assertTrue(rejected.getCause() instanceof IOException);
+            }
+            assertArrayEquals(new byte[]{1}, Files.readAllBytes(fixture.marker().toPath()));
+        }
+    }
+
     private static RuntimeOwnerStore.Record reserved(String id, long revision) {
         RuntimeLease.Identity owner = new RuntimeLease.Identity(RuntimeTarget.internal(id), RuntimeOrigin.LOCAL_UI,
                 "profile_generation", UUID.randomUUID().toString(), UUID.randomUUID().toString(),
