@@ -224,6 +224,70 @@ public final class LimitsUiAndroidTest {
         }
     }
 
+    @Test
+    public void scopeChurnRestoresSavedRowsDespiteEarlierMetadataSuccessOrFailure() throws Exception {
+        String third = "com.example.subhub.churn.fixture";
+        Set<String> firstScope = Set.of(FIRST, SECOND), secondScope = Set.of(FIRST, third);
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        try (ActivityScenario<AppModeActivity> scenario = ActivityScenario.launch(AppModeActivity.class)) {
+            try {
+                awaitMetadata(scenario); // A has a successful catalog observation.
+                scenario.onActivity(a -> {
+                    com.subhub.app.util.AsyncUiScope work = com.subhub.app.util.AsyncUiScope.forPage(a);
+                    for (int index = 0; index < 2; index++) work.load("churn-gate:" + index, () -> {
+                        started.countDown();
+                        if (!release.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new IllegalStateException("Fixture gate timed out");
+                        return true;
+                    }, ignored -> { }, failure -> { });
+                });
+                assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                scenario.onActivity(a -> {
+                    timers.updateAllowances(Map.of(third, 33));
+                    showScope(a, secondScope);
+                    assertNull(field(a, SECOND)); assertEquals("33", field(a, third).getText().toString());
+                    assertTrue(com.subhub.app.util.AsyncUiScope.forPage(a).isPending("limits-apps"));
+                    showScope(a, firstScope); // B is still queued, and the old successful scope is A.
+                    assertFirstScope(a, third);
+                    field(a, FIRST).requestFocus(); field(a, FIRST).setText("27");
+                    field(a, SECOND).requestFocus(); assertEquals(27, timers.allowanceMinutes(FIRST));
+                    com.subhub.app.util.AsyncUiScope work = com.subhub.app.util.AsyncUiScope.forPage(a);
+                    assertTrue(work.isPending("limits-apps"));
+                    work.cancel("limits-apps");
+                    invoke(a, "appMetadataUnavailable", new Class<?>[]{Set.class}, firstScope);
+                    showScope(a, secondScope);
+                    assertNull(field(a, SECOND)); assertNotNull(field(a, third));
+                    showScope(a, firstScope); // A's previous failure must not leave B's rows visible.
+                    assertFirstScope(a, third);
+                    assertTrue("Returning to a failed scope retries its current metadata", work.isPending("limits-apps"));
+                    field(a, FIRST).requestFocus(); field(a, FIRST).setText("37");
+                    field(a, SECOND).requestFocus(); assertEquals(37, timers.allowanceMinutes(FIRST));
+                    assertEquals(40, timers.allowanceMinutes(SECOND));
+                });
+                assertEquals(1L, release.getCount());
+                release.countDown();
+                awaitMetadata(scenario);
+                scenario.onActivity(a -> {
+                    assertFirstScope(a, third);
+                    assertEquals("37", field(a, FIRST).getText().toString());
+                    assertEquals(33, timers.allowanceMinutes(third));
+                });
+            } finally { release.countDown(); }
+        }
+    }
+
+    private void showScope(AppModeActivity activity, Set<String> packages) {
+        apps.saveIncludedPackages(packages);
+        invoke(activity, "renderPerAppAllowances", new Class<?>[0]);
+    }
+
+    private static void assertFirstScope(AppModeActivity activity, String absent) {
+        assertNotNull(field(activity, FIRST)); assertNotNull(field(activity, SECOND));
+        assertNull("Rows from the superseded scope must be removed", field(activity, absent));
+        assertEquals("40", field(activity, SECOND).getText().toString());
+    }
+
     private static void awaitMetadata(ActivityScenario<AppModeActivity> scenario) {
         long deadline = android.os.SystemClock.uptimeMillis() + 10_000;
         java.util.concurrent.atomic.AtomicBoolean pending = new java.util.concurrent.atomic.AtomicBoolean(true);

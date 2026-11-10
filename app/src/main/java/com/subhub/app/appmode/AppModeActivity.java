@@ -302,9 +302,16 @@ public final class AppModeActivity extends AppCompatActivity {
         Set<String> requested =
                 java.util.Collections.unmodifiableSet(
                         new java.util.LinkedHashSet<>(manager.getIncludedPackages()));
-        if (requested.equals(loadingPackages)
+        boolean currentRows = requested.equals(displayedPackages) && requested.equals(appRows.keySet());
+        if (currentRows && (requested.equals(loadingPackages)
                 || requested.equals(failedPackages)
-                || requested.equals(metadataPackages) && !appRows.isEmpty()) return;
+                || requested.equals(metadataPackages) && !appRows.isEmpty())) return;
+        if (!currentRows) {
+            // Metadata state belongs to the rendered scope, not a cache of previously shown rows.
+            // Returning A -> B -> A must restore A even if its older lookup succeeded or failed.
+            appData.cancel("limits-apps");
+            loadingPackages = null; failedPackages = null; metadataPackages = null;
+        }
         if (requested.isEmpty()) {
             if (!appRows.isEmpty() || binding.perAppAllowancesList.getChildCount() == 0) {
                 boolean previous = populatingTimers;

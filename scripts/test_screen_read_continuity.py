@@ -48,6 +48,16 @@ class ScreenReadContinuityTest(unittest.TestCase):
         self.assertNotIn("displayedPackages =", metadata)
         self.assertIn("metadataPackages = requested", metadata)
 
+    def test_allowance_metadata_cache_is_bound_to_the_rendered_scope(self):
+        source = (ROOT / "app/src/main/java/com/subhub/app/appmode/AppModeActivity.java").read_text()
+        render = source.split("private void renderPerAppAllowances()", 1)[1].split("private void appMetadataUnavailable", 1)[0]
+        self.assertIn("requested.equals(displayedPackages) && requested.equals(appRows.keySet())", render)
+        self.assertIn("if (currentRows && (requested.equals(loadingPackages)", render)
+        invalidate = render.split("if (!currentRows)", 1)[1].split("if (requested.isEmpty())", 1)[0]
+        self.assertIn('appData.cancel("limits-apps")', invalidate)
+        for name in ["loadingPackages", "failedPackages", "metadataPackages"]:
+            self.assertIn(name + " = null", invalidate)
+
     def test_unknown_does_not_masquerade_as_empty_or_error(self):
         resources = {}
         for path in (ROOT / "app/src/main/res/values").glob("*.xml"):
