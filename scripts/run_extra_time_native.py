@@ -37,6 +37,26 @@ MEMORY_AVAILABLE = (2560 + 2048) * MIB
 MAX_LOG = 16 * MIB
 MAX_ARCHIVE = 64 * MIB
 MAX_MEMBER = 16 * MIB
+# Only allowlisted metadata from a newly executed method reaches the job console.
+# Raw assertion messages, values, view dumps and logcat stay in retained evidence.
+MAX_FAILURE_CHARS = 256 * 1024
+MAX_FAILURE_LINES = 4096
+MAX_FAILURE_LINE = 2048
+MAX_FAILURE_ITEMS = 4
+SAFE_FAILURE_EXCEPTIONS = frozenset((
+    "java.lang.AssertionError", "junit.framework.AssertionFailedError",
+    "org.junit.ComparisonFailure", "java.lang.IllegalStateException",
+    "java.lang.IllegalArgumentException", "java.lang.NullPointerException",
+    "java.lang.RuntimeException", "java.util.concurrent.TimeoutException",
+    "org.junit.AssumptionViolatedException", "org.junit.internal.AssumptionViolatedException",
+    "androidx.test.espresso.NoMatchingViewException", "androidx.test.espresso.AmbiguousViewMatcherException",
+    "androidx.test.espresso.PerformException", "androidx.test.espresso.AppNotIdleException",
+    "androidx.test.espresso.IdlingResourceTimeoutException",
+))
+SAFE_ASSERTION_OPERATIONS = frozenset((
+    "fail", "assertTrue", "assertFalse", "assertEquals", "assertNotEquals",
+    "assertNull", "assertNotNull", "assertSame", "assertNotSame", "assertArrayEquals", "assertThat",
+))
 # Ubuntu 24.04's client-library package supplies the missing emulator SONAME.
 # Never infer arbitrary apt package names from loader output.
 EMULATOR_RUNTIME_PACKAGES = {"libpulse.so.0": "libpulse0"}
@@ -622,7 +642,8 @@ def source_inventory(suite="extra-time"):
         expected = selected_methods + excluded
         if len(set(expected)) != len(expected) or set(found) != set(expected):
             raise ValueError(f"Native inventory changed for {cls}: expected {expected}, found {list(found)}")
-        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path), "methods": found,
+        inventory[cls] = {"path": path.relative_to(ROOT).as_posix(), "sha256": digest(path),
+                          "lineCount": len(text.splitlines()), "methods": found,
                           "selectedMethods": selected_methods, "sourceOnlyMethods": excluded}
     if {f"{cls}#{method}" for cls, methods in native.items() for method in methods} != eligible:
         raise ValueError("Native source inventory differs from the selected suite")
@@ -786,6 +807,113 @@ def instrumentation_result(text, selector, exit_code):
         raise ValueError("Instrumentation final summary is incomplete")
     return {"class": selected_class, "test": selected_method, "numtests": 1,
             "statusCodes": [1, 0], "instrumentationCode": -1}
+
+
+def instrumentation_failure_summary(text, selector, exit_code, inventory):
+    """Lossy diagnostics, never a success oracle or a copy of arbitrary test output.
+
+    Bind stack metadata to the selected status bundle. Source locations must match
+    that class's already-reconciled repository inventory, including its line bounds.
+    Even apparently harmless assertion messages may contain private runtime values.
+    """
+    result = {"schema": 1, "outputAvailable": text is not None, "protocolComplete": False,
+              "statusCodes": [], "finalCodes": [], "exceptions": [], "assertionOperations": [],
+              "sourceFrames": [], "failureMarkers": [], "truncated": False, "messagesOmitted": True}
+    if text is None:
+        return result
+    result["exitCode"] = exit_code if type(exit_code) is int and -255 <= exit_code <= 255 else "unknown"
+    selected_class, selected_method = selector.split("#", 1)
+    source = inventory.get(selected_class, {})
+    expected_path = "app/src/androidTest/java/" + selected_class.replace(".", "/") + ".java"
+    source_verified = source.get("path") == expected_path and type(source.get("lineCount")) is int
+    bundle, stack, statuses, finals = {}, [], [], []
+    in_stack = ambiguous = False
+    result["truncated"] = len(text) > MAX_FAILURE_CHARS
+    bounded = text[:MAX_FAILURE_CHARS]
+    if result["truncated"]:
+        bounded = bounded.rsplit("\n", 1)[0] if "\n" in bounded else ""
+    lines = bounded.splitlines()
+    if len(lines) > MAX_FAILURE_LINES:
+        result["truncated"] = True
+
+    def add(key, value):
+        if value not in result[key]:
+            if len(result[key]) < MAX_FAILURE_ITEMS:
+                result[key].append(value)
+            else:
+                result["truncated"] = True
+
+    def retain_stack():
+        if ambiguous or bundle.get("class") != selected_class or bundle.get("test") != selected_method \
+                or bundle.get("numtests") != "1" or bundle.get("current") != "1":
+            return
+        for line in stack:
+            exception = re.fullmatch(r"\s*(?:(?:Caused by|Suppressed): )?([A-Za-z0-9_.$]+(?:Exception|Error))(?::.*)?", line)
+            if exception:
+                add("exceptions", exception[1] if exception[1] in SAFE_FAILURE_EXCEPTIONS else "other")
+            frame = re.fullmatch(r"\s+at ([A-Za-z0-9_.$]+)\.([A-Za-z0-9_$<>]+)\(([A-Za-z0-9_$]+\.java):([0-9]{1,6})\)", line)
+            if not frame:
+                continue
+            if frame[1] in ("org.junit.Assert", "junit.framework.Assert") and frame[2] in SAFE_ASSERTION_OPERATIONS:
+                add("assertionOperations", frame[1] + "." + frame[2])
+            if source_verified and frame[1].split("$", 1)[0] == selected_class \
+                    and frame[3] == selected_class.rsplit(".", 1)[-1] + ".java" \
+                    and 1 <= int(frame[4]) <= source["lineCount"]:
+                add("sourceFrames", {"path": source["path"], "line": int(frame[4])})
+
+    for index, line in enumerate(lines[:MAX_FAILURE_LINES]):
+        if len(line) > MAX_FAILURE_LINE:
+            result["truncated"] = True
+            in_stack = False
+            continue
+        for prefix, marker in (("INSTRUMENTATION_FAILED:", "failed"),
+                               ("INSTRUMENTATION_ABORTED:", "aborted"),
+                               ("INSTRUMENTATION_RESULT: shortMsg=", "short_message"),
+                               ("FAILURES!!!", "failure_summary")):
+            if line.startswith(prefix):
+                add("failureMarkers", marker)
+        field = re.fullmatch(r"INSTRUMENTATION_STATUS: ([A-Za-z0-9_]+)=(.*)", line)
+        if field:
+            if field[1] in bundle:
+                ambiguous = True
+            bundle[field[1]] = field[2]
+            in_stack = field[1] == "stack"
+            if in_stack:
+                stack.append(field[2])
+            continue
+        status = re.fullmatch(r"INSTRUMENTATION_STATUS_CODE: (-?[0-9]+)", line)
+        final = re.fullmatch(r"INSTRUMENTATION_CODE: (-?[0-9]+)", line)
+        if status:
+            code = int(status[1]) if status[1] in ("-4", "-3", "-2", "-1", "0", "1", "2") else "unknown"
+            if len(result["statusCodes"]) < MAX_FAILURE_ITEMS:
+                result["statusCodes"].append(code)
+            else:
+                result["truncated"] = True
+            matches = not ambiguous and all(bundle.get(key) == value for key, value in (
+                ("class", selected_class), ("test", selected_method), ("numtests", "1"), ("current", "1")))
+            statuses.append((code, matches, index))
+            retain_stack()
+            bundle, stack, in_stack = {}, [], False
+        elif final:
+            code = int(final[1]) if final[1] in ("-1", "0", "1") else "unknown"
+            if len(result["finalCodes"]) < MAX_FAILURE_ITEMS:
+                result["finalCodes"].append(code)
+            else:
+                result["truncated"] = True
+            finals.append((code, index))
+            in_stack = False
+        elif line.startswith("INSTRUMENTATION_"):
+            in_stack = False
+        elif in_stack:
+            stack.append(line)
+    # A cut-off bundle can still supply safe locations, but never complete proof.
+    retain_stack()
+    result["protocolComplete"] = not (result["truncated"] or ambiguous or bundle
+                                        or set(result["failureMarkers"]) - {"failure_summary"}) \
+        and len(statuses) == 2 and statuses[0][0] == 1 and statuses[1][0] in (-4, -3, -2, -1, 0) \
+        and all(item[1] for item in statuses) and len(finals) == 1 and finals[0][1] > statuses[-1][2] \
+        and finals[0][0] == -1
+    return result
 
 
 class Producer:
@@ -1196,6 +1324,7 @@ class Producer:
 
     def method(self, selector, index):
         started = time.monotonic()
+        text, code = None, None
         self.record["methods"][selector] = {"state": "running", "index": index}
         self.record["remaining"].remove(selector)
         self.save()
@@ -1209,10 +1338,21 @@ class Producer:
         except BaseException as failure:
             self.record["methods"][selector].update(state="failed", failure=type(failure).__name__ + ": " + str(failure),
                                                     seconds=round(time.monotonic() - started, 2))
+            try:
+                diagnostic = instrumentation_failure_summary(text, selector, code, self.record.get("inventory", {}))
+            except Exception:
+                # Reporting must not replace the original failure or delay cleanup.
+                diagnostic = {"schema": 1, "outputAvailable": False, "messagesOmitted": True}
+            diagnostic["stage"] = "command" if text is None else "instrumentation_validation"
+            self.record["methods"][selector]["failureDiagnostic"] = diagnostic
             raise
         finally:
             self.save()
-            print(json.dumps({"method": selector, "state": self.record["methods"][selector]["state"]}), flush=True)
+            result = self.record["methods"][selector]
+            console = {"method": selector, "state": result["state"]}
+            if "failureDiagnostic" in result:
+                console["failureDiagnostic"] = result["failureDiagnostic"]
+            print(json.dumps(console), flush=True)
 
     def run_tests(self):
         self.record["state"] = "selected_native_running"; self.save()
