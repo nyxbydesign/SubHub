@@ -69,6 +69,29 @@ class GradleDiagnosticTest(unittest.TestCase):
                     _, report = self.report(b"> Task " + task + (b" " + status if status else b"") + b"\n")
                     self.assertEqual({label: emitted}, report["tasks"])
 
+    def test_lint_reports_only_exact_issue_and_source_labels(self):
+        source = next(iter(safe.LINT_SOURCES))
+        for issue, label in safe.LINT_ISSUES.items():
+            for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):
+                with self.subTest(issue=issue, prefix=prefix):
+                    _, report = self.report(prefix + source + b":123: Error: " + PRIVATE + b" [" + issue + b"]\n")
+                    self.assertEqual([label], report["lint"])
+                    self.assertEqual([safe.LINT_SOURCES[source]], report["lintSources"])
+        _, report = self.report(b"/home/private/secret.java:1: Error: " + PRIVATE + b" [NewApi]\n")
+        self.assertEqual(["new_api"], report["lint"])
+        self.assertEqual([], report["lintSources"])
+
+    def test_unknown_or_malformed_lint_and_exception_text_cannot_emit_source(self):
+        source = next(iter(safe.LINT_SOURCES))
+        data = (source + b":1: Error: PRIVATE_TOKEN [PRIVATE_TOKEN]\n"
+                + source + b":1: Error: PRIVATE_TOKEN [NewApi] trailing\n"
+                + source + b":PRIVATE_TOKEN: Error: PRIVATE_TOKEN [NewApi]\n"
+                + source + b":1: Warning: PRIVATE_TOKEN [NewApi]\n"
+                + b"* Exception is:\n" + source + b":1: Error: PRIVATE_TOKEN [NewApi]\n")
+        _, report = self.report(data)
+        self.assertEqual([], report["lint"])
+        self.assertEqual([], report["lintSources"])
+
     def test_exception_text_cannot_overwrite_task_status_and_failure_is_monotonic(self):
         data = (b"> Task :app:packageDebug FAILED\n* Exception is:\n"
                 b"java.io.IOException: PRIVATE_TOKEN\n> Task :app:packageDebug\n"
@@ -162,6 +185,8 @@ class GradleDiagnosticTest(unittest.TestCase):
         data = b"\n".join(b"> Task " + task + b" FAILED" for task in safe.TASKS)
         data += b"\n* Exception is:\n" + b"\n".join(name + b": " + PRIVATE for name in safe.EXCEPTIONS)
         data += b"\n" + b"\n".join(b"java.io.IOException: " + phrase for phrase in safe.RESOURCE_MESSAGES)
+        data += b"\n* Try:\n" + b"\n".join(path + b":1: Error: " + PRIVATE + b" [" + issue + b"]"
+                                                  for path in safe.LINT_SOURCES for issue in safe.LINT_ISSUES)
         _, result = self.report(data)
         self.assertLessEqual(len(result["exceptions"]), safe.MAX_CATEGORIES)
         self.assertEqual(len(safe.TASKS), len(result["tasks"]))

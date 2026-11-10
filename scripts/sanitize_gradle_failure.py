@@ -69,16 +69,40 @@ TASKS = {
 }
 STATUSES = {None: "seen", b"FAILED": "failed", b"UP-TO-DATE": "up_to_date",
             b"FROM-CACHE": "from_cache", b"SKIPPED": "skipped", b"NO-SOURCE": "no_source"}
+# Fixed labels only. Never publish a lint message, path, line number, symbol or source excerpt.
+LINT_ISSUES = {
+    b"NewApi": "new_api", b"InlinedApi": "inlined_api",
+    b"WrongConstant": "wrong_constant", b"RestrictedApi": "restricted_api",
+    b"MissingPermission": "missing_permission", b"OverrideAbstract": "override_abstract",
+    b"NotInstantiatable": "not_instantiatable", b"UnsafeOptInUsageError": "unsafe_opt_in",
+}
+LINT_SOURCES = {
+    b"app/src/main/java/com/subhub/app/internal/InternalSubContext.java": "internal_editor_context",
+    b"app/src/main/java/com/subhub/app/internal/InternalConfigurationStore.java": "internal_configuration",
+    b"app/src/main/java/com/subhub/app/internal/InternalStorageScope.java": "internal_storage_scope",
+    b"app/src/main/java/com/subhub/app/internal/FileInternalSubBackend.java": "internal_file_backend",
+    b"app/src/main/java/com/subhub/app/internal/InternalSubStore.java": "internal_store",
+    b"app/src/main/java/com/subhub/app/internal/InternalSubRecord.java": "internal_record",
+    b"app/src/main/java/com/subhub/app/internal/InternalRecordCodec.java": "internal_record_codec",
+    b"app/src/main/java/com/subhub/app/internal/InternalProfile.java": "internal_profile",
+    b"app/src/main/java/com/subhub/app/internal/InternalProfileAdapter.java": "internal_profile_adapter",
+    b"app/src/main/java/com/subhub/app/runtime/SQLiteRuntimeOwnerBackend.java": "runtime_owner_database",
+    b"app/src/test/java/com/subhub/app/internal/InternalStorageChecks.java": "internal_storage_checks",
+    b"app/src/test/java/com/subhub/app/internal/InternalConfigurationTest.java": "internal_configuration_tests",
+    b"app/src/androidTest/java/com/subhub/app/internal/InternalStorageAndroidTest.java": "internal_storage_native_tests",
+    b"app/src/androidTest/java/com/subhub/app/runtime/RuntimeOwnerDatabaseAndroidTest.java": "runtime_owner_native_tests",
+}
 EXCEPTION_LINE = re.compile(
     rb"[ \t]*(?:(?:Caused by|Suppressed): )?([A-Za-z0-9_.$]{1,256})(?::(.*))?")
 TASK_LINE = re.compile(rb"> Task ([A-Za-z0-9_:]+)(?: (FAILED|UP-TO-DATE|FROM-CACHE|SKIPPED|NO-SOURCE))?")
+LINT_LINE = re.compile(rb"([^\r\n]+):[0-9]{1,7}: (?:Error|Fatal): [^\r\n]* \[([A-Za-z][A-Za-z0-9]{0,63})\]")
 
 
 class Diagnostics:
     def __init__(self):
         self.result = {"schema": 1, "messagesOmitted": True, "truncated": False,
                        "sanitizerFailed": False, "exceptionSectionSeen": False, "unknownException": False,
-                       "exceptions": [], "resources": [], "tasks": {}}
+                       "exceptions": [], "resources": [], "tasks": {}, "lint": [], "lintSources": []}
         self.in_exception = False
 
     def add(self, key, label):
@@ -97,6 +121,13 @@ class Diagnostics:
         if line.startswith((b"* ", b"BUILD ")):
             self.in_exception = False
         if not self.in_exception:
+            lint = LINT_LINE.fullmatch(line)
+            if lint and lint[2] in LINT_ISSUES:
+                self.add("lint", LINT_ISSUES[lint[2]])
+                for path, label in LINT_SOURCES.items():
+                    if lint[1] == path or lint[1].endswith(b"/" + path):
+                        self.add("lintSources", label)
+                        break
             task = TASK_LINE.fullmatch(line)
             if task and task[1] in TASKS:
                 key = TASKS[task[1]]

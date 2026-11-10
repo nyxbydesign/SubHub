@@ -13,7 +13,7 @@ import java.util.UUID;
  */
 public final class OwnedResourceRegistry {
     public enum Effect { STARTUP, NORMAL, CLEANUP }
-    private enum Mode { RESERVED, STARTING, ACTIVE, SEALED }
+    private enum Mode { RESERVED, STARTING, ACTIVATING, ACTIVE, SEALED }
     private final RuntimeMutex mutex;
     private final RuntimeLease lease;
     private final String epoch = UUID.randomUUID().toString();
@@ -21,24 +21,54 @@ public final class OwnedResourceRegistry {
     private final Set<Registration> resources = new HashSet<>();
     private final Map<String, Registration> components = new HashMap<>();
     private final Set<EffectPermit> permits = new HashSet<>();
-    private Mode mode = Mode.RESERVED;
+    // Lock order: RuntimeMutex -> permitLock. Never enter RuntimeMutex, persistence, callbacks,
+    // or Android from permitLock. Window callbacks can acquire/release without waiting for fsync.
+    private final Object permitLock = new Object();
+    private volatile Mode mode = Mode.RESERVED;
     private DrainReceipt receipt;
 
     OwnedResourceRegistry(RuntimeMutex mutex, RuntimeLease lease, Runnable requiredComponentClosed) {
         this.mutex = mutex; this.lease = lease; this.requiredComponentClosed = requiredComponentClosed;
     }
-    void starting() { mutex.requireHeld(); if (mode != Mode.RESERVED) throw new IllegalStateException("Start already sealed"); mode = Mode.STARTING; }
-    void activate() { mutex.requireHeld(); if (mode != Mode.STARTING) throw new IllegalStateException("Start already sealed"); mode = Mode.ACTIVE; }
-    void seal() { mutex.requireHeld(); mode = Mode.SEALED; }
+    boolean starting() {
+        mutex.requireHeld(); synchronized (permitLock) {
+            if (mode != Mode.RESERVED) return false;
+            mode = Mode.STARTING; return true;
+        }
+    }
+    /** Close startup admission BEFORE the ACTIVE journal CAS; a definite failed CAS may retry. */
+    boolean prepareActivation() {
+        mutex.requireHeld(); synchronized (permitLock) {
+            if ((mode != Mode.STARTING && mode != Mode.ACTIVATING) || !permits.isEmpty()) return false;
+            mode = Mode.ACTIVATING; return true;
+        }
+    }
+    boolean activate() {
+        mutex.requireHeld(); synchronized (permitLock) {
+            if (mode != Mode.ACTIVATING || !permits.isEmpty()) return false;
+            mode = Mode.ACTIVE; return true;
+        }
+    }
+    void seal() { mutex.requireHeld(); synchronized (permitLock) { mode = Mode.SEALED; } }
+
+    /** Immediate exact-capability fence, even while the owner worker is awaiting journal fsync. */
+    public void fence(RuntimeLease requested) {
+        synchronized (permitLock) {
+            if (requested != lease) throw new SecurityException("Different runtime capability");
+            mode = Mode.SEALED;
+        }
+    }
 
     Registration register(RuntimeLease requested, String name, boolean component) {
         mutex.requireHeld(); RuntimeOrigin.key(name);
-        if (requested != lease || mode == Mode.RESERVED || mode == Mode.SEALED || receipt != null)
-            throw new SecurityException("Runtime no longer admits work");
-        if (component && components.containsKey(name)) throw new IllegalStateException("Component already registered");
-        Registration value = new Registration(this, name, component);
-        resources.add(value); if (component) components.put(name, value);
-        return value;
+        synchronized (permitLock) {
+            if (requested != lease || mode == Mode.RESERVED || mode == Mode.ACTIVATING || mode == Mode.SEALED || receipt != null)
+                throw new SecurityException("Runtime no longer admits work");
+            if (component && components.containsKey(name)) throw new IllegalStateException("Component already registered");
+            Registration value = new Registration(this, name, component);
+            resources.add(value); if (component) components.put(name, value);
+            return value;
+        }
     }
     boolean ownsComponent(Registration registration) {
         mutex.requireHeld();
@@ -49,29 +79,32 @@ public final class OwnedResourceRegistry {
 
     public EffectPermit acquireEffectPermit(RuntimeLease requested, Effect effect) {
         Objects.requireNonNull(effect);
-        return mutex.runtime(() -> {
+        synchronized (permitLock) {
             boolean allowed = effect == Effect.STARTUP && mode == Mode.STARTING
                     || effect == Effect.NORMAL && mode == Mode.ACTIVE
                     || effect == Effect.CLEANUP && mode == Mode.SEALED;
             if (requested != lease || !allowed || receipt != null) throw new SecurityException("Effect admission revoked");
             EffectPermit permit = new EffectPermit(this, effect); permits.add(permit); return permit;
-        });
+        }
     }
 
     public DrainReceipt drained(RuntimeLease requested) {
         return mutex.runtime(() -> {
-            if (requested != lease || mode != Mode.SEALED || !resources.isEmpty() || !permits.isEmpty()) return null;
-            if (receipt == null) receipt = new DrainReceipt(this, lease, epoch);
-            return receipt;
+            synchronized (permitLock) {
+                if (requested != lease || mode != Mode.SEALED || !resources.isEmpty() || !permits.isEmpty()) return null;
+                if (receipt == null) receipt = new DrainReceipt(this, lease, epoch);
+                return receipt;
+            }
         });
     }
     boolean accepts(DrainReceipt value) {
         mutex.requireHeld();
-        return value != null && value == receipt && value.registry == this && value.lease == lease
-                && value.epoch.equals(epoch) && mode == Mode.SEALED && resources.isEmpty() && permits.isEmpty();
+        synchronized (permitLock) {
+            return value != null && value == receipt && value.registry == this && value.lease == lease
+                    && value.epoch.equals(epoch) && mode == Mode.SEALED && resources.isEmpty() && permits.isEmpty();
+        }
     }
     boolean isSealed() { mutex.requireHeld(); return mode == Mode.SEALED; }
-    boolean startupEffectsDrained() { mutex.requireHeld(); return permits.isEmpty(); }
 
     public static final class Registration implements AutoCloseable {
         private final OwnedResourceRegistry registry;
@@ -103,10 +136,9 @@ public final class OwnedResourceRegistry {
         private boolean closed;
         private EffectPermit(OwnedResourceRegistry registry, Effect effect) { this.registry = registry; this.effect = effect; }
         @Override public void close() {
-            registry.mutex.runtime(() -> {
+            synchronized (registry.permitLock) {
                 if (!closed) { closed = true; registry.permits.remove(this); }
-                return null;
-            });
+            }
         }
     }
     /** Only this registry can issue a receipt after sealing and acknowledged closure. */

@@ -147,7 +147,10 @@ public final class ActiveRuntimeCoordinator {
             }
             Result saved = write(record.next(Phase.STARTING, record.savedConfigurationRevision,
                     record.appliedConfigurationRevision, record.readyComponents));
-            if (saved == Result.OK) resources.starting();
+            if (saved == Result.OK && !resources.starting()) {
+                Result stopped = stopLocked(requested);
+                return stopped == Result.OK ? Result.WRONG_PHASE : stopped;
+            }
             return saved;
         });
     }
@@ -186,12 +189,16 @@ public final class ActiveRuntimeCoordinator {
             Result guard = guard(requested, Phase.STARTING);
             if (guard != Result.OK) return guard;
             if (!authority.current(witness)) { stopLocked(requested); return Result.AUTHORITY_CHANGED; }
-            if (!record.readyComponents.equals(record.requiredComponents) || !resources.startupEffectsDrained())
+            if (!record.readyComponents.equals(record.requiredComponents))
                 return Result.NOT_READY;
             for (String component : record.requiredComponents) if (!resources.hasComponent(component)) return Result.NOT_READY;
+            if (!resources.prepareActivation()) return Result.NOT_READY;
             Result saved = write(record.next(Phase.ACTIVE, record.savedConfigurationRevision,
                     record.appliedConfigurationRevision, record.readyComponents));
-            if (saved == Result.OK) resources.activate();
+            if (saved == Result.OK && !resources.activate()) {
+                Result stopped = stopLocked(requested);
+                return stopped == Result.OK ? Result.WRONG_PHASE : stopped;
+            }
             return saved;
         });
     }
