@@ -53,6 +53,25 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         raw = f" {selected[-1]} ,\n{selected[20]}\n{selected[0]}, "
         self.assertEqual([selected[0], selected[20], selected[-1]], native.selectors(raw, "subhub-pass"))
 
+    def test_reconnect_selects_only_six_reviewed_contracts_and_keeps_original_suites(self):
+        selected = native.selectors("", "reconnect")
+        self.assertEqual(6, len(selected))
+        self.assertEqual(6, len(set(selected)))
+        self.assertEqual({"RemoteFeatureSchedulingAndroidTest": 2, "RemoteConfigurationAndroidTest": 4},
+                         {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.RECONNECT_NATIVE.items()})
+        self.assertTrue(set(selected).isdisjoint(native.SUBHUB_PASS_SELECTORS))
+        self.assertEqual([selected[0], selected[-1]], native.selectors(selected[-1] + "," + selected[0], "reconnect"))
+        for cls, methods in native.RECONNECT_SOURCE_ONLY.items():
+            for method in methods:
+                with self.subTest(method=method), self.assertRaisesRegex(ValueError, "unique subset"):
+                    native.selectors(f"{cls}#{method}", "reconnect")
+
+    def test_reconnect_missing_or_duplicate_members_fail_closed(self):
+        values = native.SUITES["reconnect"]
+        for changed in (values[:-1], values[:-1] + [values[0]]):
+            with mock.patch.dict(native.SUITES, {"reconnect": changed}), self.assertRaisesRegex(ValueError, "6 unique"):
+                native.suite_selectors("reconnect")
+
     def test_default_rejects_an_integration_method(self):
         with self.assertRaisesRegex(ValueError, "unique subset"):
             native.selectors(native.SUBHUB_PASS_SELECTORS[20])
@@ -110,7 +129,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
     def source_copy(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for cls in (*native.NATIVE, *native.SUBHUB_PASS_NATIVE):
+            for cls in (*native.NATIVE, *native.SUBHUB_PASS_NATIVE, *native.RECONNECT_NATIVE):
                 relative = Path("app/src/androidTest/java") / (cls.replace(".", "/") + ".java")
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -443,6 +462,22 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
             self.assertEqual("extra-time", suite)
             self.assertEqual(count, len(native.selectors(raw, suite)))
 
+    def test_reconnect_label_runs_only_six_even_with_older_suite_labels(self):
+        for labels in (("native-reconnect",), ("native-reconnect", "native-subhub-pass", "native-extra-time-ui")):
+            with self.subTest(labels=labels):
+                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
+                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
+                self.assertEqual("reconnect", suite)
+                self.assertEqual("", raw)
+                self.assertEqual(6, len(native.selectors(raw, suite)))
+
+    def test_dispatch_reconnect_supports_full_suite_and_exact_subset(self):
+        for raw, count in (("", 6), (native.RECONNECT_SELECTORS[0], 1)):
+            args = dict(event="workflow_dispatch", suite="reconnect", selectors=raw)
+            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
+            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
+            self.assertEqual(count, len(native.selectors(selected, suite)))
+
     def test_dispatch_pass_supports_full_suite_and_exact_subset(self):
         for raw, count in (("", 52), (native.SUBHUB_PASS_SELECTORS[20], 1)):
             args = dict(event="workflow_dispatch", suite="subhub-pass", selectors=raw)
@@ -460,7 +495,7 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
         self.assertNotIn("labeled", trigger)
         self.assertNotIn("types:", trigger)  # Retain the original PR default event set.
         self.assertNotRegex(trigger, r"(?m)^  (push|schedule|workflow_run|pull_request_target):")
-        self.assertIn("options: [extra-time, subhub-pass]", trigger)
+        self.assertIn("options: [extra-time, subhub-pass, reconnect]", trigger)
         self.assertIn("timeout-minutes: 45", self.workflow)
         self.assertEqual(1, self.workflow.count("run: python3 scripts/run_extra_time_native.py"))
         self.assertRegex(self.workflow, r"run: python3 -m unittest [^\n]*\bscripts\.test_extra_time_native_inventory\b")

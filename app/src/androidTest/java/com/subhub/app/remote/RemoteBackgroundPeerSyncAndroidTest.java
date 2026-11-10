@@ -216,7 +216,7 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
             assertConsumer();
             long priorStart = receipt.getLong("last_started", 0);
             scheduled = true;
-            if(automaticNetwork)networkWake=new RemoteConnectivityWake(target,feature::requestAutomaticSync);
+            if(automaticNetwork)networkWake=new RemoteConnectivityWake(target,feature::requestStableConnectionSync);
             else RemoteScheduler.kick(target);
             long deadline = SystemClock.elapsedRealtime() + PROOF_MILLIS;
             WorkInfo work = null;
@@ -308,7 +308,7 @@ public final class RemoteBackgroundPeerSyncAndroidTest {
             // A matching OS start can observe an already running GreedyScheduler worker. Keep this
             // corroboration distinct from the actual worker receipt and authenticated exchange.
             JSONObject evidence = new JSONObject().put("work", work.getId().toString()).put("uniqueWork", RemoteScheduler.IMMEDIATE)
-                    .put("producer", automaticNetwork?"RemoteConnectivityWake.onAvailable":"RemoteScheduler.kick")
+                    .put("producer", automaticNetwork?"RemoteConnectivityWake.stableValidatedNetwork":"RemoteScheduler.kick")
                     .put("priorImmediateDrain",new org.json.JSONArray(priorImmediateDrain)).put("actualScheduledWorker", RemoteSyncWorker.class.getName())
                     .put("osJobCorroboration", true).put("exclusiveOsWorkerLaunchProven", false)
                     .put("inProcessGreedyContributionPossible", true)

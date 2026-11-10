@@ -286,6 +286,39 @@ public final class RemoteFeatureSchedulingAndroidTest {
         ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
         assertEquals("Background recovery cannot restart a foreground service",1,serviceStarts.get());
     }
+    @Test public void stableReconnectClearsOfflineBackoffAndCoalescesExistingBackgroundWork()throws Exception{
+        ScheduledExecutorService clock=(ScheduledExecutorService)field("timer");
+        CountDownLatch entered=new CountDownLatch(1),resume=new CountDownLatch(1);
+        clock.execute(()->{entered.countDown();try{resume.await();}catch(InterruptedException stopped){Thread.currentThread().interrupt();}});
+        assertTrue(entered.await(5,TimeUnit.SECONDS));
+        try{
+            Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            due.put(identity(87)+":"+generation(87),SystemClock.elapsedRealtime()+60_000);
+            ((Map<String,Integer>)field("consecutiveFailures")).put(identity(87)+":"+generation(87),6);
+            set("nextEndpointAttempt",SystemClock.elapsedRealtime()+60_000);
+            ((AtomicInteger)field("endpointFailures")).set(6);
+            feature.requestAutomaticSync();
+            for(int i=0;i<10;i++)feature.requestStableConnectionSync();
+            resume.countDown();clock.submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(0L,field("nextEndpointAttempt"));assertEquals(0,((AtomicInteger)field("endpointFailures")).get());
+            assertTrue(due.isEmpty());assertTrue(((Map<?,?>)field("consecutiveFailures")).isEmpty());
+            assertEquals(1,backgroundKicks.get());assertEquals(0,serviceStarts.get());
+            assertEquals(0,transport.activeCalls.get());assertSame(transport,field("endpoint"));assertFalse(transport.closed);
+            assertEquals(90,store.peers(true).size());
+        }finally{resume.countDown();}
+    }
+    @Test public void stableReconnectCannotBypassBackgroundOptOutOrRetiredRuntime()throws Exception{
+        assertTrue(feature.setBackgroundSyncEnabled(false));
+        feature.requestStableConnectionSync();
+        ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+        assertEquals(0,backgroundKicks.get());assertEquals(0,transport.activeCalls.get());assertEquals(0,serviceStarts.get());
+        set("stopped",true);
+        try{
+            set("nextEndpointAttempt",12345L);feature.requestStableConnectionSync();
+            ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(12345L,field("nextEndpointAttempt"));assertEquals(0,backgroundKicks.get());
+        }finally{set("stopped",false);}
+    }
     @Test public void connectedServiceBackpressureKeepsOneFutureDueWakeInsteadOfSpinning()throws Exception{
         RemoteFeature.ConnectedServiceLease owner=feature.acquireConnectedService(()->{}).get(5,TimeUnit.SECONDS);
         try{

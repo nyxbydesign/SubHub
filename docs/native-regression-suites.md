@@ -6,6 +6,8 @@ and one fresh, owned API 35 x86_64 emulator. Its default `extra-time` suite rema
 methods plus 31 reviewed integration methods, **52 unique methods total**. The
 `remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt` method is already one
 of the default 21 and is not duplicated in the integration suite.
+The focused `reconnect` suite selects six separate scheduling and durable-queue
+contracts without rerunning either older suite.
 
 ## Select the suite without duplicate jobs
 
@@ -20,13 +22,22 @@ of the default 21 and is not duplicated in the integration suite.
   source-only methods are rejected. Do not dispatch while the same candidate's
   automatic native job is already in flight.
 - A manual dispatch does not depend on PR labels. The default remains `extra-time`.
-  Neither suite qualifies a release in place of canonical exact-source Android CI.
+  No native suite qualifies a release in place of canonical exact-source Android CI.
+- For stable-connection retry changes, add `native-reconnect` before the candidate
+  push, or select `reconnect` for a later explicit dispatch. This label takes
+  precedence over the integration and legacy subset labels in the same single job.
+  Remove it when a later candidate should use a different suite. Its six methods
+  cover coalesced retry/backoff reset, background opt-out/runtime retirement,
+  persisted SENT-command ordering and duplicate receipts, rejection, conflict,
+  and fresh consent checks. They use isolated stores and synthetic transport;
+  they do not claim a physical network disconnect/reconnect test.
 
 Inspect the exact inventory locally without a build or emulator:
 
 ```sh
 python3 scripts/run_extra_time_native.py --check-inventory
 python3 scripts/run_extra_time_native.py --suite subhub-pass --check-inventory
+python3 scripts/run_extra_time_native.py --suite reconnect --check-inventory
 python3 -m unittest scripts.test_extra_time_native_inventory
 ```
 
@@ -52,6 +63,7 @@ pushing the combined candidate head:
 ```
 
 Keep `native-subhub-pass` as well when selecting methods from the 52-method suite.
+Use `native-reconnect` instead for a subset of the six reconnect contracts.
 The producer reads the PR event JSON directly from `GITHUB_EVENT_PATH`; body text
 is never interpolated into a shell command or workflow expression. With
 `native-subset`, the block overrides the legacy subset labels. Without that exact

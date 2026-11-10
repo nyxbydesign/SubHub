@@ -81,6 +81,7 @@ public final class RemoteFeature {
     private final Map<String,PresenceWake> presenceWakes=new HashMap<>();
     private static final class PresenceWake { ScheduledFuture<?> task; }
     private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean stableConnectionPending = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean librariesRetired;
     private final Object connectedServiceLock=new Object();
     private final Object backgroundPreferenceChangeLock=new Object();
@@ -151,7 +152,7 @@ public final class RemoteFeature {
         app.registerActivityLifecycleCallbacks(lifecycleCallbacks);
         timer.scheduleWithFixedDelay(()->{try{if(foreground)tick();}catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}},2,2,TimeUnit.SECONDS);
         synchronizeBackground();
-        try { connectivityWake=new RemoteConnectivityWake(app,this::requestAutomaticSync); }
+        try { connectivityWake=new RemoteConnectivityWake(app,this::requestStableConnectionSync); }
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
     }
     private void retirePresence(String key) {
@@ -193,10 +194,18 @@ public final class RemoteFeature {
         if(stopped||!automaticSyncPending.compareAndSet(false,true))return;
         try{timer.execute(()->{
             automaticSyncPending.set(false);if(stopped)return;
-            try{invalidateAttempts();if(!needsBackground())return;
+            try{
+                // A recovered network must not inherit an offline endpoint's reconnect delay.
+                // This changes scheduling only: durable commands, receipts and authority stay intact.
+                if(stableConnectionPending.getAndSet(false)){endpointFailures.set(0);nextEndpointAttempt=0;}
+                invalidateAttempts();if(!needsBackground())return;
                 if(hasConnectedService())scheduleConnectedSync(0);else if(foreground)tick();else kickBackground();
             }catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Sync attempt deferred");}
         });}catch(RejectedExecutionException closed){automaticSyncPending.set(false);}
+    }
+    void requestStableConnectionSync() {
+        if(stopped)return;
+        stableConnectionPending.set(true);requestAutomaticSync();
     }
     /** Admission survives future cancellation until the actual resource-using callable exits. */
     private static class AdmittedTask<T> extends FutureTask<T> {

@@ -439,6 +439,77 @@ public class RemoteConfigurationAndroidTest {
         edits.drain(peer);assertEquals(next.id,dom.latestCommand(SUB,generation).id);
     }
 
+    @Test public void reconnectDrainsPreserveSentCommandAndPublishLatestEditOnlyAfterAppliedReceipt() throws Exception {
+        JSONObject first=configuration();RemoteStore.Command original=dom.queueConfiguration(SUB,generation,0,0,first);
+        RemoteProtocol.Batch sent=dom.nextBatch(SUB,generation,RemoteProtocol.Stream.CONFIGURATION);
+        dom.acknowledge(SUB,sub.receive(DOM,sent));dom.markSent(SUB,sent);
+        JSONObject latest=new JSONObject(first.toString());latest.getJSONObject("service").put("hidden",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(latest));
+        dom.close();dom=new RemoteStore(context,prefix+"dom.db");
+        RemoteContracts contracts=new RemoteContracts(context,dom,new RemoteConfigurationWriter(context,dom));
+        RemoteStore.Peer peer=dom.peer(SUB,generation);
+        for(int i=0;i<3;i++)contracts.process(peer);
+        RemoteStore.Command retained=dom.latestCommand(SUB,generation);
+        assertEquals(original.id,retained.id);assertEquals(original.body,retained.body);
+        assertEquals(RemoteStore.CommandState.SENT,retained.state);
+        assertEquals("0",dom.metadata(SUB,generation,"applied_revision","0"));
+        assertEquals(RemoteProtocol.canonical(latest),dom.metadata(SUB,generation,"configuration_edit",""));
+        JSONObject receipt=new JSONObject().put("schema",1).put("id",original.id).put("revision",1)
+                .put("state","APPLIED").put("appliedRevision",1).put("reason","");
+        dom.acceptResult(SUB,generation,receipt);contracts.process(peer);
+        RemoteStore.Command next=dom.latestCommand(SUB,generation);
+        assertEquals(2,next.revision);assertEquals(1,new JSONObject(next.body).getLong("base"));
+        assertTrue(RemoteConfigurationEdits.same(latest,RemoteConfiguration.active(new JSONObject(next.body).getJSONObject("configuration"))));
+        dom.acceptResult(SUB,generation,receipt);
+        for(int i=0;i<3;i++)contracts.process(peer);
+        assertEquals(next.id,dom.latestCommand(SUB,generation).id);
+        assertEquals("2",dom.metadata(SUB,generation,"desired_revision","0"));
+    }
+
+    @Test public void reconnectDrainsNeverRetryRejectedConfiguration() throws Exception {
+        assertTerminalSurvivesReconnect(RemoteStore.CommandState.REJECTED);
+    }
+
+    @Test public void reconnectDrainsNeverRetryConfigurationConflict() throws Exception {
+        assertTerminalSurvivesReconnect(RemoteStore.CommandState.CONFLICT);
+    }
+
+    private void assertTerminalSurvivesReconnect(RemoteStore.CommandState state) throws Exception {
+        JSONObject first=configuration();RemoteStore.Command original=dom.queueConfiguration(SUB,generation,0,0,first);
+        JSONObject latest=new JSONObject(first.toString());latest.getJSONObject("service").put("hidden",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(latest));
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",original.id).put("revision",1)
+                .put("state",state.name()).put("appliedRevision",0).put("reason","Stopped"));
+        dom.close();dom=new RemoteStore(context,prefix+"dom.db");
+        RemoteContracts contracts=new RemoteContracts(context,dom,new RemoteConfigurationWriter(context,dom));
+        RemoteStore.Peer peer=dom.peer(SUB,generation);
+        for(int i=0;i<3;i++)contracts.process(peer);
+        assertEquals(original.id,dom.latestCommand(SUB,generation).id);
+        assertEquals(state,dom.latestCommand(SUB,generation).state);
+        assertEquals("1",dom.metadata(SUB,generation,"desired_revision","0"));
+        assertEquals(RemoteProtocol.canonical(latest),dom.metadata(SUB,generation,"configuration_edit",""));
+        assertFalse(contracts.editFailure(peer).isEmpty());
+    }
+
+    @Test public void reconnectDrainRechecksNewConsentBeforePublishingQueuedEdit() throws Exception {
+        JSONObject first=configuration();RemoteStore.Command original=dom.queueConfiguration(SUB,generation,0,0,first);
+        JSONObject latest=new JSONObject(first.toString());
+        latest.getJSONObject("contract").getJSONObject("sections").getJSONObject("modules").put("module_censor_enabled",true);
+        dom.saveConfigurationEdit(SUB,generation,RemoteProtocol.canonical(latest));
+        dom.acceptResult(SUB,generation,new JSONObject().put("schema",1).put("id",original.id).put("revision",1)
+                .put("state","APPLIED").put("appliedRevision",1).put("reason",""));
+        JSONObject consent=new JSONObject();
+        for(String feature:com.subhub.app.security.SubFeaturePolicy.FEATURES)consent.put(feature,!"censor".equals(feature));
+        sub.publish(DOM,generation,RemoteProtocol.Stream.RUNTIME,"current",new JSONObject().put("featureConsent",consent),false,1000);
+        dom.receive(SUB,sub.nextBatch(DOM,generation,RemoteProtocol.Stream.RUNTIME));
+        RemoteContracts contracts=new RemoteContracts(context,dom,new RemoteConfigurationWriter(context,dom));
+        RemoteStore.Peer peer=dom.peer(SUB,generation);
+        for(int i=0;i<3;i++)contracts.process(peer);
+        assertEquals(original.id,dom.latestCommand(SUB,generation).id);
+        assertEquals(RemoteProtocol.canonical(latest),dom.metadata(SUB,generation,"configuration_edit",""));
+        assertFalse(contracts.editFailure(peer).isEmpty());
+    }
+
     @Test public void rejectedAutoEditStopsUntilExplicitDiscardAndNeverErasesPendingCommand() throws Exception {
         JSONObject first=configuration();RemoteStore.Command command=dom.queueConfiguration(SUB,generation,0,0,first);
         JSONObject second=new JSONObject(first.toString());second.getJSONObject("service").put("hidden",true);
