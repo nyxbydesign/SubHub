@@ -124,4 +124,47 @@ public final class RetainedStatisticsTest {
         history.event("large", "b", "2026-08-01", "photos", 1);
         assertEquals(Long.MAX_VALUE, history.total("photos"));
     }
+    @Test public void composedStreakUsesItsCapturedCalendarAcrossTheExpiryBoundary() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo"), losAngeles = ZoneId.of("America/Los_Angeles");
+        for (String instant : new String[]{"2026-11-10T01:00:00Z", "2026-11-11T14:59:59Z",
+                "2026-11-11T15:00:00Z", "2026-11-12T01:00:00Z"}) {
+            long now = time(instant);
+            LocalDate today = Instant.ofEpochMilli(now).atZone(tokyo).toLocalDate();
+            RetainedStatistics history = new RetainedStatistics(losAngeles, now, Collections.emptyMap());
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                    .identified("12345678-1234-1234-1234-123456789abc", tokyo.getId()));
+            int expected = today.isBefore(LocalDate.parse("2026-11-12")) ? 8 : 0;
+            StatsSnapshot original = streakSnapshot(expected, today);
+            StatsSnapshot composed = original.withRetained(history);
+            assertEquals(instant, expected, composed.getCurrentStreak());
+            assertEquals(instant, expected, composed.withRetained(history).getCurrentStreak());
+            assertFalse("Travel cannot create an extra session day", history.activityDates().contains("2026-11-02"));
+            assertEquals(Long.valueOf(1), history.days().get("2026-11-03").get("sessions"));
+            if (instant.equals("2026-11-12T01:00:00Z")) {
+                // This different-clock history value reproduced the bug; composition must not use it.
+                assertEquals(8, history.currentStreak(Instant.ofEpochMilli(now).atZone(losAngeles).toLocalDate()));
+                assertEquals(0, composed.getCurrentStreak());
+            }
+        }
+    }
+
+    @Test public void retainedStreakRecoveryPreservesLiveProgressAndLegacyFallback() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                time("2026-11-12T01:00:00Z"), Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(time("2026-11-03T00:00:00Z"),
+                (time("2026-11-10T01:00:00Z") - time("2026-11-03T00:00:00Z")) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        assertEquals(9, streakSnapshot(9, LocalDate.parse("2026-11-11")).withRetained(history).getCurrentStreak());
+        assertEquals(8, streakSnapshot(0, LocalDate.parse("2026-11-11")).withRetained(history).getCurrentStreak());
+        assertEquals(0, streakSnapshot(0, null).withRetained(history).getCurrentStreak());
+    }
+
+    private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today) {
+        return new StatsSnapshot(0, 0, 0, currentStreak, "2026-11-10", 0, 0, 0,
+                0, 0, 0, 0, 0, 0, false, Collections.emptySet(),
+                Collections.emptySet(), Collections.emptySet(), 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today);
+    }
+
 }

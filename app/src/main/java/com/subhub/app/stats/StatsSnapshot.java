@@ -1,5 +1,6 @@
 package com.subhub.app.stats;
 
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -11,6 +12,8 @@ public final class StatsSnapshot {
     private final long totalSessionSeconds;
     private final int sessions;
     private final int currentStreak;
+    // The calendar sampled with currentStreak must also govern retained-history recency.
+    private final LocalDate streakToday;
     private final String lastSessionDate;
     private final long totalProtectedSeconds;
     private final int currentSessionBlocks;
@@ -55,7 +58,8 @@ public final class StatsSnapshot {
             long currentSessionTributeEvents, long tributeCents,
             long currentSessionTributeCents, long tamperEvents,
             long currentSessionTamperEvents, long popupImpressions,
-            long currentSessionPopupImpressions) {
+            long currentSessionPopupImpressions, LocalDate streakToday) {
+        this.streakToday = streakToday;
         this.totalBlocks = totalBlocks;
         this.totalSessionSeconds = totalSessionSeconds;
         this.sessions = sessions;
@@ -133,7 +137,7 @@ public final class StatsSnapshot {
         return new StatsSnapshot(Math.max(totalBlocks, history.total("censors")),
                 Math.max(totalSessionSeconds, history.sessionSeconds()),
                 (int) Math.min(Integer.MAX_VALUE, Math.max(sessions, history.total("sessions"))),
-                Math.max(currentStreak, history.currentStreak()), lastSessionDate, Math.max(totalProtectedSeconds, history.sessionSeconds()),
+                Math.max(currentStreak, history.currentStreak(streakToday)), lastSessionDate, Math.max(totalProtectedSeconds, history.sessionSeconds()),
                 currentSessionBlocks, (int) Math.min(Integer.MAX_VALUE, Math.max(peakSessionBlocks, history.peak())),
                 Math.max(longestSessionSeconds, history.longest()), browserSessions, browserPages,
                 Math.max(exportedImages, history.total("photos")), customPhrases,
@@ -145,7 +149,7 @@ public final class StatsSnapshot {
                 Math.max(tributeEvents, history.total("tributes")), currentSessionTributeEvents,
                 Math.max(tributeCents, history.total("assessed_EUR")), currentSessionTributeCents,
                 tamperEvents, currentSessionTamperEvents,
-                Math.max(popupImpressions, history.total("popups")), currentSessionPopupImpressions);
+                Math.max(popupImpressions, history.total("popups")), currentSessionPopupImpressions, streakToday);
     }
 
     private static Set<String> union(Set<String> first, Set<String> second) {

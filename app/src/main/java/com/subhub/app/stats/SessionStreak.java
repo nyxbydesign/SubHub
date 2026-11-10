@@ -30,14 +30,16 @@ final class SessionStreak {
         } catch (RuntimeException invalid) { return new SessionStreak(count, savedDay); }
     }
 
-    int current(long observedAt, String zone) {
-        try { return current(Instant.ofEpochMilli(observedAt).atZone(ZoneId.of(zone)).toLocalDate()); }
-        catch (RuntimeException invalid) { return 0; }
+    static LocalDate today(long observedAt, String zone) {
+        try { return Instant.ofEpochMilli(observedAt).atZone(ZoneId.of(zone)).toLocalDate(); }
+        catch (RuntimeException invalid) { return null; }
     }
+
+    int current(long observedAt, String zone) { return current(today(observedAt, zone)); }
 
     int current(LocalDate today) {
         LocalDate last = parse(lastDay);
-        return last != null && !last.isAfter(today) && !last.isBefore(today.minusDays(1)) ? days : 0;
+        return today != null && last != null && !last.isAfter(today) && !last.isBefore(today.minusDays(1)) ? days : 0;
     }
 
     private static LocalDate parse(String value) {

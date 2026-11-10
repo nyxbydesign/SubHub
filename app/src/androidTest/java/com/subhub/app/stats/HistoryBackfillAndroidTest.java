@@ -64,6 +64,44 @@ public final class HistoryBackfillAndroidTest {
                 + ";2," + WALL + ",3600,100,10000,2,1,250,3,4,0").commit();
     }
 
+    @Test public void stoppedTokyoStreakDoesNotReturnThroughLosAngelesHistoryAfterExpiry() throws Exception {
+        TimeZone originalZone = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"));
+            long start = Instant.parse("2026-11-03T00:00:00Z").toEpochMilli();
+            long end = Instant.parse("2026-11-10T01:00:00Z").toEpochMilli();
+            StatsRepository.NativeSession session = new StatsRepository.NativeSession(
+                    UUID.randomUUID().toString(), start, "Asia/Tokyo");
+            assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit()
+                    .putString(StatsRepository.NATIVE_OWNER_KEY, session.identity).commit());
+            StatsRepository repository = new StatsRepository(context, false);
+            assertTrue(repository.ensureNativeSession(session));
+            assertEquals(8, LocalRetainedStatistics.load(context, end).stats.getCurrentStreak());
+            assertTrue(repository.endSessionForIdentity(session.identity, end, (end - start) / 1000));
+            assertFalse(prefs(StatsRepository.PREFS_NAME).contains(StatsRepository.ACTIVE_SESSION_ZONE));
+            assertEquals("Asia/Tokyo", prefs(StatsRepository.PREFS_NAME).getString(StatsRepository.LAST_SESSION_ZONE, ""));
+            LocalRetainedStatistics stopped = LocalRetainedStatistics.load(context, end);
+            assertEquals(8, stopped.stats.getCurrentStreak());
+            AchievementManager manager = new AchievementManager(context);
+            manager.checkRetainedAchievements(stopped.stats);
+            assertTrue(manager.isUnlocked("streak_7"));
+            long earnedAt = manager.getUnlockedAt("streak_7");
+            long before = Instant.parse("2026-11-11T14:59:59Z").toEpochMilli();
+            long boundary = Instant.parse("2026-11-11T15:00:00Z").toEpochMilli();
+            long later = Instant.parse("2026-11-12T01:00:00Z").toEpochMilli();
+            assertEquals(8, LocalRetainedStatistics.load(context, before).stats.getCurrentStreak());
+            assertEquals(0, LocalRetainedStatistics.load(context, boundary).stats.getCurrentStreak());
+            LocalRetainedStatistics reloaded = LocalRetainedStatistics.load(context, later);
+            assertEquals(0, reloaded.repository.retainedSnapshot(later).getCurrentStreak());
+            assertEquals(8, reloaded.history.currentStreak(Instant.ofEpochMilli(later)
+                    .atZone(ZoneId.systemDefault()).toLocalDate()));
+            assertEquals(0, reloaded.stats.getCurrentStreak());
+            manager.checkRetainedAchievements(reloaded.stats);
+            assertTrue(manager.isUnlocked("streak_7")); assertEquals(earnedAt, manager.getUnlockedAt("streak_7"));
+            assertEquals(0, LocalRetainedStatistics.load(context, later).stats.getCurrentStreak());
+        } finally { TimeZone.setDefault(originalZone); }
+    }
+
     @Test public void localOnlyBothCountsOnceAndNeverImportsSourceRows() throws Exception {
         session();
         Map<String, ?> before = prefs(StatsRepository.PREFS_NAME).getAll();

@@ -39,14 +39,17 @@ final class LocalRetainedStatistics {
     }
 
     static LocalRetainedStatistics load(Context context) throws Exception {
+        return load(context, System.currentTimeMillis());
+    }
+
+    static LocalRetainedStatistics load(Context context, long now) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("History projection must be off main");
         if (!DeviceRolePreferences.supportsSub(context)) throw new SecurityException("Local Sub unavailable");
-        long now = System.currentTimeMillis();
         StatsRepository repository = new StatsRepository(context, false);
-        StatsSnapshot original = repository.retainedSnapshot();
+        StatsSnapshot original = repository.retainedSnapshot(now);
         DailyStatsStore.awaitWrites();
         DailyStatsStore daily = DailyStatsStore.get(context);
-        daily.syncStats(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0));
+        daily.syncStatsSnapshot(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).getAll(), now);
         RetainedStatistics history = new RetainedStatistics(ZoneId.systemDefault(), now,
                 daily.days("0000-01-01", "9999-12-31"));
         history.activeDates(original.getActiveDates());

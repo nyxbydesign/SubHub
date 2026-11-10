@@ -73,8 +73,14 @@ final class RetainedStatistics {
                 .merge(metric, amount, DomStatsSnapshot::add);
     }
 
-    String day(long timestamp) {
-        return Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate().toString();
+    String day(long timestamp) { return day(timestamp, zone); }
+
+    private static String day(long timestamp, ZoneId calendar) {
+        return Instant.ofEpochMilli(timestamp).atZone(calendar).toLocalDate().toString();
+    }
+
+    private ZoneId sessionZone(StatsRepository.SessionEntry entry) {
+        return entry.zone().isEmpty() ? zone : ZoneId.of(entry.zone());
     }
 
     Map<String, Map<String, Long>> days() {
@@ -85,15 +91,16 @@ final class RetainedStatistics {
         Map<String, Map<String, Long>> sessionDays = new TreeMap<>();
         for (Map.Entry<String, StatsRepository.SessionEntry> saved : sessions.entrySet()) {
             StatsRepository.SessionEntry entry = saved.getValue();
-            String date = day(entry.getStartMillis());
+            ZoneId calendar = sessionZone(entry);
+            String date = day(entry.getStartMillis(), calendar);
             add(sessionDays, date, "sessions", 1);
             for (Map.Entry<String, Long> slice : DailyTimeSlices.split(entry.getStartMillis(),
-                    entry.getDurationSeconds() * 1000, entry.zone().isEmpty() ? zone : ZoneId.of(entry.zone())).entrySet())
+                    entry.getDurationSeconds() * 1000, calendar).entrySet())
                 add(sessionDays, slice.getKey(), "service_ms", slice.getValue());
             // A session-wide count has no event clock within a session crossing midnight.
             long lastObserved = entry.getStartMillis() + entry.getDurationSeconds() * 1000;
             if (entry.getDurationSeconds() > 0) lastObserved--;
-            if (date.equals(day(lastObserved))) {
+            if (date.equals(day(lastObserved, calendar))) {
                 add(sessionDays, date, "censors", entry.getBlocks());
                 add(sessionDays, date, "limits_ms", entry.getLimitedAppMillis());
                 add(sessionDays, date, "limit_stops", entry.getLimitInterventions());
@@ -150,15 +157,16 @@ final class RetainedStatistics {
 
     Set<String> activityDates() {
         Set<String> result = new java.util.TreeSet<>(activeDates);
-        for (StatsRepository.SessionEntry entry : sessions.values()) result.add(day(entry.getStartMillis()));
+        for (StatsRepository.SessionEntry entry : sessions.values())
+            result.add(day(entry.getStartMillis(), sessionZone(entry)));
         for (Map.Entry<String, Map<String, Long>> day : days().entrySet())
             if (day.getValue().getOrDefault("service_ms", 0L) > 0) result.add(day.getKey());
         return result;
     }
 
-    int currentStreak() {
+    int currentStreak(LocalDate day) {
+        if (day == null) return 0;
         Set<String> dates = activityDates();
-        LocalDate day = Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
         if (!dates.contains(day.toString())) day = day.minusDays(1);
         int streak = 0;
         while (dates.contains(day.toString())) { streak++; day = day.minusDays(1); }

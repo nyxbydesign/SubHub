@@ -527,11 +527,12 @@ public final class StatsRepository {
             // Legacy records without a zone retain their previous device-calendar interpretation.
             String streakZone = observedStart > 0 ? activeSessionZone()
                     : preferences.getString(LAST_SESSION_ZONE, java.time.ZoneId.systemDefault().getId());
+            LocalDate streakToday = SessionStreak.today(now, streakZone);
             SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
                     preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, streakZone);
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
-                    streak.current(now, streakZone), streak.lastDay, protectedSeconds,
+                    streak.current(streakToday), streak.lastDay, protectedSeconds,
                     restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
                     preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),
@@ -558,7 +559,7 @@ public final class StatsRepository {
                     preferences.getLong(KEY_TAMPER_EVENTS, 0L),
                     activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS),
                     preferences.getLong(KEY_POPUP_IMPRESSIONS, 0L),
-                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS));
+                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS), streakToday);
         }
     }
 
