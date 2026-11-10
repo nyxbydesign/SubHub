@@ -523,7 +523,7 @@ public final class StatsRepository {
                     preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, activeSessionZone());
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
-                    streak.current(LocalDate.now()), streak.lastDay, protectedSeconds,
+                    streak.current(now, activeSessionZone()), streak.lastDay, protectedSeconds,
                     restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
                     preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),

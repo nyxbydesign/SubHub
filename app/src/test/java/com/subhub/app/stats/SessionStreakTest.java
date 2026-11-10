@@ -35,6 +35,17 @@ public final class SessionStreakTest {
         assertEquals(3, value.days); assertEquals("2026-10-26", value.lastDay);
     }
 
+    @Test public void westwardTravelKeepsRecencyInTheSessionsRecordedZone() {
+        long observedAt = at("2026-11-10T01:00:00Z");
+        SessionStreak value = SessionStreak.through(1, "2026-11-03",
+                at("2026-11-03T00:00:00Z"), observedAt, "Asia/Tokyo");
+        assertEquals("2026-11-10", value.lastDay);
+        assertEquals(8, value.current(observedAt, "Asia/Tokyo"));
+        assertEquals(LocalDate.parse("2026-11-09"), Instant.ofEpochMilli(observedAt)
+                .atZone(java.time.ZoneId.of("America/Los_Angeles")).toLocalDate());
+        assertEquals(0, value.current(observedAt, "invalid"));
+    }
+
     @Test public void idleInvalidAndFutureFactsCannotInventAStreak() {
         assertEquals(0, SessionStreak.through(9, "2026-10-01", 0, at("2026-10-10T00:00:00Z"), "UTC")
                 .current(LocalDate.parse("2026-10-10")));

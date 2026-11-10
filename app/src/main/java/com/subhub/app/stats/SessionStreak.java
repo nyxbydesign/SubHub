@@ -30,6 +30,11 @@ final class SessionStreak {
         } catch (RuntimeException invalid) { return new SessionStreak(count, savedDay); }
     }
 
+    int current(long observedAt, String zone) {
+        try { return current(Instant.ofEpochMilli(observedAt).atZone(ZoneId.of(zone)).toLocalDate()); }
+        catch (RuntimeException invalid) { return 0; }
+    }
+
     int current(LocalDate today) {
         LocalDate last = parse(lastDay);
         return last != null && !last.isAfter(today) && !last.isBefore(today.minusDays(1)) ? days : 0;
