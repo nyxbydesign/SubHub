@@ -173,9 +173,10 @@ public final class JournalActivity extends PreferencePage {
     }
     private void refresh() {
         if (content == null || model.editing || model.busy) return;
+        // A queued read is not an authority lease: revoke visible rows/playback before coalescing.
+        if (!authorized()) { unavailable(); return; }
         if (data.isPending("journal-screen") && model.selected.equals(requestedSelection)
                 && model.offset == requestedOffset) return;
-        if (!authorized()) { unavailable(); return; }
         JournalRuntime runtime = model.runtime; boolean dom = model.dom;
         PersonId target = model.target; String selected = model.selected; int offset = model.offset;
         requestedSelection = selected; requestedOffset = offset;
@@ -223,6 +224,7 @@ public final class JournalActivity extends PreferencePage {
         });
     }
     private void unavailable() {
+        data.cancel("journal-screen"); data.cancelPrefix("journal-thumb:"); rendered = "";
         closePlayers(); content.removeAllViews();
         JournalUi.empty(content, R.drawable.ic_ux_lock, getString(R.string.journal_unavailable));
         content.findViewWithTag("journal_empty").setTag("journal_unavailable");

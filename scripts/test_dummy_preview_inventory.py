@@ -35,7 +35,7 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             ], inventory["com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest"]["selectedMethods"])
             self.assertTrue(set(selected).isdisjoint(native.DEVICE_PASS_SELECTORS))
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
-            self.assertEqual(54, len(native.suite_selectors("device-pass")))
+            self.assertEqual(56, len(native.suite_selectors("device-pass")))
 
 if __name__ == "__main__":
     unittest.main()

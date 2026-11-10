@@ -46,6 +46,7 @@ public final class AppModeActivity extends AppCompatActivity {
     private AsyncUiScope appData;
     private final Map<String, AppLimitRow> appRows = new LinkedHashMap<>();
     private Set<String> displayedPackages = java.util.Collections.emptySet(),
+            metadataPackages = java.util.Collections.emptySet(),
             loadingPackages,
             failedPackages;
     private Bundle restoredDrafts;
@@ -303,7 +304,7 @@ public final class AppModeActivity extends AppCompatActivity {
                         new java.util.LinkedHashSet<>(manager.getIncludedPackages()));
         if (requested.equals(loadingPackages)
                 || requested.equals(failedPackages)
-                || requested.equals(displayedPackages) && !appRows.isEmpty()) return;
+                || requested.equals(metadataPackages) && !appRows.isEmpty()) return;
         if (requested.isEmpty()) {
             if (!appRows.isEmpty() || binding.perAppAllowancesList.getChildCount() == 0) {
                 boolean previous = populatingTimers;
@@ -315,6 +316,7 @@ public final class AppModeActivity extends AppCompatActivity {
                 message(R.string.limits_no_apps);
             }
             displayedPackages = requested;
+            metadataPackages = requested;
             loadingPackages = null;
             appData.cancel("limits-apps");
             return;
@@ -330,15 +332,18 @@ public final class AppModeActivity extends AppCompatActivity {
                 AppLimitRow row = appRows.get(model.packageName);
                 if (row != null) row.metadata(model.name, model.icon);
             }
-            displayedPackages = requested;
+            metadataPackages = requested;
             renderTimerControls();
             renderTimerUsage();
-        }, failure -> {
-            loadingPackages = null;
-            failedPackages = requested;
-            // Stored allowances stay usable even when the package catalog cannot be queried.
-            if (binding != null) message(R.string.limits_apps_unavailable);
-        });
+        }, failure -> appMetadataUnavailable(requested));
+    }
+
+    private void appMetadataUnavailable(Set<String> requested) {
+        loadingPackages = null;
+        if (binding == null || !manager.getIncludedPackages().equals(requested)) return;
+        failedPackages = requested;
+        // Catalog availability does not determine whether the complete saved rows may be edited.
+        message(R.string.limits_apps_unavailable);
     }
 
     private void renderStoredAllowances(Set<String> requested) {
@@ -368,6 +373,8 @@ public final class AppModeActivity extends AppCompatActivity {
                 binding.perAppAllowancesList.addView(row, new LinearLayout.LayoutParams(-1, -2));
             }
             restoredDrafts = null;
+            // All requested rows are now present. Saving must not wait for labels or icons.
+            displayedPackages = requested;
         } finally { populatingTimers = previous; }
         renderTimerControls(); renderTimerUsage();
         if (dirtyTimers) scheduleAutoSave();

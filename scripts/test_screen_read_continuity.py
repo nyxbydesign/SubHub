@@ -31,6 +31,23 @@ class ScreenReadContinuityTest(unittest.TestCase):
         self.assertIn("epoch != achievementReadEpoch", read)
         self.assertIn("lastAchievementRead < 5_000L", read)
 
+    def test_journal_authority_precedes_pending_read_coalescing(self):
+        source = (ROOT / "app/src/main/java/com/subhub/app/journal/JournalActivity.java").read_text()
+        refresh = source.split("private void refresh()", 1)[1].split("private void unavailable()", 1)[0]
+        self.assertLess(refresh.index("if (!authorized())"), refresh.index('data.isPending("journal-screen")'))
+        revoke = source.split("private void unavailable()", 1)[1].split("private void failedRefresh()", 1)[0]
+        self.assertIn('data.cancel("journal-screen")', revoke)
+        self.assertIn("closePlayers()", revoke)
+        self.assertIn('rendered = ""', revoke)
+
+    def test_allowance_save_readiness_comes_from_stored_rows_not_metadata(self):
+        source = (ROOT / "app/src/main/java/com/subhub/app/appmode/AppModeActivity.java").read_text()
+        render = source.split("private void renderStoredAllowances", 1)[1].split("private void message", 1)[0]
+        self.assertIn("displayedPackages = requested", render)
+        metadata = source.split('appData.load("limits-apps"', 1)[1].split("private void renderStoredAllowances", 1)[0]
+        self.assertNotIn("displayedPackages =", metadata)
+        self.assertIn("metadataPackages = requested", metadata)
+
     def test_unknown_does_not_masquerade_as_empty_or_error(self):
         resources = {}
         for path in (ROOT / "app/src/main/res/values").glob("*.xml"):
