@@ -42,7 +42,8 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             remoteClock.postDelayed(this, domOverview ? 5000 : 2000);
         }
     };
-    private LinearLayout totalsDetails, sessionList, currentSession, allowances;
+    private LinearLayout totalsDetails, sessionList, currentSession, currentSessionDetails, allowances;
+    private android.view.View sessionAllowanceDivider;
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
     private AchievementPreviewView achievements;
     private LocalRetainedStatistics localFacts;
@@ -94,6 +95,16 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         statisticsBuilt = true;
         currentSession = card(page);
         currentSession.setId(R.id.profile_stats_current);
+        currentSessionDetails = com.subhub.app.people.PersonUi.column(this);
+        currentSessionDetails.setTag("profile_current_session_details");
+        currentSession.addView(currentSessionDetails, new LinearLayout.LayoutParams(-1, -2));
+        sessionAllowanceDivider = new android.view.View(this);
+        sessionAllowanceDivider.setBackgroundColor(getColor(R.color.outline_subtle));
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, dp(1));
+        dividerParams.topMargin = dp(16);
+        dividerParams.bottomMargin = dp(12);
+        currentSession.addView(sessionAllowanceDivider, dividerParams);
+        sessionAllowanceDivider.setVisibility(android.view.View.GONE);
         LinearLayout summary = card(page);
         summary.setId(R.id.stats_lifetime_summary);
         heading(summary, R.string.stats_all_time);
@@ -135,7 +146,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             }
             @Override public void onViewDetachedFromWindow(android.view.View view) { stopAppIcons(); }
         });
-        page.addView(allowances, new LinearLayout.LayoutParams(-1, -2));
+        currentSession.addView(allowances, new LinearLayout.LayoutParams(-1, -2));
         sessionList = card(page);
         sessionList.setTag("stats_session_history");
         totalsDetails = card(page);
@@ -477,16 +488,16 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             lifetimeTime.setText(value.hasTotals() ? duration(value.sessionSeconds) : unknown());
             lifetimeCensors.setText(number(value.subs));
             lifetimeSessions.setText(value.hasTotals() ? number(value.sessions) : unknown());
-            currentSession.removeAllViews();
-            heading(currentSession, R.string.dom_stats_current);
-            row(currentSession, R.string.dom_stats_active,
+            currentSessionDetails.removeAllViews();
+            heading(currentSessionDetails, R.string.dom_stats_current);
+            row(currentSessionDetails, R.string.dom_stats_active,
                     gauge(value.activeSubs, value.activeKnown, value.subs)).setTag("dom_stats_active");
-            row(currentSession, R.string.dom_stats_hardcore,
+            row(currentSessionDetails, R.string.dom_stats_hardcore,
                     gauge(value.hardcoreSubs, value.hardcoreKnown, value.subs)).setTag("dom_stats_hardcore");
             if (value.activeKnown < value.subs)
-                text(currentSession, getString(R.string.dom_stats_runtime_coverage, value.activeKnown, value.subs), 12, true);
+                text(currentSessionDetails, getString(R.string.dom_stats_runtime_coverage, value.activeKnown, value.subs), 12, true);
             if (value.hardcoreKnown < value.subs)
-                text(currentSession, getString(R.string.dom_stats_hardcore_coverage, value.hardcoreKnown, value.subs), 12, true);
+                text(currentSessionDetails, getString(R.string.dom_stats_hardcore_coverage, value.hardcoreKnown, value.subs), 12, true);
             totalsDetails.removeAllViews();
             heading(totalsDetails, R.string.profile_stats_feature_totals);
             for (String currency : value.paidCents.keySet()) {
@@ -506,11 +517,13 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                 text(totalsDetails, getString(R.string.dom_stats_wallet_coverage, value.walletKnown, value.subs), 12, true);
             text(totalsDetails, getString(R.string.dom_stats_scope), 12, true);
             achievements.render(loaded.achievements);
+            updateCurrentSessionVisibility();
         }, failure -> {
             if (!workspace.accessible(this)) { finish(); return; }
             lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
-            currentSession.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
+            currentSessionDetails.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
             text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+            updateCurrentSessionVisibility();
         });
     }
 
@@ -530,22 +543,23 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private long factsObservedAt() { return localFacts == null ? System.currentTimeMillis() : localFacts.observedAt; }
 
     private void bindCurrent(StatsRepository repository, StatsSnapshot stats) {
-        currentSession.removeAllViews();
+        currentSessionDetails.removeAllViews();
         boolean active = repository.observedSessionActive();
-        currentSession.setVisibility(active ? android.view.View.VISIBLE : android.view.View.GONE);
-        if (!active) return;
-        heading(currentSession, R.string.profile_stats_current_session);
-        row(currentSession, R.string.stats_session_elapsed, duration(stats.getCurrentSessionSeconds()));
-        text(currentSession, getString(R.string.stats_session_as_of,
+        currentSessionDetails.setVisibility(active ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (!active) { updateCurrentSessionVisibility(); return; }
+        heading(currentSessionDetails, R.string.profile_stats_current_session);
+        row(currentSessionDetails, R.string.stats_session_elapsed, duration(stats.getCurrentSessionSeconds()));
+        text(currentSessionDetails, getString(R.string.stats_session_as_of,
                 DateFormat.getDateTimeInstance().format(new Date(factsObservedAt()))), 12, true);
-        row(currentSession, R.string.stats_censors, number(stats.getCurrentSessionBlocks()));
-        row(currentSession, R.string.stats_limited_app_time, duration(stats.getCurrentSessionLimitedAppMillis() / 1000));
-        row(currentSession, R.string.stats_limit_stops, number(stats.getCurrentSessionLimitInterventions()));
-        row(currentSession, R.string.stats_tributes, number(stats.getCurrentSessionTributeEvents()));
+        row(currentSessionDetails, R.string.stats_censors, number(stats.getCurrentSessionBlocks()));
+        row(currentSessionDetails, R.string.stats_limited_app_time, duration(stats.getCurrentSessionLimitedAppMillis() / 1000));
+        row(currentSessionDetails, R.string.stats_limit_stops, number(stats.getCurrentSessionLimitInterventions()));
+        row(currentSessionDetails, R.string.stats_tributes, number(stats.getCurrentSessionTributeEvents()));
         for (String currency : new String[] {"EUR", "USD"}) {
-            row(currentSession, R.string.stats_assessed,
+            row(currentSessionDetails, R.string.stats_assessed,
                     WalletCurrency.format(currency, repository.tributeCents(currency, true)) + " " + currency);
         }
+        updateCurrentSessionVisibility();
     }
 
     private void bindRemoteTotals() {
@@ -561,13 +575,14 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                     : DateFormat.getDateTimeInstance().format(new Date(person.lastSyncedAt))),13,true);
             if (person.sync.stats != com.subhub.app.people.PersonSnapshot.Freshness.CURRENT)
                 text(totalsDetails,getString(R.string.role_stale_data),13,true);
-            currentSession.removeAllViews();currentSession.setVisibility(person.serviceActive?android.view.View.VISIBLE:android.view.View.GONE);
-            if(person.serviceActive){heading(currentSession,R.string.profile_stats_current_session);
-                row(currentSession,R.string.stats_session_elapsed,remoteMetric(stats,"currentSeconds",true));
-                row(currentSession,R.string.stats_censors,remoteMetric(stats,"currentCensors",false));
-                row(currentSession,R.string.stats_limit_stops,remoteMetric(stats,"currentLimitStops",false));
-                row(currentSession,R.string.stats_tributes,remoteMetric(stats,"currentTributes",false));}
-        } catch (Exception unavailable) { currentSession.setVisibility(android.view.View.GONE); }
+            currentSessionDetails.removeAllViews();currentSessionDetails.setVisibility(person.serviceActive?android.view.View.VISIBLE:android.view.View.GONE);
+            if(person.serviceActive){heading(currentSessionDetails,R.string.profile_stats_current_session);
+                row(currentSessionDetails,R.string.stats_session_elapsed,remoteMetric(stats,"currentSeconds",true));
+                row(currentSessionDetails,R.string.stats_censors,remoteMetric(stats,"currentCensors",false));
+                row(currentSessionDetails,R.string.stats_limit_stops,remoteMetric(stats,"currentLimitStops",false));
+                row(currentSessionDetails,R.string.stats_tributes,remoteMetric(stats,"currentTributes",false));}
+        } catch (Exception unavailable) { currentSessionDetails.setVisibility(android.view.View.GONE); }
+        updateCurrentSessionVisibility();
         row(totalsDetails,R.string.statistics_longest,getString(R.string.role_unknown_data));
         row(totalsDetails,R.string.statistics_current_streak,getString(R.string.role_unknown_data));
         row(totalsDetails,R.string.stats_limited_app_time,stats==null?getString(R.string.role_unknown_data):duration(stats.optLong("limitMillis")/1000));
@@ -587,7 +602,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     }
 
     private void bindAllowances() {
-        if (domOverview) { allowances.setVisibility(android.view.View.GONE); return; }
+        if (domOverview) { allowances.setVisibility(android.view.View.GONE); updateCurrentSessionVisibility(); return; }
         if (remote != null) {
             RemoteStatsSource expected = remote;
             String route = getIntent().getStringExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
@@ -597,9 +612,11 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             data.load("stats-app-allowances",expected::person,person->{
                 if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
                 allowances.removeAllViews();com.subhub.app.people.PersonUi.allowances(allowances,person);
+                updateCurrentSessionVisibility();
             },failure->{
                 if (!currentAppIconTarget(request, expected, route, provider, authority)) return;
                 allowances.removeAllViews();text(allowances,getString(R.string.role_unknown_data),13,true);
+                updateCurrentSessionVisibility();
             });
             return;
         }
@@ -608,10 +625,24 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         data.load("stats-app-allowances", () -> repository.load(com.subhub.app.people.PersonId.LOCAL), person -> {
             allowances.removeAllViews();
             com.subhub.app.people.PersonUi.allowances(allowances, person);
+            updateCurrentSessionVisibility();
         }, failure -> {
             allowances.removeAllViews();
             text(allowances, getString(R.string.role_unknown_data), 13, true);
+            updateCurrentSessionVisibility();
         });
+    }
+
+    /** Neither an idle session nor a metric refresh may hide or discard daily allowances. */
+    private void updateCurrentSessionVisibility() {
+        boolean sessionVisible = currentSessionDetails.getVisibility() == android.view.View.VISIBLE
+                && currentSessionDetails.getChildCount() > 0;
+        boolean appTimeVisible = allowances.getVisibility() == android.view.View.VISIBLE
+                && allowances.getChildCount() > 0;
+        sessionAllowanceDivider.setVisibility(sessionVisible && appTimeVisible
+                ? android.view.View.VISIBLE : android.view.View.GONE);
+        currentSession.setVisibility(sessionVisible || appTimeVisible
+                ? android.view.View.VISIBLE : android.view.View.GONE);
     }
 
     private void bindSessions() {

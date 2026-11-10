@@ -150,6 +150,96 @@ public final class ProfileAndroidTest {
         assertFalse(ProfileStore.save(context, false, "Wrong owner", "", ""));
     }
 
+    @Test public void emptyAboutMeIsOptionalAndOnlyChangesOnSaveForEitherRole() throws Exception {
+        String avatar = profileImage(Color.rgb(67, 135, 208));
+        for (boolean dom : new boolean[]{false, true}) {
+            if (dom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
+            assertTrue(ProfileStore.save(context, dom, "Keep this name", "Original biography", avatar, "Fixture gender", 29));
+            ProfileData original = ProfileStore.load(context, dom), other = ProfileStore.load(context, !dom);
+            Intent edit = new Intent(context, ProfileEditorActivity.class).putExtra(ProfileEditorActivity.EXTRA_DOM, dom);
+            try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
+                scenario.onActivity(a -> {
+                    TextView label = a.findViewById(android.R.id.content).findViewWithTag("profile_about_label");
+                    assertEquals(a.getString(R.string.profile_about_optional), label.getText().toString());
+                    java.util.ArrayList<View> obsolete = new java.util.ArrayList<>();
+                    a.findViewById(android.R.id.content).findViewsWithText(obsolete,
+                            a.getString(R.string.profile_optional_visibility), View.FIND_VIEWS_WITH_TEXT);
+                    assertTrue("Removed sharing subtext must stay absent", obsolete.isEmpty());
+                });
+                onView(tag("profile_about")).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
+                scenario.recreate();
+                scenario.onActivity(a -> assertEquals("", ((TextView) a.findViewById(android.R.id.content)
+                        .findViewWithTag("profile_about")).getText().toString()));
+                assertEquals(original, ProfileStore.load(context, dom));
+                onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
+            }
+            assertEquals(original, ProfileStore.load(context, dom));
+            try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
+                onView(tag("profile_about")).perform(revealAboveNavigation(), replaceText(""), closeSoftKeyboard());
+                onView(tag("profile_save")).perform(revealAboveNavigation(), click());
+            }
+            ProfileData saved = ProfileStore.load(context, dom);
+            assertEquals("", saved.about);
+            assertEquals(original.name, saved.name); assertEquals(original.avatar, saved.avatar);
+            assertEquals(original.gender, saved.gender); assertEquals(original.age, saved.age);
+            assertEquals(other, ProfileStore.load(context, !dom));
+            try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
+                scenario.onActivity(a -> assertEquals("", ((TextView) a.findViewById(android.R.id.content)
+                        .findViewWithTag("profile_about")).getText().toString()));
+            }
+        }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void profileEditorPairsActionsAndKeepsAvatarRemovalAsDraft() throws Exception {
+        String avatar = profileImage(Color.rgb(67, 135, 208));
+        assertTrue(ProfileStore.save(context, false, "Layout fixture", "", avatar));
+        Intent edit = new Intent(context, ProfileEditorActivity.class).putExtra(ProfileEditorActivity.EXTRA_DOM, false);
+        try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(edit)) {
+            onView(tag("profile_avatar_actions")).perform(revealAboveNavigation());
+            settleNativeFrame(scenario);
+            scenario.onActivity(a -> assertProfileActionPair(a, "profile_avatar_actions",
+                    "profile_avatar_change", "profile_avatar_remove"));
+            capture(scenario, "editor-avatar-action-row").recycle();
+            onView(tag("profile_form_actions")).perform(revealAboveNavigation());
+            settleNativeFrame(scenario);
+            scenario.onActivity(a -> assertProfileActionPair(a, "profile_form_actions", "profile_save", "profile_cancel"));
+            capture(scenario, "editor-save-cancel-row").recycle();
+            onView(tag("profile_avatar_remove")).perform(revealAboveNavigation(), click());
+            assertEquals(avatar, ProfileStore.load(context, false).avatar);
+            scenario.recreate();
+            await(scenario, a -> {
+                View change = a.findViewById(android.R.id.content).findViewWithTag("profile_avatar_change");
+                return change.isLaidOut() && change.getWidth() > 0;
+            });
+            scenario.onActivity(a -> {
+                View root = a.findViewById(android.R.id.content);
+                View change = root.findViewWithTag("profile_avatar_change"), remove = root.findViewWithTag("profile_avatar_remove");
+                assertEquals(View.GONE, remove.getVisibility());
+                assertEquals(((View) change.getParent()).getWidth(), change.getWidth());
+            });
+            onView(tag("profile_cancel")).perform(revealAboveNavigation(), click());
+        }
+        assertEquals(avatar, ProfileStore.load(context, false).avatar);
+    }
+
+    private static void assertProfileActionPair(Activity activity, String rowTag, String topTag, String bottomTag) {
+        View root = activity.findViewById(android.R.id.content);
+        ProfileActionRow row = root.findViewWithTag(rowTag);
+        TextView top = root.findViewWithTag(topTag), bottom = root.findViewWithTag(bottomTag);
+        assertSame(row, top.getParent()); assertSame(row, bottom.getParent());
+        if (row.getOrientation() == android.widget.LinearLayout.HORIZONTAL) {
+            assertSame(bottom, row.getChildAt(0)); assertSame(top, row.getChildAt(1));
+            assertTrue(Math.abs(top.getWidth() - bottom.getWidth()) <= 1);
+            assertEquals(1, top.getLineCount()); assertEquals(1, bottom.getLineCount());
+        } else {
+            assertSame(top, row.getChildAt(0)); assertSame(bottom, row.getChildAt(1));
+        }
+        assertTrue(top.getHeight() >= PersonUi.dp(activity, 48));
+        assertTrue(bottom.getHeight() >= PersonUi.dp(activity, 48));
+        textFits(top); textFits(bottom);
+    }
+
     @Test public void subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation() {
         java.util.Map<String, ?> baseline = new LinkedHashMap<>(context.getSharedPreferences(SubFeaturePolicy.STORE, 0).getAll());
         try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {

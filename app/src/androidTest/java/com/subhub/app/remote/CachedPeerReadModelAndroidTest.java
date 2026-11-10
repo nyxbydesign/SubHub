@@ -139,6 +139,52 @@ public final class CachedPeerReadModelAndroidTest {
         assertThrows(IllegalStateException.class,()->repository.load(selected));
     }
 
+    @Test public void atmosphereSummaryUsesOnlyThePeerBaselineAndKeepsConsentFreshnessSeparate() throws Exception {
+        long now = System.currentTimeMillis();
+        JSONObject configuration = RemoteConfigurationAndroidTest.configuration();
+        JSONObject sections = configuration.getJSONObject("contract").getJSONObject("sections");
+        sections.getJSONObject("modules").put("module_subliminal_enabled", true);
+        sections.getJSONObject("subliminal").put("subliminal_enabled_packs", new org.json.JSONArray(java.util.List.of("findom")))
+                .put("subliminal_advanced", true).put("subliminal_custom_phrases", "Never expose this fixture phrase");
+        sections.getJSONObject("popup").put("popup_storm_enabled", true).put("popup_storm_position_mode", "center");
+        mirror(RemoteProtocol.Stream.BASELINE, "active", configuration);
+        store.putMetadata(SUB, generation, "confirmed_BASELINE", Long.toString(now));
+        RemotePersonRepository repository = new RemotePersonRepository(context, feature);
+        PersonId selected = RemotePersonRepository.id(store.peer(SUB, generation));
+        PersonSnapshot saved = repository.load(selected);
+        PersonSnapshot.Section atmosphere = atmosphere(saved);
+        assertEquals(PersonSnapshot.Freshness.CURRENT, saved.sync.contract);
+        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertTrue(atmosphere.details.contains("Categories: Findom\nIntensity: Custom"));
+        assertTrue(atmosphere.details.contains("Consent: Unknown"));
+        assertFalse(atmosphere.details.contains("Never expose"));
+        assertFalse(atmosphere.details.matches("(?s).*\\d.*"));
+        JSONObject consent = new JSONObject();
+        for (String key : SubFeaturePolicy.FEATURES) consent.put(key, !"subliminal".equals(key));
+        JSONObject runtime = runtime(now).put("featureConsent", consent);
+        assertTrue(RemoteTelemetry.validRuntime(runtime));
+        mirror(RemoteProtocol.Stream.RUNTIME, "current", runtime);
+        store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now));
+        assertEquals("Whispers Disabled by Sub\nPopup Storm On", atmosphere(repository.load(selected)).summary);
+        store.putMetadata(SUB, generation, "confirmed_RUNTIME", Long.toString(now - 120_000));
+        atmosphere = atmosphere(repository.load(selected));
+        assertEquals("Whispers Configured on\nPopup Storm Configured on", atmosphere.summary);
+        assertTrue(atmosphere.details.contains("Consent: Last observed disabled by Sub"));
+        store.putMetadata(SUB, generation, "confirmed_BASELINE", Long.toString(now - 40 * 60_000L));
+        saved = repository.load(selected);
+        assertEquals(PersonSnapshot.Freshness.STALE, saved.sync.contract);
+        assertEquals(atmosphere.details, atmosphere(saved).details);
+        mirror(RemoteProtocol.Stream.BASELINE, "active", new JSONObject().put("bad", "configuration"));
+        saved = repository.load(selected);
+        assertEquals(PersonSnapshot.Freshness.UNKNOWN, saved.sync.contract);
+        assertTrue(saved.sections.isEmpty());
+    }
+
+    private static PersonSnapshot.Section atmosphere(PersonSnapshot person) {
+        for (PersonSnapshot.Section section : person.sections) if ("atmosphere".equals(section.key)) return section;
+        throw new AssertionError("Missing atmosphere section");
+    }
+
     private void mirror(RemoteProtocol.Stream stream,String item,JSONObject body) {
         store.getWritableDatabase().execSQL("INSERT OR REPLACE INTO remote_objects(peer,generation,stream,item,seq,body,deleted,observed) VALUES(?,?,?,?,1,?,0,?)",
                 new Object[]{SUB,generation,stream.name(),item,com.subhub.app.storage.StoredPayloads.bind(body.toString()),System.currentTimeMillis()});

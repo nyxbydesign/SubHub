@@ -1087,6 +1087,17 @@
     <string name="arrangement_linger_after">%1$s · %2$d sec</string>
     <string name="arrangement_wallet_caps">Tribute Caps</string>
     <string name="arrangement_wallet_cap_values">%1$s daily · %2$s weekly</string>
+    <string name="arrangement_whisper_categories">Categories: %1$s</string>
+    <string name="arrangement_whisper_intensity">Intensity: %1$s</string>
+    <string name="arrangement_custom_intensity">Custom</string>
+    <string name="arrangement_popup_placement">Placement: %1$s</string>
+    <string name="arrangement_popup_effects">Effects: %1$s</string>
+    <string name="arrangement_popup_bursts">Bursts</string>
+    <string name="arrangement_popup_tease">Tease (%1$s)</string>
+    <string name="arrangement_configured_on">Configured on</string>
+    <string name="arrangement_consent_unknown">Consent: Unknown</string>
+    <string name="arrangement_consent_last_allowed">Consent: Last observed allowed</string>
+    <string name="arrangement_consent_last_disabled">Consent: Last observed disabled by Sub</string>
     <string name="arrangement_subliminal_voice">Message packs</string>
     <string name="arrangement_subliminal_intensity">Message intensity</string>
     <string name="close">Close</string>

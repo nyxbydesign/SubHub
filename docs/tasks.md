@@ -2,6 +2,8 @@
 
 Open **Tasks** in the bottom navigation. In the Dom workspace, choose a Sub profile to see its active, pending and scheduled tasks. Select a task card for instructions, attachments, completion requests and review. Back returns from a form to the task, then to its list. The Sub workspace opens its own Tasks list.
 
+The summary row shows **Completed**, **Active**, **Pending** and **Scheduled**, in that order, on both the Sub's task list and each Dom task-overview card. Completed counts only accepted occurrences in that relationship's recorded history, including when History is hidden. Each accepted day of a recurring task counts once. Pending, denied, refused, skipped, expired and cancelled occurrences do not count; repeated sync or reload does not add another completion.
+
 Open a Sub profile and choose **Tasks** in the Contract group. A Sub can also open Tasks from Home, where the subtitle shows the number of currently active occurrences. Pending reviews and completed, failed, refused, skipped or cancelled occurrences are excluded. Repeated delivery does not increase the count.
 
 A Dom creates a task with a title, instructions, a start time, duration, and optionally one image, audio track or video. Select weekdays from Monday through Sunday for a recurring task; leave them unselected for a single task.
@@ -47,4 +49,4 @@ Tasks and proof media remain on the paired devices. Both peers must support the 
 - One instruction attachment and up to five completion attachments, each at most 25 MiB. Supported formats are JPEG, PNG, WebP, GIF, MP3, Ogg, WAV, MP4 audio/video and WebM video.
 - Attachments use a separate private store per pairing, bounded to 256 MiB and 512 attachments. Playback requires an available, fully received attachment; larger transfers resume across sync windows.
 - The local journal is bounded to 250 task definitions and 20,000 actions per relationship. A full store rejects additional work without discarding existing history.
-- Foreground deadlines are checked regularly. Background checks use Android scheduling, normally at least 15 minutes apart, and can be delayed by battery restrictions or a stopped app. A delayed check preserves the task's original deadline and any timely completion request.
+- Foreground deadlines are checked when SubHub becomes visible and every 30 seconds while it stays visible. That foreground timer stops when the app is hidden. Background checks use Android scheduling, normally at least 15 minutes apart, and can be delayed by battery restrictions or a stopped app. A delayed check preserves the task's original deadline and any timely completion request.

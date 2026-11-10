@@ -1142,6 +1142,120 @@ public final class TasksAndroidTest {
         }
     }
 
+    @Test public void completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation() throws Exception {
+        try (ActivityScenario<TasksActivity> page = launch()) {
+            awaitCounterRow(page, 0, 0, 0, 0);
+            TaskDefinition pending = seedCounterOutcomes();
+            awaitCounterRow(page, 0, 1, 1, 1);
+            TaskAction accepted = acceptCounterTask(pending);
+            awaitCounterRow(page, 1, 1, 0, 1);
+            assertFalse(store.append(scope, accepted, true, false));
+            awaitCounterRow(page, 1, 1, 0, 1);
+            page.recreate();
+            awaitCounterRow(page, 1, 1, 0, 1);
+            switchRole(page, false);
+            awaitCounterRow(page, 1, 1, 0, 1);
+            page.recreate();
+            awaitCounterRow(page, 1, 1, 0, 1);
+            tap("tasks_history");
+            awaitCounterRow(page, 1, 1, 0, 1);
+            openTask(page, pending);
+            androidx.test.espresso.Espresso.pressBack();
+            awaitCounterRow(page, 1, 1, 0, 1);
+        }
+    }
+
+    @Test public void domOverviewCompletedCounterRefreshesForAcceptedReviews() throws Exception {
+        TaskDefinition pending = seedCounterOutcomes();
+        try (ActivityScenario<TasksOverviewActivity> page = ActivityScenario.launch(TasksOverviewActivity.class)) {
+            awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
+            awaitCounterRow(page, 0, 1, 1, 1);
+            acceptCounterTask(pending);
+            awaitCounterRow(page, 1, 1, 0, 1);
+            page.recreate();
+            awaitCounterRow(page, 1, 1, 0, 1);
+            TaskAction cancel = new TaskAction(UUID.randomUUID().toString(), pending.id,
+                    TaskAction.Kind.CANCEL_ONCE, pending.firstStart.toLocalDate(),
+                    System.currentTimeMillis(), "", "", List.of(), null);
+            assertTrue(store.append(scope, cancel, true, false));
+            awaitCounterRow(page, 0, 1, 0, 1);
+        }
+    }
+
+    private TaskDefinition seedCounterOutcomes() throws Exception {
+        seed("counter active and next scheduled", true);
+        TaskDefinition pending = seed("counter pending", false);
+        submitCounterTask(pending);
+        TaskDefinition denied = seed("counter denied", false);
+        TaskAction proof = submitCounterTask(denied);
+        assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), denied.id,
+                TaskAction.Kind.DENY, denied.firstStart.toLocalDate(), System.currentTimeMillis(),
+                "", proof.id, List.of(), null), true, false));
+        TaskDefinition refused = seed("counter refused", false);
+        assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), refused.id,
+                TaskAction.Kind.REFUSE_ONCE, refused.firstStart.toLocalDate(), System.currentTimeMillis(),
+                "", "", List.of(), null), false, false));
+        TaskDefinition cancelled = seed("counter cancelled", false);
+        assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), cancelled.id,
+                TaskAction.Kind.CANCEL_ONCE, cancelled.firstStart.toLocalDate(), System.currentTimeMillis(),
+                "", "", List.of(), null), true, false));
+        return pending;
+    }
+
+    private TaskAction submitCounterTask(TaskDefinition task) throws Exception {
+        TaskAction proof = new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.OUTSIDE,
+                task.firstStart.toLocalDate(), System.currentTimeMillis(), "", "", List.of(), null);
+        assertTrue(store.append(scope, proof, false, false));
+        return proof;
+    }
+
+    private TaskAction acceptCounterTask(TaskDefinition task) throws Exception {
+        TaskAction accepted = new TaskAction(UUID.randomUUID().toString(), task.id, TaskAction.Kind.ACCEPT,
+                task.firstStart.toLocalDate(), System.currentTimeMillis(), "", row(task).submission.id, List.of(), null);
+        assertTrue(store.append(scope, accepted, true, false));
+        return accepted;
+    }
+
+    private void awaitCounterRow(ActivityScenario<? extends Activity> page,
+            int completed, int active, int pending, int scheduled) throws Exception {
+        int[] numbers = {completed, active, pending, scheduled};
+        int[] captions = {R.string.tasks_completed, R.string.tasks_active,
+                R.string.tasks_pending, R.string.tasks_scheduled};
+        await(() -> {
+            AtomicBoolean ready = new AtomicBoolean();
+            page.onActivity(activity -> {
+                ViewGroup row = activity.findViewById(android.R.id.content).findViewWithTag("tasks_counts");
+                if (row == null || row.getWidth() == 0 || row.getChildCount() != 4) return;
+                for (int column = 0; column < 4; column++) {
+                    ViewGroup cell = (ViewGroup) row.getChildAt(column);
+                    android.widget.TextView value = (android.widget.TextView) cell.getChildAt(0);
+                    android.widget.TextView caption = (android.widget.TextView) cell.getChildAt(1);
+                    if (!Integer.toString(numbers[column]).contentEquals(value.getText())
+                            || !activity.getString(captions[column]).contentEquals(caption.getText())
+                            || value.getLayout() == null || caption.getLayout() == null) return;
+                }
+                ready.set(true);
+            });
+            return ready.get();
+        });
+        page.onActivity(activity -> {
+            android.widget.LinearLayout row = activity.findViewById(android.R.id.content).findViewWithTag("tasks_counts");
+            assertEquals("All four counters stay in one row", android.widget.LinearLayout.HORIZONTAL, row.getOrientation());
+            for (int column = 0; column < 4; column++) {
+                ViewGroup cell = (ViewGroup) row.getChildAt(column);
+                for (int child = 0; child < cell.getChildCount(); child++) {
+                    android.widget.TextView text = (android.widget.TextView) cell.getChildAt(child);
+                    android.text.Layout layout = text.getLayout();
+                    assertNotNull(layout);
+                    for (int line = 0; line < layout.getLineCount(); line++) {
+                        assertEquals("Counter text is not truncated", 0, layout.getEllipsisCount(line));
+                        assertTrue("Counter text fits its column", layout.getLineMax(line) <= layout.getWidth() + 1);
+                    }
+                }
+            }
+        });
+    }
+
     private void awaitHomeCount(ActivityScenario<? extends Activity> page, int count) throws Exception {
         await(() -> {
             AtomicBoolean found = new AtomicBoolean();

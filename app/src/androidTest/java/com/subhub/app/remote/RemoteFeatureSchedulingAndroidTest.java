@@ -403,7 +403,7 @@ public final class RemoteFeatureSchedulingAndroidTest {
             String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
             long generation=(Long)invoke("attemptGeneration",new Class<?>[0]),before=SystemClock.elapsedRealtime();
             invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
-            assertTrue(due.get(key)>=before+300_000);assertTrue(due.get(key)<SystemClock.elapsedRealtime()+301_000);
+            assertTrue(due.get(key)>=before+900_000);assertTrue(due.get(key)<SystemClock.elapsedRealtime()+901_000);
             invoke("invalidateChangedAttempts",new Class<?>[0]);assertFalse("New data to a healthy peer stays immediately due",due.containsKey(key));
             generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
             invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
@@ -502,6 +502,148 @@ public final class RemoteFeatureSchedulingAndroidTest {
             owners.remove("test",replacement);invoke("stopIdlePairingTimers",new Class<?>[0]);
             assertTrue(newPoll.isCancelled());assertTrue(newDeadline.isCancelled());assertNull(field("pairingPollWake"));assertNull(field("pairingDeadlineWake"));
         }finally{owners.clear();invoke("stopIdlePairingTimers",new Class<?>[0]);resume.countDown();}
+    }
+    @Test public void deviceDataWakeIsContextScopedAndOptOutCancelsItsEffect()throws Exception{
+        invoke("observeDeviceData",new Class<?>[0]);invoke("observeDeviceData",new Class<?>[0]);
+        DeviceDataSyncWake wake=(DeviceDataSyncWake)field("deviceDataWake");
+        Field pending=DeviceDataSyncWake.class.getDeclaredField("pending");pending.setAccessible(true);
+        RemoteDeviceData.changed(target);assertNull(pending.get(wake));
+        RemoteDeviceData.changed(context);assertNull("No Sub source means no timer",pending.get(wake));
+        store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?",new Object[]{identity(87)});
+        feature.activity.refreshSource();
+        RemoteDeviceData.changed(context);Object first=pending.get(wake);assertNotNull(first);
+        for(int i=0;i<100;i++)RemoteDeviceData.changed(context);
+        assertSame("Repeated source writes keep one bounded wake",first,pending.get(wake));
+        assertTrue(feature.setBackgroundSyncEnabled(false));
+        int kicks=backgroundKicks.get();long generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+        // Invoke the delivery boundary deterministically; the pure scheduler tests qualify its deadline.
+        invoke("synchronizeDeviceData",new Class<?>[0]);
+        assertEquals(kicks,backgroundKicks.get());assertEquals(generation,invoke("attemptGeneration",new Class<?>[0]));
+        assertEquals(0,transport.activeCalls.get());assertEquals(0,serviceStarts.get());
+        wake.close();RemoteDeviceData.changed(context);assertNull(pending.get(wake));
+    }
+    @Test public void deviceDataRequiresAnActiveSubAndPreservesOfflineBackoff()throws Exception{
+        try(RemoteFeature.ConnectedServiceLease owner=quietOwner()){
+            String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            long generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+            invoke("synchronizeDeviceData",new Class<?>[0]);
+            assertEquals("Dom-only local data cannot request a source exchange",generation,invoke("attemptGeneration",new Class<?>[0]));
+            store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?",new Object[]{identity(87)});
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+            long failedDue=due.get(key);invoke("synchronizeDeviceData",new Class<?>[0]);
+            ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(failedDue,due.get(key).longValue());assertEquals(0,transport.activeCalls.get());
+            assertEquals(1,((Map<String,Integer>)field("consecutiveFailures")).get(key).intValue());
+            generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+            store.getWritableDatabase().execSQL("UPDATE peers SET state='REVOKED' WHERE peer=?",new Object[]{identity(87)});
+            invoke("synchronizeDeviceData",new Class<?>[0]);assertEquals(generation,invoke("attemptGeneration",new Class<?>[0]));
+        }
+    }
+    @Test public void sourceObserversDoNotCrossContextsAndRetiredObserversCannotWake()throws Exception{
+        AtomicInteger signals=new AtomicInteger();
+        AutoCloseable observer=RemoteDeviceData.observe(context,signals::incrementAndGet);
+        try{
+            RemoteDeviceData.changed(target);assertEquals(0,signals.get());
+            RemoteDeviceData.changed(context);assertEquals(1,signals.get());
+            try(AutoCloseable broken=RemoteDeviceData.observe(context,()->{throw new IllegalStateException("synthetic");})){
+                RemoteDeviceData.changed(context);assertEquals(2,signals.get());
+            }
+        }finally{observer.close();}
+        RemoteDeviceData.changed(context);assertEquals(2,signals.get());
+        store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?",new Object[]{identity(87)});
+        feature.activity.refreshSource();
+        invoke("observeDeviceData",new Class<?>[0]);RemoteDeviceData.changed(context);
+        DeviceDataSyncWake wake=(DeviceDataSyncWake)field("deviceDataWake");
+        Field pending=DeviceDataSyncWake.class.getDeclaredField("pending");pending.setAccessible(true);assertNotNull(pending.get(wake));
+        set("stopped",true);wake.close();RemoteDeviceData.changed(context);assertNull(pending.get(wake));
+        invoke("synchronizeDeviceData",new Class<?>[0]);assertEquals(0,transport.activeCalls.get());assertEquals(0,backgroundKicks.get());
+    }
+    @Test public void selectedAppActivityPersistsOnceAndQueuesTheExistingSourceWake()throws Exception{
+        CountDownLatch entered=new CountDownLatch(1),resume=new CountDownLatch(1);
+        ((ScheduledExecutorService)field("timer")).execute(()->{entered.countDown();try{resume.await();}catch(InterruptedException stopped){Thread.currentThread().interrupt();}});
+        assertTrue(entered.await(5,TimeUnit.SECONDS));
+        try{
+        store.getWritableDatabase().execSQL("DELETE FROM peers WHERE peer<>?",new Object[]{identity(87)});
+        store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?",new Object[]{identity(87)});
+        feature.activity.refreshSource();
+        long at=System.currentTimeMillis()+1;
+        feature.activity.foreground("com.example.home","com.example.selected",true,at);
+        Field workerField=RemoteActivityRepository.class.getDeclaredField("worker");workerField.setAccessible(true);
+        ExecutorService source=(ExecutorService)workerField.get(feature.activity);source.submit(()->{}).get(5,TimeUnit.SECONDS);
+        try(android.database.Cursor rows=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_source",null)){
+            assertTrue(rows.moveToFirst());assertEquals(1,rows.getInt(0));
+        }
+        DeviceDataSyncWake wake=(DeviceDataSyncWake)field("deviceDataWake");
+        Field pending=DeviceDataSyncWake.class.getDeclaredField("pending");pending.setAccessible(true);assertNotNull(pending.get(wake));
+        feature.activity.foreground("com.example.selected","com.example.selected",true,at+1);
+        feature.activity.foreground("com.example.selected","com.example.unselected",false,at+2);
+        source.submit(()->{}).get(5,TimeUnit.SECONDS);
+        try(android.database.Cursor rows=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM activity_source",null)){
+            assertTrue(rows.moveToFirst());assertEquals(1,rows.getInt(0));
+        }
+        assertEquals(1,store.published(identity(87),generation(87),RemoteProtocol.Stream.EVENTS).size());
+        }finally{resume.countDown();}
+    }
+    @Test public void recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot()throws Exception{
+        // Own both history stores. Never let synthetic accounting modify the application's retained history.
+        com.subhub.app.stats.DailyStatsStore originalStats=com.subhub.app.stats.DailyStatsStore.get(target);
+        com.subhub.app.stats.DailyAppUsageStore originalUsage=com.subhub.app.stats.DailyAppUsageStore.get(target);
+        com.subhub.app.stats.DailyStatsStore.awaitWrites();
+        Constructor<com.subhub.app.stats.DailyStatsStore> constructor=com.subhub.app.stats.DailyStatsStore.class.getDeclaredConstructor(Context.class,String.class);
+        constructor.setAccessible(true);
+        com.subhub.app.stats.DailyStatsStore ownedStats=constructor.newInstance(context,prefix+"stats-db");
+        com.subhub.app.stats.DailyAppUsageStore ownedUsage=new com.subhub.app.stats.DailyAppUsageStore(context,prefix+"usage-db");
+        Field statsField=com.subhub.app.stats.DailyStatsStore.class.getDeclaredField("instance");statsField.setAccessible(true);
+        Field usageField=com.subhub.app.stats.DailyAppUsageStore.class.getDeclaredField("instance");usageField.setAccessible(true);
+        synchronized(com.subhub.app.stats.DailyStatsStore.class){statsField.set(null,ownedStats);}
+        synchronized(com.subhub.app.stats.DailyAppUsageStore.class){usageField.set(null,ownedUsage);}
+        Field sessionLockField=com.subhub.app.stats.StatsRepository.class.getDeclaredField("SESSION_LOCK");sessionLockField.setAccessible(true);
+        Object sessionLock=sessionLockField.get(null);Map<Field,Object> sessionState=new LinkedHashMap<>();
+        Field seenField=com.subhub.app.stats.StatsRepository.class.getDeclaredField("SEEN_TRACK_IDS");seenField.setAccessible(true);
+        Set<Integer> seen;
+        synchronized(sessionLock){
+            for(String name:List.of("sessionStartMs","sessionBlocks","activeStamp","memoryIdentity")){
+                Field field=com.subhub.app.stats.StatsRepository.class.getDeclaredField(name);field.setAccessible(true);sessionState.put(field,field.get(null));
+            }
+            seen=new HashSet<>((Set<Integer>)seenField.get(null));
+        }
+        AtomicInteger signals=new AtomicInteger();
+        try(AutoCloseable observer=RemoteDeviceData.observe(context,signals::incrementAndGet)){
+            com.subhub.app.appmode.AppTimerManager timers=new com.subhub.app.appmode.AppTimerManager(context);
+            String selected="com.example.selected";Set<String> scope=Set.of(selected);long now=System.currentTimeMillis();
+            timers.recordUsage(selected,5_000,scope,now);assertEquals(0,signals.get());
+            context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME,0).edit()
+                .putBoolean(com.subhub.app.appmode.AppTimerManager.KEY_PER_APP_ENABLED,true).commit();
+            timers.recordUsage("com.example.other",5_000,scope,now);timers.recordUsage(selected,0,scope,now);
+            assertEquals(0,signals.get());timers.recordUsage(selected,5_000,scope,now);
+            assertEquals(1,signals.get());assertEquals(5_000,timers.snapshot(selected,now).appUsedMillis);
+            context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).edit().putBoolean("limits",false).commit();
+            timers.recordUsage(selected,5_000,scope,now);assertEquals(1,signals.get());
+            context.getSharedPreferences(com.subhub.app.security.SubFeaturePolicy.STORE,0).edit().putBoolean("limits",true).commit();
+            com.subhub.app.stats.StatsRepository stats=new com.subhub.app.stats.StatsRepository(context);
+            stats.recordRequestTributeReceipt("synthetic-source",1,"EUR",null);assertEquals(2,signals.get());
+            stats.recordRequestTributeReceipt("synthetic-source",1,"EUR",null);assertEquals(2,signals.get());
+            store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?",new Object[]{identity(87)});
+            RemoteTelemetry telemetry=new RemoteTelemetry(context,store);RemoteStore.Peer peer=store.peer(identity(87),generation(87));
+            telemetry.prepare(peer);telemetry.prepare(peer);new com.subhub.app.stats.StatsRepository(context).load();
+            assertEquals("Projection and read reconciliation must not feed their own source wake",2,signals.get());
+        }finally{
+            try{com.subhub.app.stats.DailyStatsStore.awaitWrites();ownedUsage.flush();}
+            finally{
+                synchronized(sessionLock){
+                    for(Map.Entry<Field,Object> entry:sessionState.entrySet())entry.getKey().set(null,entry.getValue());
+                    Set<Integer> actual=(Set<Integer>)seenField.get(null);actual.clear();actual.addAll(seen);
+                }
+                synchronized(com.subhub.app.stats.DailyStatsStore.class){statsField.set(null,originalStats);}
+                synchronized(com.subhub.app.stats.DailyAppUsageStore.class){usageField.set(null,originalUsage);}
+                try{ownedStats.close();}
+                finally{try{ownedUsage.close();}
+                    finally{try{assertTrue(target.deleteDatabase(prefix+"stats-db"));}
+                        finally{assertTrue(target.deleteDatabase(prefix+"usage-db"));}}}
+            }
+        }
+        assertSame(originalStats,com.subhub.app.stats.DailyStatsStore.get(target));
+        assertSame(originalUsage,com.subhub.app.stats.DailyAppUsageStore.get(target));
     }
     private static String keyForTest(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
     @After public void cleanup()throws Exception{

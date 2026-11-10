@@ -75,6 +75,9 @@ public final class RemoteActivityRepository implements ActivityRepository, Remot
         dispatchNotifications();
     }
 
+    /** Cheap scheduling hint only; publication still validates the exact live peer and generation. */
+    boolean hasSource() { return source != null; }
+
     void refreshSource() {
         synchronized (store) {
             source = null;

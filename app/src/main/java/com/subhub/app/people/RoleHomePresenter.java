@@ -5,7 +5,6 @@ import android.content.res.ColorStateList;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.ViewCompat;
@@ -592,13 +591,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 com.subhub.app.remote.RemoteUi.bindAppIcon((android.widget.ImageView) row.getChildAt(0), value.appIcon, fallback);
             else com.subhub.app.util.AppIcons.bind((android.widget.ImageView) row.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
-            ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
-            progress.setMax(1000); progress.setProgress(value.budgetMillis <= 0 ? 0 : (int) Math.min(1000,
-                    value.usedMillis / (double) value.budgetMillis * 1000));
-            progress.setProgressTintList(ColorStateList.valueOf(activity.getColor(R.color.accent_text)));
-            progress.setContentDescription(value.label);
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, dp(4));
-            size.setMarginStart(dp(36)); size.bottomMargin = dp(8); card.addView(progress, size);
+            com.subhub.app.appmode.AllowanceProgress.add(card, value);
             if (!value.packageName.isEmpty() && value.dailyMinutes > 0
                     && value.usedMillis >= value.budgetMillis)
                 com.subhub.app.appmode.ExtraTimeEntry.request(card, person.id, value.packageName);

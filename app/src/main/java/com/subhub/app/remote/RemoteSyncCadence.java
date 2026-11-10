@@ -2,7 +2,7 @@ package com.subhub.app.remote;
 
 /** Scheduling only: no authority, delivery receipt or invitation lifetime is inferred from a delay. */
 final class RemoteSyncCadence {
-    static final long BACKGROUND_IDLE_MILLIS = 5 * 60_000L;
+    static final long BACKGROUND_IDLE_MILLIS = 15 * 60_000L;
     static final long BACKGROUND_RETRY_MAX_MILLIS = 15 * 60_000L;
     private RemoteSyncCadence() { }
 

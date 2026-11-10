@@ -144,6 +144,8 @@ public final class ProfileStatsActivityAndroidTest {
                 assertNotNull(tag(stats, "stats_session_history"));
                 assertNull(stats.findViewById(R.id.stats_totals_toggle));
                 assertEquals(View.VISIBLE, stats.findViewById(R.id.stats_totals_details).getVisibility());
+                assertSame(stats.findViewById(R.id.profile_stats_current),
+                        stats.findViewById(R.id.profile_stats_allowances).getParent());
                 String allowances = text(stats.findViewById(R.id.profile_stats_allowances));
                 assertTrue(allowances.contains(context.getString(R.string.role_allowance_usage, 0, 20)));
                 assertTrue(allowances.contains(context.getString(R.string.role_allowance_usage, 0, 45)));
@@ -153,6 +155,77 @@ public final class ProfileStatsActivityAndroidTest {
             });
             onMain(stats::finish);
         }
+    }
+
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    public void profileAppTimeSharesSessionCardAcrossRefreshAndRecreation() throws Exception {
+        // Seed the retained observation only. This fixture must not start protection or a transport.
+        new AppTimerManager(context).snapshot("com.android.chrome", System.currentTimeMillis());
+        assertTrue(context.getSharedPreferences("subhub_app_timer_usage", 0).edit()
+                .putLong("package_used_ms:com.android.chrome", 10 * 60_000L)
+                .putLong("package_used_ms:com.android.settings", 9 * 60_000L).commit());
+        SharedPreferences stats = context.getSharedPreferences(StatsRepository.PREFS_NAME, 0);
+        assertTrue(stats.edit().putLong("active_session_start_ms", System.currentTimeMillis() - 60000)
+                .putString("active_session_identity", java.util.UUID.randomUUID().toString()).commit());
+        ControllerPinManager.enterSubMode();
+        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            ProfileActivity activity = resumed(ProfileActivity.class);
+            await(() -> onMainValue(() -> nestedAppTimeReady(activity, true)));
+            captureLocal(activity, "session-app-time-active", activity.findViewById(R.id.profile_stats_allowances),
+                    () -> assertNestedAppTime(activity, true));
+            scenario.recreate();
+            ProfileActivity recreated = resumed(ProfileActivity.class);
+            await(() -> onMainValue(() -> nestedAppTimeReady(recreated, true)));
+            onMain(() -> assertNestedAppTime(recreated, true));
+            // A resumed refresh must replace counters, not detach or duplicate app time.
+            scenario.moveToState(Lifecycle.State.CREATED);
+            clearObservedSession(stats);
+            scenario.moveToState(Lifecycle.State.RESUMED);
+            await(() -> onMainValue(() -> nestedAppTimeReady(recreated, false)));
+            captureLocal(recreated, "session-app-time-idle", recreated.findViewById(R.id.profile_stats_allowances),
+                    () -> assertNestedAppTime(recreated, false));
+            scenario.recreate();
+            ProfileActivity idle = resumed(ProfileActivity.class);
+            await(() -> onMainValue(() -> nestedAppTimeReady(idle, false)));
+            onMain(() -> assertNestedAppTime(idle, false));
+        } finally {
+            // The local profile also queries StatsRepository.load(), which caches session identity.
+            // Clear that synthetic cache even if capture or recreation failed, before normal restoration.
+            clearObservedSession(stats);
+        }
+    }
+
+    private void clearObservedSession(SharedPreferences stats) {
+        assertTrue(stats.edit().remove("active_session_start_ms").remove("active_session_identity").commit());
+        new StatsRepository(context).load();
+    }
+
+    private static boolean nestedAppTimeReady(Activity activity, boolean active) {
+        LinearLayout appTime = activity.findViewById(R.id.profile_stats_allowances);
+        View details = activity.getWindow().getDecorView().findViewWithTag("profile_current_session_details");
+        return appTime != null && text(appTime).contains("Chrome") && details != null
+                && (details.getVisibility() == View.VISIBLE) == active
+                && (!active || text(details).contains(activity.getString(R.string.stats_session_elapsed)));
+    }
+
+    private static void assertNestedAppTime(Activity activity, boolean active) {
+        LinearLayout card = activity.findViewById(R.id.profile_stats_current);
+        LinearLayout appTime = activity.findViewById(R.id.profile_stats_allowances);
+        View details = card.findViewWithTag("profile_current_session_details");
+        assertSame("App time belongs directly to Current session", card, appTime.getParent());
+        assertNull("No second card background", appTime.getBackground());
+        assertEquals("One metric region, separator and app-time region", 3, card.getChildCount());
+        assertTrue(card.indexOfChild(details) < card.indexOfChild(appTime));
+        assertEquals(View.VISIBLE, card.getVisibility());
+        assertEquals(active ? View.VISIBLE : View.GONE, details.getVisibility());
+        assertEquals(active ? View.VISIBLE : View.GONE, card.getChildAt(1).getVisibility());
+        assertTrue(text(appTime).contains(activity.getString(R.string.role_app_time_daily)));
+        assertNotNull(appTime.findViewWithTag("allowance_progress:com.android.chrome"));
+        assertNotNull(appTime.findViewWithTag("allowance_progress:com.android.settings"));
+        assertLocalTextFits(appTime);
+        ViewGroup parent = (ViewGroup) card.getParent();
+        assertTrue("Session and app time precede lifetime totals", parent.indexOfChild(card)
+                < parent.indexOfChild(activity.findViewById(R.id.stats_lifetime_summary)));
     }
 
     @Test public void aDomOnlyModeChangeRejectsTheAlreadyDeliveredDurationListener() throws Exception {

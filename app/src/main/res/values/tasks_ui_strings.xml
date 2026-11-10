@@ -1,4 +1,5 @@
 <resources>
+    <string name="tasks_completed">Completed</string>
     <string name="tasks_overview_empty">No Sub profiles yet</string>
     <string name="tasks_no_open">No open tasks</string>
     <string name="tasks_no_history">No task history</string>

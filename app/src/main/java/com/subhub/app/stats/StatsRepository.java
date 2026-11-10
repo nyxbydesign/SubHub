@@ -437,6 +437,7 @@ public final class StatsRepository {
             }
             if (!acknowledged) return new EvidenceRecord(EvidenceStatus.UNACKNOWLEDGED, 0, null);
             syncDaily();
+            sourceChanged();
             return new EvidenceRecord(EvidenceStatus.COMMITTED, count, load());
         }
     }
@@ -780,6 +781,7 @@ public final class StatsRepository {
                     .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
             if (!edit.commit()) throw new IllegalStateException("Source tribute store unacknowledged");
             syncDaily();
+            sourceChanged();
         }
     }
 
@@ -807,6 +809,7 @@ public final class StatsRepository {
                     .putString(DailyStatsStore.ZONE,java.time.ZoneId.systemDefault().getId());
             if (!edit.commit()) throw new IllegalStateException("Request tribute statistics were not saved");
             syncDaily();
+            sourceChanged();
         }
     }
 
@@ -814,8 +817,12 @@ public final class StatsRepository {
         editor.putLong(DailyStatsStore.STAMP, System.currentTimeMillis())
                 .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId()).apply();
         syncDaily();
+        sourceChanged();
     }
-    private void durationChanged() { if (recordDaily) DailyDurationRecorder.changed(); }
+    private void sourceChanged() { if (recordDaily) com.subhub.app.remote.RemoteDeviceData.changed(app); }
+    private void durationChanged() {
+        if (recordDaily) { DailyDurationRecorder.changed(); sourceChanged(); }
+    }
     private void syncDaily() {
         if (!recordDaily) return;
         try { DailyStatsStore.get(app).queueStats(preferences); }

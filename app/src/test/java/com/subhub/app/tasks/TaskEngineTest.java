@@ -504,11 +504,42 @@ public class TaskEngineTest {
             rows.add(engine.occurrence(task.id, task.firstStart.toLocalDate(), at));
         }
         rows.add(rows.get(0));
+        rows.add(rows.get(2)); // Duplicate accepted occurrence must not inflate Completed.
         assertEquals(1, TaskEngine.activeCount(rows));
+        assertEquals(1, TaskEngine.completedCount(rows));
         TaskEngine restored = replay(engine);
         rows.clear();
         for (TaskDefinition task : restored.definitions()) rows.add(restored.occurrence(task.id, task.firstStart.toLocalDate(), at));
         assertEquals(1, TaskEngine.activeCount(rows));
+        assertEquals(1, TaskEngine.completedCount(rows));
+    }
+
+    @Test public void completedCountTracksAcceptedRecurringOccurrencesAcrossReplayRefusalAndCancellation() throws Exception {
+        TaskDefinition task = definition(true, false);
+        TaskEngine engine = engine(task);
+        assertEquals(0, TaskEngine.completedCount(engine.recorded(task.start(DATE).toEpochMilli())));
+        for (int day = 0; day < 3; day++) {
+            LocalDate date = DATE.plusDays(day);
+            long at = task.start(date).toEpochMilli();
+            TaskAction proof = action("proof-" + day, task, SUBMIT, date, at, "");
+            assertTrue(engine.apply(proof, false));
+            assertFalse(engine.apply(proof, false));
+            if (day < 2) {
+                TaskAction acceptance = action("accept-" + day, task, ACCEPT, date, at + 1, proof.id);
+                assertTrue(engine.apply(acceptance, true));
+                assertFalse(engine.apply(acceptance, true));
+            }
+        }
+        long now = task.start(DATE.plusDays(3)).toEpochMilli();
+        assertEquals(2, TaskEngine.completedCount(replay(engine).recorded(now)));
+        engine.apply(action("refuse-future", task, REFUSE_SERIES, DATE.plusDays(3), now, ""), false);
+        assertEquals(2, TaskEngine.completedCount(replay(engine).recorded(now)));
+        engine.apply(action("accept-pending", task, ACCEPT, DATE.plusDays(2), now + 1, "proof-2"), true);
+        assertEquals(3, TaskEngine.completedCount(replay(engine).recorded(now)));
+        engine.apply(action("cancel-one", task, CANCEL_ONCE, DATE, now + 2, ""), true);
+        assertEquals(2, TaskEngine.completedCount(replay(engine).recorded(now)));
+        engine.apply(action("cancel-series", task, CANCEL_SERIES, DATE.plusDays(3), now + 3, ""), true);
+        assertEquals(0, TaskEngine.completedCount(replay(engine).recorded(now)));
     }
 
     @Test public void occurrenceAndSeriesCancellationRetainAuditAndSurviveReplay() throws Exception {

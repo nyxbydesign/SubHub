@@ -13,10 +13,12 @@ import com.subhub.app.people.PersonUi;
 final class TasksUi {
     private TasksUi() { }
 
-    static void counts(LinearLayout parent, int active, int pending, int scheduled) {
+    static void counts(LinearLayout parent, int completed, int active, int pending, int scheduled) {
         LinearLayout row = new LinearLayout(parent.getContext());
+        row.setTag("tasks_counts");
         row.setPadding(0, PersonUi.dp(parent.getContext(), 12), 0, 0);
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        count(row, completed, R.string.tasks_completed);
         count(row, active, R.string.tasks_active);
         count(row, pending, R.string.tasks_pending);
         count(row, scheduled, R.string.tasks_scheduled);
@@ -25,7 +27,7 @@ final class TasksUi {
     private static void count(LinearLayout row, int number, int label) {
         Context context = row.getContext();
         LinearLayout column = PersonUi.column(context);
-        column.setPadding(0, 0, PersonUi.dp(context, 8), 0);
+        column.setPadding(0, 0, PersonUi.dp(context, 4), 0);
         row.addView(column, new LinearLayout.LayoutParams(0, -2, 1));
         TextView value = PersonUi.text(column, Integer.toString(number), true);
         value.setTextSize(26);

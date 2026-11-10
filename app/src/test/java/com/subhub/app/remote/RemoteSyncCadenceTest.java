@@ -4,8 +4,8 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public final class RemoteSyncCadenceTest {
-    @Test public void idleBackgroundChecksAreFiveMinutesButForegroundKeepsPresenceFresh() {
-        assertEquals(300_000, RemoteSyncCadence.delay(true, false, true, 0));
+    @Test public void idleBackgroundChecksAreFifteenMinutesButForegroundKeepsPresenceFresh() {
+        assertEquals(900_000, RemoteSyncCadence.delay(true, false, true, 0));
         assertEquals(30_000, RemoteSyncCadence.delay(false, false, true, 0));
     }
     @Test public void unreachableBackgroundPeerBacksOffToFifteenMinutes() {
@@ -26,6 +26,6 @@ public final class RemoteSyncCadenceTest {
     @Test public void failureExponentIsBoundedAndSuccessIgnoresFailureCount() {
         assertEquals(30_000,RemoteSyncCadence.delay(true,false,false,0));
         assertEquals(900_000,RemoteSyncCadence.delay(true,false,false,Integer.MAX_VALUE));
-        assertEquals(300_000,RemoteSyncCadence.delay(true,false,true,6));
+        assertEquals(900_000,RemoteSyncCadence.delay(true,false,true,6));
     }
 }

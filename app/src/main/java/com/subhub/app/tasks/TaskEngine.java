@@ -46,6 +46,14 @@ public final class TaskEngine {
         return active.size();
     }
 
+    /** Count accepted occurrences, not completion requests or whole recurring definitions. */
+    public static int completedCount(Collection<Occurrence> occurrences) {
+        Set<String> completed = new HashSet<>();
+        for (Occurrence occurrence : occurrences)
+            if (occurrence.status == Status.ACCEPTED) completed.add(occurrence.id);
+        return completed.size();
+    }
+
     public List<TaskDefinition> definitions() { return new ArrayList<>(tasks.values()); }
     public boolean seriesRefused(String id) { return refusedSeries.contains(id); }
     public boolean seriesCancelled(String id) { return cancelledSeries.contains(id); }

@@ -236,6 +236,11 @@ RECONNECT_SOURCE_ONLY = {
         "backgroundHidingPreservesBackoffAndForegroundResetsIt",
         "foregroundPollingStopsWhileHiddenAndRestartsOnce",
         "pairingPollsStopAtLastLeaseAndRestartForReplacement",
+        "deviceDataWakeIsContextScopedAndOptOutCancelsItsEffect",
+        "deviceDataRequiresAnActiveSubAndPreservesOfflineBackoff",
+        "sourceObserversDoNotCrossContextsAndRetiredObserversCannotWake",
+        "selectedAppActivityPersistsOnceAndQueuesTheExistingSourceWake",
+        "recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot",
     ],
     "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
         method for method in (SUBHUB_PASS_NATIVE["com.subhub.app.remote.RemoteConfigurationAndroidTest"]
@@ -264,6 +269,132 @@ BATTERY_SOURCE_ONLY = {
         "stagedFirstApprovalDefeatsStaleExpiryAndFailedSqlCannotRetainItsLease",
     ],
 }
+# Combined source-data/profile pass. Exact UI members are reviewed alongside battery ownership.
+DEVICE_PASS_NATIVE = {
+    **BATTERY_NATIVE,
+    "com.subhub.app.journal.JournalUiAndroidTest": [
+        "profileAndOverviewPreviewsShowOnlyTitleAndUseCreationTimeFallback",
+        "previewStopsPollingWhileHiddenAndRefreshesOnReturnAndReattachment",
+    ],
+    "com.subhub.app.tasks.TasksAndroidTest": [
+        "completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
+        "domOverviewCompletedCounterRefreshesForAcceptedReviews",
+    ],
+    "com.subhub.app.appmode.AllowanceProgressAndroidTest": [
+        "nativeRoundedMetersKeepExactValuesAndAccessibility",
+        "nativeRoundedMetersMirrorForRtlWithoutInflatingSmallUsage",
+    ],
+    "com.subhub.app.people.ProfileStatsActivityAndroidTest": [
+        "profileAppTimeSharesSessionCardAcrossRefreshAndRecreation",
+        "profileOpensLocalStatsDirectlyWithTotalsAllowancesAndHistoryOnOnePage",
+    ],
+    "com.subhub.app.remote.RemoteAppIconPresentationAndroidTest": [
+        "actualRemoteStatsReprojectsVisibleAllowanceAfterDescriptorArrival",
+    ],
+    "com.subhub.app.people.ProfileActionRowAndroidTest": [
+        "actionPairsReverseOnlyWhenWideAndRetainTheirListeners",
+        "actionPairsStackForLargeTextAndLongLabelsWithoutTruncation",
+    ],
+    "com.subhub.app.people.ProfileAndroidTest": [
+        "profileEditorPairsActionsAndKeepsAvatarRemovalAsDraft",
+        "emptyAboutMeIsOptionalAndOnlyChangesOnSaveForEitherRole",
+        "avatarSelectionChangeRemovalAndCancellationKeepRoundedNativePixels",
+    ],
+    "com.subhub.app.people.AtmosphereContractDetailsAndroidTest": [
+        "localSummaryListsSelectedCategoriesAndQualitativePopupDetails",
+        "disabledEmptyAndCustomSettingsRemainExplicitWithoutInventedSelections",
+        "remoteSummaryMatchesLocalButReadsOnlyItsSuppliedSnapshot",
+        "remoteConsentIsNeverInferredFromMissingOrStaleObservations",
+        "subContractExpandsWithExistingBoldStyleAndRestoresAfterRecreation",
+        "domContractShowsDetailsWhileKeepingItsExistingEditRoute",
+        "unknownContractHidesDetailsWhileStaleContractKeepsLabeledSavedValues",
+    ],
+    "com.subhub.app.remote.CachedPeerReadModelAndroidTest": [
+        "atmosphereSummaryUsesOnlyThePeerBaselineAndKeepsConsentFreshnessSeparate",
+    ],
+}
+DEVICE_PASS_SOURCE_ONLY = {
+    **BATTERY_SOURCE_ONLY,
+    "com.subhub.app.journal.JournalUiAndroidTest": [
+        "textDraftIsBoundedPrivateSavedAndRecreatedWithoutOpeningKeyboard",
+        "pickerCopiesFiveDocumentsAndRejectsDeclaredAndActualOversize",
+        "sharedViewAndProviderRejectWithdrawnEntriesAndWrongRole",
+        "deniedMicrophoneLeavesTextEditingAndSavingAvailable",
+        "nativeRecordingStartsOnlyOnTapStopsOnRecreationAndPlays",
+        "nativeRecordingLimitStopsAtFiveMinutesAndKeepsPlayableBoundedAudio",
+        "boundDomPreviewJournalOpensSharedReadOnlyTargetAndEmptyBioLeavesNoGap",
+        "bothOwnedProfilesPlaceJournalBelowAboutAndCapturePopulatedEditor",
+        "unifiedPreviewsAndOptionalEditorRenderWithoutLeakingPrivateJournalEntries",
+        "sharedPendingWithdrawalLoadErrorAndBusyStatesKeepTheirNativeHierarchy",
+        "retainedVoiceFixtureRendersTheSameNativePlayerAndRemovalControls",
+    ],
+    "com.subhub.app.tasks.TasksAndroidTest": [
+        "createWithNativeControlsAndRetainAuthorDraftAfterRecreation",
+        "subOnlyHeaderSurvivesDetailBackAndRecreation",
+        "bothSubHeaderSurvivesDetailBackAndRecreation",
+        "bothDomHeaderSurvivesDetailBackAndRecreation",
+        "subRequestsCompletionWithNativeTextThenDomAcceptsTheExactSubmission",
+        "outsideRequestCanBeDeniedWithNativeReviewControls",
+        "refuseOneOccurrenceThenCancelARecurringSeriesWithNativeTaps",
+        "resumeRevalidatesRoleAndDropsAnAuthorDraft",
+        "localSubOwnsOptOutAcrossRecreationAndDomCannotEditIt",
+        "documentPickerUsesSupportedMimeTypesAndCancellationRetainsForm",
+        "mediaViewerRejectsAnAttachmentOutsideTheRelationshipProjection",
+        "skippedOccurrencesAppearOnlyInHistoryWithoutUserActions",
+        "historyPreviewsKeepOutcomeOrderAndCompletionRequestTimesAcrossRefreshAndRecreation",
+        "visibleImageClosesOnRoleOrOptOutChangeWithoutPausing",
+        "taskListRefreshRetainsUnchangedCardsAndPositionWhenAnotherTaskArrives",
+        "subHomeTaskCountUpdatesWithoutReplacingOtherControlsOrPosition",
+        "tasksTabRetainsListDetailAndSubmissionNavigation",
+        "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList",
+        "profileGroupsTasksImmediatelyAfterContractAndKeepsItsNativeRoute",
+        "homeActiveCountTracksZeroSingularPluralAndReplayedTerminalOutcomes",
+        "domCancellationRequiresConfirmationRetainsAuditAndStopsPendingEffects",
+        "domCanArchiveOnlyOneOccurrenceAndArchiveWhileTasksAreDisabled",
+    ],
+    "com.subhub.app.people.ProfileStatsActivityAndroidTest": [
+        "inlineDurationChangesFutureSelectionWithoutChangingTheActiveSession",
+        "aDomOnlyModeChangeRejectsTheAlreadyDeliveredDurationListener",
+        "oldStatsSectionRedirectsOnceAndRecreationReturnsToProfile",
+        "remoteDurationAndStatsStayBoundToTheSelectedPerson",
+        "recentActivitySitsBelowDestinationsAndRefreshesOnlyWhileStarted",
+        "activityChangesCoalesceBehindOneInFlightRead",
+        "switchingToSubOnlyRejectsAnInFlightPreviewAndItsStaleViewAllAction",
+        "selectedPreviewRejectsFactsFromAnotherPerson",
+        "emptyLocalPreviewOpensLocalHistoryWithoutRequiringAnEntryKey",
+        "switchingToSubOnlyRejectsAnInFlightRemoteProfileWithoutClearingLocalAuthentication",
+        "localProfileInlineDurationAndFlatStatsFitActualRequestedFontAndViewport",
+    ],
+    "com.subhub.app.remote.RemoteAppIconPresentationAndroidTest": [
+        "actualActivityPreviewOpensFullHistoryAndUsesArrivingRemotePixels",
+        "actualHomeOverviewReprojectsRecordedActivityAfterDescriptorArrival",
+        "actualPersonContractReprojectsArrivalAndRevocationWithoutManualRefresh",
+        "actualRemoteEditorRebindsIconsWithoutChangingIncompleteDraft",
+        "sharedNativeLimitsAndAppSelectorKeepRemoteIconScope",
+        "realCallerLegacyAndWrongScopesNeverBorrowViewerPackageIcons",
+    ],
+    "com.subhub.app.people.ProfileAndroidTest": [
+        "profileNavigationRetainsStatisticsAndAchievementsInTheSameHost",
+        "editsSaveAtomicallyAndCancelledDraftsLeaveBothRoleProfilesUnchanged",
+        "subParticipationRemainsAccessibleWithoutDomUnlockAndSurvivesRecreation",
+        "subProfilePlacesFeatureChoicesBeforeJournalAndKeepsTasksConsentLocal",
+        "nativeRoleSwitchesKeepDomAndSubIdentitySeparate",
+        "returningToProfileAfterAnotherWorkspaceChangeUsesTheCurrentRoleOnFirstResume",
+        "domOnlyOwnProfileStaysEditableWhileStatisticsRequireTheExistingPin",
+        "pairedSubContractStartsWithReadOnlyAllowancesAndProfileHasNoDeviceFiller",
+        "avatarDecoderRejectsBrokenOrOversizedImageDimensionsBeforeSaving",
+        "renderedRoleProfilesRetainReadableNavigationStatisticsAndOriginalAchievements",
+        "contractDomPreviewKeepsItsOwnIdentityBioAndRoundedAvatar",
+        "compactAllowancesRetainNativeTargetsExplicitStatesAndPersistence",
+        "compactReadOnlyAllowancesKeepUnknownAndHardcoreContextWithoutEditControls",
+        "largeTextCaptureCoverageShowsWholeControlsAndExpandedBioEnd",
+        "bothRoleProfileCardsUseSwitchAndSingleRolesKeepTheirIdentity",
+        "profileSelectorsUseEqualHalvesOrAReadableStack",
+    ],
+    "com.subhub.app.remote.CachedPeerReadModelAndroidTest": [
+        "offlineMirrorsStayIndependentAndContactCannotCrossGenerationsOrBypassContinuity",
+    ],
+}
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
 ALL_SELECTORS = [f"{cls}#{method}" for cls, methods in NATIVE.items() for method in methods]
 ALL_SELECTORS.remove(LARGE_FONT)
@@ -275,13 +406,29 @@ SUBHUB_PASS_SELECTORS = ALL_SELECTORS[:-1] + [
 ] + [LARGE_FONT]
 RECONNECT_SELECTORS = [f"{cls}#{method}" for cls, methods in RECONNECT_NATIVE.items() for method in methods]
 BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items() for method in methods]
-SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 26}
+DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
+SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 53}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
 MAX_EVENT_BYTES = 2 * MIB
 MAX_PR_BODY_BYTES = 64 * 1024
+# These existing profile capture helpers retain native PNGs without a composition receipt.
+# Keep their required visual artifacts distinct from the stronger UI_WITNESSES contract.
+UI_SCREENSHOTS = {
+    "com.subhub.app.people.ProfileStatsActivityAndroidTest#profileAppTimeSharesSessionCardAcrossRefreshAndRecreation": [
+        "local-session-app-time-active", "local-session-app-time-idle"],
+    "com.subhub.app.people.ProfileAndroidTest#profileEditorPairsActionsAndKeepsAvatarRemovalAsDraft": [
+        "editor-avatar-action-row", "editor-save-cancel-row"],
+}
+
+def missing_screenshots(expected, exported):
+    names = [PurePosixPath(item["path"]).name for item in exported]
+    return [prefix for prefix in expected if not any(
+        name.endswith(".png") and "-failure-" not in name
+        and (name == prefix + ".png" or name.startswith(prefix + "-")) for name in names)]
+
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
         "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
@@ -407,6 +554,9 @@ def source_inventory(suite="extra-time"):
     elif suite == "battery":
         native = BATTERY_NATIVE
         source_only = BATTERY_SOURCE_ONLY
+    elif suite == "device-pass":
+        native = DEVICE_PASS_NATIVE
+        source_only = DEVICE_PASS_SOURCE_ONLY
     inventory = {}
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"
@@ -1050,6 +1200,8 @@ class Producer:
     def export(self):
         expected = [name for selector in self.selected for name in UI_WITNESSES.get(selector, [])]
         self.record["expectedUiWitnesses"] = expected
+        screenshots = [name for selector in self.selected for name in UI_SCREENSHOTS.get(selector, [])]
+        self.record["expectedUiScreenshots"] = screenshots
         self.adb("logcat", "-d", "-t", "4000", timeout=30, check=False, label="guest-logcat")
         if self.record["state"] != "selected_native_passed":
             self.binary([self.sdk / "platform-tools/adb", "-s", self.serial, "exec-out", "screencap", "-p"],
@@ -1062,7 +1214,7 @@ class Producer:
                                       check=False, label="ui-evidence-admission")
         if status:
             self.record["uiEvidence"] = "No run-specific UI directory was produced"
-            if expected:
+            if expected or screenshots:
                 raise ValueError("Selected UI methods produced no required screenshot/composition directory")
             return
         archive = self.out / "synthetic-ui.tar"
@@ -1102,6 +1254,10 @@ class Producer:
                 exported.append({"path": path.relative_to(self.out).as_posix(), "bytes": member.size, "sha256": digest(path)})
         self.record["uiEvidence"] = exported
         self.record["uiArchiveSha256"] = digest(archive)
+        missing_png = missing_screenshots(screenshots, exported)
+        self.record["missingUiScreenshots"] = missing_png
+        if missing_png:
+            raise ValueError("Missing required native screenshots: " + ", ".join(missing_png))
         missing = []
         for name in expected:
             screenshot = extracted / self.run / (name + ".png")

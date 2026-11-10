@@ -268,6 +268,9 @@ public final class RemoteAppIconPresentationAndroidTest {
                 assertBareAllowance(host, name, amount);
                 main(() -> {
                     LinearLayout container = (LinearLayout) host.get().findViewById(R.id.profile_stats_allowances);
+                    assertSame("Remote app time shares the session card",
+                            host.get().findViewById(R.id.profile_stats_current), container.getParent());
+                    assertNull("Remote app time has no nested card", container.getBackground());
                     ViewGroup parent = (ViewGroup) container.getParent(); int index = parent.indexOfChild(container);
                     ViewGroup.LayoutParams layout = container.getLayoutParams();
                     parent.removeView(container); assertFalse(container.isAttachedToWindow());

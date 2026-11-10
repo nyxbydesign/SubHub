@@ -393,12 +393,23 @@ public final class PersonActivity extends RolePage {
         boolean allowed = person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key);
+        boolean atmosphere = "atmosphere".equals(value.key);
+        boolean known = person.sync.contract != PersonSnapshot.Freshness.UNKNOWN;
         LinearLayout row = PersonUi.row(parent, icon, value.title,
-                allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                editable && allowed ? () -> editSection(person, value.key) : null);
+                atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
+                        : allowed ? value.summary : getString(R.string.sub_feature_disabled),
+                editable && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
-        if (!editable && !value.details.isEmpty()) PersonUi.text(parent, value.details, false);
+        if (atmosphere && known) {
+            for (String block : value.details.split("\\n\\s*\\n")) {
+                android.text.SpannableString copy = new android.text.SpannableString(block);
+                int firstLine = block.indexOf('\n');
+                if (firstLine > 0) copy.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                        0, firstLine, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                PersonUi.text(parent, copy, false);
+            }
+        } else if (!atmosphere && !editable && !value.details.isEmpty()) PersonUi.text(parent, value.details, false);
     }
 
     private void editSection(PersonSnapshot person, String section) {

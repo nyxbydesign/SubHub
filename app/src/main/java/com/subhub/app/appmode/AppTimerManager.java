@@ -197,6 +197,7 @@ public final class AppTimerManager {
         stats.recordLimitedAppUsage(elapsedMillis);
         queueHistory(packageName,appUsed);
         queueHistory("",totalUsed);
+        com.subhub.app.remote.RemoteDeviceData.changed(context);
     }
 
     public synchronized UsageSnapshot snapshot(String packageName, long nowMillis) {

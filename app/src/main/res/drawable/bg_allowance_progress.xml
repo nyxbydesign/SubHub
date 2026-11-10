@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="5dp" />
+            <solid android:color="@color/surface_card_raised" />
+            <stroke android:width="1dp" android:color="@color/outline_subtle" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <!-- Scale the rounded shape itself so its leading edge stays soft at every value. -->
+        <scale android:scaleWidth="100%" android:gravity="start">
+            <shape android:shape="rectangle">
+                <corners android:radius="5dp" />
+                <gradient android:angle="0" android:startColor="@color/accent_mid"
+                    android:endColor="@color/accent_text" />
+            </shape>
+        </scale>
+    </item>
+</layer-list>

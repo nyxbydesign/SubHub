@@ -5,6 +5,7 @@
     <item name="profile_age_input" type="id" />
     <string name="profile_gender">Gender (optional)</string>
     <string name="profile_age">Age (optional)</string>
+    <string name="profile_about_optional">About me (optional)</string>
     <string name="profile_optional">Optional</string>
     <string name="profile_optional_visibility">Included in your profile for paired devices.</string>
     <plurals name="profile_age_value">

@@ -6,7 +6,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
@@ -106,11 +105,12 @@ public final class PersonUi {
         return button;
     }
 
+    /** App-time content for an existing card; daily usage is distinct from session counters. */
     public static void allowances(LinearLayout parent, PersonSnapshot snapshot) {
         if (snapshot.allowances.isEmpty()
                 && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())) return;
-        LinearLayout card = card(parent);
-        UiIdentity.sectionIcon(text(card, parent.getContext().getString(R.string.role_app_time), true),
+        LinearLayout card = parent;
+        UiIdentity.sectionIcon(text(card, parent.getContext().getString(R.string.role_app_time_daily), true),
                 R.drawable.ic_nav_limits);
         for (PersonSnapshot.Allowance value : PersonSnapshot.Allowance.ordered(snapshot.allowances)) {
             LinearLayout app = row(card, R.drawable.ic_nav_limits, value.label,
@@ -123,13 +123,7 @@ public final class PersonUi {
                 com.subhub.app.remote.RemoteUi.bindAppIcon((ImageView) app.getChildAt(0), value.appIcon, fallback);
             else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
-            ProgressBar progress = new ProgressBar(parent.getContext(), null, android.R.attr.progressBarStyleHorizontal);
-            progress.setMax(1000);
-            long maximum = value.budgetMillis;
-            progress.setProgress(maximum <= 0 ? 0 : (int) Math.min(1000, value.usedMillis / (double) maximum * 1000));
-            progress.setProgressTintList(android.content.res.ColorStateList.valueOf(parent.getContext().getColor(R.color.accent_text)));
-            progress.setContentDescription(value.label);
-            card.addView(progress, new LinearLayout.LayoutParams(-1, dp(parent.getContext(), 6)));
+            com.subhub.app.appmode.AllowanceProgress.add(card, value);
             if (snapshot.id.isLocal() && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())
                     && !value.packageName.isEmpty() && value.dailyMinutes > 0
                     && value.usedMillis >= value.budgetMillis)

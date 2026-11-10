@@ -49,9 +49,12 @@ public final class ProfileEditorActivity extends PreferencePage {
         portrait = PersonUi.column(this);
         portrait.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
         form.addView(portrait, new LinearLayout.LayoutParams(-1, -2));
-        change = PersonUi.action(form, R.string.profile_change_avatar, () -> picker.launch("image/*"), false);
+        ProfileActionRow avatarActions = new ProfileActionRow(this);
+        avatarActions.setTag("profile_avatar_actions");
+        form.addView(avatarActions, new LinearLayout.LayoutParams(-1, -2));
+        change = PersonUi.action(avatarActions, R.string.profile_change_avatar, () -> picker.launch("image/*"), false);
         change.setTag("profile_avatar_change");
-        remove = PersonUi.action(form, R.string.profile_remove_avatar, () -> {
+        remove = PersonUi.action(avatarActions, R.string.profile_remove_avatar, () -> {
             avatar = ""; renderAvatar(); buttons();
         }, false);
         remove.setTag("profile_avatar_remove");
@@ -80,12 +83,11 @@ public final class ProfileEditorActivity extends PreferencePage {
         age.setId(R.id.profile_age_input); ageLabel.setLabelFor(age.getId()); age.setHint((CharSequence) null);
         com.subhub.app.util.InputBounds.limit(age, 3);
         age.setText(state == null ? profile.age == 0 ? "" : Integer.toString(profile.age) : state.getString("profile_age", ""));
-        fieldHelp(form, getString(R.string.profile_optional_visibility));
-        fieldLabel(form, getString(R.string.profile_about));
+        fieldLabel(form, getString(R.string.profile_about_optional)).setTag("profile_about_label");
         about = input(form, R.string.profile_about, android.text.InputType.TYPE_CLASS_TEXT
                 | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         about.setSingleLine(false); about.setMinLines(3); about.setGravity(android.view.Gravity.TOP);
-        about.setTag("profile_about"); about.setContentDescription(getString(R.string.profile_about));
+        about.setTag("profile_about"); about.setContentDescription(getString(R.string.profile_about_optional));
         about.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileData.MAX_ABOUT_LENGTH)});
         about.setText(state == null ? profile.about : state.getString("profile_about", profile.about));
         if (!dom) {
@@ -95,8 +97,11 @@ public final class ProfileEditorActivity extends PreferencePage {
             choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
             com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
         }
-        save = PersonUi.action(page, R.string.profile_save, this::save, true); save.setTag("profile_save");
-        PersonUi.action(page, android.R.string.cancel, this::finish, false).setTag("profile_cancel");
+        ProfileActionRow formActions = new ProfileActionRow(this);
+        formActions.setTag("profile_form_actions");
+        page.addView(formActions, new LinearLayout.LayoutParams(-1, -2));
+        save = PersonUi.action(formActions, R.string.profile_save, this::save, true); save.setTag("profile_save");
+        PersonUi.action(formActions, android.R.string.cancel, this::finish, false).setTag("profile_cancel");
         renderAvatar(); buttons();
         com.subhub.app.util.InputFocusPolicy.openActivityForReading(this);
     }

@@ -168,6 +168,61 @@ public final class JournalUiAndroidTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 29)
+    public void previewStopsPollingWhileHiddenAndRefreshesOnReturnAndReattachment() throws Exception {
+        String id = seed(false, "Private lifecycle fixture", null, List.of(), false);
+        JournalEntry original = runtime.entry(false, PersonId.LOCAL, id);
+        JournalPreview[] retained = new JournalPreview[1];
+        android.os.Handler[] handler = new android.os.Handler[1];
+        Runnable[] poll = new Runnable[1];
+        try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+            // Profile rebuilds its own pane on resume. Retain this additional preview outside
+            // that pane so the fixture exercises the same View across a full stop/start.
+            scenario.onActivity(a -> {
+                android.widget.LinearLayout host = new android.widget.LinearLayout(a);
+                ((ViewGroup) a.findViewById(android.R.id.content)).addView(host);
+                JournalPreview.addOverview(host, false, () -> { });
+                retained[0] = (JournalPreview) host.getChildAt(0);
+                try {
+                    java.lang.reflect.Field handlerField = JournalPreview.class.getDeclaredField("handler");
+                    java.lang.reflect.Field pollField = JournalPreview.class.getDeclaredField("poll");
+                    handlerField.setAccessible(true); pollField.setAccessible(true);
+                    handler[0] = (android.os.Handler) handlerField.get(retained[0]);
+                    poll[0] = (Runnable) pollField.get(retained[0]);
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertTrue(handler[0].hasCallbacks(poll[0]));
+            });
+            await(scenario, a -> ((TextView) retained[0].findViewWithTag("overview_journal_preview"))
+                    .getText().toString().equals(original.displayTitle()));
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                assertTrue("Exercise a retained stopped view, not only detachment", retained[0].isAttachedToWindow());
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler[0].hasCallbacks(poll[0]));
+                poll[0].run(); // A delivered stale callback must not restart its loop.
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler[0].hasCallbacks(poll[0]));
+            });
+            runtime.save(false, new JournalEntry(id, original.created, original.updated,
+                    "Changed while hidden", original.text, null, List.of()), false, false);
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            await(scenario, a -> ((TextView) retained[0].findViewWithTag("overview_journal_preview"))
+                    .getText().toString().equals("Changed while hidden"));
+            scenario.onActivity(a -> {
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertTrue(handler[0].hasCallbacks(poll[0]));
+                ViewGroup parent = (ViewGroup) retained[0].getParent();
+                int index = parent.indexOfChild(retained[0]);
+                parent.removeView(retained[0]);
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler[0].hasCallbacks(poll[0]));
+                poll[0].run();
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler[0].hasCallbacks(poll[0]));
+                parent.addView(retained[0], index);
+                if (android.os.Build.VERSION.SDK_INT >= 29) assertTrue(handler[0].hasCallbacks(poll[0]));
+            });
+        }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            if (android.os.Build.VERSION.SDK_INT >= 29) assertFalse(handler[0].hasCallbacks(poll[0]));
+        });
+    }
+
     @Test public void sharedViewAndProviderRejectWithdrawnEntriesAndWrongRole() throws Exception {
         String draft = UUID.randomUUID().toString(); runtime.retainDraft(false, draft, Collections.emptyList());
         JournalAttachment file = runtime.importFile(false, draft, source("small1"));

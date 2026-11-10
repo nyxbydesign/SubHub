@@ -48,7 +48,7 @@ public final class RemotePersonRepository implements PersonRepository {
         String currency=stats==null?"EUR":stats.optString("currency","EUR");
         long tribute=stats==null?0:stats.optLong("USD".equals(currency)?"assessedUSD":"assessedEUR");
         return new PersonSnapshot(id,peer.name,runtime==null?"":runtime.optString("device",""),configuration==null?context.getString(R.string.remote_unknown):configuration.getJSONObject("contract").getString("name"),
-                service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration),allowances(peer,configuration),currency,
+                service,connection,statistics,peer.lastSyncedAt,capabilities,configuration==null?Collections.emptyList():sections(peer,configuration,runtime,live),allowances(peer,configuration),currency,
                 stats==null?0:Math.max(0,stats.optLong("protectedSeconds")),stats==null?0:Math.max(0,stats.optLong("activityEvents")),Math.max(0,tribute),stats==null?0:Math.max(0,stats.optInt("sessions")),
                 live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("serviceActive"),new PersonSnapshot.SyncState(contract,statistics,live,desired,applied),sessionIdentity,store.additionOrder(peer.identity,peer.generation))
                 .withProfile(RemoteProfiles.read(store, peer), RemoteProfiles.allowances(runtime), false).withLastContactAt(contact).withLastOnlineAt(presence.lastOnlineAt);
@@ -93,9 +93,16 @@ public final class RemotePersonRepository implements PersonRepository {
         long age=System.currentTimeMillis()-confirmed;
         return peer.state==RemoteStore.State.ACTIVE && confirmed>0 && age>=0 && age<=lifetime?PersonSnapshot.Freshness.CURRENT:PersonSnapshot.Freshness.STALE;
     }
-    private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration) throws Exception {
+    private List<PersonSnapshot.Section> sections(RemoteStore.Peer peer,JSONObject configuration,JSONObject runtime,PersonSnapshot.Freshness runtimeFreshness) throws Exception {
         JSONObject sections=configuration.getJSONObject("contract").getJSONObject("sections");List<PersonSnapshot.Section> result=new ArrayList<>();
         for(String group:new String[]{"censor","limits","wallet","atmosphere"}) {
+            if ("atmosphere".equals(group)) {
+                AtmosphereContractDetails atmosphere = AtmosphereContractDetails.remote(context, sections,
+                        RemoteProfiles.allowances(runtime), runtimeFreshness);
+                result.add(new PersonSnapshot.Section(group, context.getString(R.string.atmosphere_title),
+                        atmosphere.summary, atmosphere.details));
+                continue;
+            }
             List<String> parts=new ArrayList<>();String[] names="atmosphere".equals(group)?new String[]{"subliminal","popup"}:new String[]{group};
             for(String section:names)for(ConfigurationSettingCatalog.Field field:ConfigurationSettingCatalog.fields(section)) {
                 Object value=sections.getJSONObject(section).get(field.key);parts.add(context.getString(field.label)+": "+display(field,value));

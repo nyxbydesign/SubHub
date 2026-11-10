@@ -299,7 +299,7 @@ public final class TasksActivity extends RolePage {
         }
         LinearLayout summary = PersonUi.card(body);
         summary.setTag("tasks_summary");
-        TasksUi.counts(summary, count(state, TaskEngine.Status.ACTIVE),
+        TasksUi.counts(summary, TaskEngine.completedCount(state.rows), count(state, TaskEngine.Status.ACTIVE),
                 count(state, TaskEngine.Status.PENDING), count(state, TaskEngine.Status.SCHEDULED));
         if (state.canCreate && state.allowed && state.zone == null) {
             PersonUi.text(body, getString(R.string.tasks_timezone_unavailable), false);

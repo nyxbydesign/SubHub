@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import com.subhub.app.R;
@@ -17,7 +18,7 @@ import java.util.Date;
 import java.util.List;
 
 /** A small live preview reads through exactly the same workspace and audience checks as Journal. */
-public final class JournalPreview extends LinearLayout {
+public final class JournalPreview extends LinearLayout implements DefaultLifecycleObserver {
     private final JournalRuntime runtime;
     private final AsyncUiScope data;
     private final LifecycleOwner owner;
@@ -30,8 +31,9 @@ public final class JournalPreview extends LinearLayout {
     private final String key = "journal-preview:" + java.util.UUID.randomUUID();
     private final Runnable poll = new Runnable() {
         @Override public void run() {
-            if (!isAttachedToWindow()) return;
-            if (owner.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) refresh();
+            if (!isAttachedToWindow()
+                    || !owner.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) return;
+            refresh();
             handler.postDelayed(this, 2000);
         }
     };
@@ -105,9 +107,30 @@ public final class JournalPreview extends LinearLayout {
         if (link) { summary.setVisibility(GONE); setPadding(0, PersonUi.dp(activity, 4), 0, 0); }
     }
 
-    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); handler.post(poll); }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        owner.getLifecycle().addObserver(this);
+        startPolling();
+    }
     @Override protected void onDetachedFromWindow() {
-        handler.removeCallbacksAndMessages(null); data.cancel(key); super.onDetachedFromWindow();
+        owner.getLifecycle().removeObserver(this);
+        stopPolling();
+        super.onDetachedFromWindow();
+    }
+    @Override public void onStart(LifecycleOwner owner) { startPolling(); }
+    @Override public void onStop(LifecycleOwner owner) { stopPolling(); }
+    @Override public void onDestroy(LifecycleOwner owner) {
+        stopPolling();
+        owner.getLifecycle().removeObserver(this);
+    }
+    private void startPolling() {
+        handler.removeCallbacks(poll);
+        if (isAttachedToWindow() && owner.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED))
+            handler.post(poll);
+    }
+    private void stopPolling() {
+        handler.removeCallbacks(poll);
+        data.cancel(key);
     }
 
     private void refresh() {

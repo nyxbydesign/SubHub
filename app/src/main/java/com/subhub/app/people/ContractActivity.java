@@ -57,11 +57,7 @@ public final class ContractActivity extends RolePage {
             PersonSnapshot person = repository.load(PersonId.LOCAL);
             String atmosphere = null;
             if (person.sync.contract == PersonSnapshot.Freshness.CURRENT) {
-                boolean whispers = new com.subhub.app.settings.FeatureModuleManager(application).isSubliminalEnabled();
-                boolean popup = com.subhub.app.popup.PopupStormSettings.load(application).isEnabled();
-                atmosphere = application.getString(R.string.contract_atmosphere_states,
-                        application.getString(whispers ? R.string.role_enabled : R.string.role_disabled),
-                        application.getString(popup ? R.string.role_enabled : R.string.role_disabled));
+                atmosphere = AtmosphereContractDetails.local(application).summary;
             }
             return new ContractData(person, atmosphere);
         }, value -> { atmosphereSummary = value.atmosphere; renderPage(() -> render(value.person)); }, failure -> unavailable());

@@ -78,6 +78,8 @@ public final class RemoteFeature {
     private Application lifecycleApplication;
     private Application.ActivityLifecycleCallbacks lifecycleCallbacks;
     private RemoteConnectivityWake connectivityWake;
+    private final DeviceDataSyncWake deviceDataWake;
+    private AutoCloseable deviceDataObserver;
     private final LocalAppPresence appPresence;
     private volatile boolean presenceSyncPending;
     private final Map<String,PresenceWake> presenceWakes=new HashMap<>();
@@ -109,13 +111,17 @@ public final class RemoteFeature {
         this.backgroundScheduling=Objects.requireNonNull(backgroundScheduling);
         this.context=context.getApplicationContext();
         appPresence=new LocalAppPresence(this.context,this::presenceChanged);
+        deviceDataWake=new DeviceDataSyncWake((work,delay)->{
+            ScheduledFuture<?> future=timer.schedule(work,delay,TimeUnit.MILLISECONDS);
+            return ()->future.cancel(false);
+        },SystemClock::elapsedRealtime,this::synchronizeDeviceData);
         this.store=store;this.secrets=java.util.Objects.requireNonNull(secrets);
         this.pairingClock=java.util.Objects.requireNonNull(pairingClock);
         if (!Thread.holdsLock(store)) RemoteSessionClock.observeAtStartup(this.context);
         com.subhub.app.security.SubFeaturePolicy.registerHardcoreAuthority(this.context, store);
         keyholder=new RemoteKeyholder(this.context,store,secrets);
         appIcons=new RemoteAppIconIntegration(this.context,store,timer,this::kick);
-        activity=new RemoteActivityRepository(this.context,store,this::changed);
+        activity=new RemoteActivityRepository(this.context,store,()->requestDeviceDataSync(true));
         store.onActivityReceived(activity::received);
         store.onPairingApproval((approved,sampled)->{
             PairingOperationLease lease=pairingDeadlineOwners.get(approved.direction);
@@ -143,6 +149,7 @@ public final class RemoteFeature {
         if(installed||stopped)return;installed=true;
         timer.execute(()->{try{appIcons.refresh();}catch(Exception unavailable){/* Reconstruct from a later verified sync. */}});
         lifecycleApplication=app;
+        observeDeviceData();
         appPresence.install(app);
         lifecycleCallbacks=new Application.ActivityLifecycleCallbacks() {
             private int started;
@@ -156,6 +163,22 @@ public final class RemoteFeature {
         synchronizeBackground();
         try { connectivityWake=new RemoteConnectivityWake(app,this::requestStableConnectionSync); }
         catch(RuntimeException unavailable){android.util.Log.w("PeerSync","Network observation unavailable");}
+    }
+    private synchronized void observeDeviceData() {
+        if(stopped||deviceDataObserver!=null)return;
+        deviceDataObserver=RemoteDeviceData.observe(context,()->requestDeviceDataSync(false));
+    }
+    private void requestDeviceDataSync(boolean activityEvent) {
+        // Source callbacks run under producer locks. Only enqueue; never read peer/runtime state here.
+        if(stopped||activity==null||!activity.hasSource()||!foreground&&!BackgroundSyncPreferences.enabled(context))return;
+        if(activityEvent)deviceDataWake.activity();else deviceDataWake.telemetry();
+    }
+    private void synchronizeDeviceData() {
+        if(stopped||!foreground&&!BackgroundSyncPreferences.enabled(context))return;
+        // A local source wake cannot create a relationship or publish a Dom's local device data.
+        if(!com.subhub.app.security.DeviceRolePreferences.supportsSub(context))return;
+        for(RemoteStore.Peer peer:store.peers(false))
+            if(peer.state==RemoteStore.State.ACTIVE&&peer.localRole==RemoteProtocol.Role.SUB){changed();return;}
     }
     private synchronized void refreshForegroundPolling() {
         if (foregroundPoll != null) { foregroundPoll.cancel(false); foregroundPoll = null; }
@@ -1165,6 +1188,8 @@ public final class RemoteFeature {
     }
     synchronized void shutdownForTest() throws Exception {
         stopped=true;
+        deviceDataWake.close();
+        if(deviceDataObserver!=null){deviceDataObserver.close();deviceDataObserver=null;}
         appPresence.close();
         synchronized(presenceWakes){for(PresenceWake wake:presenceWakes.values())if(wake.task!=null)wake.task.cancel(false);presenceWakes.clear();}
         ConnectedServiceLease connected=connectedServiceLease;if(connected!=null)connected.close();

@@ -28,7 +28,11 @@ public final class TaskRuntime {
     private final RemoteStore scopedAuthority;
     public final TaskStore store;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "subhub-tasks"));
-    private volatile boolean installed, foreground;
+    private final TaskForegroundTicker foregroundTicker = new TaskForegroundTicker((tick, delay) -> {
+        ScheduledFuture<?> scheduled = executor.scheduleWithFixedDelay(tick, 0, delay, TimeUnit.MILLISECONDS);
+        return () -> scheduled.cancel(false);
+    }, this::tick);
+    private volatile boolean installed;
     private TaskRuntime(Context context) { this(context, null); }
     private TaskRuntime(Context context, RemoteStore authority) {
         this.context = context; scopedAuthority = authority; store = new TaskStore(context);
@@ -44,16 +48,14 @@ public final class TaskRuntime {
     public synchronized void install(Application application) {
         if (installed) return; installed = true;
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-            private int started;
-            @Override public void onActivityStarted(Activity activity) { if (++started == 1) { foreground = true; executor.execute(TaskRuntime.this::tick); } }
-            @Override public void onActivityStopped(Activity activity) { if (--started == 0) foreground = false; }
+            @Override public void onActivityStarted(Activity activity) { foregroundTicker.activityStarted(); }
+            @Override public void onActivityStopped(Activity activity) { foregroundTicker.activityStopped(); }
             @Override public void onActivityCreated(Activity a, android.os.Bundle b) { }
             @Override public void onActivityResumed(Activity a) { }
             @Override public void onActivityPaused(Activity a) { }
             @Override public void onActivitySaveInstanceState(Activity a, android.os.Bundle b) { }
             @Override public void onActivityDestroyed(Activity a) { }
         });
-        executor.scheduleWithFixedDelay(() -> { if (foreground) tick(); }, 30, 30, TimeUnit.SECONDS);
         WorkManager.getInstance(context).enqueueUniquePeriodicWork("subhub-task-deadlines", ExistingPeriodicWorkPolicy.KEEP,
                 new PeriodicWorkRequest.Builder(TaskWorker.class, 15, TimeUnit.MINUTES).build());
     }

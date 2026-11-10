@@ -12,13 +12,9 @@ import com.subhub.app.overlay.CensorPhrases;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceSnapshot;
-import com.subhub.app.popup.PopupStormSettings;
 import com.subhub.app.settings.CaptureMethod;
 import com.subhub.app.settings.CensorAppearance;
-import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.SettingsRepository;
-import com.subhub.app.subliminal.SubliminalSettings;
-import com.subhub.app.subliminal.SubliminalSettingsRepository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -34,7 +30,7 @@ public final class LocalContractDetails extends ContextWrapper {
             case "censor": rows = censorArrangementRows(); break;
             case "limits": rows = limitsArrangementDetails(); break;
             case "wallet": rows = walletArrangementDetails(); break;
-            case "atmosphere": rows = atmosphereArrangementDetails(); break;
+            case "atmosphere": return AtmosphereContractDetails.local(this).details;
             default: throw new IllegalArgumentException("Unknown contract section");
         }
         List<String> values = new ArrayList<>();
@@ -167,47 +163,6 @@ public final class LocalContractDetails extends ContextWrapper {
                                 R.string.arrangement_wallet_cap_values,
                                 wallet.money(wallet.getDailyCapCents()),
                                 wallet.money(wallet.getWeeklyCapCents()))));
-        return lines;
-    }
-
-    private List<ArrangementDetail> subliminalArrangementDetails() {
-        SubliminalSettings settings = new SubliminalSettingsRepository(this).load();
-        List<String> voices = new ArrayList<>();
-        for (String pack : settings.getEnabledPacks()) voices.add(friendlySubliminalPack(pack));
-        Collections.sort(voices, String.CASE_INSENSITIVE_ORDER);
-        List<ArrangementDetail> lines = new ArrayList<>();
-        lines.add(
-                detailLine(
-                        R.string.arrangement_subliminal_voice,
-                        voices.isEmpty()
-                                ? getString(R.string.arrangement_none_selected)
-                                : android.text.TextUtils.join(", ", voices)));
-        lines.add(
-                detailLine(
-                        R.string.arrangement_subliminal_intensity,
-                        friendlyPreset(settings.getPreset())));
-        return lines;
-    }
-
-    private List<ArrangementDetail> atmosphereArrangementDetails() {
-        FeatureModuleManager modules = new FeatureModuleManager(this);
-        PopupStormSettings popup = PopupStormSettings.load(this);
-        SubliminalSettings whispers = new SubliminalSettingsRepository(this).load();
-        List<ArrangementDetail> lines = new ArrayList<>();
-        lines.add(
-                detailLine(
-                        R.string.atmosphere_whispers_title,
-                        modules.isSubliminalEnabled()
-                                ? getString(
-                                        R.string.arrangement_atmosphere_enabled,
-                                        friendlyPreset(whispers.getPreset()))
-                                : getString(R.string.popup_off)));
-        lines.add(
-                detailLine(
-                        R.string.popup_title,
-                        popup.isEnabled()
-                                ? getString(R.string.atmosphere_state_on)
-                                : getString(R.string.popup_off)));
         return lines;
     }
 
@@ -356,27 +311,6 @@ public final class LocalContractDetails extends ContextWrapper {
         }
     }
 
-    private String friendlySubliminalPack(String pack) {
-        if (SubliminalSettingsRepository.PACK_OBEDIENCE.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_obedience);
-        }
-        if (SubliminalSettingsRepository.PACK_FOCUS.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_focus);
-        }
-        if (SubliminalSettingsRepository.PACK_BETA.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_beta);
-        }
-        if (SubliminalSettingsRepository.PACK_FINDOM.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_findom);
-        }
-        return getString(R.string.subliminal_pack_summary_custom);
-    }
-
-    private String friendlyPreset(SubliminalSettings.Preset preset) {
-        String raw = (preset == null ? SubliminalSettings.Preset.NORMAL : preset).name();
-        return raw.substring(0, 1) + raw.substring(1).toLowerCase(java.util.Locale.ROOT);
-    }
-
     private String friendlyEffectName(CensorAppearance.Type type) {
         CensorAppearance.Type resolved = type == null ? CensorAppearance.Type.BOX : type;
         switch (resolved) {
@@ -427,26 +361,6 @@ public final class LocalContractDetails extends ContextWrapper {
             default:
                 return getString(R.string.preset_medium);
         }
-    }
-
-    private String friendlySubliminalVoice(SubliminalSettings settings) {
-        Set<String> packs = settings.getEnabledPacks();
-        if (packs.isEmpty()) return getString(R.string.subliminal_pack_summary_none);
-        if (packs.size() != 1) return getString(R.string.subliminal_pack_summary_mixed);
-        String pack = packs.iterator().next();
-        if (SubliminalSettingsRepository.PACK_OBEDIENCE.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_obedience);
-        }
-        if (SubliminalSettingsRepository.PACK_FOCUS.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_focus);
-        }
-        if (SubliminalSettingsRepository.PACK_BETA.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_beta);
-        }
-        if (SubliminalSettingsRepository.PACK_FINDOM.equals(pack)) {
-            return getString(R.string.subliminal_pack_summary_findom);
-        }
-        return getString(R.string.subliminal_pack_summary_custom);
     }
 
 }
