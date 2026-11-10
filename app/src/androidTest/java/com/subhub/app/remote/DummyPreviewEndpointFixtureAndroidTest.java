@@ -23,7 +23,14 @@ public final class DummyPreviewEndpointFixtureAndroidTest {
     @Before public void authorizeOwnedGuest() {
         settings = new LinkedHashMap<>(context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getAll());
         wasDom = ControllerPinManager.isDomModeActive();
-        assertTrue("Verify the runner's existing fixture PIN before changing role capabilities",
+        // The runner deliberately leaves an explicitly unkeyed guest without a PIN.
+        // Prepare only that credential-free state; never overwrite existing credentials
+        // or bypass a remote keyholder. The exact settings snapshot is restored below.
+        if (!ControllerPinManager.hasCredentials(context) && ControllerPinManager.allowsUnkeyedAccess(context)) {
+            assertTrue("Prepare a temporary PIN only for the unkeyed guest",
+                    ControllerPinManager.setPin(context, "2468"));
+        }
+        assertTrue("Verify the existing or owned guest PIN before changing role capabilities",
                 ControllerPinManager.verify(context, "2468"));
         assertTrue("Use the guarded device-role transition", DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
     }
