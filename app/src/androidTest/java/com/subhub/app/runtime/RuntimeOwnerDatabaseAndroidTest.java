@@ -256,6 +256,35 @@ public final class RuntimeOwnerDatabaseAndroidTest {
         }
     }
 
+    @Test public void platformLocaleMigrationPreservesExactOwnerEvidence() throws IOException {
+        try (Fixture fixture = new Fixture()) {
+            RuntimeOwnerStore.Record owner = reserved("internal_a", 1);
+            assertEquals(RuntimeOwnerStore.Outcome.COMMITTED, fixture.first.compareAndSet(RuntimeOwnerStore.Record.idle(0), owner));
+            byte[] marker = Files.readAllBytes(fixture.marker().toPath());
+            for (java.util.Locale locale : new java.util.Locale[]{java.util.Locale.GERMANY, java.util.Locale.JAPAN}) {
+                fixture.edit(db -> db.setLocale(locale));
+                try (SQLiteRuntimeOwnerBackend reopened = fixture.reopen()) { assertEquals(owner, reopened.read()); }
+                assertArrayEquals(marker, Files.readAllBytes(fixture.marker().toPath()));
+            }
+        }
+    }
+
+    @Test public void platformMetadataNameDoesNotHideMalformedOrExtraSchema() {
+        try (Fixture fixture = new Fixture()) {
+            fixture.edit(db -> db.execSQL("ALTER TABLE android_metadata ADD COLUMN unexpected TEXT"));
+            refuses(fixture.first::read);
+        }
+        try (Fixture fixture = new Fixture()) {
+            // SQL LIKE's underscore wildcard would incorrectly exclude this application table.
+            fixture.edit(db -> db.execSQL("CREATE TABLE sqliteXunexpected (value TEXT)"));
+            refuses(fixture.first::read);
+        }
+        try (Fixture fixture = new Fixture()) {
+            fixture.edit(db -> db.execSQL("CREATE TRIGGER unexpected_owner_trigger AFTER UPDATE ON physical_owner BEGIN SELECT 1; END"));
+            refuses(fixture.first::read);
+        }
+    }
+
     private static RuntimeOwnerStore.Record reserved(String id, long revision) {
         RuntimeLease.Identity owner = new RuntimeLease.Identity(RuntimeTarget.internal(id), RuntimeOrigin.LOCAL_UI,
                 "profile_generation", UUID.randomUUID().toString(), UUID.randomUUID().toString(),

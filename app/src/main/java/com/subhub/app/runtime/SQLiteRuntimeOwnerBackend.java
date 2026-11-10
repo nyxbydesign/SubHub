@@ -34,6 +34,7 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
             + "revision INTEGER NOT NULL CHECK(revision>=0), body BLOB NOT NULL)";
     private static final String JOURNAL_SCHEMA = "CREATE TABLE owner_journal (slot INTEGER PRIMARY KEY CHECK(slot=1), "
             + "identity TEXT NOT NULL)";
+    private static final String PLATFORM_SCHEMA = "CREATE TABLE android_metadata (locale TEXT)";
     private static final String MARKER_MAGIC = "SUBHUB_OWNER_V1";
     private static final Object IO_LOCK = new Object();
     private static final DatabaseErrorHandler PRESERVE_CORRUPTION = database -> {
@@ -235,8 +236,17 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
     }
     private static void validateDatabase(SQLiteDatabase db, String identity) {
         if (db.getVersion() != 1) throw new IllegalStateException("Unsupported owner database version");
-        try (Cursor schema = db.rawQuery("SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name", null)) {
-            if (!schema.moveToFirst() || !"owner_journal".equals(schema.getString(0)) || !JOURNAL_SCHEMA.equals(schema.getString(1))
+        try (Cursor schema = db.rawQuery("SELECT name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name", null)) {
+            boolean row = schema.moveToFirst();
+            // Android SQLiteConnection maintains this exact locale table, including during open.
+            // It is platform metadata, never owner evidence. No arbitrary extra object is ignored.
+            if (row && "android_metadata".equals(schema.getString(0))) {
+                if (!PLATFORM_SCHEMA.equals(schema.getString(1)))
+                    throw new IllegalStateException("Invalid platform locale schema");
+                validatePlatformLocale(db);
+                row = schema.moveToNext();
+            }
+            if (!row || !"owner_journal".equals(schema.getString(0)) || !JOURNAL_SCHEMA.equals(schema.getString(1))
                     || !schema.moveToNext() || !TABLE.equals(schema.getString(0)) || !OWNER_SCHEMA.equals(schema.getString(1))
                     || schema.moveToNext()) throw new IllegalStateException("Invalid owner database schema");
         }
@@ -244,6 +254,15 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
             if (!journal.moveToFirst() || journal.getType(0) != Cursor.FIELD_TYPE_INTEGER || journal.getInt(0) != 1
                     || journal.getType(1) != Cursor.FIELD_TYPE_STRING || !identity.equals(journal.getString(1)) || journal.moveToNext())
                 throw new IllegalStateException("Owner journal identity does not match provisioning evidence");
+        }
+    }
+    private static void validatePlatformLocale(SQLiteDatabase db) {
+        try (Cursor locale = db.rawQuery("SELECT locale FROM android_metadata", null)) {
+            if (!locale.moveToFirst() || locale.getType(0) != Cursor.FIELD_TYPE_STRING)
+                throw new IllegalStateException("Invalid platform locale metadata");
+            String value = locale.getString(0);
+            if (value.length() > 512 || value.indexOf('\0') >= 0 || locale.moveToNext())
+                throw new IllegalStateException("Invalid platform locale metadata");
         }
     }
     private static ContentValues values(RuntimeOwnerStore.Record record) {

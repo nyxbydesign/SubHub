@@ -47,6 +47,28 @@ class GradleDiagnosticTest(unittest.TestCase):
                 self.assertEqual([category], result["exceptions"])
                 self.assertFalse(result["unknownException"])
 
+    def test_early_compile_and_resource_failures_emit_only_fixed_categories(self):
+        for task, label, exception, category in (
+            (b":app:compileDebugJavaWithJavac", "java_compile",
+             b"org.gradle.api.internal.tasks.compile.CompilationFailedException", "java_compilation"),
+            (b":app:mergeDebugResources", "merge_resources",
+             b"com.android.builder.internal.aapt.v2.Aapt2Exception", "android_resources"),
+            (b":app:checkDebugAarMetadata", "dependency_metadata",
+             b"org.gradle.internal.resolve.ModuleVersionResolveException", "dependency_resolution"),
+        ):
+            with self.subTest(task=task):
+                _, report = self.report(b"> Task " + task + b" FAILED\n* Exception is:\n"
+                                        + exception + b": " + PRIVATE + b"\n")
+                self.assertEqual({label: "failed"}, report["tasks"])
+                self.assertEqual([category], report["exceptions"])
+
+    def test_every_allowlisted_task_uses_only_fixed_status_labels(self):
+        for task, label in safe.TASKS.items():
+            for status, emitted in safe.STATUSES.items():
+                with self.subTest(task=task, status=status):
+                    _, report = self.report(b"> Task " + task + (b" " + status if status else b"") + b"\n")
+                    self.assertEqual({label: emitted}, report["tasks"])
+
     def test_exception_text_cannot_overwrite_task_status_and_failure_is_monotonic(self):
         data = (b"> Task :app:packageDebug FAILED\n* Exception is:\n"
                 b"java.io.IOException: PRIVATE_TOKEN\n> Task :app:packageDebug\n"
