@@ -133,7 +133,7 @@ public final class StatsSnapshot {
         return new StatsSnapshot(Math.max(totalBlocks, history.total("censors")),
                 Math.max(totalSessionSeconds, history.sessionSeconds()),
                 (int) Math.min(Integer.MAX_VALUE, Math.max(sessions, history.total("sessions"))),
-                currentStreak, lastSessionDate, Math.max(totalProtectedSeconds, history.sessionSeconds()),
+                Math.max(currentStreak, history.currentStreak()), lastSessionDate, Math.max(totalProtectedSeconds, history.sessionSeconds()),
                 currentSessionBlocks, (int) Math.min(Integer.MAX_VALUE, Math.max(peakSessionBlocks, history.peak())),
                 Math.max(longestSessionSeconds, history.longest()), browserSessions, browserPages,
                 Math.max(exportedImages, history.total("photos")), customPhrases,

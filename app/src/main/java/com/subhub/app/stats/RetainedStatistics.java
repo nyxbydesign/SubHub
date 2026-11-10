@@ -156,6 +156,15 @@ final class RetainedStatistics {
         return result;
     }
 
+    int currentStreak() {
+        Set<String> dates = activityDates();
+        LocalDate day = Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
+        if (!dates.contains(day.toString())) day = day.minusDays(1);
+        int streak = 0;
+        while (dates.contains(day.toString())) { streak++; day = day.minusDays(1); }
+        return streak;
+    }
+
     /** First date supported by the retained lower bound, never a fabricated lifetime date. */
     long threshold(String metric, long target) {
         long running = 0;

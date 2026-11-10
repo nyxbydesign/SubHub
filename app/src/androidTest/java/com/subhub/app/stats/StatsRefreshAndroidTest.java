@@ -142,6 +142,56 @@ public final class StatsRefreshAndroidTest {
         }
     }
 
+    @Test public void openCatalogRefreshesProgressAndDetailsWithoutNavigation() throws Exception {
+        ControllerPinManager.enterDomMode();
+        new StatsRepository(context, false).setCustomPhrasesCount(3);
+        try (ActivityScenario<AchievementsActivity> page = ActivityScenario.launch(AchievementsActivity.class)) {
+            AtomicReference<AchievementsActivity> current = new AtomicReference<>();
+            page.onActivity(current::set);
+            String rowTag = "achievement:phrase_library";
+            await(() -> containsText(current.get().findViewById(android.R.id.content)
+                    .findViewWithTag(rowTag), "3 / 10"));
+            AtomicReference<View> unchanged = new AtomicReference<>();
+            page.onActivity(activity -> unchanged.set(activity.findViewById(android.R.id.content).findViewWithTag(rowTag)));
+            // A complete polling interval must leave unchanged controls in place.
+            SystemClock.sleep(5_500);
+            page.onActivity(activity -> assertSame(unchanged.get(),
+                    activity.findViewById(android.R.id.content).findViewWithTag(rowTag)));
+            new StatsRepository(context, false).setCustomPhrasesCount(7);
+            await(() -> containsText(current.get().findViewById(android.R.id.content)
+                    .findViewWithTag(rowTag), "7 / 10"));
+            onView(withTagValue(is(rowTag))).perform(NativeUiActions.revealAboveNavigation(), click());
+            onView(withId(R.id.achievement_detail_progress)).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                    withText(context.getString(R.string.achievement_progress_detail, "7 / 10"))));
+            new StatsRepository(context, false).setCustomPhrasesCount(8);
+            long end = SystemClock.uptimeMillis() + 8_000;
+            boolean updated = false;
+            do {
+                try {
+                    onView(withId(R.id.achievement_detail_progress)).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                            withText(context.getString(R.string.achievement_progress_detail, "8 / 10"))));
+                    updated = true;
+                } catch (AssertionError notYet) { SystemClock.sleep(50); }
+            } while (!updated && SystemClock.uptimeMillis() < end);
+            assertTrue("The open detail dialog must receive current progress", updated);
+            onView(withId(R.id.achievement_detail_close)).perform(click());
+            await(() -> current.get().hasWindowFocus()
+                    && current.get().getLifecycle().getCurrentState() == androidx.lifecycle.Lifecycle.State.RESUMED);
+            page.recreate();
+            page.onActivity(current::set);
+            await(() -> containsText(current.get().findViewById(android.R.id.content)
+                    .findViewWithTag(rowTag), "8 / 10"));
+        }
+    }
+
+    private boolean containsText(View view, String text) {
+        if (view == null) return false;
+        if (view instanceof TextView && text.equals(((TextView) view).getText().toString())) return true;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            if (containsText(((ViewGroup) view).getChildAt(i), text)) return true;
+        return false;
+    }
+
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void incompleteSubHistoryHidesLargeUnknownTotalAndRetainsChart() throws Exception {
         assertPeriodTotals(false);

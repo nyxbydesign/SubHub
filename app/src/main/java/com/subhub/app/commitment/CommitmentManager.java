@@ -162,6 +162,16 @@ public final class CommitmentManager {
         }
     }
 
+    /** Elapsed time of the recorded lock, bounded by its duration, without expiry side effects. */
+    public static long observedElapsedMillis(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            if (values.getLong(KEY_STARTED_AT, 0L) <= 0 || values.getLong(KEY_ENDS_AT, 0L) <= 0) return 0L;
+            long duration = Math.max(0L, values.getLong(KEY_DURATION, 0L));
+            return Math.max(0L, duration - Math.max(0L, remaining(values, RemoteSessionClock.local())));
+        }
+    }
+
     public static long originalDurationMillis(Context context) {
         return preferences(context).getLong(KEY_DURATION, 0L);
     }

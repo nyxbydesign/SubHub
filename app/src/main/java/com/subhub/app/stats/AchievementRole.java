@@ -20,7 +20,12 @@ public enum AchievementRole {
                         && ControllerPinManager.isDomWorkspaceUnlocked());
     }
 
+    /** Keep legacy persisted IDs and earned dates when configuration badges move to Dom. */
+    static boolean isDomConfiguration(String id) {
+        return "first_custom_phrase".equals(id) || "phrase_library".equals(id) || "paypal_vault".equals(id);
+    }
+
     public boolean owns(String id) {
-        return id != null && (this == DOM) == id.startsWith("dom_");
+        return id != null && (this == DOM) == (id.startsWith("dom_") || isDomConfiguration(id));
     }
 }

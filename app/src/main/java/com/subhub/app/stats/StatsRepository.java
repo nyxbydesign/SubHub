@@ -225,7 +225,7 @@ public final class StatsRepository {
                         .putLong(KEY_LONGEST_SESSION, Math.max(preferences.getLong(KEY_LONGEST_SESSION, 0), durationSeconds))
                         .putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry))
                         .putLong(DailyStatsStore.STAMP, observedAt).putString(DailyStatsStore.ZONE, session.zone);
-                nativeStartStreak(edit, session);
+                recordSessionStreak(edit, session.startedAt, observedAt, session.zone);
                 boolean saved = edit.commit(); refreshSessionMemory();
                 if (saved) { syncDaily(); durationChanged(); }
                 return saved;
@@ -293,6 +293,7 @@ public final class StatsRepository {
                         .putString(NATIVE_ENDED, expected).putLong("remote_native_ended_at", observedAt)
                         .putLong(DailyStatsStore.STAMP, observedAt)
                         .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
+                recordSessionStreak(edit, started, observedAt, activeSessionZone());
                 boolean saved = edit.commit(); refreshSessionMemory();
                 if (saved) { syncDaily(); durationChanged(); }
                 return saved;
@@ -301,14 +302,13 @@ public final class StatsRepository {
     }
 
     private void nativeStartStreak(SharedPreferences.Editor edit, NativeSession session) {
-        String date = java.time.Instant.ofEpochMilli(session.startedAt).atZone(java.time.ZoneId.of(session.zone))
-                .toLocalDate().toString();
-        String previous = preferences.getString(KEY_LAST_SESSION_DATE, "");
-        int old = Math.max(0, preferences.getInt(KEY_CURRENT_STREAK, 0));
-        int streak = date.equals(previous) ? old
-                : java.time.LocalDate.parse(date).minusDays(1).toString().equals(previous)
-                        ? old == Integer.MAX_VALUE ? old : old + 1 : 1;
-        edit.putInt(KEY_CURRENT_STREAK, streak).putString(KEY_LAST_SESSION_DATE, date);
+        recordSessionStreak(edit, session.startedAt, session.startedAt, session.zone);
+    }
+
+    private void recordSessionStreak(SharedPreferences.Editor edit, long start, long end, String zone) {
+        SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
+                preferences.getString(KEY_LAST_SESSION_DATE, ""), start, end, zone);
+        edit.putInt(KEY_CURRENT_STREAK, streak.days).putString(KEY_LAST_SESSION_DATE, streak.lastDay);
     }
 
     private boolean flushNativeState() {
@@ -460,6 +460,7 @@ public final class StatsRepository {
             if (durationSeconds > preferences.getLong(KEY_LONGEST_SESSION, 0)) {
                 edit.putLong(KEY_LONGEST_SESSION, durationSeconds);
             }
+            recordSessionStreak(edit, started, System.currentTimeMillis(), activeSessionZone());
             edit.apply();
             appendSessionHistory(new SessionEntry(started, durationSeconds, sessionBlocks,
                     activeLong(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS),
@@ -517,10 +518,12 @@ public final class StatsRepository {
                 protectedSeconds += currentSessionSeconds;
                 totalSessionSeconds += currentSessionSeconds;
             }
+            long now = System.currentTimeMillis();
+            SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
+                    preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, activeSessionZone());
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
-                    preferences.getInt(KEY_CURRENT_STREAK, 0),
-                    preferences.getString(KEY_LAST_SESSION_DATE, ""), protectedSeconds,
+                    streak.current(LocalDate.now()), streak.lastDay, protectedSeconds,
                     restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
                     preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),
@@ -691,15 +694,9 @@ public final class StatsRepository {
                 KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS, 1L);
     }
     private void updateStreak() {
-        String today = today();
-        String previous = preferences.getString(KEY_LAST_SESSION_DATE, "");
-        int streak;
-        if (today.equals(previous)) streak = preferences.getInt(KEY_CURRENT_STREAK, 0);
-        else if (LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_LOCAL_DATE)
-                .equals(previous)) streak = preferences.getInt(KEY_CURRENT_STREAK, 0) + 1;
-        else streak = 1;
-        preferences.edit().putInt(KEY_CURRENT_STREAK, streak)
-                .putString(KEY_LAST_SESSION_DATE, today).apply();
+        SharedPreferences.Editor edit = preferences.edit();
+        recordSessionStreak(edit, sessionStartMs, sessionStartMs, activeSessionZone());
+        edit.apply();
     }
 
     private String activeSessionZone() {

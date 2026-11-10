@@ -41,7 +41,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private final LinearLayout content;
     private boolean active;
     private static final String[] CATEGORY_ORDER = {
-            "dom_subs", "dom_time", "dom_sessions", "dom_tribute", "dom_hardcore",
+            "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_wallet", "dom_tribute", "dom_hardcore",
             "sessions", "time", "streaks", "app_mode", "limits", "pact", "hardcore",
             "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
             "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
@@ -51,6 +51,11 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private AchievementManager manager;
     private StatsSnapshot stats;
     private Dialog detailDialog;
+    private AchievementManager.Achievement detailAchievement;
+    private View detailContent;
+    private String renderedFingerprint;
+    private final android.os.Handler refreshClock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refresh = this::loadCatalog;
 
     AchievementsPane(StatsActivity host) {
         super(host);
@@ -71,7 +76,14 @@ final class AchievementsPane extends android.content.ContextWrapper {
         if (!manager.isAccessible()) { host.finish(); return; }
         content.setVisibility(View.INVISIBLE);
         stats = null;
-        AchievementManager captured = manager;
+        renderedFingerprint = null;
+        loadCatalog();
+    }
+
+    private void loadCatalog() {
+        if (!active) return;
+        if (manager == null || !manager.isAccessible()) { host.finish(); return; }
+        AchievementManager captured = AchievementManager.forWorkspace(this);
         android.content.Context app = getApplicationContext();
         com.subhub.app.util.AsyncUiScope.forPage(host).load("workspace-achievement-catalog", () -> {
             if (captured.getRole() == AchievementRole.DOM) {
@@ -86,11 +98,19 @@ final class AchievementsPane extends android.content.ContextWrapper {
             return new Catalog(captured, facts.stats);
         }, loaded -> {
             if (!active) return;
-            if (manager != loaded.manager || !loaded.manager.isAccessible()) { host.finish(); return; }
+            if (!loaded.manager.isAccessible()) { host.finish(); return; }
+            manager = loaded.manager;
             stats = loaded.stats;
             manager.takePendingNotifications();
-            rebuild();
+            String fingerprint = fingerprint();
+            if (!fingerprint.equals(renderedFingerprint)) {
+                rebuild();
+                renderedFingerprint = fingerprint;
+                if (detailDialog != null && detailDialog.isShowing() && detailAchievement != null)
+                    bindDetails(detailContent, detailAchievement);
+            }
             content.setVisibility(View.VISIBLE);
+            scheduleRefresh();
         }, failure -> {
             if (!active) return;
             if (!captured.isAccessible()) { host.finish(); return; }
@@ -99,7 +119,26 @@ final class AchievementsPane extends android.content.ContextWrapper {
             binding.achievementNextName.setText(R.string.role_person_unavailable);
             binding.achievementOverallProgress.setProgress(0); binding.achievementNextProgress.setProgress(0);
             content.setVisibility(View.VISIBLE);
+            renderedFingerprint = null;
+            scheduleRefresh();
         });
+    }
+
+    private void scheduleRefresh() {
+        refreshClock.removeCallbacks(refresh);
+        if (active) refreshClock.postDelayed(refresh, 5_000L);
+    }
+
+    private String fingerprint() {
+        StringBuilder value = new StringBuilder(manager.progressCurrency());
+        for (AchievementManager.Achievement achievement : manager.all()) {
+            AchievementManager.Progress progress = manager.progress(achievement, stats);
+            value.append('|').append(achievement.getId()).append(':').append(progress.isUnlocked())
+                    .append(':').append(progress.isKnown()).append(':').append(progress.percent())
+                    .append(':').append(formatProgress(achievement, progress))
+                    .append(':').append(manager.getUnlockedAt(achievement.getId()));
+        }
+        return value.toString();
     }
 
     private static final class Catalog {
@@ -110,6 +149,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
 
     void pause() {
         active = false;
+        refreshClock.removeCallbacks(refresh);
         if (detailDialog != null) { detailDialog.dismiss(); detailDialog = null; }
         com.subhub.app.util.AsyncUiScope.forPage(host).cancel("workspace-achievement-catalog");
         if (manager != null && manager.getRole() == AchievementRole.DOM) {
@@ -179,9 +219,10 @@ final class AchievementsPane extends android.content.ContextWrapper {
         switch (achievement.getId()) {
             case "color_picker": case "border_artist": case "style_explorer":
                 return "appearance";
-            case "first_custom_phrase": case "phrase_library": return "phrases";
+            case "first_custom_phrase": case "phrase_library": return "dom_phrases";
+            case "paypal_vault": return "dom_wallet";
             case "pack_curator": return "packs";
-            case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault":
+            case "wallet_keeper": case "tribute_rulesmith":
             case "paid_pause": return "wallet_setup";
             case "wallet_paid_10": case "wallet_paid_100":
             case "wallet_paid_500": case "wallet_paid_1000": return "wallet_payments";
@@ -293,6 +334,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
         AchievementManager.Progress progress = manager.progress(achievement, stats);
 
         MaterialCardView card = new MaterialCardView(this);
+        card.setTag("achievement:" + achievement.getId());
         card.setRadius(dp(20));
         card.setCardElevation(dp(3));
         card.setCardBackgroundColor(getColor(unlocked
@@ -409,14 +451,38 @@ final class AchievementsPane extends android.content.ContextWrapper {
 
     private void showAchievementDetails(AchievementManager.Achievement achievement) {
         if (!active || !manager.isAccessible() || achievement.getRole() != manager.getRole()) return;
+        Dialog dialog = new Dialog(host);
+        detailDialog = dialog;
+        detailAchievement = achievement;
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        View content = LayoutInflater.from(this).inflate(R.layout.dialog_achievement_details, null, false);
+        detailContent = content;
+        bindDetails(content, achievement);
+        dialog.setOnDismissListener(ignored -> {
+            if (detailDialog == dialog) { detailDialog = null; detailAchievement = null; detailContent = null; }
+        });
+        content.findViewById(R.id.achievement_detail_close)
+                .setOnClickListener(view -> dialog.dismiss());
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = 0.6f;
+            window.setAttributes(attributes);
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32),
+                    dp(440)), WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+        PremiumMotion.styleDialog(dialog);
+    }
+
+    private void bindDetails(View content, AchievementManager.Achievement achievement) {
         boolean unlocked = manager.isUnlocked(achievement.getId());
         boolean concealed = achievement.isHidden() && !unlocked;
         AchievementManager.Progress progress = manager.progress(achievement, stats);
-        Dialog dialog = new Dialog(host);
-        detailDialog = dialog;
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        View content = LayoutInflater.from(this).inflate(
-                R.layout.dialog_achievement_details, null, false);
         AchievementBadgeView badge = content.findViewById(R.id.achievement_detail_badge);
         CharSequence name = concealed ? getString(R.string.achievement_hidden_name)
                 : getString(achievement.getName());
@@ -438,27 +504,12 @@ final class AchievementsPane extends android.content.ContextWrapper {
                         formatProgress(achievement, progress)));
         TextView dateView = content.findViewById(R.id.achievement_detail_date);
         if (unlocked && manager.getUnlockedAt(achievement.getId()) > 0) {
+            dateView.setVisibility(View.VISIBLE);
             dateView.setText(getString(R.string.achievement_unlocked_on,
                     formatUnlockDate(manager.getUnlockedAt(achievement.getId()))));
         } else {
             dateView.setVisibility(View.GONE);
         }
-        content.findViewById(R.id.achievement_detail_close)
-                .setOnClickListener(view -> dialog.dismiss());
-        dialog.setContentView(content);
-        dialog.setCanceledOnTouchOutside(true);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams attributes = window.getAttributes();
-            attributes.dimAmount = 0.6f;
-            window.setAttributes(attributes);
-            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32),
-                    dp(440)), WindowManager.LayoutParams.WRAP_CONTENT);
-        }
-        PremiumMotion.styleDialog(dialog);
     }
 
     private String formatUnlockDate(long timestamp) {
@@ -480,7 +531,8 @@ final class AchievementsPane extends android.content.ContextWrapper {
             AchievementManager.Progress progress) {
         if (!progress.isKnown()) return getString(R.string.dom_progress_unavailable);
         String category = achievement.getCategory();
-        if ("time".equals(category) || "dom_time".equals(category)) {
+        if ("time".equals(category) || "dom_time".equals(category)
+                || "pact_long_haul".equals(achievement.getId())) {
             return compactDuration(progress.getCurrent()) + " / "
                     + compactDuration(progress.getTarget());
         }
@@ -501,6 +553,8 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private int categoryTitle(String category) {
         switch (category) {
             case "dom_subs": return R.string.dom_category_subs;
+            case "dom_phrases": return R.string.achievement_display_phrases;
+            case "dom_wallet": return R.string.achievement_category_wallet;
             case "dom_time": return R.string.dom_category_time;
             case "dom_sessions": return R.string.dom_category_sessions;
             case "dom_tribute": return R.string.dom_category_tribute;
