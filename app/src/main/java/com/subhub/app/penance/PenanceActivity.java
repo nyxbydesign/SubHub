@@ -308,6 +308,8 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override
     protected void onRestoreInstanceState(Bundle state) {
+        // Preview always renders its synthetic source, never restored editable widget state.
+        if (FeatureEditorSession.preview(this)) return;
         // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
         populatingRules = true;
         try {
@@ -1020,10 +1022,6 @@ public final class PenanceActivity extends AppCompatActivity {
         if (connection != null) connection.close();
         binding = null;
         super.onDestroy();
-    }
-    @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }
