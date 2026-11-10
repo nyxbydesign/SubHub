@@ -93,7 +93,7 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "Fixed native suite: extra-time (21), SubHub integration (52), reconnect (6), battery (31), or device/profile pass (53)"
+        description: "Fixed native suite: extra-time (21), SubHub integration (52), reconnect (6), battery (31), or device/profile pass (54)"
         required: true
         default: extra-time
         type: choice

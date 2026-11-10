@@ -279,6 +279,7 @@ DEVICE_PASS_NATIVE = {
     "com.subhub.app.tasks.TasksAndroidTest": [
         "completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
         "domOverviewCompletedCounterRefreshesForAcceptedReviews",
+        "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList",
     ],
     "com.subhub.app.appmode.AllowanceProgressAndroidTest": [
         "nativeRoundedMetersKeepExactValuesAndAccessibility",
@@ -346,7 +347,6 @@ DEVICE_PASS_SOURCE_ONLY = {
         "taskListRefreshRetainsUnchangedCardsAndPositionWhenAnotherTaskArrives",
         "subHomeTaskCountUpdatesWithoutReplacingOtherControlsOrPosition",
         "tasksTabRetainsListDetailAndSubmissionNavigation",
-        "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList",
         "profileGroupsTasksImmediatelyAfterContractAndKeepsItsNativeRoute",
         "homeActiveCountTracksZeroSingularPluralAndReplayedTerminalOutcomes",
         "domCancellationRequiresConfirmationRetainsAuditAndStopsPendingEffects",
@@ -408,7 +408,7 @@ RECONNECT_SELECTORS = [f"{cls}#{method}" for cls, methods in RECONNECT_NATIVE.it
 BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items() for method in methods]
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 53}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"

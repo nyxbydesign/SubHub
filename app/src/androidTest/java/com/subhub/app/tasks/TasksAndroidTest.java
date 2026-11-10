@@ -38,6 +38,9 @@ import com.subhub.app.UiAutomationStateRule;
 import com.subhub.app.people.PersonId;
 import com.subhub.app.people.PersonRoutes;
 import com.subhub.app.people.PersonUi;
+import com.subhub.app.relationships.DomScopeObserverFixture;
+import com.subhub.app.relationships.DomSubjectScope;
+import com.subhub.app.relationships.RelationshipUi;
 import com.subhub.app.remote.RemoteAssets;
 import com.subhub.app.remote.RemoteFeature;
 import com.subhub.app.security.ControllerPinManager;
@@ -82,6 +85,7 @@ public final class TasksAndroidTest {
     private final Map<String, Map<String, ?>> presentationPreferences = new LinkedHashMap<>();
     private TaskRepository repository;
     private TaskStore store;
+    private DomScopeObserverFixture overviewRelationships;
     private String scope;
     private boolean ownsFixture;
 
@@ -129,6 +133,12 @@ public final class TasksAndroidTest {
 
     @After public void restore() throws Exception {
         integration.drainReaders();
+        try {
+            if (overviewRelationships != null) overviewRelationships.close();
+        } finally { restoreTaskFixture(); }
+    }
+
+    private void restoreTaskFixture() throws Exception {
         for (Map.Entry<String, Map<String, ?>> saved : presentationPreferences.entrySet())
             SharedPreferenceTestRestore.restore(context.getSharedPreferences(saved.getKey(), 0), saved.getValue());
         if (ownsFixture) {
@@ -1071,6 +1081,7 @@ public final class TasksAndroidTest {
     }
 
     @Test public void domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList() throws Exception {
+        prepareLocalOverviewRelationship();
         seed("Prepare tomorrow", false);
         try (ActivityScenario<TasksOverviewActivity> page = ActivityScenario.launch(TasksOverviewActivity.class)) {
             awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
@@ -1166,6 +1177,7 @@ public final class TasksAndroidTest {
     }
 
     @Test public void domOverviewCompletedCounterRefreshesForAcceptedReviews() throws Exception {
+        prepareLocalOverviewRelationship();
         TaskDefinition pending = seedCounterOutcomes();
         try (ActivityScenario<TasksOverviewActivity> page = ActivityScenario.launch(TasksOverviewActivity.class)) {
             awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
@@ -1180,6 +1192,19 @@ public final class TasksAndroidTest {
             assertTrue(store.append(scope, cancel, true, false));
             awaitCounterRow(page, 0, 1, 0, 1);
         }
+    }
+
+    private void prepareLocalOverviewRelationship() throws Exception {
+        assertNull(overviewRelationships);
+        // A local profile alone is not an outgoing Dom subject. Supply only this query fixture's edge.
+        overviewRelationships = new DomScopeObserverFixture(context);
+        assertFalse(DomSubjectScope.read(context).includes(PersonId.LOCAL));
+        RelationshipUi.Edge edge = DomScopeObserverFixture.local(UUID.randomUUID().toString(), 1);
+        overviewRelationships.outgoing(edge);
+        DomSubjectScope subjects = DomSubjectScope.read(context);
+        assertFalse(subjects.legacy());
+        assertEquals(Set.of(PersonId.LOCAL), subjects.personIds());
+        assertSame(edge, subjects.localEdge());
     }
 
     private TaskDefinition seedCounterOutcomes() throws Exception {

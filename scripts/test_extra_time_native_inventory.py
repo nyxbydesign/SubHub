@@ -105,14 +105,18 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_device_pass_contains_battery_and_lifecycle_ui_without_duplicates(self):
         selected = native.suite_selectors("device-pass")
-        self.assertEqual(53, len(selected))
-        self.assertEqual(53, len(set(selected)))
+        self.assertEqual(54, len(selected))
+        self.assertEqual(54, len(set(selected)))
         self.assertTrue(set(native.BATTERY_SELECTORS) < set(selected))
+        self.assertEqual({"completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
+                          "domOverviewCompletedCounterRefreshesForAcceptedReviews",
+                          "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList"},
+                         set(native.DEVICE_PASS_NATIVE["com.subhub.app.tasks.TasksAndroidTest"]))
         self.assertEqual(["local-session-app-time-active", "local-session-app-time-idle"],
                          native.UI_SCREENSHOTS["com.subhub.app.people.ProfileStatsActivityAndroidTest#profileAppTimeSharesSessionCardAcrossRefreshAndRecreation"])
         self.assertIn("com.subhub.app.journal.JournalUiAndroidTest#previewStopsPollingWhileHiddenAndRefreshesOnReturnAndReattachment", selected)
         values = native.SUITES["device-pass"]
-        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "53 unique"):
+        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "54 unique"):
             native.suite_selectors("device-pass")
 
     def test_profile_screenshots_accept_exact_or_configuration_suffix_but_not_failures(self):
@@ -546,8 +550,8 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
         labels = ("native-device-pass", "native-battery", "native-reconnect", "native-extra-time-ui")
         self.assertEqual("device-pass", self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels))
         self.assertEqual("", self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels))
-        self.assertEqual(53, len(native.selectors("", "device-pass")))
-        for raw, count in (("", 53), (native.DEVICE_PASS_SELECTORS[-1], 1)):
+        self.assertEqual(54, len(native.selectors("", "device-pass")))
+        for raw, count in (("", 54), (native.DEVICE_PASS_SELECTORS[-1], 1)):
             args = dict(event="workflow_dispatch", suite="device-pass", selectors=raw)
             suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
             selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
