@@ -3,8 +3,10 @@ package com.subhub.app.runtime;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -42,6 +44,8 @@ public class RuntimeExecution<C> {
     private final AtomicBoolean stopQueued = new AtomicBoolean(), completionQueued = new AtomicBoolean();
     private final AtomicBoolean completionRequested = new AtomicBoolean();
     private volatile boolean lifecycleDispatchFailed;
+    private final AtomicBoolean configurationQueued = new AtomicBoolean();
+    private volatile ConfigurationChange configurationChange;
 
     RuntimeExecution(ActiveRuntimeCoordinator coordinator, RuntimeLease lease,
             C acknowledgedMainConfiguration) {
@@ -96,7 +100,7 @@ public class RuntimeExecution<C> {
         if (!effectGate.tryLock()) return false;
         boolean acquired = false;
         try {
-            if (stopping.get()) return false;
+            if (stopping.get() || (configurationQueued.get() && !insideEffect())) return false;
             OwnedResourceRegistry.EffectPermit permit;
             try { permit = registry.acquireEffectPermit(lease, kind); }
             catch (SecurityException revoked) { return false; }
@@ -127,7 +131,7 @@ public class RuntimeExecution<C> {
         Objects.requireNonNull(acknowledgedMainConfiguration);
         // tryLock is reentrant. An effect/receiver cannot nest a newer revision inside an older
         // module loop and let the outer loop overwrite another module after nested success.
-        if (insideEffect()) return ActiveRuntimeCoordinator.Result.NOT_READY;
+        if (insideEffect() || configurationQueued.get()) return ActiveRuntimeCoordinator.Result.NOT_READY;
         if (!lease.identity.profileGeneration.equals(generation))
             return ActiveRuntimeCoordinator.Result.CONFIGURATION_CHANGED;
         // Do not block an Activity/service main thread behind worker work. The integration keeps
@@ -166,6 +170,155 @@ public class RuntimeExecution<C> {
         } finally { effectGate.unlock(); dispatchClosuresIfQuiescent(); }
     }
 
+    /**
+     * Android live-update path. Journal prepare/ACK runs on the serial owner worker; module
+     * updates run on their executor. No thread waits for the other executor while holding a gate.
+     * The caller retains a saved snapshot and retries NOT_READY; only OK means fully applied.
+     */
+    public CompletableFuture<ActiveRuntimeCoordinator.Result> applyConfigurationAsync(String generation,
+            long revision, C acknowledgedConfiguration, Executor moduleExecutor) {
+        Objects.requireNonNull(acknowledgedConfiguration); Objects.requireNonNull(moduleExecutor);
+        if (!lease.identity.profileGeneration.equals(generation) || revision < appliedConfigurationRevision)
+            return CompletableFuture.completedFuture(ActiveRuntimeCoordinator.Result.CONFIGURATION_CHANGED);
+        if (stopping.get()) return CompletableFuture.completedFuture(ActiveRuntimeCoordinator.Result.STALE_LEASE);
+        if (insideEffect() || !configurationQueued.compareAndSet(false, true))
+            return CompletableFuture.completedFuture(ActiveRuntimeCoordinator.Result.NOT_READY);
+        CompletableFuture<ActiveRuntimeCoordinator.Result> result = new CompletableFuture<>();
+        try { lifecycle.execute(() -> prepareConfiguration(revision, acknowledgedConfiguration, moduleExecutor, result)); }
+        catch (RuntimeException rejected) {
+            configurationQueued.set(false); lifecycleDispatchFailed = true;
+            requestStop(); result.completeExceptionally(rejected);
+        }
+        return result;
+    }
+
+    private void prepareConfiguration(long revision, C configuration, Executor moduleExecutor,
+            CompletableFuture<ActiveRuntimeCoordinator.Result> result) {
+        if (!effectGate.tryLock()) {
+            configurationQueued.set(false); result.complete(ActiveRuntimeCoordinator.Result.NOT_READY); return;
+        }
+        ConfigurationChange change = null;
+        try {
+            if (stopping.get()) { result.complete(ActiveRuntimeCoordinator.Result.STALE_LEASE); return; }
+            long expected = appliedConfigurationRevision;
+            if (revision < expected) { result.complete(ActiveRuntimeCoordinator.Result.CONFIGURATION_CHANGED); return; }
+            if (revision == expected) { result.complete(ActiveRuntimeCoordinator.Result.OK); return; }
+            ActiveRuntimeCoordinator.Result offered = coordinator.offerConfiguration(lease, expected, revision);
+            if (offered != ActiveRuntimeCoordinator.Result.OK) {
+                if (offered != ActiveRuntimeCoordinator.Result.CONFIGURATION_CHANGED) requestStop();
+                result.complete(offered); return;
+            }
+            OwnedResourceRegistry.Registration work = coordinator.registerWork(lease, "configuration_" + revision);
+            OwnedResourceRegistry.EffectPermit permit;
+            try { permit = registry.acquireEffectPermit(lease, OwnedResourceRegistry.Effect.NORMAL); }
+            catch (RuntimeException refused) { work.close(); throw refused; }
+            change = new ConfigurationChange(expected, revision, configuration, work, permit, result);
+            configurationChange = change;
+        } catch (RuntimeException | Error failed) {
+            requestStop(); result.completeExceptionally(failed);
+        } finally {
+            if (change == null) configurationQueued.set(false);
+            effectGate.unlock();
+            dispatchClosuresIfQuiescent();
+        }
+        if (change == null) return;
+        ConfigurationChange prepared = change;
+        try { moduleExecutor.execute(() -> applyModules(prepared)); }
+        catch (RuntimeException rejected) {
+            prepared.failure = rejected; requestStop();
+            // A trusted executor rejection normally precedes execution. If it ran concurrently,
+            // only that running callback may acknowledge its actual return and permit release.
+            if (prepared.stage.compareAndSet(0, 2)) finishConfiguration(prepared);
+        }
+    }
+
+    private void applyModules(ConfigurationChange change) {
+        if (!change.stage.compareAndSet(0, 1)) return; // Stale/rejected queued callback is inert.
+        if (!effectGate.tryLock()) {
+            change.outcome = ActiveRuntimeCoordinator.Result.NOT_READY;
+            change.stage.set(2); finishConfiguration(change); return;
+        }
+        try {
+            if (stopping.get() || configurationChange != change) {
+                change.outcome = ActiveRuntimeCoordinator.Result.STALE_LEASE; return;
+            }
+            effectsRunning++; effectDepth.set(effectDepth.get() + 1);
+            try {
+                for (Component component : components) {
+                    ConfigurationReceiver<C> receiver = component.configurationReceiver.get();
+                    if (receiver == null) throw new IllegalStateException("Active component has no configuration binding");
+                    receiver.apply(change.configuration);
+                    if (stopping.get()) { change.outcome = ActiveRuntimeCoordinator.Result.STALE_LEASE; return; }
+                }
+                change.outcome = ActiveRuntimeCoordinator.Result.OK;
+            } finally { effectDepth.set(effectDepth.get() - 1); effectsRunning--; }
+        } catch (RuntimeException | Error failed) {
+            change.failure = failed; requestStop();
+        } finally {
+            effectGate.unlock(); change.stage.set(2); finishConfiguration(change);
+        }
+    }
+
+    private void finishConfiguration(ConfigurationChange change) {
+        if (!change.finalizationQueued.compareAndSet(false, true)) return;
+        try {
+            lifecycle.execute(() -> {
+                ActiveRuntimeCoordinator.Result applied = change.outcome;
+                try {
+                    if (change.failure == null && applied == ActiveRuntimeCoordinator.Result.OK && !stopping.get()) {
+                        applied = coordinator.configurationApplied(lease, change.expectedRevision, change.revision);
+                        if (applied == ActiveRuntimeCoordinator.Result.OK && !stopping.get()) {
+                            mainConfiguration = change.configuration;
+                            appliedConfigurationRevision = change.revision;
+                        } else {
+                            if (stopping.get()) applied = ActiveRuntimeCoordinator.Result.STALE_LEASE;
+                            requestStop();
+                        }
+                    } else if (stopping.get()) applied = ActiveRuntimeCoordinator.Result.STALE_LEASE;
+                } catch (RuntimeException | Error failed) {
+                    change.failure = failed; requestStop();
+                } finally {
+                    // The permit spans actual module return AND journal ACK. Registration closure
+                    // also stays on the owner worker and can never block a window callback.
+                    try {
+                        change.permit.close(); change.work.close();
+                        if (configurationChange == change) configurationChange = null;
+                        configurationQueued.set(false);
+                        dispatchClosuresIfQuiescent(); tryCompleteStop();
+                    } catch (RuntimeException | Error failed) {
+                        // Retain the change/registration as unresolved rather than claiming drain.
+                        cleanupUnacknowledged = true; change.failure = failed; requestStop();
+                    }
+                }
+                if (change.failure != null) change.result.completeExceptionally(change.failure);
+                else change.result.complete(applied);
+            });
+        } catch (RuntimeException rejected) {
+            lifecycleDispatchFailed = true; requestStop();
+            // No synthetic release: durable application is unknown and the callback/permit must
+            // stay owned until the failed worker can be reconciled.
+            change.result.completeExceptionally(rejected);
+        }
+    }
+
+    private final class ConfigurationChange {
+        final long expectedRevision, revision;
+        final C configuration;
+        final OwnedResourceRegistry.Registration work;
+        final OwnedResourceRegistry.EffectPermit permit;
+        final CompletableFuture<ActiveRuntimeCoordinator.Result> result;
+        final AtomicInteger stage = new AtomicInteger(); // 0 queued, 1 executing, 2 actually returned.
+        final AtomicBoolean finalizationQueued = new AtomicBoolean();
+        volatile Throwable failure;
+        volatile ActiveRuntimeCoordinator.Result outcome = ActiveRuntimeCoordinator.Result.STALE_LEASE;
+        ConfigurationChange(long expectedRevision, long revision, C configuration,
+                OwnedResourceRegistry.Registration work, OwnedResourceRegistry.EffectPermit permit,
+                CompletableFuture<ActiveRuntimeCoordinator.Result> result) {
+            this.expectedRevision = expectedRevision; this.revision = revision; this.configuration = configuration;
+            this.work = work; this.permit = permit; this.result = result;
+        }
+    }
+
     public ActiveRuntimeCoordinator.Result requestStop() {
         stopping.set(true);
         registry.fence(lease); // Also fences separately admitted owner writers without journal IO.
@@ -195,7 +348,7 @@ public class RuntimeExecution<C> {
         if (!effectGate.tryLock()) return;
         try {
             // A stop called from an admitted effect is reentrant; its finally path performs drain.
-            if (effectsRunning != 0) return;
+            if (effectsRunning != 0 || configurationChange != null) return;
         } finally { effectGate.unlock(); }
         // No gate is held across externally supplied cleanup; new effects are already refused.
         for (Component component : components) component.requestClose();

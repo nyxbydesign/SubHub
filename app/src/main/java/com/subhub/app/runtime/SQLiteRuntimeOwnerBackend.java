@@ -7,11 +7,11 @@ import android.database.Cursor;
 import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteDatabaseCorruptException;
+import android.os.ParcelFileDescriptor;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 import java.io.File;
-import java.io.FileDescriptor;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -205,20 +205,58 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
         syncDirectory(directory.getParentFile());
     }
     private static void syncDirectory(File directory) throws IOException {
-        FileDescriptor descriptor = null;
-        try {
-            descriptor = Os.open(directory.getPath(), OsConstants.O_RDONLY | OsConstants.O_CLOEXEC, 0);
-            // O_DIRECTORY is not part of Android's public OsConstants API. Verify the actual
-            // opened descriptor with the supported stat API before treating it as a directory.
-            if (!OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode))
-                throw new IOException("Owner synchronization target is not a directory");
-            Os.fsync(descriptor);
-        } catch (ErrnoException failed) { throw new IOException("Owner directory synchronization failed", failed); }
-        finally {
-            if (descriptor != null) {
-                try { Os.close(descriptor); }
-                catch (ErrnoException failed) { throw new IOException("Owner directory close failed", failed); }
+        RuntimeOwnerDirectorySync.sync(directory, DirectoryDescriptor::open, OsConstants.FD_CLOEXEC);
+    }
+    /** Stable libc ABI through the already-shipped JNA dependency. Android exposes these fcntl
+     * constants since API21, but O_CLOEXEC only since API27 and Os.fcntlInt only since API30. */
+    public interface DescriptorOps extends com.sun.jna.Library {
+        int open(String path, int flags, int mode);
+        int fcntl(int fd, int command, int argument);
+        int close(int fd);
+    }
+    private static final class DescriptorApi {
+        static final DescriptorOps LIBC = com.sun.jna.Native.load("c", DescriptorOps.class);
+    }
+    private static final class DirectoryDescriptor implements RuntimeOwnerDirectorySync.Descriptor {
+        private ParcelFileDescriptor owner;
+        private DirectoryDescriptor() { }
+        static DirectoryDescriptor open(File directory) throws IOException {
+            DirectoryDescriptor descriptor = new DirectoryDescriptor();
+            int raw = DescriptorApi.LIBC.open(directory.getPath(), OsConstants.O_RDONLY, 0);
+            if (raw < 0) throw nativeFailure("open");
+            try { descriptor.owner = ParcelFileDescriptor.adoptFd(raw); return descriptor; }
+            catch (RuntimeException | Error failed) {
+                if (DescriptorApi.LIBC.close(raw) < 0) failed.addSuppressed(nativeFailure("close"));
+                throw failed;
             }
+        }
+        @Override public int flags() throws IOException {
+            int flags = DescriptorApi.LIBC.fcntl(owner.getFd(), OsConstants.F_GETFD, 0);
+            if (flags < 0) throw nativeFailure("fcntl(F_GETFD)");
+            return flags;
+        }
+        @Override public void flags(int value) throws IOException {
+            if (DescriptorApi.LIBC.fcntl(owner.getFd(), OsConstants.F_SETFD, value) < 0)
+                throw nativeFailure("fcntl(F_SETFD)");
+        }
+        @Override public boolean isDirectory() throws IOException {
+            // O_DIRECTORY is not public Android API. fstat checks the opened descriptor instead.
+            try { return OsConstants.S_ISDIR(Os.fstat(owner.getFileDescriptor()).st_mode); }
+            catch (ErrnoException failed) { throw new IOException("Owner directory stat failed", failed); }
+        }
+        @Override public void sync() throws IOException {
+            try { Os.fsync(owner.getFileDescriptor()); }
+            catch (ErrnoException failed) { throw new IOException("Owner directory synchronization failed", failed); }
+        }
+        @Override public void close() throws IOException {
+            if (owner == null) return;
+            int raw = owner.detachFd(); owner = null;
+            // Never retry close: Linux may already have released this descriptor even on failure.
+            if (DescriptorApi.LIBC.close(raw) < 0) throw nativeFailure("close");
+        }
+        private static IOException nativeFailure(String operation) {
+            return new IOException("Owner directory " + operation + " failed",
+                    new ErrnoException(operation, com.sun.jna.Native.getLastError()));
         }
     }
     private static void writeMarker(FileChannel marker, String state, String identity) throws IOException {
