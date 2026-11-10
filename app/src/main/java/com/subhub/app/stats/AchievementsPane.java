@@ -54,6 +54,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private AchievementManager.Achievement detailAchievement;
     private View detailContent;
     private String renderedFingerprint;
+    private Catalog retained;
     private final android.os.Handler refreshClock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refresh = this::loadCatalog;
 
@@ -73,32 +74,46 @@ final class AchievementsPane extends android.content.ContextWrapper {
         if (active) return;
         active = true;
         manager = AchievementManager.forWorkspace(this);
-        if (!manager.isAccessible()) { host.finish(); return; }
-        content.setVisibility(View.INVISIBLE);
-        stats = null;
-        renderedFingerprint = null;
+        if (!manager.isAccessible()) { showUnavailable(); host.finish(); return; }
+        if (retained == null || !retained.current()) showUnavailable();
+        else { manager = retained.manager; stats = retained.stats; }
+        content.setVisibility(View.VISIBLE);
         loadCatalog();
     }
 
     private void loadCatalog() {
         if (!active) return;
-        if (manager == null || !manager.isAccessible()) { host.finish(); return; }
+        if (manager == null || !manager.isAccessible()) { showUnavailable(); host.finish(); return; }
+        if (retained != null && !retained.current()) showUnavailable();
+        Catalog previous = retained;
         AchievementManager captured = AchievementManager.forWorkspace(this);
+        StatisticsDisplayIdentity identity = new StatisticsDisplayIdentity(this);
         android.content.Context app = getApplicationContext();
         com.subhub.app.util.AsyncUiScope.forPage(host).load("workspace-achievement-catalog", () -> {
-            if (captured.getRole() == AchievementRole.DOM) {
-                DomStatsRepository.Loaded aggregate = new DomStatsRepository(app).loadWithHistory();
-                HistoricalAchievementBackfill.dom(app, captured, aggregate);
-                captured.checkDomAchievements(aggregate.stats);
-                return new Catalog(captured, null);
+            try {
+                if (captured.getRole() == AchievementRole.DOM) {
+                    DomStatsRepository.Loaded aggregate = new DomStatsRepository(app).loadWithHistory();
+                    HistoricalAchievementBackfill.dom(app, captured, aggregate);
+                    captured.checkDomAchievements(aggregate.stats);
+                    return new Catalog(captured, null, identity, aggregate.scope);
+                }
+                LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
+                HistoricalAchievementBackfill.local(app, captured, facts);
+                captured.checkRetainedAchievements(facts.stats);
+                return new Catalog(captured, facts.stats, identity, null);
+            } catch (Exception unavailable) {
+                // A failed data refresh must not erase a still-authorized, validated snapshot.
+                if (previous != null) {
+                    try { previous.revalidate(); return previous; }
+                    catch (Exception changed) { /* Fail closed when authority or membership is unknown. */ }
+                }
+                throw unavailable;
             }
-            LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
-            HistoricalAchievementBackfill.local(app, captured, facts);
-            captured.checkRetainedAchievements(facts.stats);
-            return new Catalog(captured, facts.stats);
         }, loaded -> {
             if (!active) return;
-            if (!loaded.manager.isAccessible()) { host.finish(); return; }
+            if (!loaded.current()) { showUnavailable(); scheduleRefresh(); return; }
+            if (loaded == retained) { content.setVisibility(View.VISIBLE); scheduleRefresh(); return; }
+            retained = loaded;
             manager = loaded.manager;
             stats = loaded.stats;
             manager.takePendingNotifications();
@@ -113,13 +128,8 @@ final class AchievementsPane extends android.content.ContextWrapper {
             scheduleRefresh();
         }, failure -> {
             if (!active) return;
+            showUnavailable();
             if (!captured.isAccessible()) { host.finish(); return; }
-            binding.achievementList.removeAllViews(); binding.achievementBadgeStrip.removeAllViews();
-            binding.achievementProgress.setText(R.string.role_unknown_data);
-            binding.achievementNextName.setText(R.string.role_person_unavailable);
-            binding.achievementOverallProgress.setProgress(0); binding.achievementNextProgress.setProgress(0);
-            content.setVisibility(View.VISIBLE);
-            renderedFingerprint = null;
             scheduleRefresh();
         });
     }
@@ -141,10 +151,35 @@ final class AchievementsPane extends android.content.ContextWrapper {
         return value.toString();
     }
 
+    private void showUnavailable() {
+        retained = null; stats = null; renderedFingerprint = null;
+        if (detailDialog != null) detailDialog.dismiss();
+        binding.achievementList.removeAllViews(); binding.achievementBadgeStrip.removeAllViews();
+        binding.achievementProgress.setText(R.string.role_unknown_data);
+        binding.achievementNextName.setText(R.string.role_person_unavailable);
+        binding.achievementOverallProgress.setProgress(0); binding.achievementNextProgress.setProgress(0);
+        content.setVisibility(View.VISIBLE);
+    }
+
     private static final class Catalog {
         final AchievementManager manager;
         final StatsSnapshot stats;
-        Catalog(AchievementManager manager, StatsSnapshot stats) { this.manager = manager; this.stats = stats; }
+        final StatisticsDisplayIdentity identity;
+        final com.subhub.app.relationships.DomSubjectScope scope;
+        Catalog(AchievementManager manager, StatsSnapshot stats, StatisticsDisplayIdentity identity,
+                com.subhub.app.relationships.DomSubjectScope scope) {
+            this.manager = manager; this.stats = stats; this.identity = identity; this.scope = scope;
+        }
+        boolean current() {
+            if (!identity.current() || !manager.isAccessible()) return false;
+            try { if (scope != null) scope.requireCurrent(); return true; }
+            catch (RuntimeException changed) { return false; }
+        }
+        void revalidate() throws Exception {
+            if (!current()) throw new SecurityException("Achievement presentation changed");
+            if (scope != null) scope.revalidate();
+            if (!current()) throw new SecurityException("Achievement presentation changed");
+        }
     }
 
     void pause() {
@@ -152,9 +187,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
         refreshClock.removeCallbacks(refresh);
         if (detailDialog != null) { detailDialog.dismiss(); detailDialog = null; }
         com.subhub.app.util.AsyncUiScope.forPage(host).cancel("workspace-achievement-catalog");
-        if (manager != null && manager.getRole() == AchievementRole.DOM) {
-            content.setVisibility(View.INVISIBLE);
-        }
+        if (retained != null && !retained.current()) showUnavailable();
     }
 
     private void rebuild() {

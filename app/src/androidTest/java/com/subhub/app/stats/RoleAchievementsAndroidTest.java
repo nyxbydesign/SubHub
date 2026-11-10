@@ -241,6 +241,19 @@ public final class RoleAchievementsAndroidTest {
         assertEquals(earned, manager.getUnlockedAt("pact_long_haul"));
     }
 
+    @Test public void retainedStatisticsIdentityRejectsWorkspaceAndAuthorityChanges() {
+        StatisticsDisplayIdentity original = new StatisticsDisplayIdentity(context);
+        assertTrue(original.current());
+        ControllerPinManager.enterSubMode();
+        assertFalse(original.current());
+        ControllerPinManager.enterDomMode();
+        assertFalse(original.current());
+        StatisticsDisplayIdentity fresh = new StatisticsDisplayIdentity(context);
+        assertTrue(fresh.current());
+        People.installRemoteAuthority(() -> true);
+        assertFalse(fresh.current());
+    }
+
     @Test public void backgroundSubMilestonesKeepTheirOwnCatalogDuringDomUse() {
         context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit().putLong("total_blocks_all_time", 1).commit();
         AchievementManager events = new AchievementManager(context);

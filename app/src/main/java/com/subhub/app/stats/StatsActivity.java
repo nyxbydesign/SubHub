@@ -47,6 +47,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private TextView lifetimeTime, lifetimeCensors, lifetimeSessions;
     private AchievementPreviewView achievements;
     private LocalRetainedStatistics localFacts;
+    private StatisticsDisplayIdentity localFactsIdentity;
     private android.view.View statisticsUnlock;
     private int sessionLimit = 3;
     private com.subhub.app.util.AsyncUiScope data;
@@ -411,8 +412,10 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private void bindTotals() {
         if (domOverview) { bindDomTotals(); return; }
         if (remote != null) { bindRemoteTotals(); return; }
+        if (localFacts != null && (localFactsIdentity == null || !localFactsIdentity.current())) clearLocalStatistics();
         if (data.isPending("local-statistics")) return;
         android.content.Context app = getApplicationContext();
+        StatisticsDisplayIdentity identity = new StatisticsDisplayIdentity(this);
         data.load("local-statistics", () -> {
             LocalRetainedStatistics facts = LocalRetainedStatistics.load(app);
             HomeAchievementPreview preview = null;
@@ -421,15 +424,25 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
             return new LocalOverview(facts, preview);
         }, loaded -> {
             if (!workspace.accessible(this)) { finish(); return; }
+            if (!identity.current()) { clearLocalStatistics(); return; }
             localFacts = loaded.facts;
+            localFactsIdentity = identity;
             if (loaded.achievements != null) achievements.render(loaded.achievements);
             else achievements.setVisibility(android.view.View.GONE);
             bindLocalTotals(loaded.facts);
             bindSessions();
         }, failure -> {
-            lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
-            totalsDetails.removeAllViews(); text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+            if (localFacts != null && localFactsIdentity != null && localFactsIdentity.current()) return;
+            clearLocalStatistics();
         });
+    }
+
+    private void clearLocalStatistics() {
+        localFacts = null; localFactsIdentity = null;
+        lifetimeTime.setText(unknown()); lifetimeCensors.setText(unknown()); lifetimeSessions.setText(unknown());
+        currentSessionDetails.removeAllViews(); totalsDetails.removeAllViews(); achievements.removeAllViews();
+        text(totalsDetails, getString(R.string.role_person_unavailable), 13, true);
+        bindSessions(); updateCurrentSessionVisibility();
     }
 
     private static final class LocalOverview {
@@ -649,7 +662,9 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         sessionList.removeAllViews();
         heading(sessionList, R.string.stats_recent_sessions);
         if (remote != null || domOverview) { text(sessionList,getString(R.string.stats_remote_history_private),13,true);return; }
-        if (localFacts == null) { text(sessionList, getString(R.string.role_loading), 13, true); return; }
+        if (localFacts == null || localFactsIdentity == null || !localFactsIdentity.current()) {
+            text(sessionList, getString(R.string.role_unknown_data), 13, true); return;
+        }
         List<StatsRepository.SessionEntry> entries = new ArrayList<>(localFacts.history.sessions());
         Collections.reverse(entries);
         entries.removeIf(

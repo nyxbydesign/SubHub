@@ -152,7 +152,18 @@ public final class StatsRefreshAndroidTest {
             await(() -> containsText(current.get().findViewById(android.R.id.content)
                     .findViewWithTag(rowTag), "3 / 10"));
             AtomicReference<View> unchanged = new AtomicReference<>();
-            page.onActivity(activity -> unchanged.set(activity.findViewById(android.R.id.content).findViewWithTag(rowTag)));
+            page.onActivity(activity -> {
+                unchanged.set(activity.findViewById(android.R.id.content).findViewWithTag(rowTag));
+                try {
+                    java.lang.reflect.Field field = StatsActivity.class.getDeclaredField("catalog");
+                    field.setAccessible(true);
+                    AchievementsPane pane = (AchievementsPane) field.get(activity);
+                    pane.pause(); pane.resume();
+                    assertSame("Same-authority resume must not erase retained rows", unchanged.get(),
+                            activity.findViewById(android.R.id.content).findViewWithTag(rowTag));
+                    assertEquals(View.VISIBLE, pane.view().getVisibility());
+                } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+            });
             // A complete polling interval must leave unchanged controls in place.
             SystemClock.sleep(5_500);
             page.onActivity(activity -> assertSame(unchanged.get(),
@@ -181,6 +192,8 @@ public final class StatsRefreshAndroidTest {
             page.onActivity(current::set);
             await(() -> containsText(current.get().findViewById(android.R.id.content)
                     .findViewWithTag(rowTag), "8 / 10"));
+            ControllerPinManager.enterSubMode();
+            await(() -> page.getState() == androidx.lifecycle.Lifecycle.State.DESTROYED);
         }
     }
 
