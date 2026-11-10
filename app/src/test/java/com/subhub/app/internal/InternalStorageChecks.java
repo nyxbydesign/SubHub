@@ -1,6 +1,7 @@
 package com.subhub.app.internal;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -151,19 +152,20 @@ public final class InternalStorageChecks {
     }
     public static void diskRoundTripRetainsOwnedNamespacesAndNeverTouchesSibling() throws Exception {
         withDirectory(parent -> {
-            Path sibling = parent.resolve("physical-sentinel"); Files.writeString(sibling, "untouched");
+            Path sibling = parent.resolve("physical-sentinel"); Files.write(sibling, "untouched".getBytes(StandardCharsets.UTF_8));
             FileInternalSubBackend backend = FileInternalSubBackend.createNew(parent.toFile(), PROFILE, CONFIG);
             InternalSubStore store = new InternalSubStore(backend);
             for (InternalStorageScope.Area area : InternalStorageScope.Area.values())
-                Files.writeString(backend.scope().file(area, "owned").toPath(), area.name());
+                Files.write(backend.scope().file(area, "owned").toPath(), area.name().getBytes(StandardCharsets.UTF_8));
             InternalSubRecord shown = store.setVisible(store.read(), true);
             InternalSubRecord hidden = store.setVisible(shown, false);
             InternalSubRecord restored = store.setVisible(hidden, true);
             FileInternalSubBackend reopened = FileInternalSubBackend.openExisting(parent.toFile());
             check(reopened.read().equals(restored), "Disk round trip mismatch");
             for (InternalStorageScope.Area area : InternalStorageScope.Area.values())
-                check(Files.readString(reopened.scope().file(area, "owned").toPath()).equals(area.name()), "Namespace erased");
-            check(Files.readString(sibling).equals("untouched"), "Physical sibling changed");
+                check(new String(Files.readAllBytes(reopened.scope().file(area, "owned").toPath()),
+                        StandardCharsets.UTF_8).equals(area.name()), "Namespace erased");
+            check(new String(Files.readAllBytes(sibling), StandardCharsets.UTF_8).equals("untouched"), "Physical sibling changed");
         });
     }
     public static void missingEstablishedRecordAndLockNeverReseed() throws Exception {
@@ -229,7 +231,7 @@ public final class InternalStorageChecks {
             check(backend.scope().root().equals(physical.resolve(InternalStorageScope.TARGET_ID)), "Physical parent was not canonicalized");
             check(FileInternalSubBackend.openExisting(physical.toFile()).read().equals(backend.read()), "Alias opened different data");
             check(FileInternalSubBackend.openExisting(alias.toFile()).read().equals(backend.read()), "Trusted alias could not reopen");
-            Files.writeString(backend.scope().file(InternalStorageScope.Area.TASKS, "owned").toPath(), "safe");
+            Files.write(backend.scope().file(InternalStorageScope.Area.TASKS, "owned").toPath(), "safe".getBytes(StandardCharsets.UTF_8));
         });
     }
     public static void ownedRootSymlinkIsNeverCanonicalizedIntoSiblingData() throws Exception {
@@ -265,7 +267,7 @@ public final class InternalStorageChecks {
             start.countDown();
             for (Thread worker : workers) { worker.join(10000); check(!worker.isAlive(), "Lazy directory creation hung"); }
             if (failure.get() != null) throw new AssertionError("Concurrent directory creation failed", failure.get());
-            Files.writeString(scope.root().resolve("history"), "not a directory");
+            Files.write(scope.root().resolve("history"), "not a directory".getBytes(StandardCharsets.UTF_8));
             expect(IOException.class, () -> scope.directory(InternalStorageScope.Area.HISTORY));
         });
     }
