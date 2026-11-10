@@ -363,9 +363,57 @@ public final class ExtraTimeUiAndroidTest {
                 tap(inputTag);
                 dom.onActivity(a -> assertTrue("Native tap still focuses the minutes control", tagged(a, inputTag).hasFocus()));
                 onView(withTagValue(equalTo(inputTag))).perform(clearText(), typeText("30"), closeSoftKeyboard());
-                dom.recreate();
-                await(dom, a -> tagged(a, inputTag) instanceof EditText
-                        && "30".contentEquals(((EditText) tagged(a, inputTag)).getText()));
+                // Separate native input delivery from recreation persistence; retain the actual failed
+                // editor before ActivityScenario teardown removes the only useful on-screen witness.
+                String run = InstrumentationRegistry.getArguments().getString("evidence_run", "extra-time-ui");
+                assertTrue(run.matches("[A-Za-z0-9_-]+"));
+                java.io.File folder = new java.io.File(context.getFilesDir(), "ui-v3/" + run);
+                assertTrue(folder.isDirectory() || folder.mkdirs());
+                org.json.JSONArray observations = new org.json.JSONArray();
+                java.util.function.BiConsumer<ExtraTimeActivity, String> observe = (a, phase) -> {
+                    try {
+                        View field = tagged(a, inputTag);
+                        java.lang.reflect.Field draftsField = ExtraTimeActivity.class.getDeclaredField("minuteDrafts");
+                        draftsField.setAccessible(true);
+                        android.os.Bundle drafts = (android.os.Bundle) draftsField.get(a);
+                        org.json.JSONObject state = new org.json.JSONObject().put("phase", phase)
+                                .put("elapsedRealtime", SystemClock.elapsedRealtime())
+                                .put("editorPresent", field instanceof EditText)
+                                .put("editorText", field instanceof EditText ? ((EditText) field).getText().toString() : org.json.JSONObject.NULL)
+                                .put("retainedDraft", drafts.containsKey(id) ? drafts.getString(id) : org.json.JSONObject.NULL)
+                                .put("editorFocused", field != null && field.hasFocus())
+                                .put("windowFocused", a.hasWindowFocus())
+                                .put("domUnlocked", com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked())
+                                .put("introPresent", tagged(a, "extra_time_intro") != null);
+                        observations.put(state);
+                        android.util.Log.i("ExtraTimeDraftWitness", state.toString());
+                        java.nio.file.Files.write(new java.io.File(folder,
+                                "extra-time-large-font-draft.json").toPath(),
+                                observations.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    } catch (Exception failure) { throw new AssertionError("Could not retain synthetic draft witness", failure); }
+                };
+                try {
+                    dom.onActivity(a -> {
+                        observe.accept(a, "before-recreate");
+                        assertTrue("Native input must reach the editor before testing restoration", tagged(a, inputTag) instanceof EditText);
+                        assertEquals("Native input must be witnessed before recreation", "30", ((EditText) tagged(a, inputTag)).getText().toString());
+                    });
+                    dom.recreate();
+                    try {
+                        await(dom, a -> tagged(a, inputTag) instanceof EditText
+                                && "30".contentEquals(((EditText) tagged(a, inputTag)).getText()));
+                    } finally { dom.onActivity(a -> observe.accept(a, "after-recreate")); }
+                } catch (AssertionError failure) {
+                    try {
+                        android.graphics.Bitmap pixels = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+                        assertNotNull("Retain failed editor before teardown", pixels);
+                        try (java.io.FileOutputStream output = new java.io.FileOutputStream(
+                                new java.io.File(folder, "extra-time-large-font-draft-failure.png"))) {
+                            assertTrue(pixels.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+                        } finally { pixels.recycle(); }
+                    } catch (Exception | AssertionError evidenceFailure) { failure.addSuppressed(evidenceFailure); }
+                    throw failure;
+                }
                 narrow(dom);
                 dom.onActivity(a -> {
                     assertFalse(tagged(a, inputTag).hasFocus());

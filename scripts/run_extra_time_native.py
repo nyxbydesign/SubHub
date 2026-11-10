@@ -639,7 +639,16 @@ def pr_subset(body, suite):
     return [value for value in known if value in requested]
 
 
+def native_workflow_path(suite):
+    suite_selectors(suite)  # Retain the same explicit suite admission boundary.
+    return ".github/workflows/dummy-preview-native.yml" if suite == "dummy-preview" else ".github/workflows/extra-time-native.yml"
+
+
 def selected_methods(suite):
+    # The dedicated preview workflow always qualifies all four contracts. A subset
+    # for another workflow on the same PR cannot silently reduce this fixed suite.
+    if suite == "dummy-preview":
+        return suite_selectors(suite), "suite_default"
     """Read opt-in PR subsets before producer directories, builds, or guest work."""
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
         path = os.environ.get("GITHUB_EVENT_PATH")
@@ -783,7 +792,7 @@ class Producer:
         self.serial = "emulator-5554"
         self.avd = "subhub_extra_time_api35"
         self.soft_deadline = time.monotonic() + 35 * 60
-        self.record = {"schema": 1, "workflowPath": ".github/workflows/extra-time-native.yml",
+        self.record = {"schema": 1, "workflowPath": native_workflow_path(suite),
                        "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
                        "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
                        "producerSoftTimeoutSeconds": 35 * 60,

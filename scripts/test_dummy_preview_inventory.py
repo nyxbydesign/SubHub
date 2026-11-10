@@ -7,6 +7,21 @@ from scripts import run_extra_time_native as native
 
 
 class DummyPreviewInventoryTest(unittest.TestCase):
+    def test_shared_pr_subset_cannot_reduce_the_fixed_dummy_suite(self):
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": "/not-read-by-the-fixed-dummy-suite",
+                "EXTRA_TIME_SELECTORS": native.ALL_SELECTORS[-1]}):
+            selected, source = native.selected_methods("dummy-preview")
+            self.assertEqual(native.DUMMY_PREVIEW_SELECTORS, selected)
+            self.assertEqual("suite_default", source)
+
+    def test_receipts_identify_the_actual_suite_workflow(self):
+        self.assertEqual(".github/workflows/dummy-preview-native.yml", native.native_workflow_path("dummy-preview"))
+        for suite in ("extra-time", "subhub-pass", "reconnect", "battery", "device-pass"):
+            self.assertEqual(".github/workflows/extra-time-native.yml", native.native_workflow_path(suite))
+        with self.assertRaises(ValueError):
+            native.native_workflow_path("unknown")
+
     def test_all_four_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
