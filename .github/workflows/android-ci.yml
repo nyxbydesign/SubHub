@@ -31,10 +31,29 @@ jobs:
         env:
           RELEASE_NOTES_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace scripts.test_verify_canonical_ci
+          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace scripts.test_verify_canonical_ci scripts.test_sanitize_gradle_failure
           python3 scripts/generate_release_notes.py --tag "$RELEASE_NOTES_REF" --check-only
       - name: Test, lint, and build universal APK
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug
+        shell: bash
+        run: |
+          # Consume raw diagnostics in memory; publish only fixed allowlisted labels.
+          # Keep draining on parser limits/faults and preserve Gradle's own failure.
+          set +e
+          ./gradlew --stacktrace --console=plain testDebugUnitTest lintDebug assembleDebug 2>&1 | {
+            python3 scripts/sanitize_gradle_failure.py 2>/dev/null
+            sanitizer_status=$?
+            if (( sanitizer_status != 0 )); then
+              # Keep the pipe open even if Python fails before its drainer starts.
+              dd of=/dev/null bs=4096 status=none 2>/dev/null
+            fi
+            exit "$sanitizer_status"
+          } 2>/dev/null
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if (( pipeline_status[0] != 0 )); then
+            exit "${pipeline_status[0]}"
+          fi
+          exit "${pipeline_status[1]}"
       - name: Record exact-source canonical qualification
         env:
           QUALIFIED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
