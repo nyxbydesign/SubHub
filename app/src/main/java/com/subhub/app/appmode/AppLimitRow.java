@@ -73,14 +73,9 @@ final class AppLimitRow extends LinearLayout {
             inputParams.topMargin = dp(4);
             addView(allowance, inputParams);
         } else header.addView(allowance, inputParams);
-        progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
+        progress = new ProgressBar(context, null, 0, R.style.Widget_SubHub_ProgressMeter);
         progress.setMax(100);
-        progress.setProgressTintList(
-                android.content.res.ColorStateList.valueOf(context.getColor(R.color.accent_mid)));
-        progress.setProgressBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(
-                        context.getColor(R.color.outline_subtle)));
-        LayoutParams progressParams = new LayoutParams(-1, dp(3));
+        LayoutParams progressParams = new LayoutParams(-1, getResources().getDimensionPixelSize(R.dimen.progress_meter_height));
         progressParams.topMargin = dp(4);
         labels.addView(progress, progressParams);
     }

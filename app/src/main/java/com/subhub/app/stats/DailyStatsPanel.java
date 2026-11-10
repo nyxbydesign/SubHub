@@ -504,7 +504,8 @@ public final class DailyStatsPanel extends LinearLayout {
             super.onDraw(canvas);
             long max = 1;
             for (long v : values) max = Math.max(max, v);
-            paint.setColor(getContext().getColor(R.color.accent));
+            paint.setColor(getContext().getColor(R.color.progress_fill));
+            float radius = getResources().getDimension(R.dimen.progress_meter_radius);
             float step = getWidth() / (float) Math.max(1, values.size());
             for (int i = 0; i < values.size(); i++) {
                 long v = values.get(i);
@@ -515,8 +516,8 @@ public final class DailyStatsPanel extends LinearLayout {
                         getHeight() - h,
                         Math.max(i * step + 1, (i + 1) * step - dp(2)),
                         getHeight(),
-                        dp(2),
-                        dp(2),
+                        radius,
+                        radius,
                         paint);
             }
         }

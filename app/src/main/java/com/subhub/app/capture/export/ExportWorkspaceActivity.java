@@ -496,14 +496,12 @@ public class ExportWorkspaceActivity extends PreferencePage {
             if (item.state == ExportJobStore.State.RUNNING
                     || item.state == ExportJobStore.State.PENDING) {
                 ProgressBar progress =
-                        new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                        new ProgressBar(this, null, 0, R.style.Widget_SubHub_ProgressMeter);
                 progress.setMax(100);
                 progress.setProgress(item.progress);
-                progress.setProgressTintList(
-                        android.content.res.ColorStateList.valueOf(getColor(R.color.accent_text)));
                 progress.setContentDescription(
                         getString(R.string.gallery_export_progress, item.progress));
-                LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(6));
+                LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, getResources().getDimensionPixelSize(R.dimen.progress_meter_height));
                 progressParams.topMargin = dp(12);
                 row.addView(progress, progressParams);
             }
