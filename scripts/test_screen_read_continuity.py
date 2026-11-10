@@ -19,6 +19,18 @@ class ScreenReadContinuityTest(unittest.TestCase):
                     failures.append(f"{path.relative_to(ROOT)}:{node.attrib.get('name', '?')}")
         self.assertEqual([], failures)
 
+    def test_home_counter_read_stays_inside_the_background_job(self):
+        source = (ROOT / "app/src/main/java/com/subhub/app/MainActivity.java").read_text()
+        self.assertNotIn("renderAchievementsPreview(new StatsRepository", source)
+        runtime = source.split("private void renderRuntimeState()", 1)[1].split(
+            "private void observeAchievementInputs()", 1)[0]
+        self.assertNotIn("new StatsRepository", runtime)
+        read = source.split("private void renderAchievementsPreview()", 1)[1].split(
+            "private static final class AchievementRead", 1)[0]
+        self.assertLess(read.index('uiData.load("achievements"'), read.index("new StatsRepository"))
+        self.assertIn("epoch != achievementReadEpoch", read)
+        self.assertIn("lastAchievementRead < 5_000L", read)
+
     def test_unknown_does_not_masquerade_as_empty_or_error(self):
         resources = {}
         for path in (ROOT / "app/src/main/res/values").glob("*.xml"):

@@ -25,10 +25,15 @@ public final class PersonDirectory implements PersonRepository {
         return new ArrayList<>(ids);
     }
 
-    @Override public PersonSnapshot load(PersonId id) throws Exception {
+    @Override public PersonSnapshot load(PersonId id) throws Exception { return load(id, false); }
+
+    @Override public PersonSnapshot loadSummary(PersonId id) throws Exception { return load(id, true); }
+
+    private PersonSnapshot load(PersonId id, boolean summary) throws Exception {
         if (id == null) throw new IllegalArgumentException("Missing person identity");
         if (!id.isLocal() && remote == null) throw new IllegalArgumentException("Person unavailable");
-        PersonSnapshot result = (id.isLocal() ? local : remote).load(id);
+        PersonRepository selected = id.isLocal() ? local : remote;
+        PersonSnapshot result = summary ? selected.loadSummary(id) : selected.load(id);
         if (result == null || !id.equals(result.id)) {
             throw new IllegalStateException("Person identity mismatch");
         }

@@ -83,6 +83,7 @@ public final class MainActivity extends AppCompatActivity {
             new java.util.ArrayList<>();
     private boolean achievementsDirty = true, uiActive, notifyProgressOnResume;
     private long achievementSeconds = Long.MIN_VALUE;
+    private long achievementReadEpoch, lastAchievementRead;
     private String achievementDay = "";
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener
             achievementChanged = (preferences, key) -> achievementsDirty = true;
@@ -433,7 +434,7 @@ public final class MainActivity extends AppCompatActivity {
             achievementsDirty = true;
             notifyProgressOnResume = true;
             observeAchievementInputs();
-            renderAchievementsPreview(new StatsRepository(this).load());
+            renderAchievementsPreview();
             renderEditState();
             renderSubDashboard();
             renderPermissionReadiness();
@@ -680,6 +681,7 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         uiActive = false;
+        ++achievementReadEpoch;
         for (android.content.SharedPreferences source : achievementSources)
             source.unregisterOnSharedPreferenceChangeListener(achievementChanged);
         achievementSources.clear();
@@ -726,8 +728,7 @@ public final class MainActivity extends AppCompatActivity {
             binding.runtimeStatus.setText(R.string.runtime_idle);
         }
 
-        StatsSnapshot stats = new StatsRepository(this).load();
-        renderAchievementsPreview(stats);
+        renderAchievementsPreview();
         renderCommitmentState();
         renderSubDashboard();
         if (roleHome != null) roleHome.refresh(false);
@@ -749,30 +750,56 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void renderAchievementsPreview(StatsSnapshot stats) {
+    private void renderAchievementsPreview() {
         if (binding == null || !uiActive || uiData.isPending("achievements")) return;
-        String today = java.time.LocalDate.now().toString();
-        if (!achievementsDirty
-                && achievementSeconds == stats.getTotalProtectedSeconds()
-                && achievementDay.equals(today)) return;
-        achievementsDirty = false;
-        achievementSeconds = stats.getTotalProtectedSeconds();
-        achievementDay = today;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!achievementsDirty && now - lastAchievementRead < 5_000L) return;
         android.content.Context app = getApplicationContext();
-        uiData.load(
-                "achievements",
-                () -> com.subhub.app.stats.HomeAchievementPreview.load(app, stats),
-                preview -> {
-                    if (binding == null || !uiActive) {
-                        achievementsDirty = true;
-                        return;
-                    }
-                    if (notifyProgressOnResume) {
-                        notifyProgressOnResume = false;
-                        showProgressUnlocks(preview.achievements, stats);
-                    }
-                },
-                failure -> achievementsDirty = true);
+        com.subhub.app.stats.AchievementRole role = com.subhub.app.stats.AchievementRole.current(app);
+        if (!role.accessible(app)) return;
+        DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(app);
+        long revision = ControllerPinManager.domWorkspaceRevision(), epoch = achievementReadEpoch;
+        com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        java.util.function.BooleanSupplier current = () -> role.accessible(app)
+                && mode == DeviceRolePreferences.get(app) && revision == ControllerPinManager.domWorkspaceRevision()
+                && authority == com.subhub.app.people.People.keyholder()
+                && provider == com.subhub.app.relationships.RelationshipUi.provider();
+        boolean dirty = achievementsDirty;
+        long previousSeconds = achievementSeconds;
+        String previousDay = achievementDay;
+        achievementsDirty = false; lastAchievementRead = now;
+        uiData.load("achievements", () -> {
+            if (!current.getAsBoolean()) throw new SecurityException("Home achievement context changed");
+            // The one-second UI timer must not acquire the statistics/store locks or copy counters.
+            StatsSnapshot stats = new StatsRepository(app).load();
+            String today = java.time.LocalDate.now().toString();
+            com.subhub.app.stats.HomeAchievementPreview preview = !dirty
+                    && previousSeconds == stats.getTotalProtectedSeconds() && previousDay.equals(today)
+                    ? null : com.subhub.app.stats.HomeAchievementPreview.load(app, stats);
+            if (!current.getAsBoolean()) throw new SecurityException("Home achievement context changed");
+            return new AchievementRead(stats, preview, today);
+        }, result -> {
+            // A pause invalidates this read even when the page resumes in the same workspace.
+            if (binding == null || !uiActive || epoch != achievementReadEpoch || !current.getAsBoolean()) {
+                achievementsDirty = true;
+                return;
+            }
+            achievementSeconds = result.stats.getTotalProtectedSeconds(); achievementDay = result.day;
+            if (result.preview != null && notifyProgressOnResume) {
+                notifyProgressOnResume = false;
+                showProgressUnlocks(result.preview.achievements, result.stats);
+            }
+        }, failure -> achievementsDirty = true);
+    }
+
+    private static final class AchievementRead {
+        final StatsSnapshot stats;
+        final com.subhub.app.stats.HomeAchievementPreview preview;
+        final String day;
+        AchievementRead(StatsSnapshot stats, com.subhub.app.stats.HomeAchievementPreview preview, String day) {
+            this.stats = stats; this.preview = preview; this.day = day;
+        }
     }
 
     private void showProgressUnlocks(AchievementManager achievements, StatsSnapshot stats) {

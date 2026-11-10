@@ -426,7 +426,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             if (!scope.includes(id)) continue;
             if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context)
                     || !access.current(RelationshipUi::provider)) throw new IllegalStateException("Relationship context changed");
-            PersonSnapshot value = repository.load(id);
+            PersonSnapshot value = repository.loadSummary(id);
             if (!id.equals(value.id)) throw new IllegalStateException("Relationship projection differs");
             if (!access.legacy && !com.subhub.app.people.FavoriteSubStore.eligible(value))
                 throw new IllegalStateException("Relationship projection is not eligible");
