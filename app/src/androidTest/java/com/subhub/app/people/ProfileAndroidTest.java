@@ -527,11 +527,32 @@ public final class ProfileAndroidTest {
             }
             assertEquals("", ProfileStore.load(context, false).avatar);
             try (ActivityScenario<ProfileActivity> scenario = ActivityScenario.launch(ProfileActivity.class)) {
+                await(scenario, a -> {
+                    View avatar = a.findViewById(android.R.id.content).findViewWithTag("self_profile_avatar");
+                    return avatar instanceof ProfileAvatarView && avatar.isAttachedToWindow()
+                            && avatar.isLaidOut() && !avatar.isLayoutRequested();
+                });
+                onView(tag("self_profile_avatar")).perform(revealAboveNavigation());
+                capture(scenario, "avatar-removed-fallback").recycle();
                 scenario.onActivity(a -> {
                     ViewGroup hero = a.findViewById(android.R.id.content).findViewWithTag("self_profile:sub");
-                    ViewGroup row = (ViewGroup) hero.getChildAt(0), avatar = (ViewGroup) row.getChildAt(0);
-                    assertTrue(((TextView) avatar.getChildAt(0)).getText().length() > 0);
-                    assertEquals(View.INVISIBLE, avatar.getChildAt(1).getVisibility());
+                    View candidate = hero.findViewWithTag("self_profile_avatar");
+                    assertTrue(candidate instanceof ProfileAvatarView);
+                    ProfileAvatarView avatar = (ProfileAvatarView) candidate;
+                    assertEquals(2, avatar.getChildCount());
+                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, avatar.getImportantForAccessibility());
+                    assertTrue(avatar.getChildAt(0) instanceof TextView);
+                    TextView fallback = (TextView) avatar.getChildAt(0);
+                    assertEquals("FS", fallback.getText().toString());
+                    assertTrue(fallback.isShown());
+                    assertNotNull(fallback.getLayout());
+                    textFits(fallback);
+                    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, fallback.getImportantForAccessibility());
+                    assertEquals("Fixture Sub", ((TextView) hero.findViewWithTag("self_profile_name")).getText().toString());
+                    assertTrue(avatar.getChildAt(1) instanceof android.widget.ImageView);
+                    android.widget.ImageView image = (android.widget.ImageView) avatar.getChildAt(1);
+                    assertEquals(View.INVISIBLE, image.getVisibility());
+                    assertNull(image.getDrawable());
                 });
             }
         } finally { assertTrue(pink.delete()); assertTrue(blue.delete()); }
