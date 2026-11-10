@@ -1,5 +1,11 @@
-"""Offline API35 permission-dump and exact external-state restoration regressions."""
+"""Offline native diagnostics, API35 permission-dump and restoration regressions."""
+import contextlib
 import copy
+import io
+import json
+from pathlib import Path
+import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -206,6 +212,223 @@ class ExternalStateRestoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.producer.restore()
         self.assertNotIn("finalExternalState", self.producer.record)
+
+
+class InstrumentationFailureDiagnosticsTest(unittest.TestCase):
+    cls = "com.subhub.app.fixtures.SafeNativeTest"
+    selector = cls + "#failsSafely"
+    source = "app/src/androidTest/java/com/subhub/app/fixtures/SafeNativeTest.java"
+
+    def setUp(self):
+        self.inventory = {self.cls: {"path": self.source, "lineCount": 100}}
+
+    def bundle(self, code, stack=None):
+        output = (f"INSTRUMENTATION_STATUS: class={self.cls}\n"
+                  "INSTRUMENTATION_STATUS: test=failsSafely\n"
+                  "INSTRUMENTATION_STATUS: numtests=1\n"
+                  "INSTRUMENTATION_STATUS: current=1\n")
+        if stack is not None:
+            output += "INSTRUMENTATION_STATUS: stack=" + stack + "\n"
+        if code is not None:
+            output += f"INSTRUMENTATION_STATUS_CODE: {code}\n"
+        return output
+
+    def failure(self, stack=None):
+        if stack is None:
+            stack = ("java.lang.AssertionError: PRIVATE_ASSERTION expected:<PRIVATE_EXPECTED> but was:<PRIVATE_ACTUAL>\n"
+                     "\tat org.junit.Assert.assertEquals(Assert.java:12)\n"
+                     f"\tat {self.cls}.helper(SafeNativeTest.java:42)\n"
+                     f"\tat {self.cls}.failsSafely(SafeNativeTest.java:60)")
+        return (self.bundle(1) + self.bundle(-2, stack)
+                + "INSTRUMENTATION_RESULT: stream=\nFAILURES!!!\nTests run: 1, Failures: 1\n"
+                + "INSTRUMENTATION_CODE: -1\n")
+
+    def summary(self, text=None, code=0):
+        return native.instrumentation_failure_summary(self.failure() if text is None else text,
+                                                      self.selector, code, self.inventory)
+
+    def test_failure_shows_only_known_exception_assertion_operation_and_source_locations(self):
+        result = self.summary()
+        self.assertTrue(result["protocolComplete"])
+        self.assertEqual([1, -2], result["statusCodes"])
+        self.assertEqual([-1], result["finalCodes"])
+        self.assertEqual(["failure_summary"], result["failureMarkers"])
+        self.assertEqual(["java.lang.AssertionError"], result["exceptions"])
+        self.assertEqual(["org.junit.Assert.assertEquals"], result["assertionOperations"])
+        self.assertEqual([{"path": self.source, "line": 42}, {"path": self.source, "line": 60}], result["sourceFrames"])
+        self.assertTrue(result["messagesOmitted"])
+        self.assertNotIn("PRIVATE_", json.dumps(result))
+
+    def test_exception_causes_are_allowlisted_and_no_values_paths_or_stream_are_copied(self):
+        stack = ("androidx.test.espresso.PerformException: PRIVATE_VIEW_TEXT\n"
+                 "Caused by: java.lang.AssertionError: PRIVATE_TOKEN\n"
+                 "Suppressed: private.PERSONAL_IDENTIFIERException: PRIVATE_PASSWORD\n"
+                 "\tat private.PERSONAL_IDENTIFIERClass.method(SECRET_FILE.java:321)\n"
+                 "\tat org.junit.Assert.PRIVATE_METHOD(Assert.java:12)\n"
+                 f"\tat {self.cls}.helper(/private/path/SafeNativeTest.java:42)\n"
+                 f"\tat {self.cls}.helper(SafeNativeTest.java:101)\n"
+                 f"\tat {self.cls}.helper(SafeNativeTest.java:0)\n"
+                 f"\tat {self.cls}.helper(Other.java:42)\n"
+                 f"\tat {self.cls}$1.PRIVATE_METHOD(SafeNativeTest.java:42)")
+        text = self.failure(stack).replace("FAILURES!!!", "PRIVATE_RAW_STREAM\nFAILURES!!!")
+        result = self.summary(text)
+        self.assertEqual(["androidx.test.espresso.PerformException", "java.lang.AssertionError", "other"], result["exceptions"])
+        self.assertEqual([], result["assertionOperations"])
+        self.assertEqual([{"path": self.source, "line": 42}], result["sourceFrames"])
+        for sensitive in ("PRIVATE_", "PERSONAL_IDENTIFIER", "SECRET_FILE", "/private/path", "Other.java"):
+            self.assertNotIn(sensitive, json.dumps(result))
+
+    def test_foreign_ambiguous_or_wrong_count_bundles_do_not_attribute_stacks(self):
+        cases = [self.failure().replace(f"class={self.cls}", "class=private.OtherTest"),
+                 self.failure().replace("test=failsSafely", "test=otherMethod"),
+                 self.failure().replace("numtests=1", "numtests=2"),
+                 self.failure().replace("current=1", "current=2"),
+                 self.failure().replace("INSTRUMENTATION_STATUS: stack=", "INSTRUMENTATION_STATUS: test=failsSafely\nINSTRUMENTATION_STATUS: stack=")]
+        for text in cases:
+            with self.subTest(text=text):
+                result = self.summary(text)
+                self.assertFalse(result["protocolComplete"])
+                self.assertEqual([], result["exceptions"])
+                self.assertEqual([], result["sourceFrames"])
+                with self.assertRaises(ValueError):
+                    native.instrumentation_result(text, self.selector, 0)
+
+    def test_missing_or_unverified_inventory_omits_source_locations(self):
+        for source in ({}, {"path": "private/path.java", "lineCount": 100},
+                       {"path": self.source}, {"path": self.source, "lineCount": "100"}):
+            with self.subTest(source=source):
+                self.inventory[self.cls] = source
+                self.assertEqual([], self.summary()["sourceFrames"])
+
+    def test_incomplete_output_retains_safe_stack_but_never_claims_completion(self):
+        text = self.failure().split("INSTRUMENTATION_STATUS_CODE: -2")[0]
+        result = self.summary(text)
+        self.assertFalse(result["protocolComplete"])
+        self.assertEqual([1], result["statusCodes"])
+        self.assertEqual(["java.lang.AssertionError"], result["exceptions"])
+        self.assertEqual(2, len(result["sourceFrames"]))
+        with self.assertRaises(ValueError):
+            native.instrumentation_result(text, self.selector, 0)
+        for text in ("", "INSTRUMENTATION_FAILED: PRIVATE_DETAILS\n",
+                     self.failure().replace("INSTRUMENTATION_CODE: -1\n", "")):
+            self.assertFalse(self.summary(text)["protocolComplete"])
+
+    def test_unknown_status_numbers_are_not_copied_and_final_order_is_checked(self):
+        text = self.failure().replace("INSTRUMENTATION_STATUS_CODE: -2", "INSTRUMENTATION_STATUS_CODE: 123456789")
+        result = self.summary(text)
+        self.assertEqual([1, "unknown"], result["statusCodes"])
+        self.assertFalse(result["protocolComplete"])
+        self.assertNotIn("123456789", json.dumps(result))
+        for text in ("INSTRUMENTATION_CODE: -1\n" + self.failure(),
+                     self.failure().replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 987654321")):
+            self.assertFalse(self.summary(text)["protocolComplete"])
+            self.assertNotIn("987654321", json.dumps(self.summary(text)))
+
+    def test_framework_failure_markers_omit_private_details_and_remain_incomplete(self):
+        for prefix, marker in (("INSTRUMENTATION_FAILED:", "failed"),
+                               ("INSTRUMENTATION_ABORTED:", "aborted"),
+                               ("INSTRUMENTATION_RESULT: shortMsg=", "short_message")):
+            with self.subTest(marker=marker):
+                result = self.summary(self.failure() + prefix + "PRIVATE_DETAILS\n")
+                self.assertFalse(result["protocolComplete"])
+                self.assertIn(marker, result["failureMarkers"])
+                self.assertNotIn("PRIVATE_", json.dumps(result))
+
+    def test_character_line_and_item_bounds_are_explicit_and_small(self):
+        frames = "\n".join(f"\tat {self.cls}.helper(SafeNativeTest.java:{line})" for line in range(1, 101))
+        cases = [self.failure(frames), self.failure() * (native.MAX_FAILURE_ITEMS + 1),
+                 self.bundle(1) + "x" * (native.MAX_FAILURE_CHARS + 1),
+                 "\n" * (native.MAX_FAILURE_LINES + 1) + self.failure(),
+                 self.failure("java.lang.AssertionError: " + "x" * native.MAX_FAILURE_LINE)]
+        for text in cases:
+            with self.subTest(size=len(text)):
+                result = self.summary(text)
+                self.assertTrue(result["truncated"])
+                self.assertFalse(result["protocolComplete"])
+                for key in ("exceptions", "assertionOperations", "sourceFrames", "statusCodes", "finalCodes"):
+                    self.assertLessEqual(len(result[key]), native.MAX_FAILURE_ITEMS)
+                self.assertLess(len(json.dumps(result)), 4096)
+
+    def test_success_parser_is_unchanged_and_diagnostic_completion_is_not_a_pass(self):
+        passed = self.bundle(1) + self.bundle(0) + "OK (1 test)\nINSTRUMENTATION_CODE: -1\n"
+        self.assertEqual([1, 0], native.instrumentation_result(passed, self.selector, 0)["statusCodes"])
+        for text, code in ((self.failure(), 0), (passed, 1), (passed.replace("OK (1 test)", ""), 0),
+                           (passed.replace("STATUS_CODE: 0", "STATUS_CODE: -3"), 0)):
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                native.instrumentation_result(text, self.selector, code)
+
+    def producer(self, output):
+        producer = native.Producer.__new__(native.Producer)
+        producer.sdk, producer.serial, producer.run = Path("sdk"), "emulator-5554", "synthetic-run"
+        producer.selected = [self.selector, self.cls + "#notRun"]
+        producer.record = {"methods": {}, "remaining": list(producer.selected), "inventory": self.inventory}
+        producer.save = mock.Mock()
+        producer.settings = mock.Mock()
+        producer.command = mock.Mock(return_value=output)
+        return producer
+
+    def test_failed_method_prints_safe_diagnostic_once_and_keeps_failure_and_remaining_work(self):
+        producer = self.producer((self.failure(), 0))
+        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(ValueError):
+            producer.run_tests()
+        producer.command.assert_called_once()
+        self.assertEqual([producer.selected[1]], producer.record["remaining"])
+        self.assertEqual("failed", producer.record["methods"][self.selector]["state"])
+        console = json.loads(output.getvalue())
+        self.assertEqual("instrumentation_validation", console["failureDiagnostic"]["stage"])
+        self.assertEqual(self.selector, console["method"])
+        self.assertNotIn("PRIVATE_", output.getvalue())
+        self.assertEqual(console["failureDiagnostic"], producer.record["methods"][self.selector]["failureDiagnostic"])
+
+    def test_passed_method_console_and_receipt_are_unchanged(self):
+        passed = self.bundle(1) + self.bundle(0) + "OK (1 test)\nINSTRUMENTATION_CODE: -1\n"
+        producer = self.producer((passed, 0))
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            producer.method(self.selector, 1)
+        producer.command.assert_called_once()
+        self.assertEqual({"method": self.selector, "state": "passed"}, json.loads(output.getvalue()))
+        self.assertNotIn("failureDiagnostic", producer.record["methods"][self.selector])
+        self.assertEqual([1, 0], producer.record["methods"][self.selector]["actualInstrumentation"]["statusCodes"])
+
+    def test_command_timeout_does_not_copy_exception_message_or_retry(self):
+        producer = self.producer(None)
+        failure = TimeoutError("PRIVATE_TIMEOUT_DETAILS")
+        producer.command.side_effect = failure
+        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(TimeoutError) as caught:
+            producer.run_tests()
+        self.assertIs(failure, caught.exception)
+        producer.command.assert_called_once()
+        diagnostic = json.loads(output.getvalue())["failureDiagnostic"]
+        self.assertEqual("command", diagnostic["stage"])
+        self.assertFalse(diagnostic["outputAvailable"])
+        self.assertFalse(diagnostic["protocolComplete"])
+        self.assertNotIn("PRIVATE_", output.getvalue())
+
+    def test_diagnostic_failure_cannot_mask_original_failure(self):
+        producer = self.producer((self.failure(), 0))
+        with mock.patch.object(native, "instrumentation_failure_summary", side_effect=RuntimeError("PRIVATE_DETAILS")), \
+                contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaisesRegex(ValueError, "Instrumentation failed"):
+            producer.method(self.selector, 1)
+        self.assertNotIn("PRIVATE_", output.getvalue())
+        self.assertFalse(json.loads(output.getvalue())["failureDiagnostic"]["outputAvailable"])
+
+    def test_main_still_finishes_cleanup_and_exits_unsuccessfully_after_failure(self):
+        producer = self.producer((self.failure(), 0))
+        for name in ("source", "prepare_sdk", "build", "boot", "install"):
+            setattr(producer, name, mock.Mock())
+        producer.finish = mock.Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            producer.out = Path(folder)
+            with mock.patch.object(native, "Producer", return_value=producer), \
+                    mock.patch.object(sys, "argv", ["run_extra_time_native.py"]), \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                native.main()
+            self.assertEqual(1, caught.exception.code)
+            self.assertTrue((producer.out / "failure.txt").is_file())
+        producer.finish.assert_called_once()
+        producer.command.assert_called_once()
+        self.assertEqual("failed_preserved", producer.record["state"])
+        self.assertEqual([producer.selected[1]], producer.record["remaining"])
 
 
 if __name__ == "__main__":
