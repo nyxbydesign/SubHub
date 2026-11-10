@@ -2,7 +2,8 @@
 
 This producer is separate from canonical unit/lint CI and never signs or publishes a
 release. Each selected method runs once; a failure retains its log and the remaining
-inventory. A later explicit workflow dispatch may select only a named subset.
+inventory. An explicitly invoked hosted run may select only a named subset.
+The retained producer and inventories do not install a feature-specific workflow.
 """
 
 import argparse
@@ -695,14 +696,9 @@ def pr_subset(body, suite):
     return [value for value in known if value in requested]
 
 
-def native_workflow_path(suite):
-    suite_selectors(suite)  # Retain the same explicit suite admission boundary.
-    return ".github/workflows/dummy-preview-native.yml" if suite == "dummy-preview" else ".github/workflows/extra-time-native.yml"
-
-
 def selected_methods(suite):
-    # The dedicated preview workflow always qualifies all four contracts. A subset
-    # for another workflow on the same PR cannot silently reduce this fixed suite.
+    # The preview suite always qualifies its complete fixed inventory. A subset
+    # for another suite on the same PR cannot silently reduce it.
     if suite == "dummy-preview":
         return suite_selectors(suite), "suite_default"
     """Read opt-in PR subsets before producer directories, builds, or guest work."""
@@ -955,7 +951,9 @@ class Producer:
         self.serial = "emulator-5554"
         self.avd = "subhub_extra_time_api35"
         self.soft_deadline = time.monotonic() + 35 * 60
-        self.record = {"schema": 1, "workflowPath": native_workflow_path(suite),
+        # No feature-specific workflow is installed. Identify the retained producer
+        # without claiming a deleted workflow supplied this receipt.
+        self.record = {"schema": 1, "workflowPath": None, "producerPath": "scripts/run_extra_time_native.py",
                        "runId": int(self.run_id), "runAttempt": int(self.attempt), "evidenceRun": self.run,
                        "state": "admission", "profile": {"immediateQualityExperiment": False, "replacementLabCandidate": False},
                        "producerSoftTimeoutSeconds": 35 * 60,

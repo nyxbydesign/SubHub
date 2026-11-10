@@ -1,6 +1,5 @@
 """The dummy preview has its own bounded native suite without changing older suites."""
 import os
-from pathlib import Path
 import unittest
 from unittest import mock
 from scripts import run_extra_time_native as native
@@ -14,13 +13,6 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             selected, source = native.selected_methods("dummy-preview")
             self.assertEqual(native.DUMMY_PREVIEW_SELECTORS, selected)
             self.assertEqual("suite_default", source)
-
-    def test_receipts_identify_the_actual_suite_workflow(self):
-        self.assertEqual(".github/workflows/dummy-preview-native.yml", native.native_workflow_path("dummy-preview"))
-        for suite in ("extra-time", "subhub-pass", "reconnect", "battery", "device-pass"):
-            self.assertEqual(".github/workflows/extra-time-native.yml", native.native_workflow_path(suite))
-        with self.assertRaises(ValueError):
-            native.native_workflow_path("unknown")
 
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
@@ -44,19 +36,6 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             self.assertTrue(set(selected).isdisjoint(native.DEVICE_PASS_SELECTORS))
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
             self.assertEqual(54, len(native.suite_selectors("device-pass")))
-
-    def test_workflow_runs_on_pr_head_without_labels_or_publication(self):
-        source = (Path(__file__).parent.parent / ".github/workflows/dummy-preview-native.yml").read_text()
-        self.assertIn("app/src/androidTest/java/com/subhub/app/remote/DummyPreviewEndpointFixtureAndroidTest.java", source)
-        self.assertIn("EXTRA_TIME_SUITE: dummy-preview", source)
-        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", source)
-        self.assertIn("contents: read", source)
-        self.assertNotIn("labeled", source)
-        self.assertNotIn("pull_request_target", source)
-        self.assertNotIn("push:", source)
-        self.assertNotIn("cancel-in-progress", source)
-        self.assertEqual(1, source.count("run: python3 scripts/run_extra_time_native.py"))
-
 
 if __name__ == "__main__":
     unittest.main()
