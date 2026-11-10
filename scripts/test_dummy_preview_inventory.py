@@ -25,11 +25,16 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(16, len(selected))
-            self.assertEqual(16, len(set(selected)))
+            self.assertEqual(22, len(selected))
+            self.assertEqual(22, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
             self.assertEqual(4, len(inventory))
-            self.assertEqual(5, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
+            self.assertEqual(11, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
+            preview = inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]
+            for section in ("censor", "limits", "wallet", "atmosphere", "apps", "duration"):
+                self.assertIn(section + "EditorRecreatesWithoutAutosaveAndRejectsForgedTargets", preview)
+            self.assertIn("profileAuthorityRejectsForgeryAndLiveEditorRevocation", preview)
+            self.assertNotIn("nativeEditorsRecreateWithoutAutosaveAndRejectStaleOrForgedTargets", preview)
             self.assertEqual(6, len(inventory["com.subhub.app.remote.RemoteEditorAndroidTest"]["selectedMethods"]))
             self.assertEqual(3, len(inventory["com.subhub.app.people.PersonRefreshAndroidTest"]["selectedMethods"]))
             self.assertEqual([

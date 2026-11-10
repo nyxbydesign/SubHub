@@ -267,36 +267,71 @@ public final class DummySubPreviewAndroidTest {
         assertRealState(before, rows);
     }
 
-    @Test public void nativeEditorsRecreateWithoutAutosaveAndRejectStaleOrForgedTargets() throws Exception {
+    @Test public void censorEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("censor");
+    }
+
+    @Test public void limitsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("limits");
+    }
+
+    @Test public void walletEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("wallet");
+    }
+
+    @Test public void atmosphereEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("atmosphere");
+    }
+
+    @Test public void appsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("apps");
+    }
+
+    @Test public void durationEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+        exerciseNativeEditor("duration");
+    }
+
+    private void exerciseNativeEditor(String section) throws Exception {
         assertTrue(DummySubPreview.toggle(context));
         Intent profile = authorizedProfileIntent();
         Map<String, Map<String, ?>> before = realPreferences(); Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
         previewTransportBaseline = endpoint.transportCalls();
         instrumentation.waitForIdleSync(); long work = endpoint.completedEndpointWork();
-        for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
-            Intent route = authorizedSectionIntent(profile, section);
-            route.putExtra("feature_editor_token", "untrusted-restored-session")
-                    .putExtra("feature_editor_document", "{\"name\":\"UNTRUSTED DOCUMENT\"}")
-                    .putExtra("feature_editor_base", "{\"name\":\"UNTRUSTED BASE\"}");
-            try (ActivityScenario<Activity> scenario = ActivityScenario.launch(route)) {
-                AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set);
-                await(() -> resumed(page.get())); assertNativeSection(page.get(), section);
-                scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
-                assertNativeSection(page.get(), section);
-                if (!"atmosphere".equals(section)) attemptDisabledNativeInput(page.get());
-                assertNoAutosave(page.get());
-            }
-            assertRejected(new Intent(route).putExtra("section", "untrusted-section"));
-            assertRejected(new Intent(route).setClass(context, PersonActivity.class));
-            assertRejected(new Intent(route).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
-            assertRejected(new Intent(route).putExtra(PersonRoutes.EXTRA_PERSON_ID, "remote:forged:target"));
-            assertRejected(new Intent(context, PersonRoutes.sectionActivity(section))
-                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, DummySubPreview.ID.value()));
+        Intent route = authorizedSectionIntent(profile, section);
+        route.putExtra("feature_editor_token", "untrusted-restored-session")
+                .putExtra("feature_editor_document", "{\"name\":\"UNTRUSTED DOCUMENT\"}")
+                .putExtra("feature_editor_base", "{\"name\":\"UNTRUSTED BASE\"}");
+        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(route)) {
+            AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+            await(() -> resumed(page.get())); assertNativeSection(page.get(), section);
+            scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+            assertNativeSection(page.get(), section);
+            if (!"atmosphere".equals(section)) attemptDisabledNativeInput(page.get());
+            assertNoAutosave(page.get());
         }
+        assertRejected(new Intent(route).putExtra("section", "untrusted-section"));
+        assertRejected(new Intent(route).setClass(context, PersonActivity.class));
+        assertRejected(new Intent(route).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
+        assertRejected(new Intent(route).putExtra(PersonRoutes.EXTRA_PERSON_ID, "remote:forged:target"));
+        assertRejected(new Intent(context, PersonRoutes.sectionActivity(section))
+                .putExtra(PersonRoutes.EXTRA_PERSON_ID, DummySubPreview.ID.value()));
+        assertEquals("Preview, recreation and forged routes must not submit endpoint work", work, endpoint.completedEndpointWork());
+        assertRealState(before, rows);
+    }
+
+    @Test public void profileAuthorityRejectsForgeryAndLiveEditorRevocation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent profile = authorizedProfileIntent();
+        Map<String, Map<String, ?>> before = realPreferences(); Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
+        previewTransportBaseline = endpoint.transportCalls();
+        instrumentation.waitForIdleSync(); long work = endpoint.completedEndpointWork();
         assertRejected(new Intent(context, PersonActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID, DummySubPreview.ID.value()));
         assertRejected(new Intent(profile).putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value()));
         assertEquals("Preview, recreation and forged routes must not submit endpoint work", work, endpoint.completedEndpointWork());
         assertRealState(before, rows);
+        // The state witness drains the endpoint with its own no-op. Start the next work
+        // boundary after that witness, before any live revocation-phase navigation.
+        long revocationWork = endpoint.completedEndpointWork();
         // Verify a live settings page closes when its route is revoked, not merely on next launch.
         Intent censor = authorizedSectionIntent(profile, "censor");
         try (ActivityScenario<Activity> scenario = ActivityScenario.launch(censor)) {
@@ -305,6 +340,9 @@ public final class DummySubPreviewAndroidTest {
             await(() -> page.get().isFinishing() || page.get().isDestroyed());
         }
         assertRejected(profile);
+        assertRejected(censor);
+        assertEquals("Live revocation and stale routes must not submit endpoint work", revocationWork, endpoint.completedEndpointWork());
+        assertRealState(before, rows);
     }
 
     private Intent authorizedProfileIntent() {
