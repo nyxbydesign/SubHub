@@ -97,7 +97,7 @@ public final class DummySubPreviewAndroidTest {
                     assertEquals(expected, DummySubPreview.isEnabled(context));
                     await(() -> (tagged(host.get(), "dummy_sub_card") != null) == expected);
                     assertEquals("Holding Back must not open preview", 0, previews.getHits());
-                    assertRealState(before, rows);
+                    assertStateAfterNormalRosterReturn(before, rows);
                     scenario.recreate(); scenario.onActivity(host::set); await(() -> resumed(host.get()));
                     assertEquals(expected, DummySubPreview.isEnabled(context));
                     await(() -> (tagged(host.get(), "dummy_sub_card") != null) == expected);
@@ -196,8 +196,9 @@ public final class DummySubPreviewAndroidTest {
                         nativeBack(page); await(() -> resumed(profile));
                     } finally { instrumentation.removeMonitor(pageMonitor); }
                 }
+                assertRealState(before, rows); // Full comparison before leaving the preview boundary.
                 nativeBack(profile); await(() -> resumed(host.get()));
-                assertRealState(before, rows);
+                assertStateAfterNormalRosterReturn(before, rows);
             } finally { instrumentation.removeMonitor(monitor); }
         }
     }
@@ -587,6 +588,27 @@ public final class DummySubPreviewAndroidTest {
     }
     private void assertRealState(Map<String, Map<String, ?>> before, Map<String, List<String>> rows) throws Exception {
         assertTrue("Preview must not change profiles, settings, relationships or consent", before.equals(realPreferences()));
+        assertRuntimeStateUnchanged(rows);
+    }
+    private void assertStateAfterNormalRosterReturn(Map<String, Map<String, ?>> before,
+            Map<String, List<String>> rows) throws Exception {
+        // The real roster re-acknowledges the relationship journal on each provider read.
+        // Only that disk-barrier UUID may change; formal_seen, operation and every other value remain checked.
+        assertTrue("Normal roster return may only refresh the relationship journal write witness",
+                withoutRosterWriteWitness(before).equals(withoutRosterWriteWitness(realPreferences())));
+        assertRuntimeStateUnchanged(rows);
+    }
+    private static Map<String, Map<String, ?>> withoutRosterWriteWitness(Map<String, Map<String, ?>> values) {
+        Map<String, Map<String, ?>> result = new LinkedHashMap<>(values);
+        String store = "subhub_relationship_presentation";
+        if (values.containsKey(store)) {
+            Map<String, Object> journal = new LinkedHashMap<>(values.get(store));
+            journal.remove("write_witness");
+            result.put(store, journal);
+        }
+        return result;
+    }
+    private void assertRuntimeStateUnchanged(Map<String, List<String>> rows) throws Exception {
         assertTrue("Preview must not create peer, invitation, session, configuration or receipt rows", rows.equals(endpoint.snapshot()));
         assertEquals("Actual SQLite write audit remains unchanged", rows.get("preview_write_audit").size(), endpoint.writeCount());
         if (previewTransportBaseline >= 0)
