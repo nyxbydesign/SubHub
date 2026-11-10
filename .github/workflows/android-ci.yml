@@ -39,16 +39,19 @@ jobs:
           # Consume raw diagnostics in memory; publish only fixed allowlisted labels.
           # Keep draining on parser limits/faults and preserve Gradle's own failure.
           set +e
-          ./gradlew --stacktrace --console=plain testDebugUnitTest lintDebug assembleDebug 2>&1 | {
-            python3 scripts/sanitize_gradle_failure.py 2>/dev/null
-            sanitizer_status=$?
-            if (( sanitizer_status != 0 )); then
-              # Keep the pipe open even if Python fails before its drainer starts.
-              dd of=/dev/null bs=4096 status=none 2>/dev/null
-            fi
-            exit "$sanitizer_status"
+          # Also contain the parent shell's version-dependent pipeline notices.
+          {
+            ./gradlew --stacktrace --console=plain testDebugUnitTest lintDebug assembleDebug 2>&1 | {
+              python3 scripts/sanitize_gradle_failure.py 2>/dev/null
+              sanitizer_status=$?
+              if (( sanitizer_status != 0 )); then
+                # Keep the pipe open even if Python fails before its drainer starts.
+                dd of=/dev/null bs=4096 status=none 2>/dev/null
+              fi
+              exit "$sanitizer_status"
+            } 2>/dev/null
+            pipeline_status=("${PIPESTATUS[@]}")
           } 2>/dev/null
-          pipeline_status=("${PIPESTATUS[@]}")
           set -e
           if (( pipeline_status[0] != 0 )); then
             exit "${pipeline_status[0]}"

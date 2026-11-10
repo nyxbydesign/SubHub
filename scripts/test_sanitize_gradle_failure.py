@@ -156,7 +156,8 @@ class CanonicalShellTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", block)
         return textwrap.dedent(block.split("        run: |\n", 1)[1])
 
-    def run_workflow(self, code, reporter_fault=None, producer_signal=False):
+    def run_workflow(self, code, reporter_fault=None, producer_signal=False,
+                     script_file=False, parent_notice=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
@@ -190,14 +191,30 @@ class CanonicalShellTest(unittest.TestCase):
                             + ("os.kill(os.getpid(), signal.SIGTERM)\n" if producer_signal else f"sys.exit({code})\n"),
                             encoding="utf-8")
             fake.chmod(0o700)
-            actual = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", self.build_script()],
+            script = self.build_script()
+            if parent_notice:
+                # Bash versions differ between a terse signal notice and a full
+                # "Done ... pipeline" message. Model that parent-shell stderr,
+                # after capturing PIPESTATUS so the fixture cannot alter it.
+                capture = 'pipeline_status=("${PIPESTATUS[@]}")'
+                self.assertEqual(1, script.count(capture))
+                script = script.replace(capture, capture +
+                                        '\nprintf "%s\\n" "Done PRIVATE_TOKEN /home/private/key" >&2')
+            command = ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail"]
+            if script_file:
+                path = root / "workflow-step.sh"
+                path.write_text(script, encoding="utf-8")
+                command.append(str(path))
+            else:
+                command.extend(["-c", script])
+            actual = subprocess.run(command,
                                     cwd=root, capture_output=True, text=True, timeout=20)
             self.assertTrue((root / "producer-drained").is_file())
             calls = (root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(1, len(calls))
             self.assertEqual(["--stacktrace", "--console=plain", "testDebugUnitTest", "lintDebug", "assembleDebug"],
                              json.loads(calls[0]))
-            self.assertIn(actual.stderr, ("", "Terminated\n") if producer_signal else ("",))
+            self.assertEqual("", actual.stderr)
             self.assertNotIn("PRIVATE", actual.stdout)
             self.assertLessEqual(len(actual.stdout.encode("utf-8")), safe.MAX_OUTPUT_BYTES)
             return actual
@@ -221,14 +238,27 @@ class CanonicalShellTest(unittest.TestCase):
     def test_reporter_startup_error_and_actual_signals_keep_pipe_open_and_stderr_private(self):
         for fault, reporter_code in (("startup", 1), ("signal", 130), ("terminate", 143), ("kill", 137)):
             for code in (0, 23):
-                with self.subTest(fault=fault, code=code):
-                    actual = self.run_workflow(code, reporter_fault=fault)
-                    self.assertEqual(code or reporter_code, actual.returncode)
-                    self.assertEqual("", actual.stdout)
+                for script_file in (False, True):
+                    with self.subTest(fault=fault, code=code, script_file=script_file):
+                        actual = self.run_workflow(code, reporter_fault=fault, script_file=script_file)
+                        self.assertEqual(code or reporter_code, actual.returncode)
+                        self.assertEqual("", actual.stdout)
 
     def test_actual_producer_sigterm_status_is_preserved(self):
-        actual = self.run_workflow(143, producer_signal=True)
-        self.assertEqual(143, actual.returncode)
+        for script_file in (False, True):
+            with self.subTest(script_file=script_file):
+                actual = self.run_workflow(143, producer_signal=True, script_file=script_file)
+                self.assertEqual(143, actual.returncode)
+                self.assertEqual(["null_pointer"], json.loads(actual.stdout)["gradleDiagnostic"]["exceptions"])
+
+    def test_parent_shell_pipeline_notices_cannot_escape_to_stderr(self):
+        for code, producer_signal in ((0, False), (23, False), (143, True)):
+            for script_file in (False, True):
+                with self.subTest(code=code, script_file=script_file):
+                    actual = self.run_workflow(code, producer_signal=producer_signal,
+                                               script_file=script_file, parent_notice=True)
+                    self.assertEqual(code, actual.returncode)
+                    self.assertEqual(["null_pointer"], json.loads(actual.stdout)["gradleDiagnostic"]["exceptions"])
 
 
 if __name__ == "__main__":
