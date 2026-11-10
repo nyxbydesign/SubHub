@@ -142,8 +142,8 @@ public final class RetainedStatisticsTest {
             assertFalse("Travel cannot create an extra session day", history.activityDates().contains("2026-11-02"));
             assertEquals(Long.valueOf(1), history.days().get("2026-11-03").get("sessions"));
             if (instant.equals("2026-11-12T01:00:00Z")) {
-                // This different-clock history value reproduced the bug; composition must not use it.
-                assertEquals(8, history.currentStreak(Instant.ofEpochMilli(now).atZone(losAngeles).toLocalDate()));
+                // Reproject timestamped sessions instead of reinterpreting their civil-date labels.
+                assertEquals(0, history.currentStreak(Instant.ofEpochMilli(now).atZone(losAngeles).toLocalDate(), losAngeles.getId(), 0, ""));
                 assertEquals(0, composed.getCurrentStreak());
             }
         }
@@ -160,11 +160,73 @@ public final class RetainedStatisticsTest {
         assertEquals(0, streakSnapshot(0, null).withRetained(history).getCurrentStreak());
     }
 
+    @Test public void eastwardCensorAndUnzonedDailyDatesCannotReviveAnExpiredStreak() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T13:00:00Z");
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo"), auckland = ZoneId.of("Pacific/Auckland");
+        String deviceActivityDay = Instant.ofEpochMilli(end - 1000).atZone(auckland).toLocalDate().toString();
+        assertEquals("2026-11-11", deviceActivityDay);
+        for (String observed : new String[]{"2026-11-10T13:00:00Z", "2026-11-11T14:59:59Z",
+                "2026-11-11T15:00:00Z", "2026-11-12T01:00:00Z"}) {
+            long now = time(observed);
+            LocalDate today = Instant.ofEpochMilli(now).atZone(tokyo).toLocalDate();
+            RetainedStatistics history = new RetainedStatistics(auckland, now,
+                    Collections.singletonMap(deviceActivityDay, Map.of("service_ms", 1000L)));
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 1)
+                    .identified("12345678-1234-1234-1234-123456789abc", tokyo.getId()));
+            history.activeDates(Collections.singleton(deviceActivityDay));
+            int expected = today.isBefore(LocalDate.parse("2026-11-12")) ? 8 : 0;
+            StatsSnapshot composed = streakSnapshot(expected, today).withRetained(history);
+            assertEquals(observed, expected, composed.getCurrentStreak());
+            assertEquals(observed, expected, composed.withRetained(history).getCurrentStreak());
+            assertTrue("Keep historical activity evidence", composed.getActiveDates().contains(deviceActivityDay));
+            assertTrue("Historical streak awards remain eligible", history.awards(false).get("streak_7") > 0);
+        }
+    }
+
+    @Test public void dateOnlyEvidenceRetainsHistoricalAwardsWithoutInventingCurrentContinuity() {
+        Map<String, Map<String, Long>> days = new LinkedHashMap<>();
+        java.util.Set<String> activity = new LinkedHashSet<>();
+        for (int i = 0; i < 30; i++) {
+            String date = LocalDate.parse("2026-10-13").plusDays(i).toString();
+            days.put(date, Map.of("service_ms", 1000L)); activity.add(date);
+        }
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"),
+                time("2026-11-11T15:00:00Z"), days);
+        history.activeDates(activity);
+        assertEquals(0, streakSnapshot(0, LocalDate.parse("2026-11-12")).withRetained(history).getCurrentStreak());
+        assertTrue(history.awards(false).get("streak_30") > 0);
+        assertEquals(activity, history.activityDates());
+    }
+
+    @Test public void timestampedHistoryJoinsAnOngoingKnownStreakWithoutDateOnlyEvidence() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"),
+                time("2026-11-11T01:00:00Z"), Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(time("2026-11-03T00:00:00Z"),
+                (time("2026-11-10T13:00:00Z") - time("2026-11-03T00:00:00Z")) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        assertEquals(9, history.currentStreak(LocalDate.parse("2026-11-11"), "Asia/Tokyo", 1, "2026-11-11"));
+        assertEquals(8, history.currentStreak(LocalDate.parse("2026-11-11"), "Asia/Tokyo", 0, ""));
+        assertEquals(Integer.MAX_VALUE, history.currentStreak(LocalDate.parse("2026-11-11"),
+                "Asia/Tokyo", Integer.MAX_VALUE, "2026-11-11"));
+    }
+
+    @Test public void recoveredProgressNeverBecomesNewEvidenceOnRepeatedComposition() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-11T01:00:00Z");
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"), end, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        StatsSnapshot recovered = streakSnapshot(1, LocalDate.parse("2026-11-11"));
+        for (int i = 0; i < 5; i++) {
+            recovered = recovered.withRetained(history);
+            assertEquals(9, recovered.getCurrentStreak());
+        }
+    }
+
     private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today) {
         return new StatsSnapshot(0, 0, 0, currentStreak, "2026-11-10", 0, 0, 0,
                 0, 0, 0, 0, 0, 0, false, Collections.emptySet(),
                 Collections.emptySet(), Collections.emptySet(), 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today);
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today, "Asia/Tokyo", currentStreak);
     }
 
 }

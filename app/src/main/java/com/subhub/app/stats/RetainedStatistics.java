@@ -164,13 +164,40 @@ final class RetainedStatistics {
         return result;
     }
 
-    int currentStreak(LocalDate day) {
+    /**
+     * Live recency needs a known calendar. Historical activity/daily dates have no timezone
+     * provenance and remain eligible for historical awards, but cannot extend a current streak.
+     * Timestamped sessions are projected into the same calendar as the observed counter.
+     */
+    int currentStreak(LocalDate day, String calendar, int knownDays, String knownLastDay) {
         if (day == null) return 0;
-        Set<String> dates = activityDates();
-        if (!dates.contains(day.toString())) day = day.minusDays(1);
-        int streak = 0;
-        while (dates.contains(day.toString())) { streak++; day = day.minusDays(1); }
-        return streak;
+        final ZoneId clock;
+        try { clock = ZoneId.of(calendar); }
+        catch (RuntimeException invalid) { return 0; }
+        java.util.List<LocalDate[]> intervals = new java.util.ArrayList<>();
+        for (StatsRepository.SessionEntry entry : sessions.values()) {
+            LocalDate first = Instant.ofEpochMilli(entry.getStartMillis()).atZone(clock).toLocalDate();
+            LocalDate last = Instant.ofEpochMilli(entry.getStartMillis() + entry.getDurationSeconds() * 1000)
+                    .atZone(clock).toLocalDate();
+            intervals.add(new LocalDate[]{first, last});
+        }
+        if (knownDays > 0) try {
+            LocalDate last = LocalDate.parse(knownLastDay);
+            if (!last.isAfter(day) && !last.isBefore(day.minusDays(1)))
+                intervals.add(new LocalDate[]{last.minusDays((long) knownDays - 1), last});
+        } catch (RuntimeException invalid) { /* An invalid counter cannot supply dated proof. */ }
+        intervals.sort(java.util.Comparator.comparing(value -> value[0]));
+        LocalDate first = null, last = null;
+        int current = 0;
+        for (LocalDate[] interval : intervals) {
+            if (last == null || interval[0].isAfter(last.plusDays(1))) {
+                first = interval[0]; last = interval[1];
+            } else if (interval[1].isAfter(last)) last = interval[1];
+            if (!last.isAfter(day) && !last.isBefore(day.minusDays(1)))
+                current = (int) Math.min(Integer.MAX_VALUE,
+                        java.time.temporal.ChronoUnit.DAYS.between(first, last) + 1);
+        }
+        return current;
     }
 
     /** First date supported by the retained lower bound, never a fabricated lifetime date. */

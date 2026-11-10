@@ -93,12 +93,52 @@ public final class HistoryBackfillAndroidTest {
             assertEquals(0, LocalRetainedStatistics.load(context, boundary).stats.getCurrentStreak());
             LocalRetainedStatistics reloaded = LocalRetainedStatistics.load(context, later);
             assertEquals(0, reloaded.repository.retainedSnapshot(later).getCurrentStreak());
-            assertEquals(8, reloaded.history.currentStreak(Instant.ofEpochMilli(later)
-                    .atZone(ZoneId.systemDefault()).toLocalDate()));
+            assertEquals(0, reloaded.history.currentStreak(Instant.ofEpochMilli(later)
+                    .atZone(ZoneId.systemDefault()).toLocalDate(), ZoneId.systemDefault().getId(), 0, ""));
             assertEquals(0, reloaded.stats.getCurrentStreak());
             manager.checkRetainedAchievements(reloaded.stats);
             assertTrue(manager.isUnlocked("streak_7")); assertEquals(earnedAt, manager.getUnlockedAt("streak_7"));
             assertEquals(0, LocalRetainedStatistics.load(context, later).stats.getCurrentStreak());
+        } finally { TimeZone.setDefault(originalZone); }
+    }
+
+    @Test public void eastwardCensorDateStaysHistoricalAfterTheSessionCalendarExpires() throws Exception {
+        TimeZone originalZone = TimeZone.getDefault();
+        try {
+            // Always ahead of the session calendar, independent of the native test's wall-clock hour.
+            TimeZone.setDefault(TimeZone.getTimeZone("GMT+14:00"));
+            ZoneId sessionZone = ZoneId.of("-12:00");
+            long now = System.currentTimeMillis();
+            LocalDate last = Instant.ofEpochMilli(now).atZone(sessionZone).toLocalDate();
+            long start = last.minusDays(7).atStartOfDay(sessionZone).toInstant().toEpochMilli();
+            StatsRepository.NativeSession session = new StatsRepository.NativeSession(
+                    UUID.randomUUID().toString(), start, sessionZone.getId());
+            assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit()
+                    .putString(StatsRepository.NATIVE_OWNER_KEY, session.identity).commit());
+            StatsRepository repository = new StatsRepository(context, false);
+            assertTrue(repository.ensureNativeSession(session));
+            assertEquals(1, repository.recordTrackIds(Collections.singletonList(42), null));
+            Set<String> dates = new LinkedHashSet<>(prefs(StatsRepository.PREFS_NAME)
+                    .getStringSet("active_dates", Collections.emptySet()));
+            assertEquals(1, dates.size());
+            String deviceDay = dates.iterator().next();
+            long endedAt = System.currentTimeMillis();
+            assertTrue(repository.endSessionForIdentity(session.identity, endedAt, (endedAt - start) / 1000));
+            LocalDate recordedLast = LocalDate.parse(prefs(StatsRepository.PREFS_NAME).getString("last_session_date", ""));
+            assertTrue(LocalDate.parse(deviceDay).isAfter(recordedLast));
+            LocalRetainedStatistics stopped = LocalRetainedStatistics.load(context, endedAt);
+            assertTrue(stopped.stats.getCurrentStreak() >= 8);
+            AchievementManager manager = new AchievementManager(context);
+            manager.checkRetainedAchievements(stopped.stats);
+            long earnedAt = manager.getUnlockedAt("streak_7"); assertTrue(earnedAt > 0);
+            long expiredAt = recordedLast.plusDays(2).atStartOfDay(sessionZone).toInstant().toEpochMilli();
+            LocalRetainedStatistics expired = LocalRetainedStatistics.load(context, expiredAt);
+            assertEquals(0, expired.stats.getCurrentStreak());
+            assertEquals(0, expired.stats.withRetained(expired.history).getCurrentStreak());
+            assertTrue(expired.history.activityDates().contains(deviceDay));
+            assertEquals(dates, prefs(StatsRepository.PREFS_NAME).getStringSet("active_dates", Collections.emptySet()));
+            manager.checkRetainedAchievements(expired.stats);
+            assertTrue(manager.isUnlocked("streak_7")); assertEquals(earnedAt, manager.getUnlockedAt("streak_7"));
         } finally { TimeZone.setDefault(originalZone); }
     }
 

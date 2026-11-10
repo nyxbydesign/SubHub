@@ -559,7 +559,7 @@ public final class StatsRepository {
                     preferences.getLong(KEY_TAMPER_EVENTS, 0L),
                     activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS),
                     preferences.getLong(KEY_POPUP_IMPRESSIONS, 0L),
-                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS), streakToday);
+                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS), streakToday, streakZone, streak.current(streakToday));
         }
     }
 
