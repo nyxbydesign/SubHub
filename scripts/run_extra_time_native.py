@@ -231,11 +231,37 @@ RECONNECT_SOURCE_ONLY = {
         "backgroundOptOutRetiresOnlyBackgroundOwnersAndForegroundSyncContinues",
         "queuedServiceStartAndLeaseAcquisitionCannotOutrunPersistedOptOut",
         "optOutDrainsOwnedBackgroundWindowWithoutClosingForegroundEndpoint",
+        "quietBackgroundCadenceKeepsNewDataFastWithoutResettingOfflineBackoff",
+        "dirtyBackgroundFailureBacksOffButNetworkResetKeepsRetryDue",
+        "backgroundHidingPreservesBackoffAndForegroundResetsIt",
+        "foregroundPollingStopsWhileHiddenAndRestartsOnce",
+        "pairingPollsStopAtLastLeaseAndRestartForReplacement",
     ],
     "com.subhub.app.remote.RemoteConfigurationAndroidTest": [
         method for method in (SUBHUB_PASS_NATIVE["com.subhub.app.remote.RemoteConfigurationAndroidTest"]
                               + SUBHUB_PASS_SOURCE_ONLY["com.subhub.app.remote.RemoteConfigurationAndroidTest"])
         if method not in RECONNECT_NATIVE["com.subhub.app.remote.RemoteConfigurationAndroidTest"]
+    ],
+}
+# Full reviewed scheduler coverage plus real inbound transport and independent deadlines.
+BATTERY_NATIVE = {
+    "com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest": (
+        RECONNECT_NATIVE["com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest"]
+        + RECONNECT_SOURCE_ONLY["com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest"]
+    ),
+    "com.subhub.app.remote.RemoteBackgroundResponderAndroidTest": [
+        "delayedAuthenticatedInboundExchangesAfterOutgoingHasFinished",
+    ],
+    "com.subhub.app.remote.PairingLifecycleAndroidTest": [
+        "productionDeadlineProducerRunsWhileOtherWorkQueuesAreBlocked",
+    ],
+}
+BATTERY_SOURCE_ONLY = {
+    "com.subhub.app.remote.PairingLifecycleAndroidTest": [
+        "originalClocksOneUseCancellationAndCommittedOutcomeStaySeparate",
+        "cheapLeaseDeadlinePublishesClosureWithoutSqlMutation",
+        "observedFirstApprovalRearmsCheapDeadlineOnceWithoutRenewingItsBound",
+        "stagedFirstApprovalDefeatsStaleExpiryAndFailedSqlCannotRetainItsLease",
     ],
 }
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
@@ -248,8 +274,9 @@ SUBHUB_PASS_SELECTORS = ALL_SELECTORS[:-1] + [
     f"{cls}#{method}" for cls, methods in SUBHUB_PASS_NATIVE.items() for method in methods
 ] + [LARGE_FONT]
 RECONNECT_SELECTORS = [f"{cls}#{method}" for cls, methods in RECONNECT_NATIVE.items() for method in methods]
-SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6}
+BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items() for method in methods]
+SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 26}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -361,7 +388,7 @@ def suite_selectors(suite):
     values = SUITES[suite]
     if len(values) != SUITE_COUNTS[suite] or len(set(values)) != SUITE_COUNTS[suite]:
         raise ValueError(f"The {suite} native inventory must contain exactly {SUITE_COUNTS[suite]} unique methods")
-    if suite != "reconnect" and values[-1] != LARGE_FONT:
+    if suite in ("extra-time", "subhub-pass") and values[-1] != LARGE_FONT:
         raise ValueError("The global large-font contract must run last")
     return list(values)
 
@@ -377,6 +404,9 @@ def source_inventory(suite="extra-time"):
     elif suite == "reconnect":
         native = RECONNECT_NATIVE
         source_only = RECONNECT_SOURCE_ONLY
+    elif suite == "battery":
+        native = BATTERY_NATIVE
+        source_only = BATTERY_SOURCE_ONLY
     inventory = {}
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\([^)]*\))?"

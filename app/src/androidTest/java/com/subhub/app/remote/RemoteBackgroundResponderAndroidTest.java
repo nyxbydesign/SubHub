@@ -92,6 +92,11 @@ public final class RemoteBackgroundResponderAndroidTest {
             assertEquals(localIdentity,responder.localIdentity());
             remote.publish(localIdentity,generation,RemoteProtocol.Stream.STATS,"delayed-proof",new JSONObject().put("phase",2),false,System.currentTimeMillis());
             RemoteProtocol.Batch pending=remote.nextBatch(localIdentity,generation,RemoteProtocol.Stream.STATS);assertFalse(pending.changes.isEmpty());
+            @SuppressWarnings("unchecked") Map<String,Long> due=(Map<String,Long>)field("nextAttempt").get(feature);
+            String schedulingKey=peerIdentity+":"+generation;
+            // An earlier outgoing retry must be postponed by the incoming authenticated duplex exchange.
+            due.put(schedulingKey,SystemClock.elapsedRealtime()+10_000);
+            long inboundStarted=SystemClock.elapsedRealtime();
             try(PeerTransport.Connection connection=peer.connect(localIdentity,responder.inviteRoute(),8_000)){
                 assertEquals(localIdentity,connection.authenticatedPeerIdentity());assertTrue(connection.isDirect());
                 session().outgoing(connection,remote.peer(localIdentity,generation),System.nanoTime()+TimeUnit.SECONDS.toNanos(15));
@@ -101,6 +106,7 @@ public final class RemoteBackgroundResponderAndroidTest {
             assertTrue(remote.nextBatch(localIdentity,generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
             assertFalse("The delayed peer exchanged within the original window",window.isDone());
             assertEquals(2,credentialReceipts.get());
+            assertTrue("Successful inbound must prevent a redundant outgoing retry",due.get(schedulingKey)>=inboundStarted+30_000);
             assertTrue(window.get(60,TimeUnit.SECONDS));
             await(()->value("endpoint")==null);
             assertTrue(((Map<?,?>)field("connections").get(feature)).isEmpty());

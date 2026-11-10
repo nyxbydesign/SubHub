@@ -8,6 +8,8 @@ methods plus 31 reviewed integration methods, **52 unique methods total**. The
 of the default 21 and is not duplicated in the integration suite.
 The focused `reconnect` suite selects six separate scheduling and durable-queue
 contracts without rerunning either older suite.
+The focused `battery` suite selects all 24 scheduler contracts plus the real Iroh
+background responder and independent pairing-deadline regression, 26 methods total.
 
 ## Select the suite without duplicate jobs
 
@@ -32,12 +34,21 @@ contracts without rerunning either older suite.
   and fresh consent checks. They use isolated stores and synthetic transport;
   they do not claim a physical network disconnect/reconnect test.
 
+- For background-sync battery changes, add `native-battery` before the candidate
+  push, or select `battery` for an explicit later dispatch. This label takes
+  precedence over `native-reconnect`, integration and legacy subset labels.
+  It covers quiet cadence, offline backoff, dirty-data delivery, foreground and
+  pairing poll ownership, opt-out, responder retention, real delayed authenticated
+  inbound exchanges, and deadline production while other queues are blocked.
+  Synthetic scheduling checks are not physical-device battery measurements.
+
 Inspect the exact inventory locally without a build or emulator:
 
 ```sh
 python3 scripts/run_extra_time_native.py --check-inventory
 python3 scripts/run_extra_time_native.py --suite subhub-pass --check-inventory
 python3 scripts/run_extra_time_native.py --suite reconnect --check-inventory
+python3 scripts/run_extra_time_native.py --suite battery --check-inventory
 python3 -m unittest scripts.test_extra_time_native_inventory
 ```
 
@@ -63,7 +74,8 @@ pushing the combined candidate head:
 ```
 
 Keep `native-subhub-pass` as well when selecting methods from the 52-method suite.
-Use `native-reconnect` instead for a subset of the six reconnect contracts.
+Use `native-reconnect` instead for a subset of the six reconnect contracts, or
+`native-battery` for a subset of the 26 battery contracts.
 The producer reads the PR event JSON directly from `GITHUB_EVENT_PATH`; body text
 is never interpolated into a shell command or workflow expression. With
 `native-subset`, the block overrides the legacy subset labels. Without that exact

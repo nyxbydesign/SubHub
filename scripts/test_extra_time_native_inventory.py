@@ -72,6 +72,37 @@ class NativeSuiteInventoryTest(unittest.TestCase):
             with mock.patch.dict(native.SUITES, {"reconnect": changed}), self.assertRaisesRegex(ValueError, "6 unique"):
                 native.suite_selectors("reconnect")
 
+    def test_battery_selects_all_scheduler_methods_real_responder_and_deadline(self):
+        selected = native.selectors("", "battery")
+        self.assertEqual(26, len(selected))
+        self.assertEqual(26, len(set(selected)))
+        self.assertEqual({"RemoteFeatureSchedulingAndroidTest": 24,
+                          "RemoteBackgroundResponderAndroidTest": 1, "PairingLifecycleAndroidTest": 1},
+                         {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.BATTERY_NATIVE.items()})
+        self.assertIn("com.subhub.app.remote.RemoteBackgroundResponderAndroidTest#delayedAuthenticatedInboundExchangesAfterOutgoingHasFinished", selected)
+        self.assertIn("com.subhub.app.remote.PairingLifecycleAndroidTest#productionDeadlineProducerRunsWhileOtherWorkQueuesAreBlocked", selected)
+        self.assertEqual([selected[0], selected[-1]], native.selectors(selected[-1] + "," + selected[0], "battery"))
+        for cls, methods in native.BATTERY_SOURCE_ONLY.items():
+            for method in methods:
+                with self.subTest(method=method), self.assertRaisesRegex(ValueError, "unique subset"):
+                    native.selectors(f"{cls}#{method}", "battery")
+
+    def test_battery_missing_or_duplicate_members_fail_closed(self):
+        values = native.SUITES["battery"]
+        for changed in (values[:-1], values[:-1] + [values[0]]):
+            with mock.patch.dict(native.SUITES, {"battery": changed}), self.assertRaisesRegex(ValueError, "26 unique"):
+                native.suite_selectors("battery")
+
+    def test_battery_selected_and_source_only_drift_fail_closed(self):
+        for cls, method in (("com.subhub.app.remote.RemoteBackgroundResponderAndroidTest",
+                             "delayedAuthenticatedInboundExchangesAfterOutgoingHasFinished"),
+                            ("com.subhub.app.remote.PairingLifecycleAndroidTest",
+                             "cheapLeaseDeadlinePublishesClosureWithoutSqlMutation")):
+            with self.subTest(method=method), self.source_copy() as root:
+                self.edit_source(root, cls, method, "unreviewedRenamedMethod")
+                with self.assertRaisesRegex(ValueError, "Native inventory changed"):
+                    native.source_inventory("battery")
+
     def test_default_rejects_an_integration_method(self):
         with self.assertRaisesRegex(ValueError, "unique subset"):
             native.selectors(native.SUBHUB_PASS_SELECTORS[20])
@@ -129,7 +160,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
     def source_copy(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for cls in (*native.NATIVE, *native.SUBHUB_PASS_NATIVE, *native.RECONNECT_NATIVE):
+            for cls in (*native.NATIVE, *native.SUBHUB_PASS_NATIVE, *native.RECONNECT_NATIVE, *native.BATTERY_NATIVE):
                 relative = Path("app/src/androidTest/java") / (cls.replace(".", "/") + ".java")
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,6 +323,15 @@ class NativePrSubsetTest(unittest.TestCase):
             selected, source = native.selected_methods("subhub-pass")
         self.assertEqual(self.chosen, selected)
         self.assertEqual("pull_request_body", source)
+
+    def test_battery_pr_subset_uses_only_reviewed_methods_in_suite_order(self):
+        chosen = [native.BATTERY_SELECTORS[0], native.BATTERY_SELECTORS[-1]]
+        with self.event(body=self.block(list(reversed(chosen))), labels=[native.PR_SUBSET_LABEL, "native-battery"]):
+            self.assertEqual((chosen, "pull_request_body"), native.selected_methods("battery"))
+        cls = "com.subhub.app.remote.PairingLifecycleAndroidTest"
+        excluded = f"{cls}#{native.BATTERY_SOURCE_ONLY[cls][0]}"
+        with self.assertRaisesRegex(ValueError, "unique exact selectors"):
+            native.pr_subset(self.block([excluded]), "battery")
 
     def test_subset_requires_the_exact_opt_in_label(self):
         for labels in ([], ["native-subset-typo"], ["Native-subset"], ["native-subhub-pass"]):
@@ -471,6 +511,23 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
                 self.assertEqual("", raw)
                 self.assertEqual(6, len(native.selectors(raw, suite)))
 
+    def test_battery_label_wins_over_all_older_suite_and_subset_labels(self):
+        for labels in (("native-battery",), ("native-battery", "native-reconnect", "native-subhub-pass",
+                                            "native-extra-time-ui", "native-extra-time-tribute-large")):
+            with self.subTest(labels=labels):
+                suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), labels=labels)
+                raw = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), labels=labels)
+                self.assertEqual("battery", suite)
+                self.assertEqual("", raw)
+                self.assertEqual(26, len(native.selectors(raw, suite)))
+
+    def test_dispatch_battery_supports_full_suite_and_exact_subset(self):
+        for raw, count in (("", 26), (native.BATTERY_SELECTORS[-1], 1)):
+            args = dict(event="workflow_dispatch", suite="battery", selectors=raw)
+            suite = self.evaluate(self.expression("EXTRA_TIME_SUITE"), **args)
+            selected = self.evaluate(self.expression("EXTRA_TIME_SELECTORS"), **args)
+            self.assertEqual(count, len(native.selectors(selected, suite)))
+
     def test_dispatch_reconnect_supports_full_suite_and_exact_subset(self):
         for raw, count in (("", 6), (native.RECONNECT_SELECTORS[0], 1)):
             args = dict(event="workflow_dispatch", suite="reconnect", selectors=raw)
@@ -495,7 +552,7 @@ class NativeWorkflowSelectionTest(unittest.TestCase):
         self.assertNotIn("labeled", trigger)
         self.assertNotIn("types:", trigger)  # Retain the original PR default event set.
         self.assertNotRegex(trigger, r"(?m)^  (push|schedule|workflow_run|pull_request_target):")
-        self.assertIn("options: [extra-time, subhub-pass, reconnect]", trigger)
+        self.assertIn("options: [extra-time, subhub-pass, reconnect, battery]", trigger)
         self.assertIn("timeout-minutes: 45", self.workflow)
         self.assertEqual(1, self.workflow.count("run: python3 scripts/run_extra_time_native.py"))
         self.assertRegex(self.workflow, r"run: python3 -m unittest [^\n]*\bscripts\.test_extra_time_native_inventory\b")

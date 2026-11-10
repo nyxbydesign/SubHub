@@ -390,6 +390,119 @@ public final class RemoteFeatureSchedulingAndroidTest {
             assertSame(transport,field("endpoint"));assertFalse(transport.closed);assertEquals(90,store.peers(true).size());
         }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
     }
+    /** One owned active peer, with automatic work parked beyond this test's assertions. */
+    private RemoteFeature.ConnectedServiceLease quietOwner()throws Exception{
+        store.getWritableDatabase().execSQL("DELETE FROM peers WHERE peer<>?",new Object[]{identity(87)});
+        ((Map<String,Long>)field("nextAttempt")).put(identity(87)+":"+generation(87),SystemClock.elapsedRealtime()+900_000);
+        RemoteFeature.ConnectedServiceLease owner=feature.acquireConnectedService(()->{}).get(5,TimeUnit.SECONDS);
+        assertNotNull(owner);((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+        assertEquals(0,transport.activeCalls.get());return owner;
+    }
+    @Test public void quietBackgroundCadenceKeepsNewDataFastWithoutResettingOfflineBackoff()throws Exception{
+        try(RemoteFeature.ConnectedServiceLease owner=quietOwner()){
+            String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            long generation=(Long)invoke("attemptGeneration",new Class<?>[0]),before=SystemClock.elapsedRealtime();
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
+            assertTrue(due.get(key)>=before+300_000);assertTrue(due.get(key)<SystemClock.elapsedRealtime()+301_000);
+            invoke("invalidateChangedAttempts",new Class<?>[0]);assertFalse("New data to a healthy peer stays immediately due",due.containsKey(key));
+            generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+            long failedDue=due.get(key);assertTrue(failedDue>=SystemClock.elapsedRealtime()+29_000);
+            for(int i=0;i<10;i++)feature.changed();
+            ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(failedDue,due.get(key).longValue());assertEquals(0,transport.activeCalls.get());
+            assertEquals(1,((Map<String,Integer>)field("consecutiveFailures")).get(key).intValue());
+            // New data during an authenticated successful duplex snapshot still needs another exchange.
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
+            assertFalse(due.containsKey(key));assertFalse(((Map<?,?>)field("consecutiveFailures")).containsKey(key));
+            generation=(Long)invoke("attemptGeneration",new Class<?>[0]);set("foreground",true);before=SystemClock.elapsedRealtime();
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,true,false);
+            assertTrue(due.get(key)>=before+30_000);assertTrue(due.get(key)<SystemClock.elapsedRealtime()+31_000);
+            set("foreground",false);before=SystemClock.elapsedRealtime();
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,true);
+            assertTrue("Pairing/revocation remains fast in background",due.get(key)<before+3_100);
+            ((AtomicInteger)field("backgroundWindows")).incrementAndGet();
+            try{
+                ((Map<?,?>)field("consecutiveFailures")).clear();before=SystemClock.elapsedRealtime();
+                invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+                assertTrue("A bounded window sharing the service retains its short retry",due.get(key)<before+3_100);
+            }finally{((AtomicInteger)field("backgroundWindows")).decrementAndGet();}
+            due.put(key,SystemClock.elapsedRealtime()+900_000);
+            ((Map<String,Integer>)field("consecutiveFailures")).put(key,6);
+            // Synthetic durable revocation, then the production notification path: never carry a
+            // previously ACTIVE peer's slow backoff into retained revocation delivery.
+            store.getWritableDatabase().execSQL("UPDATE peers SET state='REVOKED' WHERE peer=?",new Object[]{identity(87)});
+            store.revoke(identity(87),generation(87));
+            assertFalse(due.containsKey(key));assertFalse(((Map<?,?>)field("consecutiveFailures")).containsKey(key));
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+            assertFalse("A late old ACTIVE failure cannot delay revocation",due.containsKey(key));
+        }
+    }
+    @Test public void dirtyBackgroundFailureBacksOffButNetworkResetKeepsRetryDue()throws Exception{
+        try(RemoteFeature.ConnectedServiceLease owner=quietOwner()){
+            RemoteStore.Peer peer=store.peer(identity(87),generation(87));String key=keyForTest(peer);
+            Set<String> busy=(Set<String>)field("busy");busy.add(key);
+            Future<?> attempt=(Future<?>)invoke("schedulePeer",new Class<?>[]{RemoteStore.Peer.class,long.class},peer,System.nanoTime()+TimeUnit.SECONDS.toNanos(10));
+            assertNotNull(attempt);assertTrue(transport.activeEntered.await(5,TimeUnit.SECONDS));
+            invoke("invalidateChangedAttempts",new Class<?>[0]);release.countDown();attempt.get(5,TimeUnit.SECONDS);until(()->busy.isEmpty());
+            Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            assertTrue("A new source event cannot bypass the failed background attempt",due.get(key)>SystemClock.elapsedRealtime()+28_000);
+            long old=(Long)invoke("attemptGeneration",new Class<?>[0]);invoke("invalidateAttempts",new Class<?>[0]);
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,old,false,false);
+            assertFalse("A late offline failure cannot undo explicit network recovery",due.containsKey(key));
+            assertTrue(((Map<?,?>)field("consecutiveFailures")).isEmpty());
+        }
+    }
+    @Test public void backgroundHidingPreservesBackoffAndForegroundResetsIt()throws Exception{
+        try(RemoteFeature.ConnectedServiceLease owner=quietOwner()){
+            String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
+            long generation=(Long)invoke("attemptGeneration",new Class<?>[0]);
+            invoke("finishAttempt",new Class<?>[]{String.class,long.class,boolean.class,boolean.class},key,generation,false,false);
+            long failedDue=due.get(key);
+            invoke("requestAutomaticSync",new Class<?>[]{boolean.class},false);
+            ((ScheduledExecutorService)field("timer")).submit(()->{}).get(5,TimeUnit.SECONDS);
+            assertEquals(failedDue,due.get(key).longValue());assertEquals(0,transport.activeCalls.get());
+            set("foreground",true);feature.requestAutomaticSync();
+            assertTrue(transport.activeEntered.await(5,TimeUnit.SECONDS));
+            assertFalse(((Map<?,?>)field("consecutiveFailures")).containsKey(key));
+        }
+    }
+    @Test public void foregroundPollingStopsWhileHiddenAndRestartsOnce()throws Exception{
+        assertNull(field("foregroundPoll"));set("foreground",true);
+        invoke("refreshForegroundPolling",new Class<?>[0]);ScheduledFuture<?> first=(ScheduledFuture<?>)field("foregroundPoll");assertNotNull(first);
+        set("foreground",false);invoke("refreshForegroundPolling",new Class<?>[0]);
+        assertTrue(first.isCancelled());assertNull(field("foregroundPoll"));
+        set("foreground",true);invoke("refreshForegroundPolling",new Class<?>[0]);
+        ScheduledFuture<?> next=(ScheduledFuture<?>)field("foregroundPoll");assertNotNull(next);assertNotSame(first,next);assertFalse(next.isCancelled());
+        invoke("refreshForegroundPolling",new Class<?>[0]);assertTrue(next.isCancelled());assertFalse(((ScheduledFuture<?>)field("foregroundPoll")).isCancelled());
+        set("foreground",false);invoke("refreshForegroundPolling",new Class<?>[0]);assertNull(field("foregroundPoll"));
+    }
+    @Test public void pairingPollsStopAtLastLeaseAndRestartForReplacement()throws Exception{
+        // No SQL or transport authority is manufactured: closed synthetic leases only exercise timer ownership.
+        // Gate timer execution so the test can inspect ownership before any poll body runs.
+        CountDownLatch timerEntered=new CountDownLatch(1),deadlineEntered=new CountDownLatch(1),resume=new CountDownLatch(1);
+        ScheduledExecutorService timer=(ScheduledExecutorService)field("timer"),deadline=(ScheduledExecutorService)field("pairingDeadlineTimer");
+        Runnable block=()->{try{resume.await();}catch(InterruptedException stopped){Thread.currentThread().interrupt();}};
+        timer.execute(()->{timerEntered.countDown();block.run();});deadline.execute(()->{deadlineEntered.countDown();block.run();});
+        assertTrue(timerEntered.await(5,TimeUnit.SECONDS));assertTrue(deadlineEntered.await(5,TimeUnit.SECONDS));
+        Map<String,PairingOperationLease> owners=(Map<String,PairingOperationLease>)field("pairingLeases");
+        PairingOperationLease first=new PairingOperationLease(null,"synthetic",null,null,null,ignored->{});first.close();
+        PairingOperationLease replacement=new PairingOperationLease(null,"synthetic",null,null,null,ignored->{});replacement.close();
+        try{
+            owners.put("test",first);invoke("installPairingTimer",new Class<?>[0]);
+            ScheduledFuture<?> oldPoll=(ScheduledFuture<?>)field("pairingPollWake"),oldDeadline=(ScheduledFuture<?>)field("pairingDeadlineWake");
+            assertNotNull(oldPoll);assertNotNull(oldDeadline);
+            owners.remove("test",first);invoke("stopIdlePairingTimers",new Class<?>[0]);
+            assertTrue(oldPoll.isCancelled());assertTrue(oldDeadline.isCancelled());assertFalse((Boolean)field("pairingTimerInstalled"));
+            owners.put("test",replacement);invoke("installPairingTimer",new Class<?>[0]);
+            ScheduledFuture<?> newPoll=(ScheduledFuture<?>)field("pairingPollWake"),newDeadline=(ScheduledFuture<?>)field("pairingDeadlineWake");
+            assertNotSame(oldPoll,newPoll);assertNotSame(oldDeadline,newDeadline);
+            owners.remove("test",first);invoke("stopIdlePairingTimers",new Class<?>[0]);
+            assertFalse("A stale owner cannot cancel its replacement",newPoll.isCancelled());assertFalse(newDeadline.isCancelled());
+            owners.remove("test",replacement);invoke("stopIdlePairingTimers",new Class<?>[0]);
+            assertTrue(newPoll.isCancelled());assertTrue(newDeadline.isCancelled());assertNull(field("pairingPollWake"));assertNull(field("pairingDeadlineWake"));
+        }finally{owners.clear();invoke("stopIdlePairingTimers",new Class<?>[0]);resume.countDown();}
+    }
     private static String keyForTest(RemoteStore.Peer peer){return peer.identity+":"+peer.generation;}
     @After public void cleanup()throws Exception{
         release.countDown();
