@@ -304,7 +304,7 @@ public final class AchievementManager {
                 return settings.perAppEnabled && settings.totalEnabled ? 1 : 0;
             }
             case "pact_sealed":
-                return CommitmentManager.observedActive(context) ? 1 : 0;
+                return CommitmentManager.observedStarted(context) ? 1 : 0;
             case "pact_long_haul":
                 return CommitmentManager.observedElapsedMillis(context) / 1000L;
             case "hardcore_guardian":

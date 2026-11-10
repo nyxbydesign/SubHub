@@ -179,17 +179,20 @@ public final class RoleAchievementsAndroidTest {
     @Test public void liveStreakAndTimedLockProgressDoNotRequireSessionRestart() {
         ControllerPinManager.enterSubMode();
         long day = 24L * 60L * 60L * 1000L, now = System.currentTimeMillis();
-        String startDay = java.time.Instant.ofEpochMilli(now - 6 * day)
-                .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString();
+        java.time.LocalDate firstDay = java.time.LocalDate.now().minusDays(6);
+        long startedAt = firstDay.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        String startDay = firstDay.toString();
         SharedPreferences stats = context.getSharedPreferences(StatsRepository.PREFS_NAME, 0);
         assertTrue(stats.edit().putInt("current_streak", 1).putString("last_session_date", startDay)
-                .putLong("active_session_start_ms", now - 6 * day).commit());
+                .putLong("active_session_start_ms", startedAt).commit());
         StatsSnapshot snapshot = new StatsRepository(context, false).retainedSnapshot();
         assertEquals(7, snapshot.getCurrentStreak());
+        SharedPreferences main = new SettingsRepository(context).preferences();
+        assertTrue(main.edit().remove("commitment_longest_elapsed_ms").remove("commitment_started_once")
+                .remove("commitment_started_at").remove("commitment_ends_at").remove("commitment_duration").commit());
         AchievementManager manager = new AchievementManager(context);
         manager.checkRetainedAchievements(snapshot);
         assertTrue(manager.isUnlocked("streak_7"));
-        SharedPreferences main = new SettingsRepository(context).preferences();
         assertTrue(main.edit().putLong("commitment_started_at", now - 3 * day)
                 .putLong("commitment_ends_at", now + 7 * day).putLong("commitment_duration", 10 * day)
                 .remove("commitment_boot").remove("commitment_ends_elapsed").commit());
@@ -204,6 +207,38 @@ public final class RoleAchievementsAndroidTest {
         Map<String, ?> before = main.getAll();
         manager.checkRetainedAchievements(snapshot);
         assertTrue(manager.isUnlocked("pact_long_haul")); assertEquals(before, main.getAll());
+    }
+
+    @Test public void exactlySevenDayLockRemainsEarnableAfterExpiryAndLaterShortLocks() {
+        ControllerPinManager.enterSubMode();
+        long day = 24L * 60L * 60L * 1000L, now = System.currentTimeMillis();
+        SharedPreferences main = new SettingsRepository(context).preferences();
+        assertTrue(main.edit().putLong("commitment_started_at", now - 7 * day - 1)
+                .putLong("commitment_ends_at", now - 1).putLong("commitment_duration", 7 * day)
+                .remove("commitment_boot").remove("commitment_ends_elapsed")
+                .remove("commitment_longest_elapsed_ms").remove("commitment_started_once").commit());
+        // Both natural expiry and native/manual Stop use this same transactional clear.
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            SharedPreferences.Editor edit = main.edit();
+            com.subhub.app.commitment.CommitmentManager.appendNativeStop(context, edit);
+            assertTrue(edit.commit());
+        }
+        assertFalse(main.contains("commitment_started_at"));
+        assertEquals(7 * day, com.subhub.app.commitment.CommitmentManager.observedElapsedMillis(context));
+        assertTrue(com.subhub.app.commitment.CommitmentManager.observedStarted(context));
+        assertTrue(main.edit().putLong("commitment_started_at", now)
+                .putLong("commitment_ends_at", now + day).putLong("commitment_duration", day).commit());
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            SharedPreferences.Editor edit = main.edit();
+            com.subhub.app.commitment.CommitmentManager.appendNativeStop(context, edit);
+            assertTrue(edit.commit());
+        }
+        AchievementManager manager = new AchievementManager(context);
+        manager.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        assertTrue(manager.isUnlocked("pact_sealed")); assertTrue(manager.isUnlocked("pact_long_haul"));
+        long earned = manager.getUnlockedAt("pact_long_haul");
+        manager.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        assertEquals(earned, manager.getUnlockedAt("pact_long_haul"));
     }
 
     @Test public void backgroundSubMilestonesKeepTheirOwnCatalogDuringDomUse() {
