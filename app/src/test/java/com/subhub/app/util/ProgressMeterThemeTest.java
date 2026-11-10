@@ -3,6 +3,7 @@ package com.subhub.app.util;
 import static org.junit.Assert.*;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
@@ -82,16 +83,20 @@ public final class ProgressMeterThemeTest {
         for (String path : new String[]{"appmode/AllowanceProgress.java", "appmode/AppLimitRow.java",
                 "appmode/ExtraTimeViews.java", "stats/AchievementPreviewView.java", "stats/AchievementsPane.java",
                 "capture/export/ExportWorkspaceActivity.java"}) {
-            String code = Files.readString(source("java/com/subhub/app/" + path).toPath());
+            String code = readSource("java/com/subhub/app/" + path);
             assertTrue(path, code.contains("R.style.Widget_SubHub_ProgressMeter"));
             assertTrue(path, code.contains("R.dimen.progress_meter_height"));
             assertFalse(path, code.contains("progressBarStyleHorizontal"));
             assertFalse(path, code.contains("setProgressTintList"));
             assertFalse(path, code.contains("setProgressBackgroundTintList"));
         }
-        String chart = Files.readString(source("java/com/subhub/app/stats/DailyStatsPanel.java").toPath());
+        String chart = readSource("java/com/subhub/app/stats/DailyStatsPanel.java");
         assertTrue(chart.contains("paint.setColor(getContext().getColor(R.color.progress_fill))"));
         assertTrue(chart.contains("getDimension(R.dimen.progress_meter_radius)"));
+    }
+
+    private static String readSource(String path) throws java.io.IOException {
+        return new String(Files.readAllBytes(source(path).toPath()), StandardCharsets.UTF_8);
     }
 
     private static File source(String path) {
