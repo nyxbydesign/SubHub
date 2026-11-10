@@ -59,7 +59,7 @@ public final class PairingActivity extends RemotePage {
             creation=new androidx.lifecycle.ViewModelProvider(this).get(InvitationCreation.class);
             if(state!=null)creation.directAttempted|=state.getBoolean("pairingDirectAttempted",false)||state.containsKey("invitationId");
             if(directInvitation()&&creation.request==null)creation.directAttempted=false;
-            if(directInvitation())text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+            if(directInvitation())text(body,getString(R.string.role_data_unknown),false).setTag("pairing_invitation_loading");
             else PersonUi.action(body,R.string.remote_create_invite,this::createInvitation,true);
         }
         else {
@@ -122,7 +122,7 @@ public final class PairingActivity extends RemotePage {
         });
     }
     private void showInvitationLoading(){
-        body.removeAllViews();text(body,getString(R.string.role_loading),false).setTag("pairing_invitation_loading");
+        body.removeAllViews();text(body,getString(R.string.role_data_unknown),false).setTag("pairing_invitation_loading");
         candidates=PersonUi.column(this);body.addView(candidates);attachLifecyclePanel();
     }
     private void observeCreation() {

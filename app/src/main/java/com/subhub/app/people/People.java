@@ -25,6 +25,7 @@ public final class People {
                     com.subhub.app.security.DeviceRolePreferences.supportsSub(application)
                             ? local.people() : java.util.Collections.emptyList();}
             @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
+            @Override public PersonSnapshot loadSummary(PersonId id){return localProjection.apply(local.loadSummary(id));}
         }, remote);
     }
 

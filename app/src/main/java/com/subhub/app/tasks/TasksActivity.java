@@ -245,7 +245,7 @@ public final class TasksActivity extends RolePage {
                 : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
         if (state == null) {
             LinearLayout loading = PersonUi.card(body);
-            PersonUi.text(loading, getString(R.string.role_loading), false);
+            PersonUi.text(loading, getString(R.string.role_data_unknown), false);
             return;
         }
         if (state.dom != TaskRepository.domSession(person)) {
@@ -270,8 +270,7 @@ public final class TasksActivity extends RolePage {
         PersonUi.text(body, state.name, true).setTag("tasks_target");
         if (!person.isLocal() && !state.supported)
             PersonUi.text(body, getString(R.string.tasks_update_devices), false);
-        if (model.busy || model.loading) PersonUi.text(body,
-                getString(model.busy ? R.string.tasks_working : R.string.role_loading), false);
+        if (model.busy) PersonUi.text(body, getString(R.string.tasks_working), false);
         if (!model.form.isEmpty()) {
             if ("create".equals(model.form) && state.canCreate && state.allowed) author();
             else {

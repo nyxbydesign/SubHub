@@ -210,7 +210,8 @@ public class RemoteSessionControlsAndroidTest {
         try (ActivityScenario<PersonActivity> page = open()) {
             inject(page, gateway); tap("remote_session_start"); await(() -> gateway.reviews.get() == 1);
             gateway.failSnapshot = true;
-            await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
+            await(() -> hasText(page, "remote_session_status", context.getString(R.string.role_refresh_failed)));
+            assertAppliedDurationRetained(page);
             gateway.reviewed.complete(review(RemoteSessionCommands.Action.START, WITNESS));
             InstrumentationRegistry.getInstrumentation().waitForIdleSync(); assertEquals(0, gateway.confirms.get());
         }
@@ -274,7 +275,8 @@ public class RemoteSessionControlsAndroidTest {
             page.onActivity(a -> tag(a, "remote_session_stop").performClick());
             assertEquals(0, gateway.reviews.get()); assertEquals(0, gateway.confirms.get());
             gateway.failSnapshot = true;
-            await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
+            await(() -> hasText(page, "remote_session_status", context.getString(R.string.role_refresh_failed)));
+            assertAppliedDurationRetained(page);
             page.onActivity(a -> {
                 assertFalse(tag(a, "remote_session_stop").isEnabled());
                 assertNull(tag(a, "remote_session_start"));
@@ -479,7 +481,8 @@ public class RemoteSessionControlsAndroidTest {
             inject(page, gateway);
             page.onActivity(a -> assertNull(tag(a, "remote_session_refresh")));
             gateway.failSnapshot = true;
-            await(() -> hasText(page, "remote_session_status", context.getString(R.string.remote_unknown)));
+            await(() -> hasText(page, "remote_session_status", context.getString(R.string.role_refresh_failed)));
+            assertAppliedDurationRetained(page);
             gateway.failSnapshot = false;
             await(() -> enabled(page, "remote_session_start"));
             page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
@@ -566,6 +569,18 @@ public class RemoteSessionControlsAndroidTest {
         await(() -> hasText(page, "remote_session_applied_duration", context.getString(R.string.remote_session_applied_duration,
                 "60 " + context.getString(R.string.remote_minutes))));
     }
+    private void assertAppliedDurationRetained(ActivityScenario<PersonActivity> page) {
+        page.onActivity(a -> {
+            View duration = tag(a, "remote_session_applied_duration");
+            assertTrue("Last applied duration remains visible after a read failure", duration.isShown());
+            assertEquals(context.getString(R.string.remote_session_applied_duration,
+                    "60 " + context.getString(R.string.remote_minutes)), ((TextView) duration).getText().toString());
+            View start = tag(a, "remote_session_start"), stop = tag(a, "remote_session_stop");
+            assertTrue("No stale action permission", (start == null || !start.isEnabled())
+                    && (stop == null || !stop.isEnabled()));
+        });
+    }
+
     private static View tag(PersonActivity a, String value) { return a.findViewById(android.R.id.content).findViewWithTag(value); }
     private static boolean hasTag(ActivityScenario<PersonActivity> page, String value) {
         AtomicBoolean found = new AtomicBoolean(); page.onActivity(a -> found.set(tag(a, value) != null)); return found.get();

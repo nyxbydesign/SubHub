@@ -20,11 +20,14 @@ public final class RemotePersonRepository implements PersonRepository {
         List<PersonId> result=new ArrayList<>();for(RemoteStore.Peer peer:store.peers(true))if(peer.localRole==RemoteProtocol.Role.DOM)result.add(id(peer));return result;
     }
     @Override public PersonSnapshot load(PersonId id) throws Exception {
-        return store.authorityObservation(()->loadObserved(id));
+        return store.authorityObservation(()->loadObserved(id, false));
     }
-    private PersonSnapshot loadObserved(PersonId id) throws Exception {
+    @Override public PersonSnapshot loadSummary(PersonId id) throws Exception {
+        return store.authorityObservation(()->loadObserved(id, true));
+    }
+    private PersonSnapshot loadObserved(PersonId id, boolean summaryOnly) throws Exception {
         RemoteStore.Peer peer=peer(id);if(peer.localRole!=RemoteProtocol.Role.DOM)throw new IllegalArgumentException("Not a paired Sub");
-        JSONObject baseline=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");
+        JSONObject baseline=summaryOnly?null:store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.BASELINE,"active");
         JSONObject configuration=null;
         // Payload shape is independent of the other mirrors. Persistence/authority errors still escape.
         if(baseline!=null)try{configuration=RemoteConfiguration.active(baseline);}
@@ -41,8 +44,9 @@ public final class RemotePersonRepository implements PersonRepository {
         if(configuration!=null && peer.state==RemoteStore.State.ACTIVE)capabilities.add(PersonSnapshot.Capability.EDIT_CONTRACT);
         String sessionIdentity=runtime==null?"":runtime.optString("sessionIdentity","");
         if(peer.state==RemoteStore.State.ACTIVE && live==PersonSnapshot.Freshness.CURRENT && runtime!=null && runtime.optBoolean("endSessionSupported") && runtime.optBoolean("serviceActive") && sessionIdentity.matches("[0-9a-f]{64}"))capabilities.add(PersonSnapshot.Capability.END_SESSION);
-        String applied=store.metadata(peer.identity,peer.generation,"applied_revision","0"),desired=store.metadata(peer.identity,peer.generation,"desired_revision","0");
-        RemoteStore.Command latest=store.latestCommand(peer.identity,peer.generation);if(latest==null || !latest.pending())desired=applied;
+        String applied=summaryOnly?"":store.metadata(peer.identity,peer.generation,"applied_revision","0"),desired=summaryOnly?"":store.metadata(peer.identity,peer.generation,"desired_revision","0");
+        if(!summaryOnly){RemoteStore.Command latest=store.latestCommand(peer.identity,peer.generation);if(latest==null || !latest.pending())desired=applied;}
+        if(summaryOnly)capabilities.clear();
         String service=runtime==null?context.getString(R.string.remote_unknown):context.getString(runtime.optBoolean("paused")?R.string.remote_paused:runtime.optBoolean("serviceActive")?R.string.remote_active:R.string.remote_inactive);
         if(runtime!=null && live!=PersonSnapshot.Freshness.CURRENT)service=context.getString(R.string.remote_last_observed,service);
         String currency=stats==null?"EUR":stats.optString("currency","EUR");

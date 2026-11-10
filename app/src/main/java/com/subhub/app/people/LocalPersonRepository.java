@@ -33,6 +33,26 @@ public final class LocalPersonRepository implements PersonRepository {
 
     @Override public List<PersonId> people() { return Collections.singletonList(PersonId.LOCAL); }
 
+    @Override public PersonSnapshot loadSummary(PersonId id) {
+        if (!PersonId.LOCAL.equals(id)) throw new IllegalArgumentException("Not this device");
+        AppModeManager apps = new AppModeManager(context);
+        boolean paused = new PaidPauseManager(context).isActive();
+        boolean active = paused || CommitmentManager.isActive(context) || apps.isArmed()
+                || ScreenCaptureService.isRunning() || ScreenshotAccessibilityService.isRecognitionActive();
+        String service = context.getString(paused ? R.string.role_service_paused
+                : active ? R.string.role_service_active : R.string.role_service_inactive);
+        StatsSnapshot stats = new StatsRepository(context).load();
+        return new PersonSnapshot(id, ProfileNames.get(context, false), Build.MODEL,
+                context.getString(R.string.role_unknown_data), service,
+                PersonSnapshot.Connection.LOCAL, PersonSnapshot.Freshness.CURRENT, 0,
+                Collections.emptySet(), Collections.emptyList(), Collections.emptyList(),
+                new PenanceManager(context).getCurrency(), stats.getTotalProtectedSeconds(),
+                stats.getActivityEvents(), stats.getTributeCents(), stats.getSessions(), active,
+                new PersonSnapshot.SyncState(PersonSnapshot.Freshness.UNKNOWN,
+                        PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.CURRENT, "", ""))
+                .withProfile(ProfileStore.load(context, false), Collections.emptyMap());
+    }
+
     @Override public PersonSnapshot load(PersonId id) {
         if (!PersonId.LOCAL.equals(id)) throw new IllegalArgumentException("Not this device");
         SettingsRepository settings = new SettingsRepository(context);

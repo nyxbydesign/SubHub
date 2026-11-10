@@ -57,7 +57,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     private TextView action, status, reason, duration;
     private boolean showingStop;
     private com.subhub.app.commitment.ServiceCountdownView time;
-    private boolean reviewing;
+    private boolean reviewing, readUnavailable;
     private long observationEpoch;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -110,7 +110,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
             if (showingStop) stop();
             else request(RemoteSessionCommands.Action.START);
         });
-        status = PersonUi.text(controls, activity.getString(R.string.role_loading), false);
+        status = PersonUi.text(controls, observed.serviceLabel, false);
         status.setTag("remote_session_status");
         reason = PersonUi.text(controls, "", false); reason.setTag("remote_session_reason");
         action.setEnabled(false);
@@ -139,8 +139,13 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         work.load(key + ":snapshot", () -> backend.snapshot().get(15, TimeUnit.SECONDS), value -> {
             if (!attached() || !authorized()||revision!=ControllerPinManager.domWorkspaceRevision()) return;
             if (!peer.identity.equals(value.peer) || !peer.generation.equals(value.generation)) { unavailable(); return; }
-            snapshot = value; render();
-        }, failure -> { if (attached() && authorized()) unavailable(); });
+            snapshot = value; readUnavailable = false; render();
+        }, failure -> {
+            if (!attached()) return;
+            if (!authorized()) { controls.removeAllViews(); onStop((LifecycleOwner) activity); return; }
+            if (revision != ControllerPinManager.domWorkspaceRevision()) { unavailable(); return; }
+            readFailed();
+        });
     }
 
     private boolean busy() {
@@ -156,7 +161,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 ? snapshot.canStop || !snapshot.sessionIdentity.isEmpty()
                         || snapshot.idleFence.isEmpty() && observed.serviceActive
                 : observed.serviceActive);
-        action.setEnabled(!busy() && (showingStop
+        action.setEnabled(!readUnavailable && !busy() && (showingStop
                 ? snapshot.supported ? snapshot.canStop : legacyStopAvailable()
                 : snapshot.supported && snapshot.canStart && !changedDuration));
         duration.setText(snapshot.service == null ? "" : activity.getString(R.string.remote_session_applied_duration,
@@ -173,7 +178,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
         RemoteSessionCommands.Result result = snapshot.latestResult;
         String queued = operation.saved.get("operation");
         status.setText(operation.pending != null && !operation.pending.isDone()
-                ? activity.getString(R.string.role_loading)
+                ? activity.getString(R.string.role_action_pending)
                 : queued != null && (result == null || !queued.equals(result.id))
                 ? activity.getString(R.string.remote_unknown)
                 : result != null ? activity.getString(stateLabel(result.state)) : "");
@@ -202,7 +207,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     }
 
     private void stop() {
-        if (!attached() || !authorized() || snapshot == null || busy()) return;
+        if (!attached() || !authorized() || snapshot == null || readUnavailable || busy()) return;
         if (snapshot.supported) request(RemoteSessionCommands.Action.STOP);
         else if (legacyStopAvailable()) {
             com.subhub.app.people.ConnectionUi provider = com.subhub.app.people.People.connectionUi();
@@ -211,7 +216,7 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
     }
 
     private void request(RemoteSessionCommands.Action action) {
-        if (!attached() || !authorized() || snapshot == null || busy()
+        if (!attached() || !authorized() || snapshot == null || readUnavailable || busy()
                 || (action == RemoteSessionCommands.Action.START ? !snapshot.canStart || durationDraft.getAsBoolean()
                         : !snapshot.canStop)) return;
         RemoteSessionRuntime.Snapshot source = snapshot;
@@ -247,6 +252,15 @@ public final class RemoteSessionControls implements DefaultLifecycleObserver {
                 if (error != null) unavailable(); else load();
             }));
         }, failure -> { reviewing = false; if (attached() && authorized()) unavailable(); });
+    }
+
+    private void readFailed() {
+        if (snapshot == null) { unavailable(); return; }
+        observationEpoch++; reviewing = false; work.cancel(key + ":review");
+        // Preserve already observed duration and session facts, never old command permission.
+        readUnavailable = true; action.setEnabled(false);
+        status.setText(R.string.role_refresh_failed); status.setVisibility(View.VISIBLE);
+        reason.setText(R.string.remote_session_changed); reason.setVisibility(View.VISIBLE);
     }
 
     private void unavailable() {

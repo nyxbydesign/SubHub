@@ -49,7 +49,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
         this.scope = scope; this.dom = dom; this.current = current; this.revoked = revoked;
         setOrientation(VERTICAL);
         setTag("task_inline_attachment:" + attachment.hash);
-        status(R.string.tasks_media_loading, "task_inline_loading");
+        PersonUi.text(this, TasksActivity.mediaLabel(getContext(), attachment), false).setTag("task_inline_loading");
     }
 
     @Override protected void onAttachedToWindow() {
@@ -75,7 +75,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
         if (!live()) { deny(); return; }
         clearContent();
         long token = ++generation;
-        status(R.string.tasks_media_loading, "task_inline_loading");
+        PersonUi.text(this, TasksActivity.mediaLabel(getContext(), attachment), false).setTag("task_inline_loading");
         TaskRepository repo = repository; TaskAttachment media = attachment;
         String expected = scope; boolean mode = dom; Context app = getContext().getApplicationContext();
         data.load(jobs + "-load", () -> TaskMediaActivity.load(repo, media, expected, mode, app), result -> {
@@ -107,7 +107,7 @@ final class TaskAttachmentView extends LinearLayout implements AutoCloseable {
                 });
                 addView(seek, new LayoutParams(-1, -2));
                 position = PersonUi.text(this, "", false); position.setTag("task_inline_position");
-                status(R.string.tasks_media_loading, "task_inline_loading");
+                PersonUi.text(this, TasksActivity.mediaLabel(getContext(), attachment), false).setTag("task_inline_loading");
                 player.setOnErrorListener((mp, what, extra) -> { if (token == generation && !closed) failure(false); return true; });
                 player.setOnCompletionListener(mp -> { if (live() && token == generation) { play.setText(R.string.tasks_media_play); updateProgress(); } });
                 player.setOnPreparedListener(mp -> {

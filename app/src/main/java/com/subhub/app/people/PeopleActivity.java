@@ -13,7 +13,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private LinearLayout body;
     private android.widget.ScrollView rosterScroll;
     private com.subhub.app.util.AsyncUiScope data;
-    private boolean resumed;
+    private boolean resumed, refreshQueued;
     private int rosterPosition;
     private boolean restoreRosterPosition = true;
     private LinearLayout roster;
@@ -63,6 +63,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         refreshDummyPreview();
         refreshActivityPreview();
         if (snapshotUnavailable) { snapshotUnavailable = false; relationships.refresh(); }
+        if (data.isPending("people")) { refreshQueued = true; return; }
         PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
@@ -76,26 +77,36 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
             return new Roster(access, com.subhub.app.relationships.RelationshipPanel.roster(
                     application, repository, access, locale));
         }, loaded -> {
-            if (!mayManagePeople() || !resumed) return;
-            if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
-                renderedPeople.clear(); roster.removeAllViews();
-                favoriteGuidance.setVisibility(android.view.View.GONE);
-                snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
-            }
-            renderPeople(loaded);
-            if (restoreRosterPosition) {
-                restoreRosterPosition = false;
-                if (rosterPosition > 0) {
-                    int restored = rosterPosition;
-                    rosterScroll.post(() -> {
-                        if (resumed && rosterPosition == restored) rosterScroll.scrollTo(0, restored);
-                    });
+            try {
+                if (!mayManagePeople() || !resumed) return;
+                if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
+                    renderedPeople.clear(); roster.removeAllViews();
+                    favoriteGuidance.setVisibility(android.view.View.GONE);
+                    snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
                 }
-            }
+                renderPeople(loaded);
+                if (restoreRosterPosition) {
+                    restoreRosterPosition = false;
+                    if (rosterPosition > 0) {
+                        int restored = rosterPosition;
+                        rosterScroll.post(() -> {
+                            if (resumed && rosterPosition == restored) rosterScroll.scrollTo(0, restored);
+                        });
+                    }
+                }
+            } finally { finishRefresh(); }
         }, failure -> {
-            if (!resumed || !mayManagePeople()) return;
-            showRosterUnavailable();
+            try {
+                if (!resumed || !mayManagePeople()) return;
+                showRosterUnavailable();
+            } finally { finishRefresh(); }
         });
+    }
+
+    private void finishRefresh() {
+        if (!refreshQueued) return;
+        refreshQueued = false;
+        if (resumed && mayManagePeople()) refresh();
     }
 
     private void ensureContent() {
@@ -114,7 +125,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
         roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(roster, getString(R.string.role_loading), false);
+        PersonUi.text(roster, getString(R.string.role_data_unknown), false);
     }
 
     /** Separate presentation row: never participates in roster, favorites or presence. */
@@ -287,7 +298,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
 
     @Override protected void onPause() {
         rosterPosition = rosterScroll.getScrollY();
-        resumed = false;
+        resumed = false; refreshQueued = false;
         stopPresenceObservation();
         authority.removeCallbacks(checkAuthority);
         data.cancel("people");

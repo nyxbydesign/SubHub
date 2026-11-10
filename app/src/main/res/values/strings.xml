@@ -1153,7 +1153,7 @@
     <string name="limits_minutes_per_day">min/day</string>
     <string name="limits_manage_apps">Manage included apps</string>
     <string name="limits_no_apps">No included apps</string>
-    <string name="limits_loading_apps">Loading apps…</string>
+    <string name="limits_loading_apps">App details not yet available</string>
     <string name="limits_usage_remaining">%1$s used · %2$s left</string>
     <string name="limits_usage_only">%1$s used</string>
     <string name="limits_reached">Limit reached</string>

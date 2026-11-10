@@ -113,7 +113,7 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
     protected final void loading() {
         // A background refresh must not collapse a populated page while its read is pending.
         if (body.getChildCount() != 0) return;
-        PersonUi.text(body, getString(R.string.role_loading), false);
+        PersonUi.text(body, getString(R.string.role_data_unknown), false);
     }
 
     protected final void unavailable() {

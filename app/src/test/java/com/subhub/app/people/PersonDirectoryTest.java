@@ -15,6 +15,29 @@ public final class PersonDirectoryTest {
         assertEquals(PersonId.LOCAL, directory.load(PersonId.LOCAL).id);
     }
 
+    @Test public void summaryReadsUseTheSelectedProjectionAndKeepIdentityChecks() throws Exception {
+        PersonId peer = new PersonId("peer:summary");
+        int[] full = {0}, summaries = {0};
+        PersonRepository remote = new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { full[0]++; return snapshot(peer); }
+            public PersonSnapshot loadSummary(PersonId id) { summaries[0]++; return snapshot(peer); }
+        };
+        PersonDirectory directory = new PersonDirectory(repository(PersonId.LOCAL), remote);
+        assertEquals(peer, directory.loadSummary(peer).id);
+        assertEquals(0, full[0]); assertEquals(1, summaries[0]);
+        assertEquals(PersonId.LOCAL, directory.loadSummary(PersonId.LOCAL).id);
+        PersonRepository incorrect = new PersonRepository() {
+            public List<PersonId> people() { return List.of(peer); }
+            public PersonSnapshot load(PersonId id) { return snapshot(peer); }
+            public PersonSnapshot loadSummary(PersonId id) { return snapshot(PersonId.LOCAL); }
+        };
+        assertThrows(IllegalStateException.class,
+                () -> new PersonDirectory(repository(PersonId.LOCAL), incorrect).loadSummary(peer));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PersonDirectory(repository(PersonId.LOCAL), null).loadSummary(peer));
+    }
+
     @Test public void missingRemoteNeverFallsBackToLocalData() {
         PersonDirectory directory = new PersonDirectory(repository(PersonId.LOCAL), null);
         assertThrows(IllegalArgumentException.class, () -> directory.load(new PersonId("peer:missing")));
