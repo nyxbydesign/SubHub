@@ -52,6 +52,9 @@ final class LocalRetainedStatistics {
         daily.syncStatsSnapshot(context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).getAll(), now);
         RetainedStatistics history = new RetainedStatistics(ZoneId.systemDefault(), now,
                 daily.days("0000-01-01", "9999-12-31"));
+        history.legacyServiceDates(daily.legacyServiceDates());
+        for (Map.Entry<String, Set<String>> dates : daily.sessionActivityDates().entrySet())
+            history.sessionDates(dates.getKey(), dates.getValue());
         history.activeDates(original.getActiveDates());
         for (StatsRepository.SessionEntry session : repository.getSessionHistory()) history.session(session);
         if (context.getDatabasePath("daily_app_usage.db").isFile()) {

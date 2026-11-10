@@ -22,6 +22,8 @@ final class RetainedStatistics {
     private final Set<String> receipts = new LinkedHashSet<>();
     private final Map<String, StatsRepository.SessionEntry> sessions = new LinkedHashMap<>();
     private final Set<String> activeDates = new java.util.TreeSet<>();
+    private Set<String> legacyServiceDates;
+    private final Map<ZoneId, Set<LocalDate>> sessionDates = new LinkedHashMap<>();
     private Map<String, Map<String, Long>> materialized;
     private final Map<String, Long> undated = new LinkedHashMap<>();
 
@@ -39,6 +41,25 @@ final class RetainedStatistics {
             for (Map.Entry<String, Long> value : day.getValue().entrySet())
                 values.merge(value.getKey(), value.getValue(), Math::max);
         }
+    }
+
+    /** Date-only daily evidence, excluding copies with an identified session clock. */
+    void legacyServiceDates(Set<String> dates) {
+        legacyServiceDates = new java.util.TreeSet<>();
+        for (String day : dates) if (validDay(day)) legacyServiceDates.add(day);
+    }
+
+    /** Persisted duration checkpoints retain their session calendar, unlike display aggregates. */
+    void sessionDates(String calendar, Set<String> dates) {
+        final ZoneId clock;
+        try { clock = ZoneId.of(calendar); }
+        catch (RuntimeException invalid) { return; }
+        LocalDate today = Instant.ofEpochMilli(now).atZone(clock).toLocalDate();
+        Set<LocalDate> known = sessionDates.computeIfAbsent(clock, ignored -> new java.util.TreeSet<>());
+        for (String date : dates) try {
+            LocalDate day = LocalDate.parse(date);
+            if (!day.isAfter(today)) known.add(day);
+        } catch (RuntimeException invalid) { /* Invalid checkpoint labels do not prove activity. */ }
     }
 
     void activeDates(Set<String> dates) {
@@ -166,7 +187,7 @@ final class RetainedStatistics {
 
     /**
      * Live recency needs a known calendar. Historical activity/daily dates have no timezone
-     * provenance and remain eligible for historical awards, but cannot extend a current streak.
+     * provenance and are checked separately for historical awards, but cannot extend a current streak.
      * Timestamped sessions are projected into the same calendar as the observed counter.
      */
     int currentStreak(LocalDate day, String calendar, int knownDays, String knownLastDay) {
@@ -174,13 +195,7 @@ final class RetainedStatistics {
         final ZoneId clock;
         try { clock = ZoneId.of(calendar); }
         catch (RuntimeException invalid) { return 0; }
-        java.util.List<LocalDate[]> intervals = new java.util.ArrayList<>();
-        for (StatsRepository.SessionEntry entry : sessions.values()) {
-            LocalDate first = Instant.ofEpochMilli(entry.getStartMillis()).atZone(clock).toLocalDate();
-            LocalDate last = Instant.ofEpochMilli(entry.getStartMillis() + entry.getDurationSeconds() * 1000)
-                    .atZone(clock).toLocalDate();
-            intervals.add(new LocalDate[]{first, last});
-        }
+        java.util.List<LocalDate[]> intervals = sessionIntervals(clock);
         if (knownDays > 0) try {
             LocalDate last = LocalDate.parse(knownLastDay);
             if (!last.isAfter(day) && !last.isBefore(day.minusDays(1)))
@@ -242,17 +257,34 @@ final class RetainedStatistics {
                     date = earliest(date, entry.getStartMillis() + entry.getDurationSeconds() * 1000);
             result.put(id, date);
         }
-        int streak = 0;
-        LocalDate previous = null;
+        // Presentation dates can use different session calendars. Never join those labels
+        // to prove a streak: project timestamps into one clock, independently for each known
+        // calendar. Bare legacy dates remain eligible on their own, without borrowing days
+        // from timestamped sessions or their materialized daily copies.
+        Set<String> legacy = new java.util.TreeSet<>(activeDates);
+        if (legacyServiceDates != null) legacy.addAll(legacyServiceDates);
+        else for (Map.Entry<String, Map<String, Long>> date : recorded.entrySet())
+            if (date.getValue().getOrDefault("service_ms", 0L) > 0) legacy.add(date.getKey());
+        java.util.List<LocalDate[]> legacyIntervals = new java.util.ArrayList<>();
+        for (String date : legacy) {
+            LocalDate day = LocalDate.parse(date);
+            legacyIntervals.add(new LocalDate[]{day, day});
+        }
+        streakAwards(result, legacyIntervals, zone);
+        Set<ZoneId> calendars = new LinkedHashSet<>(sessionDates.keySet());
+        for (StatsRepository.SessionEntry entry : sessions.values()) calendars.add(sessionZone(entry));
+        for (ZoneId calendar : calendars) {
+            java.util.List<LocalDate[]> intervals = sessionIntervals(calendar);
+            for (Map.Entry<ZoneId, Set<LocalDate>> stored : sessionDates.entrySet())
+                if (stored.getKey().getRules().equals(calendar.getRules()))
+                    for (LocalDate day : stored.getValue()) intervals.add(new LocalDate[]{day, day});
+            streakAwards(result, intervals, calendar);
+        }
         Set<String> active = activityDates();
         for (String date : active) {
             LocalDate day = LocalDate.parse(date);
-            streak = previous != null && previous.plusDays(1).equals(day) ? streak + 1 : 1;
-            if (streak >= 7) result.putIfAbsent("streak_7", endOfDay(date));
-            if (streak >= 30) result.putIfAbsent("streak_30", endOfDay(date));
             if (day.getDayOfWeek() == java.time.DayOfWeek.SUNDAY && active.contains(day.minusDays(1).toString()))
                 result.putIfAbsent("weekend_warrior", endOfDay(date));
-            previous = day;
         }
         for (Map.Entry<String, Map<String, Long>> date : days().entrySet()) {
             if (date.getValue().getOrDefault("censors", 0L) <= 0) continue;
@@ -264,6 +296,32 @@ final class RetainedStatistics {
             if (id != null) result.putIfAbsent(id, endOfDay(date.getKey()));
         }
         return result;
+    }
+
+    private java.util.List<LocalDate[]> sessionIntervals(ZoneId clock) {
+        java.util.List<LocalDate[]> intervals = new java.util.ArrayList<>();
+        for (StatsRepository.SessionEntry entry : sessions.values()) {
+            LocalDate first = Instant.ofEpochMilli(entry.getStartMillis()).atZone(clock).toLocalDate();
+            LocalDate last = Instant.ofEpochMilli(entry.getStartMillis() + entry.getDurationSeconds() * 1000)
+                    .atZone(clock).toLocalDate();
+            intervals.add(new LocalDate[]{first, last});
+        }
+        return intervals;
+    }
+
+    private void streakAwards(Map<String, Long> result, java.util.List<LocalDate[]> intervals, ZoneId clock) {
+        intervals.sort(java.util.Comparator.comparing(value -> value[0]));
+        LocalDate first = null, last = null;
+        for (LocalDate[] interval : intervals) {
+            if (last == null || interval[0].isAfter(last.plusDays(1))) {
+                first = interval[0]; last = interval[1];
+            } else if (interval[1].isAfter(last)) last = interval[1];
+            long days = java.time.temporal.ChronoUnit.DAYS.between(first, last) + 1;
+            for (int target : new int[]{7, 30}) if (days >= target) {
+                long proof = Math.min(now, first.plusDays(target).atStartOfDay(clock).toInstant().toEpochMilli() - 1);
+                result.merge("streak_" + target, proof, RetainedStatistics::earliest);
+            }
+        }
     }
 
     private boolean validDay(String date) {

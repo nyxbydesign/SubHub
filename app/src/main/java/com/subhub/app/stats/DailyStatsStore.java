@@ -67,6 +67,47 @@ public final class DailyStatsStore extends SQLiteOpenHelper {
         }
         return result;
     }
+    /**
+     * Keep genuine date-only history, but do not mistake the per-session duration ledger's
+     * materialized civil-day copies for independent legacy streak proof. Read every ledger
+     * checkpoint, including sessions no longer present in the bounded preferences history.
+     */
+    synchronized Set<String> legacyServiceDates() {
+        Map<String, Long> identified = new HashMap<>();
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT name,value FROM checkpoint WHERE name LIKE 'session-duration:%'", null)) {
+            while (c.moveToNext()) {
+                String name = c.getString(0), date = name.substring(name.lastIndexOf(':') + 1);
+                identified.merge(date, Math.max(0, c.getLong(1)), DomStatsSnapshot::add);
+            }
+        }
+        Set<String> result = new TreeSet<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT day,value FROM daily WHERE metric='service_ms'", null)) {
+            while (c.moveToNext()) if (c.getLong(1) > identified.getOrDefault(c.getString(0), 0L))
+                result.add(c.getString(0));
+        }
+        return result;
+    }
+
+    /** The ledger retains each session's original calendar even after preferences history is pruned. */
+    synchronized Map<String, Set<String>> sessionActivityDates() {
+        Map<String, Set<String>> result = new LinkedHashMap<>();
+        // A checkpoint key ends in ':' plus its ten-character ISO date. Join the indexed
+        // origin metadata in one query instead of opening a cursor for every retained session.
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT substr(c.name,-10),m.value FROM checkpoint c JOIN metadata m "
+                        + "ON m.name=substr(c.name,1,length(c.name)-11) "
+                        + "WHERE c.name LIKE 'session-duration:%' AND c.value>0", null)) {
+            while (c.moveToNext()) {
+                String origin = c.getString(1);
+                if (origin != null && origin.contains(";"))
+                    result.computeIfAbsent(origin.substring(origin.indexOf(';') + 1), ignored -> new TreeSet<>())
+                            .add(c.getString(0));
+            }
+        }
+        return result;
+    }
+
     /** An absent checkpoint is migration, not evidence that old totals happened today. */
     synchronized void checkpoint(String source, Map<String, Long> totals, long wall, String zone) {
         if(totals.equals(cachedTotals.get(source)))return;

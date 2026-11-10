@@ -187,6 +187,87 @@ public final class HistoryBackfillAndroidTest {
         } finally { TimeZone.setDefault(originalZone); }
     }
 
+    @Test public void actualBackfillDoesNotAwardSixTokyoDaysPlusAnIsolatedLosAngelesDay() throws Exception {
+        TimeZone originalZone = TimeZone.getDefault();
+        try {
+            // Past dates ensure reconciliation sees the proof rather than rejecting future clocks.
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"));
+            long start = Instant.parse("2025-11-05T00:00:00Z").toEpochMilli();
+            long end = Instant.parse("2025-11-10T01:00:00Z").toEpochMilli();
+            long restart = Instant.parse("2025-11-11T16:00:00Z").toEpochMilli();
+            StatsRepository repository = new StatsRepository(context, false);
+            StatsRepository.NativeSession first = new StatsRepository.NativeSession(UUID.randomUUID().toString(), start, "Asia/Tokyo");
+            assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(StatsRepository.NATIVE_OWNER_KEY, first.identity).commit());
+            assertTrue(repository.ensureNativeSession(first));
+            assertTrue(repository.endSessionForIdentity(first.identity, end, (end - start) / 1000));
+            assertEquals(6, LocalRetainedStatistics.load(context, end).stats.getCurrentStreak());
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"));
+            assertEquals(0, LocalRetainedStatistics.load(context, restart).stats.getCurrentStreak());
+            StatsRepository.NativeSession next = new StatsRepository.NativeSession(UUID.randomUUID().toString(), restart, "America/Los_Angeles");
+            assertTrue(prefs(SettingsRepository.PREFERENCES_NAME).edit().putString(StatsRepository.NATIVE_OWNER_KEY, next.identity).commit());
+            assertTrue(repository.ensureNativeSession(next));
+            assertTrue(repository.endSessionForIdentity(next.identity, restart + 60_000, 60));
+            AchievementManager manager = new AchievementManager(context);
+            assertFalse(manager.isUnlocked("streak_7"));
+            for (int i = 0; i < 3; i++) {
+                LocalRetainedStatistics facts = LocalRetainedStatistics.load(context, restart + 60_000);
+                assertEquals(1, facts.stats.getCurrentStreak());
+                assertEquals(7, facts.history.activityDates().size());
+                assertTrue(daily.legacyServiceDates().isEmpty());
+                HistoricalAchievementBackfill.local(context, manager, facts);
+                assertFalse(manager.isUnlocked("streak_7")); assertEquals(0, manager.getUnlockedAt("streak_7"));
+                assertFalse(manager.isUnlocked("streak_30"));
+                assertTrue(manager.takePendingNotifications().isEmpty());
+                manager = new AchievementManager(context);
+            }
+            // An already earned receipt is never revoked or redated by ambiguous history.
+            Set<String> earned = new LinkedHashSet<>(prefs("betablocker_achievements").getStringSet("unlocked", Collections.emptySet()));
+            earned.add("streak_7"); long earnedAt = end - 1234;
+            assertTrue(prefs("betablocker_achievements").edit().putStringSet("unlocked", earned)
+                    .putLong("unlocked_at.streak_7", earnedAt).commit());
+            manager = new AchievementManager(context);
+            HistoricalAchievementBackfill.local(context, manager, LocalRetainedStatistics.load(context, restart + 60_000));
+            assertTrue(manager.isUnlocked("streak_7")); assertEquals(earnedAt, manager.getUnlockedAt("streak_7"));
+            assertEquals(earnedAt, prefs("betablocker_achievements").getLong("unlocked_at.streak_7", 0));
+        } finally { TimeZone.setDefault(originalZone); }
+    }
+
+    @Test public void legacyDailyStreakSurvivesBackfillAndPrunedIdentifiedSessionCopiesDoNotBecomeLegacy() throws Exception {
+        SQLiteDatabase db = daily.getWritableDatabase();
+        for (int i = 0; i < 30; i++) {
+            String day = LocalDate.parse("2025-07-01").plusDays(i).toString();
+            db.execSQL("INSERT INTO daily VALUES(?,'service_ms',1000)", new Object[]{day});
+        }
+        // A persisted interval ledger can outlive the bounded preferences session history.
+        String id = UUID.randomUUID().toString();
+        db.execSQL("INSERT INTO metadata VALUES('session_duration_v1','1')");
+        db.execSQL("INSERT INTO metadata VALUES(?,?)", new Object[]{"session-duration:" + id,
+                Instant.parse("2025-08-01T00:00:00Z").toEpochMilli() + ";UTC"});
+        for (int i = 0; i < 7; i++) {
+            String day = LocalDate.parse("2025-08-01").plusDays(i).toString();
+            db.execSQL("INSERT INTO daily VALUES(?,'service_ms',1000)", new Object[]{day});
+            db.execSQL("INSERT INTO checkpoint VALUES(?,1000)", new Object[]{"session-duration:" + id + ":" + day});
+        }
+        Set<String> expected = new TreeSet<>();
+        for (int i = 0; i < 30; i++) expected.add(LocalDate.parse("2025-07-01").plusDays(i).toString());
+        assertEquals(expected, daily.legacyServiceDates());
+        assertEquals(7, daily.sessionActivityDates().get("UTC").size());
+        AchievementManager manager = new AchievementManager(context);
+        HistoricalAchievementBackfill.local(context, manager, LocalRetainedStatistics.load(context));
+        assertTrue(manager.isUnlocked("streak_7")); assertTrue(manager.isUnlocked("streak_30"));
+        long earnedAt = manager.getUnlockedAt("streak_30"); assertTrue(earnedAt > 0);
+        HistoricalAchievementBackfill.local(context, manager, LocalRetainedStatistics.load(context));
+        assertEquals(earnedAt, manager.getUnlockedAt("streak_30"));
+        assertEquals(expected, daily.legacyServiceDates());
+        assertTrue(manager.takePendingNotifications().isEmpty());
+        // Remove only fixture-owned legacy rows; the pruned identified ledger still proves its week.
+        db.execSQL("DELETE FROM daily WHERE day LIKE '2025-07-%'");
+        LocalRetainedStatistics pruned = LocalRetainedStatistics.load(context);
+        assertTrue(pruned.history.sessions().isEmpty());
+        assertTrue(pruned.history.awards(false).get("streak_7") > 0);
+        assertFalse(pruned.history.awards(false).containsKey("streak_30"));
+    }
+
     @Test public void localOnlyBothCountsOnceAndNeverImportsSourceRows() throws Exception {
         session();
         Map<String, ?> before = prefs(StatsRepository.PREFS_NAME).getAll();

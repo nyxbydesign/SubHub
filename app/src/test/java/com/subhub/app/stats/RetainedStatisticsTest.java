@@ -241,6 +241,66 @@ public final class RetainedStatisticsTest {
         assertTrue("Old streak remains historically eligible", history.awards(false).get("streak_7") > 0);
     }
 
+    @Test public void mixedSessionCalendarsCannotManufactureAHistoricalSevenDayAward() {
+        long start = time("2026-11-05T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long restart = time("2026-11-11T16:00:00Z"), closed = restart + 60_000;
+        for (String displayZone : new String[]{"Asia/Tokyo", "America/Los_Angeles", "Pacific/Auckland"}) {
+            RetainedStatistics history = new RetainedStatistics(ZoneId.of(displayZone), closed, Collections.emptyMap());
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                    .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+            history.session(new StatsRepository.SessionEntry(restart, 60, 0)
+                    .identified("22345678-1234-1234-1234-123456789abc", "America/Los_Angeles"));
+            assertEquals(7, history.activityDates().size()); // Display labels are not streak proof.
+            for (int i = 0; i < 3; i++) {
+                assertFalse(displayZone, history.awards(false).containsKey("streak_7"));
+                assertFalse(history.awards(false).containsKey("streak_30"));
+            }
+            // Persisting the daily presentation must not turn it into independent legacy evidence.
+            Map<String, Map<String, Long>> copied = history.days();
+            history.mergeRecorded(copied);
+            history.legacyServiceDates(Collections.emptySet());
+            assertFalse(history.awards(false).containsKey("streak_7"));
+        }
+    }
+
+    @Test public void timestampedHistoryEarnsAStreakOnlyWithinOneCoherentCalendar() {
+        long start = time("2026-11-05T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long next = time("2026-11-11T01:00:00Z"); // Nov 11 Tokyo, Nov 10 LA: no missed day.
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"), next, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        history.session(new StatsRepository.SessionEntry(next, 0, 0)
+                .identified("22345678-1234-1234-1234-123456789abc", "America/Los_Angeles"));
+        assertTrue(history.awards(false).get("streak_7") > 0);
+        assertFalse(history.awards(false).containsKey("streak_30"));
+    }
+
+    @Test public void legacyHistoryStandsOnItsOwnWithoutBorrowingTimestampedDays() {
+        Map<String, Map<String, Long>> days = new LinkedHashMap<>();
+        for (int i = 0; i < 6; i++) days.put(LocalDate.parse("2026-08-01").plusDays(i).toString(), Map.of("service_ms", 1000L));
+        RetainedStatistics history = new RetainedStatistics(UTC, NOW, days);
+        history.session(new StatsRepository.SessionEntry(time("2026-08-07T12:00:00Z"), 60, 0));
+        assertFalse("Unknown calendars cannot supply a missing day", history.awards(false).containsKey("streak_7"));
+        for (int i = 6; i < 30; i++) days.put(LocalDate.parse("2026-08-01").plusDays(i).toString(), Map.of("service_ms", 1000L));
+        history.mergeRecorded(days);
+        assertTrue("A genuine date-only legacy run is still eligible", history.awards(false).get("streak_30") > 0);
+    }
+
+    @Test public void prunedSessionLedgerPreservesCoherentHistoryWithoutCombiningTravelLabels() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                time("2026-11-12T01:00:00Z"), Collections.emptyMap());
+        java.util.Set<String> tokyo = new LinkedHashSet<>();
+        for (int i = 0; i < 6; i++) tokyo.add(LocalDate.parse("2026-11-05").plusDays(i).toString());
+        history.sessionDates("Asia/Tokyo", tokyo);
+        history.sessionDates("America/Los_Angeles", Collections.singleton("2026-11-11"));
+        assertFalse(history.awards(false).containsKey("streak_7"));
+        history.sessionDates("invalid", Collections.singleton("2026-11-11"));
+        history.sessionDates("Asia/Tokyo", Collections.singleton("bad-date"));
+        assertFalse(history.awards(false).containsKey("streak_7"));
+        history.sessionDates("Asia/Tokyo", Collections.singleton("2026-11-11"));
+        assertTrue("A valid stored calendar remains eligible after session-history pruning", history.awards(false).get("streak_7") > 0);
+    }
+
     private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today) {
         return streakSnapshot(currentStreak, today, "2026-11-10", "Asia/Tokyo");
     }
