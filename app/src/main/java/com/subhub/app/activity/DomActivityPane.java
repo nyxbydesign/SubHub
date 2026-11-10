@@ -250,21 +250,27 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         boolean local = state.local;
         String cursor = state.cursor;
         String requestedFocus = state.focusKey;
+        long workspaceRevision = ControllerPinManager.domWorkspaceRevision();
+        Object relationshipProvider = com.subhub.app.relationships.RelationshipUi.provider();
+        Object keyholder = com.subhub.app.people.People.keyholder();
         if (!state.loaded) status.setVisibility(View.GONE);
         retry.setVisibility(View.GONE);
         retry.setText(R.string.role_retry);
         work.load("activity-page", () -> new PageResult(requestedFocus == null ? repository.load(cursor, PAGE_SIZE)
                 : repository.locate(requestedFocus, PAGE_SIZE), local ? 0 : repository.unreadCount()), result -> {
             if (!resumed || !mayRead() || generation != renderGeneration) return;
-            if (repository != ActivitySources.repository()) { refresh(false); return; }
+            if (repository != ActivitySources.repository()
+                    || workspaceRevision != ControllerPinManager.domWorkspaceRevision()
+                    || relationshipProvider != com.subhub.app.relationships.RelationshipUi.provider()
+                    || keyholder != com.subhub.app.people.People.keyholder()) { refresh(false); return; }
             // Capture the user's current position at delivery, not where the request began.
             if (!reset) rememberPosition();
             boolean changed = !ActivityFeedSnapshot.same(state.entries, result.page.entries);
             state.entries = result.page.entries;
             state.source = repository;
-            state.workspaceRevision = ControllerPinManager.domWorkspaceRevision();
-            state.relationshipProvider = com.subhub.app.relationships.RelationshipUi.provider();
-            state.keyholder = com.subhub.app.people.People.keyholder();
+            state.workspaceRevision = workspaceRevision;
+            state.relationshipProvider = relationshipProvider;
+            state.keyholder = keyholder;
             state.loaded = true;
             state.unread = result.unread;
             if (requestedFocus != null) state.cursor = result.page.cursor;
