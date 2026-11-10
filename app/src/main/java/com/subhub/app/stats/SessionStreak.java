@@ -16,11 +16,19 @@ final class SessionStreak {
     }
 
     static SessionStreak through(int savedDays, String savedDay, long startedAt, long through, String zone) {
+        return through(savedDays, savedDay, zone, startedAt, through, zone);
+    }
+
+    static SessionStreak through(int savedDays, String savedDay, String savedZone,
+            long startedAt, long through, String zone) {
         LocalDate previous = parse(savedDay);
         long count = Math.max(0, savedDays);
         if (startedAt <= 0 || through < startedAt) return new SessionStreak(count, savedDay);
         try {
             ZoneId clock = ZoneId.of(zone);
+            // Bare civil dates cannot be reinterpreted in a different calendar. Retained
+            // timestamped sessions can recover that history without inventing a bridge.
+            if (!sameCalendar(savedZone, clock)) { previous = null; count = 0; }
             LocalDate first = Instant.ofEpochMilli(startedAt).atZone(clock).toLocalDate();
             LocalDate last = Instant.ofEpochMilli(through).atZone(clock).toLocalDate();
             if (previous != null && !previous.isBefore(first.minusDays(1)) && !previous.isAfter(last))
@@ -28,6 +36,13 @@ final class SessionStreak {
             else count = ChronoUnit.DAYS.between(first, last) + 1;
             return new SessionStreak(Math.max(count, ChronoUnit.DAYS.between(first, last) + 1), last.toString());
         } catch (RuntimeException invalid) { return new SessionStreak(count, savedDay); }
+    }
+
+    private static boolean sameCalendar(String savedZone, ZoneId clock) {
+        // Missing metadata is a legacy device-calendar record, preserving its existing fallback.
+        if (savedZone == null || savedZone.isEmpty()) return true;
+        try { return ZoneId.of(savedZone).getRules().equals(clock.getRules()); }
+        catch (RuntimeException invalid) { return false; }
     }
 
     static LocalDate today(long observedAt, String zone) {

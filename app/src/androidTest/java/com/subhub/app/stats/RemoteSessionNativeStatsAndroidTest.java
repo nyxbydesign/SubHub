@@ -139,6 +139,24 @@ public class RemoteSessionNativeStatsAndroidTest {
         } finally { java.util.TimeZone.setDefault(original); }
     }
 
+    @Test public void ordinaryRestartCannotCarryAnExpiredCountIntoANewCalendar() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT-12:00"));
+            java.time.LocalDate yesterday = java.time.LocalDate.now().minusDays(1);
+            assertTrue(saved().edit().putInt("current_streak", 8).putString("last_session_date", yesterday.toString())
+                    .putString(StatsRepository.LAST_SESSION_ZONE, "+14:00").commit());
+            assertEquals(0, stats.retainedSnapshot().getCurrentStreak());
+            stats.startSession();
+            assertEquals(1, saved().getInt("current_streak", 0));
+            int live = stats.load().getCurrentStreak();
+            assertTrue(live >= 1 && live <= 2); // A test crossing midnight legitimately adds one day.
+            stats.endSession();
+            int stopped = new StatsRepository(context, false).load().getCurrentStreak();
+            assertTrue(stopped >= live && stopped <= 2);
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
     @Test public void startAndEndReplaysCountAndAppendExactlyOnce() {
         StatsRepository.NativeSession session=session();committedMainOwner(session);
         assertTrue(stats.ensureNativeSession(session));assertTrue(new StatsRepository(context,false).ensureNativeSession(session));

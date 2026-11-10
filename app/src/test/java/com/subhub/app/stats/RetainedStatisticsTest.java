@@ -222,11 +222,34 @@ public final class RetainedStatisticsTest {
         }
     }
 
+    @Test public void changedZoneRestartCompositionCannotBridgeTheActualSessionGap() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long restart = time("2026-11-11T16:00:00Z");
+        SessionStreak first = SessionStreak.through(1, "2026-11-03", "Asia/Tokyo", start, end, "Asia/Tokyo");
+        SessionStreak next = SessionStreak.through(first.days, first.lastDay, "Asia/Tokyo",
+                restart, restart, "America/Los_Angeles");
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                restart, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        StatsSnapshot current = streakSnapshot(next.days, LocalDate.parse("2026-11-11"),
+                next.lastDay, "America/Los_Angeles");
+        for (int i = 0; i < 5; i++) {
+            current = current.withRetained(history);
+            assertEquals(1, current.getCurrentStreak());
+        }
+        assertTrue("Old streak remains historically eligible", history.awards(false).get("streak_7") > 0);
+    }
+
     private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today) {
-        return new StatsSnapshot(0, 0, 0, currentStreak, "2026-11-10", 0, 0, 0,
+        return streakSnapshot(currentStreak, today, "2026-11-10", "Asia/Tokyo");
+    }
+
+    private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today, String lastDay, String zone) {
+        return new StatsSnapshot(0, 0, 0, currentStreak, lastDay, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, false, Collections.emptySet(),
                 Collections.emptySet(), Collections.emptySet(), 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today, "Asia/Tokyo", currentStreak);
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today, zone, currentStreak);
     }
 
 }

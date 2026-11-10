@@ -308,7 +308,8 @@ public final class StatsRepository {
 
     private void recordSessionStreak(SharedPreferences.Editor edit, long start, long end, String zone) {
         SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
-                preferences.getString(KEY_LAST_SESSION_DATE, ""), start, end, zone);
+                preferences.getString(KEY_LAST_SESSION_DATE, ""), preferences.getString(LAST_SESSION_ZONE, null),
+                start, end, zone);
         edit.putInt(KEY_CURRENT_STREAK, streak.days).putString(KEY_LAST_SESSION_DATE, streak.lastDay)
                 .putString(LAST_SESSION_ZONE, zone);
     }
@@ -529,7 +530,8 @@ public final class StatsRepository {
                     : preferences.getString(LAST_SESSION_ZONE, java.time.ZoneId.systemDefault().getId());
             LocalDate streakToday = SessionStreak.today(now, streakZone);
             SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
-                    preferences.getString(KEY_LAST_SESSION_DATE, ""), observedStart, now, streakZone);
+                    preferences.getString(KEY_LAST_SESSION_DATE, ""), preferences.getString(LAST_SESSION_ZONE, null),
+                    observedStart, now, streakZone);
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
                     streak.current(streakToday), streak.lastDay, protectedSeconds,

@@ -50,6 +50,27 @@ public final class SessionStreakTest {
         assertEquals(0, value.current(observedAt, "invalid"));
     }
 
+    @Test public void changedZoneRestartCannotReinterpretAnExpiredCivilDate() {
+        long firstStart = at("2026-11-03T00:00:00Z"), firstEnd = at("2026-11-10T01:00:00Z");
+        long restart = at("2026-11-11T16:00:00Z");
+        SessionStreak first = SessionStreak.through(1, "2026-11-03", "Asia/Tokyo", firstStart, firstEnd, "Asia/Tokyo");
+        assertEquals(8, first.days); assertEquals(0, first.current(restart, "Asia/Tokyo"));
+        SessionStreak next = SessionStreak.through(first.days, first.lastDay, "Asia/Tokyo",
+                restart, restart, "America/Los_Angeles");
+        assertEquals(1, next.days); assertEquals("2026-11-11", next.lastDay);
+        SessionStreak ongoing = SessionStreak.through(next.days, next.lastDay, "America/Los_Angeles",
+                restart, at("2026-11-12T16:00:00Z"), "America/Los_Angeles");
+        assertEquals(2, ongoing.days);
+    }
+
+    @Test public void sameCalendarAliasesAndLegacyDatesKeepContinuityButInvalidZonesDoNot() {
+        long now = at("2026-11-11T16:00:00Z");
+        assertEquals(9, SessionStreak.through(8, "2026-11-10", "UTC", now, now, "Etc/UTC").days);
+        assertEquals(9, SessionStreak.through(8, "2026-11-10", null, now, now, "UTC").days);
+        assertEquals(1, SessionStreak.through(8, "2026-11-10", "invalid", now, now, "UTC").days);
+        assertEquals(1, SessionStreak.through(8, "2026-11-10", "Pacific/Auckland", now, now, "Asia/Tokyo").days);
+    }
+
     @Test public void idleInvalidAndFutureFactsCannotInventAStreak() {
         assertEquals(0, SessionStreak.through(9, "2026-10-01", 0, at("2026-10-10T00:00:00Z"), "UTC")
                 .current(LocalDate.parse("2026-10-10")));
