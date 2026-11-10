@@ -52,6 +52,11 @@ public final class DummySubPreviewAndroidTest {
     private DummyPreviewEndpointFixture endpoint;
     private com.subhub.app.stats.DummyPreviewHistoryWitness history;
     private int previewTransportBaseline = -1;
+    private Object journalLock, originalJournalState;
+    private Map<String, Object> journalStates;
+    private String journalIdentity;
+    private boolean journalWasPresent, journalIsolated;
+    private boolean originalDom;
     private static final String[] STORES = {"subhub_dummy_preview", "subhub_profile_names",
             SettingsRepository.PREFERENCES_NAME, SubFeaturePolicy.STORE, "subhub_relationship_presentation",
             "subhub_service_duration_ui", "profile_configuration_identity", "subhub_extra_time_v1",
@@ -59,7 +64,9 @@ public final class DummySubPreviewAndroidTest {
             com.subhub.app.penance.PenanceManager.PREFS_NAME};
 
     @Before public void prepare() throws Exception {
+        originalDom = ControllerPinManager.isDomModeActive();
         for (String store : preferenceStores()) saved.put(store, new LinkedHashMap<>(context.getSharedPreferences(store, 0).getAll()));
+        isolateJournalCache();
         assertFalse("Use an idle, owned UI guest", LocalSessionControls.isActive(context));
         assertTrue(context.getSharedPreferences("subhub_dummy_preview", 0).edit().clear().commit());
         assertTrue(ControllerPinManager.setPin(context, "2468"));
@@ -73,9 +80,41 @@ public final class DummySubPreviewAndroidTest {
     @After public void restore() throws Exception {
         integration.drainReaders();
         try { if (endpoint != null) endpoint.close(); }
-        finally { for (String store : preferenceStores())
-            SharedPreferenceTestRestore.restore(context.getSharedPreferences(store, 0),
-                    saved.containsKey(store) ? saved.get(store) : Collections.emptyMap()); }
+        finally {
+            try { for (String store : preferenceStores())
+                SharedPreferenceTestRestore.restore(context.getSharedPreferences(store, 0),
+                        saved.containsKey(store) ? saved.get(store) : Collections.emptyMap()); }
+            finally {
+                try { restoreJournalCache(); }
+                finally {
+                    if (originalDom) ControllerPinManager.enterDomMode();
+                    else ControllerPinManager.enterSubMode();
+                }
+            }
+        }
+    }
+    @SuppressWarnings("unchecked") private void isolateJournalCache() throws Exception {
+        Class<?> owner = com.subhub.app.relationships.RelationshipPanel.class;
+        java.lang.reflect.Field lock = owner.getDeclaredField("JOURNAL_LOCK"); lock.setAccessible(true);
+        java.lang.reflect.Field states = owner.getDeclaredField("JOURNAL_STATES"); states.setAccessible(true);
+        journalLock = lock.get(null); journalStates = (Map<String, Object>) states.get(null);
+        journalIdentity = context.getApplicationInfo().dataDir + "/subhub_relationship_presentation";
+        synchronized (journalLock) {
+            journalWasPresent = journalStates.containsKey(journalIdentity);
+            originalJournalState = journalStates.remove(journalIdentity);
+            journalIsolated = true;
+        }
+    }
+    private void restoreJournalCache() {
+        if (!journalIsolated) return;
+        synchronized (journalLock) {
+            // Reinstate the retained object, never mutate its fields or clear another journal's cache.
+            if (journalWasPresent) journalStates.put(journalIdentity, originalJournalState);
+            else journalStates.remove(journalIdentity);
+            journalIsolated = false;
+            assertEquals("Restore the journal cache's original presence", journalWasPresent, journalStates.containsKey(journalIdentity));
+            assertSame("Restore the exact original journal state", originalJournalState, journalStates.get(journalIdentity));
+        }
     }
 
     @Test public void directConnectionFiveSecondHoldAddsAndRemovesWithoutOpeningPreview() throws Exception {

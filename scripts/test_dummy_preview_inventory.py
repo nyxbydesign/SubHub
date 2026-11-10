@@ -25,17 +25,24 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(14, len(selected))
-            self.assertEqual(14, len(set(selected)))
+            self.assertEqual(16, len(selected))
+            self.assertEqual(16, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
-            self.assertEqual(3, len(inventory))
+            self.assertEqual(4, len(inventory))
             self.assertEqual(5, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
+            self.assertEqual(6, len(inventory["com.subhub.app.remote.RemoteEditorAndroidTest"]["selectedMethods"]))
+            self.assertEqual(3, len(inventory["com.subhub.app.people.PersonRefreshAndroidTest"]["selectedMethods"]))
+            self.assertEqual([
+                "constructorFailureRestoresRealAdaptersAndDeletesOwnedStore",
+                "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore",
+            ], inventory["com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest"]["selectedMethods"])
             self.assertTrue(set(selected).isdisjoint(native.DEVICE_PASS_SELECTORS))
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
             self.assertEqual(54, len(native.suite_selectors("device-pass")))
 
     def test_workflow_runs_on_pr_head_without_labels_or_publication(self):
         source = (Path(__file__).parent.parent / ".github/workflows/dummy-preview-native.yml").read_text()
+        self.assertIn("app/src/androidTest/java/com/subhub/app/remote/DummyPreviewEndpointFixtureAndroidTest.java", source)
         self.assertIn("EXTRA_TIME_SUITE: dummy-preview", source)
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", source)
         self.assertIn("contents: read", source)
