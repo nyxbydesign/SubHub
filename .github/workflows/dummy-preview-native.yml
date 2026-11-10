@@ -45,6 +45,7 @@ on:
       - 'app/src/main/res/values/dummy_sub_preview.xml'
       - 'app/src/androidTest/java/com/subhub/app/people/DummySubPreviewAndroidTest.java'
       - 'app/src/androidTest/java/com/subhub/app/remote/DummyPreviewEndpointFixture.java'
+      - 'app/src/androidTest/java/com/subhub/app/remote/DummyPreviewEndpointFixtureAndroidTest.java'
 
 permissions:
   contents: read
