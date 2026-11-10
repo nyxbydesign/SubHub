@@ -626,11 +626,41 @@ public final class DummySubPreviewAndroidTest {
         } finally { instrumentation.removeMonitor(monitor); }
     }
     private Rect backBounds(Activity activity) {
-        await(() -> resumed(activity)); AtomicReference<Rect> result = new AtomicReference<>();
+        await(() -> resumed(activity));
+        AtomicReference<View> target = new AtomicReference<>();
+        AtomicReference<android.widget.ScrollView> viewport = new AtomicReference<>();
         instrumentation.runOnMainSync(() -> {
-            View back = PrimaryHeader.backButton(activity.findViewById(android.R.id.content)); Rect bounds = new Rect();
+            View back = PrimaryHeader.backButton(activity.findViewById(android.R.id.content));
+            assertNotNull(back); target.set(back);
+            for (android.view.ViewParent parent = back.getParent(); parent != null; parent = parent.getParent())
+                if (parent instanceof android.widget.ScrollView) {
+                    viewport.set((android.widget.ScrollView) parent); break;
+                }
+        });
+        // Normal settings headers scroll with their page. Reveal the actual Back control after
+        // inspecting lower settings, without changing its visibility or invoking its listener.
+        if (viewport.get() != null) onView(org.hamcrest.Matchers.sameInstance(target.get()))
+                .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+        await(() -> resumed(activity));
+        AtomicReference<Rect> result = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> {
+            assertTrue("Back input requires the same foreground Activity", resumed(activity));
+            View back = target.get();
+            assertSame(back, PrimaryHeader.backButton(activity.findViewById(android.R.id.content)));
+            Rect bounds = new Rect();
             assertTrue(back.getGlobalVisibleRect(bounds)); assertEquals(back.getWidth(), bounds.width());
-            assertEquals(back.getHeight(), bounds.height()); result.set(bounds);
+            assertEquals(back.getHeight(), bounds.height());
+            Rect window = new Rect(); back.getWindowVisibleDisplayFrame(window);
+            assertTrue("Back must clear the visible window's system/IME boundaries", window.contains(bounds));
+            if (viewport.get() != null) {
+                Rect visible = new Rect(); assertTrue(viewport.get().getGlobalVisibleRect(visible));
+                assertTrue("Back must be fully inside its visible scroll viewport", visible.contains(bounds));
+            }
+            View navigation = activity.findViewById(com.subhub.app.R.id.bottom_navigation);
+            Rect nav = new Rect();
+            if (navigation != null && navigation.getGlobalVisibleRect(nav))
+                assertTrue("Back must clear floating navigation", bounds.bottom <= nav.top);
+            result.set(bounds);
         }); return result.get();
     }
     private long pointer(int action, long down, float x, float y) {
