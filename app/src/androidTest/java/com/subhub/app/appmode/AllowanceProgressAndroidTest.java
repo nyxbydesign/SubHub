@@ -67,7 +67,7 @@ public final class AllowanceProgressAndroidTest {
                         pixels.getPixel(pixels.getWidth() * 3 / 16, pixels.getHeight() / 2));
                 assertEquals(context.getColor(R.color.surface_card_raised),
                         pixels.getPixel(pixels.getWidth() / 2, pixels.getHeight() / 2));
-                Rect fill = fillBounds(bar);
+                Rect fill = renderedFillBounds(bar);
                 assertEquals(0, fill.left);
                 assertEquals(pixels.getWidth() / 4f, fill.width(), 1f);
             } catch (AssertionError failure) {
@@ -83,25 +83,35 @@ public final class AllowanceProgressAndroidTest {
         withAttachedParent(parent -> {
             Context context = parent.getContext();
             ProgressBar bar = AllowanceProgress.add(parent, value(15 * 60_000L));
-            Bitmap pixels = draw(bar, View.LAYOUT_DIRECTION_RTL);
-            try {
-                Rect fill = fillBounds(bar);
-                assertEquals(pixels.getWidth(), fill.right);
-                assertEquals(pixels.getWidth() / 4f, fill.width(), 1f);
-                assertEquals(context.getColor(R.color.surface_card_raised),
-                        pixels.getPixel(pixels.getWidth() / 4, pixels.getHeight() / 2));
-                assertNotEquals(context.getColor(R.color.surface_card_raised),
-                        pixels.getPixel(pixels.getWidth() * 7 / 8, pixels.getHeight() / 2));
-            } catch (AssertionError failure) {
-                retainFailure(context, pixels, "allowance-rtl", failure);
-                throw failure;
-            } finally { pixels.recycle(); }
+            // Reuse the same meter without changing its level or dimensions: drawable START
+            // gravity can otherwise leave stale child bounds when only direction changes.
+            for (int direction : new int[]{View.LAYOUT_DIRECTION_RTL, View.LAYOUT_DIRECTION_LTR,
+                    View.LAYOUT_DIRECTION_RTL, View.LAYOUT_DIRECTION_LTR}) {
+                Bitmap pixels = draw(bar, direction);
+                try {
+                    assertEquals(1000, bar.getMax());
+                    assertEquals(250, bar.getProgress());
+                    Rect fill = renderedFillBounds(bar);
+                    boolean rtl = direction == View.LAYOUT_DIRECTION_RTL;
+                    assertEquals(rtl ? pixels.getWidth() : 0, rtl ? fill.right : fill.left);
+                    assertEquals(pixels.getWidth() / 4f, fill.width(), 1f);
+                    int trackX = rtl ? pixels.getWidth() / 4 : pixels.getWidth() * 3 / 4;
+                    int fillX = rtl ? pixels.getWidth() * 7 / 8 : pixels.getWidth() / 8;
+                    assertEquals(context.getColor(R.color.surface_card_raised),
+                            pixels.getPixel(trackX, pixels.getHeight() / 2));
+                    assertNotEquals(context.getColor(R.color.surface_card_raised),
+                            pixels.getPixel(fillX, pixels.getHeight() / 2));
+                } catch (AssertionError failure) {
+                    retainFailure(context, pixels, "allowance-direction-" + direction, failure);
+                    throw failure;
+                } finally { pixels.recycle(); }
+            }
             ProgressBar tiny = AllowanceProgress.add(parent, value(3600L));
             assertEquals(1, tiny.getProgress());
             Bitmap small = draw(tiny, View.LAYOUT_DIRECTION_LTR);
             try {
-                assertTrue("Known nonzero usage retains a nonzero fill", fillBounds(tiny).width() > 0);
-                assertTrue("No minimum filled pill that exaggerates usage", fillBounds(tiny).width() <= Math.ceil(small.getWidth() / 1000d));
+                assertTrue("Known nonzero usage retains a nonzero fill", renderedFillBounds(tiny).width() > 0);
+                assertTrue("No minimum filled pill that exaggerates usage", renderedFillBounds(tiny).width() <= Math.ceil(small.getWidth() / 1000d));
             } catch (AssertionError failure) {
                 retainFailure(context, small, "allowance-tiny", failure);
                 throw failure;
@@ -130,10 +140,23 @@ public final class AllowanceProgressAndroidTest {
         return pixels;
     }
 
-    private static Rect fillBounds(ProgressBar bar) {
+    private static Rect renderedFillBounds(ProgressBar bar) {
         LayerDrawable layers = (LayerDrawable) bar.getProgressDrawable();
         ScaleDrawable progress = (ScaleDrawable) layers.findDrawableByLayerId(android.R.id.progress);
-        return new Rect(progress.getDrawable().getBounds());
+        Rect raw = new Rect(progress.getDrawable().getBounds());
+        assertEquals("ScaleDrawable remains left-based before Canvas mirroring", 0, raw.left);
+        assertEquals(0, bar.getPaddingLeft());
+        assertEquals(0, bar.getPaddingRight());
+        assertEquals(0, bar.getPaddingTop());
+        assertEquals(0, bar.getPaddingBottom());
+        // Widget.SubHub.AllowanceProgress enables mirrorForRtl. ProgressBar.drawTrack
+        // maps drawable x to width - x in RTL; raw Drawable bounds are not View pixels.
+        // Independent pixel checks above still detect missing or double mirroring.
+        if (bar.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+            return new Rect(bar.getWidth() - raw.right, raw.top,
+                    bar.getWidth() - raw.left, raw.bottom);
+        }
+        return raw;
     }
 
     private static void withAttachedParent(Consumer<LinearLayout> assertions) throws InterruptedException {

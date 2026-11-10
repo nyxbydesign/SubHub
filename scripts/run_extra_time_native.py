@@ -278,7 +278,7 @@ DEVICE_PASS_NATIVE = {
     ],
     "com.subhub.app.tasks.TasksAndroidTest": [
         "completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
-        "domOverviewCompletedCounterRefreshesForAcceptedReviews",
+        "domOverviewExcludesCompletedAndRefreshesOriginalCounters",
         "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList",
     ],
     "com.subhub.app.appmode.AllowanceProgressAndroidTest": [

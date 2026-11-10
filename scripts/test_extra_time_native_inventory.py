@@ -109,7 +109,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertEqual(54, len(set(selected)))
         self.assertTrue(set(native.BATTERY_SELECTORS) < set(selected))
         self.assertEqual({"completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
-                          "domOverviewCompletedCounterRefreshesForAcceptedReviews",
+                          "domOverviewExcludesCompletedAndRefreshesOriginalCounters",
                           "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList"},
                          set(native.DEVICE_PASS_NATIVE["com.subhub.app.tasks.TasksAndroidTest"]))
         self.assertEqual(["local-session-app-time-active", "local-session-app-time-idle"],

@@ -67,14 +67,10 @@ public final class TasksOverviewActivity extends RolePage {
                     TaskRepository tasks = new TaskRepository(app, person.id);
                     summary.supported = tasks.supported();
                     summary.allowed = tasks.allowed();
-                    if (summary.supported && summary.allowed) {
-                        List<TaskEngine.Occurrence> rows = tasks.list(System.currentTimeMillis());
-                        summary.completed = TaskEngine.completedCount(rows);
-                        for (TaskEngine.Occurrence task : rows) {
-                            if (task.status == TaskEngine.Status.ACTIVE) summary.active++;
-                            else if (task.status == TaskEngine.Status.PENDING) summary.pending++;
-                            else if (task.status == TaskEngine.Status.SCHEDULED) summary.scheduled++;
-                        }
+                    if (summary.supported && summary.allowed) for (TaskEngine.Occurrence task : tasks.list(System.currentTimeMillis())) {
+                        if (task.status == TaskEngine.Status.ACTIVE) summary.active++;
+                        else if (task.status == TaskEngine.Status.PENDING) summary.pending++;
+                        else if (task.status == TaskEngine.Status.SCHEDULED) summary.scheduled++;
                     }
                 } catch (Exception unavailable) { summary.failed = true; }
                 result.add(summary);
@@ -129,7 +125,7 @@ public final class TasksOverviewActivity extends RolePage {
             Summary summary = loaded.summaries.get(index);
             PersonId id = summary.person.id;
             List<Object> signature = java.util.Arrays.asList(summary.person.name, summary.person.device,
-                    summary.failed, summary.supported, summary.allowed, summary.completed, summary.active, summary.pending, summary.scheduled);
+                    summary.failed, summary.supported, summary.allowed, summary.active, summary.pending, summary.scheduled);
             LinearLayout card = cards.get(id);
             if (!signature.equals(signatures.get(id))) {
                 if (card != null) body.removeView(card);
@@ -141,7 +137,7 @@ public final class TasksOverviewActivity extends RolePage {
                 if (summary.failed) PersonUi.text(card, getString(R.string.tasks_profile_unavailable), false);
                 else if (!summary.supported) PersonUi.text(card, getString(R.string.tasks_update_devices), false);
                 else if (!summary.allowed) PersonUi.text(card, getString(R.string.tasks_disabled), false);
-                else TasksUi.counts(card, summary.completed, summary.active, summary.pending, summary.scheduled);
+                else TasksUi.counts(card, summary.active, summary.pending, summary.scheduled);
                 PersonUi.action(card, R.string.tasks_view_all, () -> openCurrent(id), false)
                         .setTag("tasks_profile:" + id.value());
                 cards.put(id, card); signatures.put(id, signature);
@@ -242,7 +238,7 @@ public final class TasksOverviewActivity extends RolePage {
     private static final class Summary {
         final PersonSnapshot person;
         final RelationshipUi.Edge edge;
-        int completed, active, pending, scheduled;
+        int active, pending, scheduled;
         boolean supported, allowed, failed;
         Summary(PersonSnapshot person, RelationshipUi.Edge edge) { this.person = person; this.edge = edge; }
     }

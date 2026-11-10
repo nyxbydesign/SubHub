@@ -1176,21 +1176,27 @@ public final class TasksAndroidTest {
         }
     }
 
-    @Test public void domOverviewCompletedCounterRefreshesForAcceptedReviews() throws Exception {
+    @Test public void domOverviewExcludesCompletedAndRefreshesOriginalCounters() throws Exception {
         prepareLocalOverviewRelationship();
         TaskDefinition pending = seedCounterOutcomes();
         try (ActivityScenario<TasksOverviewActivity> page = ActivityScenario.launch(TasksOverviewActivity.class)) {
             awaitTag(page, "tasks_profile:" + PersonId.LOCAL.value());
-            awaitCounterRow(page, 0, 1, 1, 1);
+            awaitOverviewCounterRow(page, 1, 1, 1);
             acceptCounterTask(pending);
-            awaitCounterRow(page, 1, 1, 0, 1);
+            awaitOverviewCounterRow(page, 1, 0, 1);
             page.recreate();
-            awaitCounterRow(page, 1, 1, 0, 1);
+            awaitOverviewCounterRow(page, 1, 0, 1);
             TaskAction cancel = new TaskAction(UUID.randomUUID().toString(), pending.id,
                     TaskAction.Kind.CANCEL_ONCE, pending.firstStart.toLocalDate(),
                     System.currentTimeMillis(), "", "", List.of(), null);
             assertTrue(store.append(scope, cancel, true, false));
-            awaitCounterRow(page, 0, 1, 0, 1);
+            awaitOverviewCounterRow(page, 1, 0, 1);
+            TaskDefinition active = seed("overview active count refresh", false);
+            awaitOverviewCounterRow(page, 2, 0, 1);
+            assertTrue(store.append(scope, new TaskAction(UUID.randomUUID().toString(), active.id,
+                    TaskAction.Kind.CANCEL_ONCE, active.firstStart.toLocalDate(),
+                    System.currentTimeMillis(), "", "", List.of(), null), true, false));
+            awaitOverviewCounterRow(page, 1, 0, 1);
         }
     }
 
@@ -1246,12 +1252,24 @@ public final class TasksAndroidTest {
         int[] numbers = {completed, active, pending, scheduled};
         int[] captions = {R.string.tasks_completed, R.string.tasks_active,
                 R.string.tasks_pending, R.string.tasks_scheduled};
+        awaitCounterRow(page, numbers, captions);
+    }
+
+    private void awaitOverviewCounterRow(ActivityScenario<TasksOverviewActivity> page,
+            int active, int pending, int scheduled) throws Exception {
+        awaitCounterRow(page, new int[]{active, pending, scheduled},
+                new int[]{R.string.tasks_active, R.string.tasks_pending, R.string.tasks_scheduled});
+        onView(withText(R.string.tasks_completed)).check(doesNotExist());
+    }
+
+    private void awaitCounterRow(ActivityScenario<? extends Activity> page,
+            int[] numbers, int[] captions) throws Exception {
         await(() -> {
             AtomicBoolean ready = new AtomicBoolean();
             page.onActivity(activity -> {
                 ViewGroup row = activity.findViewById(android.R.id.content).findViewWithTag("tasks_counts");
-                if (row == null || row.getWidth() == 0 || row.getChildCount() != 4) return;
-                for (int column = 0; column < 4; column++) {
+                if (row == null || row.getWidth() == 0 || row.getChildCount() != numbers.length) return;
+                for (int column = 0; column < numbers.length; column++) {
                     ViewGroup cell = (ViewGroup) row.getChildAt(column);
                     android.widget.TextView value = (android.widget.TextView) cell.getChildAt(0);
                     android.widget.TextView caption = (android.widget.TextView) cell.getChildAt(1);
@@ -1265,8 +1283,8 @@ public final class TasksAndroidTest {
         });
         page.onActivity(activity -> {
             android.widget.LinearLayout row = activity.findViewById(android.R.id.content).findViewWithTag("tasks_counts");
-            assertEquals("All four counters stay in one row", android.widget.LinearLayout.HORIZONTAL, row.getOrientation());
-            for (int column = 0; column < 4; column++) {
+            assertEquals("All counters stay in one row", android.widget.LinearLayout.HORIZONTAL, row.getOrientation());
+            for (int column = 0; column < numbers.length; column++) {
                 ViewGroup cell = (ViewGroup) row.getChildAt(column);
                 for (int child = 0; child < cell.getChildCount(); child++) {
                     android.widget.TextView text = (android.widget.TextView) cell.getChildAt(child);

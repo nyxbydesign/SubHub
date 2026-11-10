@@ -14,20 +14,32 @@ final class TasksUi {
     private TasksUi() { }
 
     static void counts(LinearLayout parent, int completed, int active, int pending, int scheduled) {
+        LinearLayout row = counterRow(parent);
+        count(row, completed, R.string.tasks_completed, 4);
+        count(row, active, R.string.tasks_active, 4);
+        count(row, pending, R.string.tasks_pending, 4);
+        count(row, scheduled, R.string.tasks_scheduled, 4);
+    }
+
+    static void counts(LinearLayout parent, int active, int pending, int scheduled) {
+        LinearLayout row = counterRow(parent);
+        count(row, active, R.string.tasks_active, 8);
+        count(row, pending, R.string.tasks_pending, 8);
+        count(row, scheduled, R.string.tasks_scheduled, 8);
+    }
+
+    private static LinearLayout counterRow(LinearLayout parent) {
         LinearLayout row = new LinearLayout(parent.getContext());
         row.setTag("tasks_counts");
         row.setPadding(0, PersonUi.dp(parent.getContext(), 12), 0, 0);
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        count(row, completed, R.string.tasks_completed);
-        count(row, active, R.string.tasks_active);
-        count(row, pending, R.string.tasks_pending);
-        count(row, scheduled, R.string.tasks_scheduled);
+        return row;
     }
 
-    private static void count(LinearLayout row, int number, int label) {
+    private static void count(LinearLayout row, int number, int label, int rightPaddingDp) {
         Context context = row.getContext();
         LinearLayout column = PersonUi.column(context);
-        column.setPadding(0, 0, PersonUi.dp(context, 4), 0);
+        column.setPadding(0, 0, PersonUi.dp(context, rightPaddingDp), 0);
         row.addView(column, new LinearLayout.LayoutParams(0, -2, 1));
         TextView value = PersonUi.text(column, Integer.toString(number), true);
         value.setTextSize(26);

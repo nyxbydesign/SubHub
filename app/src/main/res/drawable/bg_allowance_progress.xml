@@ -8,8 +8,9 @@
         </shape>
     </item>
     <item android:id="@android:id/progress">
-        <!-- Scale the rounded shape itself so its leading edge stays soft at every value. -->
-        <scale android:scaleWidth="100%" android:gravity="start">
+        <!-- Keep drawable coordinates left-based; ProgressBar mirrors the Canvas for RTL.
+             ScaleDrawable reads scaleGravity, not the generic gravity attribute. -->
+        <scale android:scaleWidth="100%" android:scaleGravity="left">
             <shape android:shape="rectangle">
                 <corners android:radius="5dp" />
                 <gradient android:angle="0" android:startColor="@color/accent_mid"
