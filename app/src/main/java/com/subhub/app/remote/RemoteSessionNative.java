@@ -242,7 +242,7 @@ public final class RemoteSessionNative implements AutoCloseable {
                     .putBoolean("media_projection_session_desired", false)
                     .putString(STOP_MAIN_KEY, RemoteProtocol.canonical(new StopMarker(prepared, false, end).json()));
             if (nativeOwned) edit.putString(MAIN_KEY, RemoteProtocol.canonical(new Marker(start.prepared, true, false, transition, duration).json()));
-            CommitmentManager.appendNativeStop(edit);
+            CommitmentManager.appendNativeStop(context, edit);
             boolean saved = edit.commit(); RuntimeSessionIdentity.changed();
             if (!saved) return false;
             com.subhub.app.appmode.SessionExpiryAlarms.update(context, com.subhub.app.appmode.SessionExpiryAlarms.Kind.PACT,

@@ -20,6 +20,8 @@ public final class CommitmentManager {
     private static final String KEY_SALT = "commitment_code_salt";
     private static final String KEY_HASH = "commitment_code_hash";
     private static final String KEY_DURATION = "commitment_duration";
+    private static final String KEY_STARTED_ONCE = "commitment_started_once";
+    private static final String KEY_LONGEST_ELAPSED = "commitment_longest_elapsed_ms";
 
     private CommitmentManager() {}
 
@@ -34,7 +36,8 @@ public final class CommitmentManager {
                     .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                     .remove("commitment_ends_elapsed").remove("commitment_boot");
         } else {
-            edit.putString("commitment_session_identity", prepared.pactIdentity)
+            edit.putBoolean(KEY_STARTED_ONCE, true)
+                    .putString("commitment_session_identity", prepared.pactIdentity)
                     .putLong(KEY_STARTED_AT, prepared.statistics.startedAt).putLong(KEY_ENDS_AT, prepared.endsAt)
                     .putLong(KEY_DURATION, prepared.selectedDuration).putBoolean("commitment_hide_countdown", prepared.request.service.hidden)
                     .putLong("commitment_range_min", prepared.request.service.minimum)
@@ -44,8 +47,14 @@ public final class CommitmentManager {
     }
 
     /** A native Stop clears the pact in the same main-preference commit as its application marker. */
-    public static void appendNativeStop(SharedPreferences.Editor edit) {
+    public static void appendNativeStop(Context context, SharedPreferences.Editor edit) {
         if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime transaction required");
+        SharedPreferences values = preferences(context);
+        if (hasRecordedLock(values)) {
+            // Preserve earned progress in the same acknowledged transaction as the lock's removal.
+            edit.putBoolean(KEY_STARTED_ONCE, true).putLong(KEY_LONGEST_ELAPSED,
+                    Math.max(values.getLong(KEY_LONGEST_ELAPSED, 0L), elapsedMillis(values, RemoteSessionClock.local())));
+        }
         edit.remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
                 .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                 .remove("commitment_ends_elapsed").remove("commitment_boot").remove(KEY_SALT).remove(KEY_HASH);
@@ -66,6 +75,7 @@ public final class CommitmentManager {
             String identity = java.util.UUID.randomUUID().toString();
             String retired = preferences(context).getString("commitment_session_identity", "");
             boolean saved = preferences(context).edit()
+                    .putBoolean(KEY_STARTED_ONCE, true)
                     .putLong(KEY_STARTED_AT, now.wall).putString("commitment_session_identity", identity)
                     .putLong(KEY_ENDS_AT, now.wall + duration).putLong(KEY_DURATION, duration)
                     .putBoolean("commitment_hide_countdown", hideCountdown)
@@ -162,6 +172,34 @@ public final class CommitmentManager {
         }
     }
 
+    /** A completed lock remains evidence after its runtime fields have been cleared. */
+    public static boolean observedStarted(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            return values.getBoolean(KEY_STARTED_ONCE, false) || hasRecordedLock(values);
+        }
+    }
+
+    /** Longest elapsed timed lock, including the current lock, without expiry side effects. */
+    public static long observedElapsedMillis(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            return Math.max(Math.max(0L, values.getLong(KEY_LONGEST_ELAPSED, 0L)),
+                    elapsedMillis(values, RemoteSessionClock.local()));
+        }
+    }
+
+    private static boolean hasRecordedLock(SharedPreferences values) {
+        return values.getLong(KEY_STARTED_AT, 0L) > 0 && values.getLong(KEY_ENDS_AT, 0L) > 0
+                && values.getLong(KEY_DURATION, 0L) > 0;
+    }
+
+    private static long elapsedMillis(SharedPreferences values, RemoteSessionClock.Sample clock) {
+        if (!hasRecordedLock(values)) return 0L;
+        long duration = values.getLong(KEY_DURATION, 0L);
+        return Math.max(0L, duration - Math.max(0L, remaining(values, clock)));
+    }
+
     public static long originalDurationMillis(Context context) {
         return preferences(context).getLong(KEY_DURATION, 0L);
     }
@@ -200,7 +238,7 @@ public final class CommitmentManager {
             edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
             com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
         }
-        appendNativeStop(edit);
+        appendNativeStop(context, edit);
         com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
         boolean saved = edit.commit();
         RuntimeSessionIdentity.changed();

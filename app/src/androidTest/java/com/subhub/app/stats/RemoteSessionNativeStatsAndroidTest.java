@@ -63,6 +63,100 @@ public class RemoteSessionNativeStatsAndroidTest {
                 .putString(StatsRepository.NATIVE_OWNER_KEY,session.identity).putBoolean("app_mode_armed",true).commit());
     }
 
+    @Test public void stoppedStreakKeepsTokyoCalendarAfterWestwardTravelAndReload() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
+            long now = java.time.Instant.parse("2026-11-10T01:00:00Z").toEpochMilli();
+            long start = java.time.Instant.parse("2026-11-03T00:00:00Z").toEpochMilli();
+            StatsRepository.NativeSession session = new StatsRepository.NativeSession(
+                    UUID.randomUUID().toString(), start, "Asia/Tokyo");
+            committedMainOwner(session);
+            assertTrue(stats.ensureNativeSession(session));
+            assertEquals(8, stats.retainedSnapshot(now).getCurrentStreak());
+            assertTrue(stats.endSessionForIdentity(session.identity, now, (now - start) / 1000));
+            assertFalse(saved().contains(StatsRepository.ACTIVE_SESSION_ZONE));
+            assertEquals("Asia/Tokyo", saved().getString(StatsRepository.LAST_SESSION_ZONE, ""));
+            assertEquals("2026-11-10", saved().getString("last_session_date", ""));
+            StatsRepository reloaded = new StatsRepository(context, false);
+            assertEquals(8, reloaded.retainedSnapshot(now).getCurrentStreak());
+            assertEquals(8, reloaded.retainedSnapshot(now + 24L * 60 * 60 * 1000).getCurrentStreak());
+            assertEquals(0, reloaded.retainedSnapshot(now + 48L * 60 * 60 * 1000).getCurrentStreak());
+            // Idempotent Stop cannot replace the recorded calendar with the new device calendar.
+            assertTrue(reloaded.endSessionForIdentity(session.identity, now, (now - start) / 1000));
+            assertEquals("Asia/Tokyo", saved().getString(StatsRepository.LAST_SESSION_ZONE, ""));
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
+    @Test public void recoveredClosedSessionPersistsItsCalendarWithoutAnActiveReceipt() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
+            long now = java.time.Instant.parse("2026-11-10T01:00:00Z").toEpochMilli();
+            long start = java.time.Instant.parse("2026-11-03T00:00:00Z").toEpochMilli();
+            StatsRepository.NativeSession session = new StatsRepository.NativeSession(
+                    UUID.randomUUID().toString(), start, "Asia/Tokyo");
+            committedMainOwner(session);
+            assertTrue(stats.finishNativeSession(session, now, (now - start) / 1000));
+            assertFalse(saved().contains(StatsRepository.ACTIVE_SESSION_ZONE));
+            assertEquals("Asia/Tokyo", saved().getString(StatsRepository.LAST_SESSION_ZONE, ""));
+            assertEquals(8, new StatsRepository(context, false).retainedSnapshot(now).getCurrentStreak());
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
+    @Test public void ordinaryStopAndPublicReloadRetainTheSessionCalendar() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            // These two calendars are always at least one civil day apart, whatever the test time.
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT-12:00"));
+            java.time.ZoneId sessionZone = java.time.ZoneId.of("+14:00");
+            long now = System.currentTimeMillis();
+            java.time.LocalDate first = java.time.Instant.ofEpochMilli(now).atZone(sessionZone).toLocalDate().minusDays(7);
+            long start = first.atStartOfDay(sessionZone).toInstant().toEpochMilli();
+            assertTrue(saved().edit().putString("active_session_identity", UUID.randomUUID().toString())
+                    .putLong("active_session_start_ms", start)
+                    .putString(StatsRepository.ACTIVE_SESSION_ZONE, sessionZone.getId())
+                    .putInt("current_streak", 1).putString("last_session_date", first.toString()).commit());
+            int live = stats.load().getCurrentStreak();
+            assertTrue(live >= 8);
+            stats.endSession();
+            assertFalse(saved().contains(StatsRepository.ACTIVE_SESSION_ZONE));
+            assertEquals(sessionZone.getId(), saved().getString(StatsRepository.LAST_SESSION_ZONE, ""));
+            assertTrue(new StatsRepository(context, false).load().getCurrentStreak() >= live);
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
+    @Test public void legacyStoppedDatesKeepDeviceCalendarFallbackWithoutInventingAZone() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
+            long now = java.time.Instant.parse("2026-11-10T01:00:00Z").toEpochMilli();
+            assertTrue(saved().edit().putInt("current_streak", 8).putString("last_session_date", "2026-11-09").commit());
+            assertEquals(8, new StatsRepository(context, false).retainedSnapshot(now).getCurrentStreak());
+            assertFalse(saved().contains(StatsRepository.LAST_SESSION_ZONE));
+            assertTrue(saved().edit().putString(StatsRepository.LAST_SESSION_ZONE, "invalid").commit());
+            assertEquals(0, new StatsRepository(context, false).retainedSnapshot(now).getCurrentStreak());
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
+    @Test public void ordinaryRestartCannotCarryAnExpiredCountIntoANewCalendar() {
+        java.util.TimeZone original = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT-12:00"));
+            java.time.LocalDate yesterday = java.time.LocalDate.now().minusDays(1);
+            assertTrue(saved().edit().putInt("current_streak", 8).putString("last_session_date", yesterday.toString())
+                    .putString(StatsRepository.LAST_SESSION_ZONE, "+14:00").commit());
+            assertEquals(0, stats.retainedSnapshot().getCurrentStreak());
+            stats.startSession();
+            assertEquals(1, saved().getInt("current_streak", 0));
+            int live = stats.load().getCurrentStreak();
+            assertTrue(live >= 1 && live <= 2); // A test crossing midnight legitimately adds one day.
+            stats.endSession();
+            int stopped = new StatsRepository(context, false).load().getCurrentStreak();
+            assertTrue(stopped >= live && stopped <= 2);
+        } finally { java.util.TimeZone.setDefault(original); }
+    }
+
     @Test public void startAndEndReplaysCountAndAppendExactlyOnce() {
         StatsRepository.NativeSession session=session();committedMainOwner(session);
         assertTrue(stats.ensureNativeSession(session));assertTrue(new StatsRepository(context,false).ensureNativeSession(session));
