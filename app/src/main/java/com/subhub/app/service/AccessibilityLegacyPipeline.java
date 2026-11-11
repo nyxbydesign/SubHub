@@ -1196,6 +1196,7 @@ final class AccessibilityLegacyPipeline {
                 return;
             }
             long requestedDocumentEpoch = visualDocumentEpoch.get();
+            boolean captureWindow = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && activeWindowId >= 0;
             AtomicBoolean terminalReturned = new AtomicBoolean();
             AccessibilityService.TakeScreenshotCallback callback = new AccessibilityService.TakeScreenshotCallback() {
                 @Override
@@ -1213,7 +1214,7 @@ final class AccessibilityLegacyPipeline {
                             }
                             return;
                         }
-                        process(result, requestedEpoch, requestedScrollX, requestedScrollY,
+                        process(result, captureWindow, HardwareBuffer::close, requestedEpoch, requestedScrollX, requestedScrollY,
                                 requestedGeneration, requestUptime,
                                 activeWindowId, requestedDocumentEpoch, requestId, requestedLabCensor);
                     } finally {
@@ -1253,8 +1254,7 @@ final class AccessibilityLegacyPipeline {
             nativeScreenshotRequests.incrementAndGet();
             sdkInvocationAttempted = true;
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                        && activeWindowId >= 0) {
+                if (captureWindow && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     host.takeScreenshotOfWindow(activeWindowId, worker, callback);
                 } else {
                     host.takeScreenshot(Display.DEFAULT_DISPLAY, worker, callback);
@@ -1293,6 +1293,8 @@ final class AccessibilityLegacyPipeline {
     @RequiresApi(Build.VERSION_CODES.R)
     private void process(
             AccessibilityService.ScreenshotResult result,
+            boolean captureWindow,
+            java.util.function.Consumer<HardwareBuffer> releaseBuffer,
             long requestedEpoch,
             long requestedScrollX,
             long requestedScrollY,
@@ -1305,6 +1307,7 @@ final class AccessibilityLegacyPipeline {
         Bitmap wrapped = null;
         Bitmap frame = null;
         HardwareBuffer buffer = result.getHardwareBuffer();
+        boolean releaseLocally = true;
         try {
             if (!isCurrentCapture(requestedEpoch)
                     || requestedDocumentEpoch != visualDocumentEpoch.get()
@@ -1312,8 +1315,7 @@ final class AccessibilityLegacyPipeline {
                     && requestedWindowId != activeApplicationWindowId.get()) return;
             wrapped = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
             if (wrapped == null) return;
-            CaptureTimeReference captureTime = CaptureTimeReference.accessibility(
-                    Build.VERSION.SDK_INT >= 34 && requestedWindowId >= 0,
+            CaptureTimeReference captureTime = CaptureTimeReference.accessibility(captureWindow,
                     requestedAtUptimeMillis, result.getTimestamp(), SystemClock.uptimeMillis());
             if (BuildConfig.DEBUG) {
                 CensorLabLog.i(TAG, "CAPTURE_TIME id=" + requestedAtUptimeMillis
@@ -1546,15 +1548,17 @@ final class AccessibilityLegacyPipeline {
             if (submittedFastSequence != Long.MIN_VALUE
                     && streamingQualityReady && qualityRefine && scene != null) {
                 Rect captureViewport = screenBounds();
-                enqueueQualityInference(new QualityInferenceFrame(
-                        wrapped, buffer, requestedEpoch, sourceScrollX, sourceScrollY,
+                QualityInferenceFrame qualityFrame = new QualityInferenceFrame(
+                        wrapped, () -> releaseBuffer.accept(buffer), requestedEpoch, sourceScrollX, sourceScrollY,
                         inferenceMotionGeneration, wrapped.getWidth(), wrapped.getHeight(),
                         inferenceResolution, capturePhase.screenshotUptimeMillis,
                         submittedFastSequence, inferenceDocumentEpoch, inferenceSurfaceKey,
                         inferenceSurfaceTelemetryToken, !capturePhase.phaseUncertain,
-                        captureViewport.width(), captureViewport.height(), requestedWindowId, scene));
+                        captureViewport.width(), captureViewport.height(), requestedWindowId, scene);
+                // The QUALITY lane owns both the wrapper and its source release from this point.
                 wrapped = null;
-                buffer = null;
+                releaseLocally = false;
+                enqueueQualityInference(qualityFrame);
             }
         } catch (Exception error) {
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
@@ -1562,7 +1566,7 @@ final class AccessibilityLegacyPipeline {
         } finally {
             if (frame != null && !frame.isRecycled()) frame.recycle();
             if (wrapped != null && !wrapped.isRecycled()) wrapped.recycle();
-            if (buffer != null) buffer.close();
+            if (releaseLocally && buffer != null) releaseBuffer.accept(buffer);
             finishScreenshotRequest(screenshotRequestId);
         }
     }
@@ -1749,17 +1753,20 @@ final class AccessibilityLegacyPipeline {
 
     private void enqueueQualityInference(QualityInferenceFrame candidate) {
         if (!running || qualityInferenceWorker == null || qualityInferenceWorker.isShutdown()) {
+            candidate.recycle();
             CensorLabLog.i(TAG, "QUALITY_BACKFILL_DROP reason=worker-unavailable"
                     + " running=" + running
                     + " workerPresent=" + (qualityInferenceWorker != null)
                     + " workerShutdown=" + (qualityInferenceWorker != null
                             && qualityInferenceWorker.isShutdown())
                     + " sourceFastSequence=" + candidate.fastSubmissionSequence);
-            candidate.recycle();
             return;
         }
-        QualityBackfillCoordinator.BackfillStamp stamp = backfillStamp(candidate);
+        QualityBackfillCoordinator.BackfillStamp stamp;
+        try { stamp = backfillStamp(candidate); }
+        catch (RuntimeException | Error rejected) { candidate.recycle(); throw rejected; }
         if (stamp == null) {
+            candidate.recycle();
             CensorLabLog.i(TAG, "QUALITY_BACKFILL_DROP reason=invalid-stamp"
                     + " documentEpoch=" + candidate.visualDocumentEpoch
                     + " surfaceEmpty=" + (candidate.scrollSurfaceKey == null
@@ -1768,7 +1775,6 @@ final class AccessibilityLegacyPipeline {
                     + " geometry=" + candidate.sourceWidth + 'x' + candidate.sourceHeight
                     + " viewport=" + candidate.viewportWidth + 'x' + candidate.viewportHeight
                     + " sourceFastSequence=" + candidate.fastSubmissionSequence);
-            candidate.recycle();
             staleQualityInferenceFrames.incrementAndGet();
             return;
         }
@@ -6938,7 +6944,7 @@ final class AccessibilityLegacyPipeline {
     private static final class QualityInferenceFrame {
         private RenderSourceReference renderReference = RenderSourceReference.UNKNOWN;
         private Bitmap sourceFrame;
-        private HardwareBuffer sourceBuffer;
+        private Runnable releaseSource;
         private final long epoch;
         private final long scrollX;
         private final long scrollY;
@@ -6959,7 +6965,7 @@ final class AccessibilityLegacyPipeline {
 
         private QualityInferenceFrame(
                 Bitmap sourceFrame,
-                HardwareBuffer sourceBuffer,
+                Runnable releaseSource,
                 long epoch,
                 long scrollX,
                 long scrollY,
@@ -6978,7 +6984,7 @@ final class AccessibilityLegacyPipeline {
                 int captureWindowId,
                 SceneContext scene) {
             this.sourceFrame = sourceFrame;
-            this.sourceBuffer = sourceBuffer;
+            this.releaseSource = releaseSource;
             this.epoch = epoch;
             this.scrollX = scrollX;
             this.scrollY = scrollY;
@@ -6999,10 +7005,15 @@ final class AccessibilityLegacyPipeline {
         }
 
         private void recycle() {
-            if (sourceFrame != null && !sourceFrame.isRecycled()) sourceFrame.recycle();
+            Bitmap retiringFrame = sourceFrame;
+            Runnable retiringSource = releaseSource;
             sourceFrame = null;
-            if (sourceBuffer != null) sourceBuffer.close();
-            sourceBuffer = null;
+            releaseSource = null;
+            try {
+                if (retiringFrame != null && !retiringFrame.isRecycled()) retiringFrame.recycle();
+            } finally {
+                if (retiringSource != null) retiringSource.run();
+            }
         }
     }
 
