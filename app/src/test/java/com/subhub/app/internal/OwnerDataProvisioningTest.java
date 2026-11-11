@@ -3,6 +3,7 @@ package com.subhub.app.internal;
 import org.junit.Test;
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static org.junit.Assert.*;
 
@@ -62,24 +63,24 @@ public final class OwnerDataProvisioningTest {
         Path evidence = parent.resolve("independent-registry"), directory = parent.resolve("runtime-data");
         try {
             OwnerDataProvisioning.Evidence registry = new OwnerDataProvisioning.Evidence() {
-                @Override public String read() throws IOException { return Files.exists(evidence) ? Files.readString(evidence) : ""; }
-                @Override public boolean commit(String state) throws IOException { Files.writeString(evidence, state); return true; }
+                @Override public String read() throws IOException { return Files.exists(evidence) ? new String(Files.readAllBytes(evidence), StandardCharsets.UTF_8) : ""; }
+                @Override public boolean commit(String state) throws IOException { Files.write(evidence, state.getBytes(StandardCharsets.UTF_8)); return true; }
             };
             OwnerDataProvisioning.Factory<AutoCloseable> factory = new OwnerDataProvisioning.Factory<>() {
                 @Override public AutoCloseable openExisting() { throw new AssertionError("No ready data"); }
                 @Override public AutoCloseable provisionNew() throws IOException {
-                    Files.createDirectory(directory); Files.writeString(directory.resolve("partial"), "retained");
+                    Files.createDirectory(directory); Files.write(directory.resolve("partial"), "retained".getBytes(StandardCharsets.UTF_8));
                     throw new IOException("Uncertain initial data write");
                 }
                 @Override public void validate(AutoCloseable ignored) { fail("Not created"); }
             };
             assertThrows(IOException.class, () -> new OwnerDataProvisioning().open(
                     OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE, registry, factory));
-            assertEquals("started", Files.readString(evidence));
-            assertEquals("retained", Files.readString(directory.resolve("partial")));
+            assertEquals("started", new String(Files.readAllBytes(evidence), StandardCharsets.UTF_8));
+            assertEquals("retained", new String(Files.readAllBytes(directory.resolve("partial")), StandardCharsets.UTF_8));
             assertThrows(IOException.class, () -> new OwnerDataProvisioning().open(
                     OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE, registry, factory));
-            assertEquals("retained", Files.readString(directory.resolve("partial")));
+            assertEquals("retained", new String(Files.readAllBytes(directory.resolve("partial")), StandardCharsets.UTF_8));
         } finally {
             Files.deleteIfExists(directory.resolve("partial")); Files.deleteIfExists(directory);
             Files.deleteIfExists(evidence); Files.deleteIfExists(parent);

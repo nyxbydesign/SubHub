@@ -4,6 +4,7 @@ import android.content.SharedPreferences;
 import org.junit.Test;
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -120,9 +121,9 @@ public final class InternalRuntimePreferencesTest {
     @Test public void openExistingNeverCreatesFilesAndPartialProvisionRemainsBlocked() throws Exception {
         directory((scope, parent) -> {
             expect(IOException.class, () -> open(scope)); assertEquals(0, countFiles(scope.root()));
-            Files.writeString(scope.root().resolve(FileInternalRuntimeBackend.MARKER), "STARTED");
+            Files.write(scope.root().resolve(FileInternalRuntimeBackend.MARKER), "STARTED".getBytes(StandardCharsets.UTF_8));
             expect(IOException.class, () -> open(scope)); expect(IOException.class, () -> provision(scope));
-            assertEquals("STARTED", Files.readString(scope.root().resolve(FileInternalRuntimeBackend.MARKER)));
+            assertEquals("STARTED", new String(Files.readAllBytes(scope.root().resolve(FileInternalRuntimeBackend.MARKER)), StandardCharsets.UTF_8));
         });
     }
     @Test public void corruptOrForeignRecordNeverAcknowledgesDefaults() throws Exception {
