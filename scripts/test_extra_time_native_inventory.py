@@ -260,7 +260,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             selected = [native.SUBHUB_PASS_SELECTORS[20], native.LARGE_FONT]
-            env = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+            env = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_ARCH": "X64", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
                    "RUNNER_TEMP": folder, "ANDROID_HOME": str(root / "sdk"),
                    "EXTRA_TIME_SELECTORS": ",".join(reversed(selected))}
             with mock.patch.dict(os.environ, env), mock.patch.object(native, "ROOT", root), mock.patch.object(sys, "platform", "linux"):
@@ -461,7 +461,7 @@ class NativePrSubsetTest(unittest.TestCase):
     def test_subset_receipt_is_explicit_and_does_not_claim_the_whole_suite_passed(self):
         with tempfile.TemporaryDirectory() as folder, self.event():
             root = Path(folder)
-            env = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+            env = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_ARCH": "X64", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
                    "RUNNER_TEMP": folder, "ANDROID_HOME": str(root / "sdk")}
             with mock.patch.dict(os.environ, env), mock.patch.object(native, "ROOT", root), mock.patch.object(sys, "platform", "linux"):
                 producer = native.Producer("subhub-pass")

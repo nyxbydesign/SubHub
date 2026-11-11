@@ -12,6 +12,12 @@ public final class DeviceRuntimeEffects {
     private final RuntimeExecution<?> runtime;
     private final DeviceContinuationScope mutations;
     private final RuntimeLease.Identity owner;
+    interface DurationObserver { void observed(DeviceComponent component, long wallMillis, long elapsedRealtimeMillis); }
+    private final AtomicReference<DurationObserver> durationObserver = new AtomicReference<>();
+    void bindDurationObserver(DurationObserver observer) {
+        if (!durationObserver.compareAndSet(null, Objects.requireNonNull(observer)))
+            throw new IllegalStateException("DEVICE duration source already bound");
+    }
     private final Runnable startupReturned;
     private final Consumer<ActiveRuntimeCoordinator.Result> readinessAcknowledged;
 
@@ -41,6 +47,11 @@ public final class DeviceRuntimeEffects {
         return mutations.admit(mutation);
     }
 
+    DeviceContinuationScope.Borrow borrowManagedMutation(RuntimeLease.Identity expected,
+            DeviceContinuationScope.Mutation mutation, boolean startup) {
+        return mutations.admitManaged(expected, mutation, startup);
+    }
+
     public final class DeviceComponent {
         private final RuntimeExecution<?>.Component registration;
         private final AtomicInteger nativeWork = new AtomicInteger();
@@ -54,6 +65,14 @@ public final class DeviceRuntimeEffects {
             finally { if (entered.get()) startupActuallyReturned(); }
         }
         public boolean normal(Runnable action) { return mutations.normal(action); }
+        /** Fresh exact admission, never ambient current-owner data resolution. Busy must be retained. */
+        public boolean durationChanged(long wallMillis, long elapsedRealtimeMillis) {
+            return normal(() -> {
+                DurationObserver observer = durationObserver.get();
+                if (observer == null) throw new IllegalStateException("DEVICE duration source is not bound");
+                observer.observed(this, wallMillis, elapsedRealtimeMillis);
+            });
+        }
         /**
          * Capture immutable config/source/frame facts under short admission at actual worker start.
          * Queued submissions, SDK callbacks and frame borrows still need their own counted owner.

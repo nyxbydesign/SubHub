@@ -1,112 +1,99 @@
 # Fixed native regression suites
 
-The `Extra-time native regression` workflow has **one** job, one paired APK build,
-and one fresh, owned API 35 x86_64 emulator. Its default `extra-time` suite remains
-21 exact ExtraTime/Tribute methods. Opting into `subhub-pass` runs those same 21
-methods plus 31 reviewed integration methods, **52 unique methods total**. The
-`remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt` method is already one
-of the default 21 and is not duplicated in the integration suite.
-The focused `reconnect` suite selects six separate scheduling and durable-queue
-contracts without rerunning either older suite.
-The focused `battery` suite selects all 24 scheduler contracts plus the real Iroh
-background responder and independent pairing-deadline regression, 26 methods total.
+## General Android CI, with native tests off by default
 
-## Select the suite without duplicate jobs
+`.github/workflows/android-ci.yml` always runs canonical unit tests, lint, the debug
+build and its exact-source qualification receipt. Its manual `native_suite` choice
+is `none` by default. Selecting a fixed native suite adds one dependent native job
+on a fresh GitHub-hosted Linux x64 runner. PRs never opt into native execution via
+labels. There are no feature-specific native workflow files.
 
-- For a PR, add `native-subhub-pass` **before** pushing its combined candidate head.
-  The existing PR opened/synchronize/reopened events use that label. Adding a label
-  alone does not trigger a run. It takes precedence over the older
-  `native-extra-time-ui` and `native-extra-time-tribute-large` subset labels.
-- For an explicit later rerun, choose `subhub-pass` in `workflow_dispatch`'s `suite`
-  input. An empty `selectors` input selects all 52. Otherwise supply only the exact
-  `Class#method` selectors from that suite, separated by commas or newlines.
-  Duplicates, class-wide selectors, wildcards, unknown methods, and the older
-  source-only methods are rejected. Do not dispatch while the same candidate's
-  automatic native job is already in flight.
-- A manual dispatch does not depend on PR labels. The default remains `extra-time`.
-  No native suite qualifies a release in place of canonical exact-source Android CI.
-- For stable-connection retry changes, add `native-reconnect` before the candidate
-  push, or select `reconnect` for a later explicit dispatch. This label takes
-  precedence over the integration and legacy subset labels in the same single job.
-  Remove it when a later candidate should use a different suite. Its six methods
-  cover coalesced retry/backoff reset, background opt-out/runtime retirement,
-  persisted SENT-command ordering and duplicate receipts, rejection, conflict,
-  and fresh consent checks. They use isolated stores and synthetic transport;
-  they do not claim a physical network disconnect/reconnect test.
+The selectable suites are `extra-time` (21 methods), `subhub-pass` (52),
+`reconnect` (6), `battery` (31), `device-pass` (54), and `dummy-preview` (22).
+These are exact inventories, not wildcards or class-wide selections. This workflow
+runs the complete selected suite; it does not accept a method-subset input.
+The retained producer's standalone selector parsing remains available to existing
+explicit callers, but does not create an automatic PR or dispatch route.
 
-- For background-sync battery changes, add `native-battery` before the candidate
-  push, or select `battery` for an explicit later dispatch. This label takes
-  precedence over `native-reconnect`, integration and legacy subset labels.
-  It covers quiet cadence, offline backoff, dirty-data delivery, foreground and
-  pairing poll ownership, opt-out, responder retention, real delayed authenticated
-  inbound exchanges, and deadline production while other queues are blocked.
-  Synthetic scheduling checks are not physical-device battery measurements.
+The native job depends on canonical success and builds the same immutable commit.
+Its failures, including absent host prerequisites, fail the overall Android CI run.
+The release gate requires the latest exact-source run to succeed and carry its own
+canonical receipt. An older green run or a native-only receipt cannot replace it.
+Native execution does not sign or publish a release. Native runs have distinct
+concurrency groups so a later canonical run cannot cancel the owned guest's teardown.
 
-Inspect the exact inventory locally without a build or emulator:
+## Preprovisioned host only
+
+The producer never installs host or SDK packages, accepts SDK licenses, changes
+KVM permissions, or falls back to unaccelerated emulation. The runner must already
+have readable/writable `/dev/kvm`, the Android command-line tools, platform-tools,
+emulator, platform 35, build-tools 35.0.0, and the Google APIs API 35 x86_64 system
+image. Their installed metadata, executables, runtime libraries and acceleration
+are checked before the paired build. Missing prerequisites stop the run. The native
+build disables Gradle SDK auto-download; ordinary Gradle/dependency resolution is
+not an offline-build guarantee.
+
+`ubuntu-24.04` names the supported host family, not a promise that every required
+emulator package or permission is provisioned. Check the current image and actual
+job admission result. The producer does not repair incomplete hosts.
+
+Read existing capabilities without executing any child command, starting ADB,
+writing files, creating an AVD or connecting to the network:
 
 ```sh
-python3 scripts/run_extra_time_native.py --check-inventory
-python3 scripts/run_extra_time_native.py --suite subhub-pass --check-inventory
-python3 scripts/run_extra_time_native.py --suite reconnect --check-inventory
-python3 scripts/run_extra_time_native.py --suite battery --check-inventory
-python3 -m unittest scripts.test_extra_time_native_inventory
+python3 scripts/run_extra_time_native.py --check-host
 ```
 
-The receipt records the suite, its complete selector set, the actual requested
-subset, remaining/not-passed methods, and the class source hashes and annotations.
-Every class retains an exact source method inventory, including explicitly listed
-older methods that are **not** admitted as selectors. An unreviewed source change
-fails before building/launching the guest. Each method still needs one exact
-instrumentation start and pass; ignored tests and assumptions are not passes.
+This prints bounded host/installed-package metadata and returns nonzero when
+requirements are missing. `runtimeVerified` remains false: it does not establish
+that KVM operations, dynamic loading, guest boot or tests pass.
 
-## Select a bounded PR recovery subset
+An explicitly selected native run retains the existing resource guards: at least
+10.2 GiB free before first boot, at least 4.5 GiB available memory, a 2560 MiB/two-core
+guest, bounded commands and a cleanup reserve. It refuses an already connected
+Android device and creates an owned fresh-data guest. Guest fixture state changes,
+exact restoration, source/APK identity, evidence bounds and owned shutdown remain
+required. This is synthetic emulator qualification, not a personal phone test.
 
-For one automatic PR job that runs only reviewed unfinished methods, add the
-`native-subset` label and exactly one block like this to the PR body **before**
-pushing the combined candidate head:
+## Manual selection on a candidate branch
 
-```text
-<!-- native-selectors:start -->
-[
-  "com.subhub.app.remote.ExtraTimeRequestAndroidTest#retainedCapabilityCannotBypassConsentWorkspaceOrRevocation"
-]
-<!-- native-selectors:end -->
+The existing Android CI workflow must be registered on the repository's default
+branch. A candidate branch may contain the new inputs without changing `master`.
+GitHub documents selecting a different workflow ref through CLI or REST. For an
+operator already authorized to dispatch a specific candidate:
+
+```sh
+gh workflow run android-ci.yml --ref <candidate-branch> -f native_suite=<fixed-suite>
 ```
 
-Keep `native-subhub-pass` as well when selecting methods from the 52-method suite.
-Use `native-reconnect` instead for a subset of the six reconnect contracts, or
-`native-battery` for a subset of the 26 battery contracts.
-The producer reads the PR event JSON directly from `GITHUB_EVENT_PATH`; body text
-is never interpolated into a shell command or workflow expression. With
-`native-subset`, the block overrides the legacy subset labels. Without that exact
-label, the block is ignored and existing selection behavior is unchanged. Manual
-`workflow_dispatch` continues to use only its own suite/selectors inputs.
+The REST equivalent addresses `android-ci.yml` with the candidate branch in `ref`
+and the selected suite in `inputs.native_suite`. The CLI also reads the requested
+ref's workflow definitions when prompting. Do not assume a browser form refreshed
+its fields after changing branches; verify the selected ref and submitted inputs.
+These are supported service interfaces, not a statement that a particular local
+CLI or account is authenticated. Do not change default-branch workflows or acquire
+credentials merely to expose the form.
 
-The block must contain a nonempty JSON array of unique, exact `Class#method`
-strings from the chosen suite. No code fences belong **inside** the marker pair.
-Missing, reordered, malformed, duplicate or additional marker comments, empty
-arrays, class-wide selectors, wildcards, non-string values, unknown methods, and
-oversized input fail before producer setup/build. Markers are case-sensitive.
-Execution follows the fixed suite order, retaining the large-font case last.
+References: [GitHub manual workflows](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
+[dispatch API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event),
+[GitHub CLI implementation](https://github.com/cli/cli/blob/trunk/pkg/cmd/workflow/run/run.go),
+[Ubuntu 24.04 installed software](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md),
+[Android SDK auto-download control](https://developer.android.com/studio/intro/update).
 
-For recovery, inspect the preserved receipt first: `notPassed` includes the
-failed method plus unstarted methods; `remaining` alone omits the attempted
-failure. Review that set against the fix and the preserved passing cases. Publish
-the exact JSON list and label before the next head push. Label/body edits alone do
-not start a run because the workflow retains its existing PR event types. Wait
-for any existing candidate run to finish; do not also dispatch or rerun a job.
+## Inspect inventories without native execution
 
-The new receipt records `selectionSource=pull_request_body`, the complete suite
-inventory, actual `selected` subset, `notSelected`, method outcomes and retained
-source/APK identities. A passing subset does **not** claim that all suite methods
-ran on that head. Inspect its exact-head receipt, required UI witnesses,
-restoration and shutdown. Prior receipts remain evidence for their original
-heads; reconcile relevant production/test/helper/build changes separately before
-reusing any passing result. Canonical exact-source Android CI is unaffected.
+```sh
+python3 scripts/run_extra_time_native.py --suite dummy-preview --check-inventory
+python3 scripts/run_extra_time_native.py --suite device-pass --check-inventory
+python3 -m unittest scripts.test_extra_time_native_inventory scripts.test_native_preprovisioned scripts.test_native_ci_policy
+```
 
-Remove `native-subset` when a later PR event should run the normal suite again.
-Leaving the label and block in place keeps selecting that subset on future heads.
-Neither a label nor native subset evidence permits a merge or release.
+The receipt records the exact suite, selected methods, source hashes, outcomes and
+remaining/not-passed methods. An ignored test or assumption is not a pass. Evidence
+keeps the original `build/reports/extra-time-native/` path and existing packaging and
+limits. Native receipts retain `workflowPath: null` and identify the producer script;
+the separate canonical receipt identifies Android CI. Passing results apply to their
+recorded source and configuration, not automatically to later changes.
 
 ## Integration suite coverage and fixture requirements
 
@@ -126,7 +113,7 @@ Neither a label nor native subset evidence permits a merge or release.
 All 31 additional selectors fit this single-guest producer. The two-device `RemoteFlowAndroidTest` and
 `RemoteActivityFlowAndroidTest`, all other source-only methods, and unbounded
 whole-app suites remain out of scope. This inventory review establishes eligibility,
-not runtime success: CI must execute each selected method and its teardown.
+not runtime success: An opted-in native run must execute each selected method and its teardown.
 
 The existing large-font ExtraTime UI method remains **last**, so no added test
 inherits its global font change. The API, controller fixture, method timeout,

@@ -90,6 +90,91 @@ public final class CommitmentManager {
         }
     }
 
+    /** Exact managed pact, retained before its first write; old start/expiry behavior is unchanged. */
+    public static ManagedPact prepareManaged(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner,
+            long minimum, long maximum, boolean hidden) {
+        if (owner == null || owner.target.kind != com.subhub.app.runtime.RuntimeTarget.Kind.DEVICE)
+            throw new SecurityException("Managed pact requires DEVICE evidence");
+        PactDuration.validate(minimum, maximum);
+        return new ManagedPact(context.getApplicationContext(), owner, minimum, maximum, hidden);
+    }
+    public static final class ManagedPact {
+        private final Context context;
+        private final com.subhub.app.runtime.RuntimeLease.Identity fullOwner;
+        private final String owner, identity = java.util.UUID.randomUUID().toString();
+        private final long minimum, maximum;
+        private final boolean hidden;
+        private SessionExpiryAlarms.ManagedAlarm alarm;
+        private boolean attempted, acknowledged, finished;
+        private ManagedPact(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner, long minimum, long maximum, boolean hidden) {
+            this.context = context; this.fullOwner = owner; this.owner = owner.session; this.minimum = minimum; this.maximum = maximum; this.hidden = hidden;
+        }
+        /** Chooses once on the admitted owner worker; never queues legacy reinforcement. */
+        public synchronized void start() {
+            requireManagedWorker(context);
+            if (attempted || finished) throw new IllegalStateException("Managed pact already attempted");
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.ARM, com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.STARTUP)) {
+                java.util.Objects.requireNonNull(permit);
+                long trigger;
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    SharedPreferences values = preferences(context);
+                    if (!owner.equals(values.getString(AppModeManager.KEY_MANAGED_DEVICE_SESSION, ""))
+                            || !values.getBoolean(AppModeManager.KEY_ARMED, false)
+                            || !values.getString("commitment_session_identity", "").isEmpty()
+                            || values.getLong(KEY_ENDS_AT, 0) != 0)
+                        throw new SecurityException("Physical pact ownership changed before start");
+                    long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
+                    RemoteSessionClock.Sample now = RemoteSessionClock.local();
+                    if (now.wall <= 0 || now.elapsed < 0) throw new IllegalStateException("Pact clock unavailable");
+                    long endsAt = Math.addExact(now.wall, duration); trigger = Math.addExact(now.elapsed, duration);
+                    alarm = SessionExpiryAlarms.prepareManaged(context, fullOwner, SessionExpiryAlarms.Kind.PACT, identity, trigger);
+                    attempted = true;
+                    if (!values.edit().putBoolean(KEY_STARTED_ONCE, true)
+                            .putLong(KEY_STARTED_AT, now.wall).putString("commitment_session_identity", identity)
+                            .putLong(KEY_ENDS_AT, endsAt).putLong(KEY_DURATION, duration)
+                            .putBoolean("commitment_hide_countdown", hidden)
+                            .putLong("commitment_range_min", minimum).putLong("commitment_range_max", maximum)
+                            .putLong("commitment_ends_elapsed", trigger).putInt("commitment_boot", now.boot)
+                            .remove(KEY_SALT).remove(KEY_HASH).commit())
+                        throw new IllegalStateException("Physical pact start was not acknowledged");
+                    RuntimeSessionIdentity.changed();
+                }
+                // Binder never runs while holding Runtime. Actual return, not posting, is the receipt.
+                alarm.install(); acknowledged = true;
+            }
+        }
+        public synchronized void finish() {
+            requireManagedWorker(context);
+            if (finished) return;
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.DISARM, com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.CLEANUP)) {
+                java.util.Objects.requireNonNull(permit);
+                if (!attempted) { finished = true; return; }
+                if (alarm != null) alarm.cancel();
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    SharedPreferences values = preferences(context);
+                    if (!owner.equals(values.getString(AppModeManager.KEY_MANAGED_DEVICE_SESSION, ""))
+                            || !identity.equals(values.getString("commitment_session_identity", "")))
+                        throw new SecurityException("Physical pact changed before managed cleanup");
+                    SharedPreferences.Editor edit = values.edit(); appendNativeStop(context, edit);
+                    if (!edit.commit()) throw new IllegalStateException("Physical pact end was not acknowledged");
+                    RuntimeSessionIdentity.changed(); acknowledged = false; finished = true;
+                }
+            }
+        }
+        public synchronized boolean startAcknowledged() { return acknowledged && !finished; }
+        public synchronized boolean finishAcknowledged() { return finished; }
+    }
+    private static void requireManagedWorker(Context context) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Managed pact requires the owner worker");
+        if (com.subhub.app.runtime.AppRuntimeGateway.current(context) == null)
+            throw new SecurityException("Managed pact requires installed physical ownership");
+    }
+
     /** Compatibility for older callers; keeper codes are no longer part of a pact. */
     public static boolean start(Context context, long requestedDurationMs, String ignoredCode) {
         return start(context, requestedDurationMs);

@@ -57,6 +57,117 @@ public final class AppModeManager {
         } finally { permit.close(); }
     }
 
+    /** Persistent ownership evidence for a managed physical start, never executable authority. */
+    public static final String KEY_MANAGED_DEVICE_SESSION = "managed_device_session_v1";
+
+    /**
+     * Retain this exact handle before managed start. Old public setters remain unchanged. The
+     * installed gateway supplies executable admission; a copied Identity cannot mint that permit.
+     */
+    public static ManagedArm prepareManaged(Context source, com.subhub.app.runtime.RuntimeLease.Identity owner) {
+        if (owner == null || owner.target.kind != com.subhub.app.runtime.RuntimeTarget.Kind.DEVICE)
+            throw new SecurityException("Managed arm requires DEVICE evidence");
+        return new ManagedArm(source.getApplicationContext(), owner);
+    }
+    public static final class ManagedArm {
+        private final Context context;
+        private final com.subhub.app.runtime.RuntimeLease.Identity fullOwner;
+        private final String owner;
+        private final SharedPreferences main, statistics;
+        private StatsRepository repository;
+        private String statisticsIdentity;
+        private StatsRepository.SessionStamp statisticsStamp;
+        private boolean attempted, acknowledged, finished;
+        private ManagedArm(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner) {
+            this.context = context; this.fullOwner = owner; this.owner = owner.session;
+            main = context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+            statistics = context.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE);
+        }
+        /** Worker + admitted STARTUP only in the backend; no OS posts or alarm side effects. */
+        public synchronized void start() {
+            requireManagedWorker(context);
+            if (attempted || finished) throw new IllegalStateException("Managed arm already attempted");
+            try (AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner, AppRuntimeGateway.Mutation.ARM, AppRuntimeGateway.ManagedDevicePhase.STARTUP)) {
+                java.util.Objects.requireNonNull(permit);
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context))
+                        throw new SecurityException("Existing remote session requires reconciliation");
+                    if (RuntimeSessionIdentity.observe(context, com.subhub.app.remote.RemoteSessionClock.local()).active
+                            || !main.getString(KEY_MANAGED_DEVICE_SESSION, "").isEmpty()
+                            || !main.getString("commitment_session_identity", "").isEmpty()
+                            || main.getLong("commitment_ends_at", 0) != 0
+                            || main.getBoolean("media_projection_session_desired", false)
+                            || !statistics.getString("active_session_identity", "").isEmpty()
+                            || statistics.getLong("active_session_start_ms", 0) != 0)
+                        throw new SecurityException("Existing physical session must not be overwritten");
+                    attempted = true;
+                    if (!main.edit().putString(KEY_MANAGED_DEVICE_SESSION, owner).putBoolean(KEY_ARMED, true).commit())
+                        throw new IllegalStateException("Physical arm was not acknowledged");
+                    RuntimeSessionIdentity.changed();
+                    repository = com.subhub.app.remote.RemoteSessionNative.statistics(context);
+                    repository.startSession();
+                    statisticsIdentity = repository.activeSessionIdentity();
+                    if (!SessionExpiryAlarms.validIdentity(statisticsIdentity)
+                            || !statistics.edit().commit())
+                        throw new IllegalStateException("Physical statistics start was not acknowledged");
+                    statisticsStamp = repository.observedSessionStamp();
+                    if (statisticsStamp == null || !statisticsStamp.isDeviceSession() || !statisticsStamp.isCurrent())
+                        throw new IllegalStateException("Physical statistics source was not established");
+                    acknowledged = true;
+                }
+            }
+        }
+        public synchronized StatsRepository.SessionStamp statisticsStamp() {
+            if (!startAcknowledged()) throw new SecurityException("Statistics start not acknowledged");
+            return statisticsStamp;
+        }
+        public synchronized String statisticsIdentity() {
+            if (!startAcknowledged()) throw new SecurityException("Statistics start not acknowledged");
+            return statisticsIdentity;
+        }
+        /**
+         * Exact owned cleanup, after capture/pact retirement. Never clears an unrelated statistics
+         * identity. An uncertain write remains a failed receipt until explicit recovery.
+         */
+        public synchronized void finish() {
+            requireManagedWorker(context);
+            if (finished) return;
+            try (AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner, AppRuntimeGateway.Mutation.DISARM, AppRuntimeGateway.ManagedDevicePhase.CLEANUP)) {
+                java.util.Objects.requireNonNull(permit);
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    if (!attempted) { finished = true; return; }
+                    if (!owner.equals(main.getString(KEY_MANAGED_DEVICE_SESSION, "")))
+                        throw new SecurityException("Managed physical ownership changed before cleanup");
+                    String active = statistics.getString("active_session_identity", "");
+                    if (!active.isEmpty() && !active.equals(statisticsIdentity))
+                        throw new SecurityException("Different or uncertain physical statistics session");
+                    if (!main.edit().putBoolean(KEY_ARMED, false).commit())
+                        throw new IllegalStateException("Physical disarm was not acknowledged");
+                    RuntimeSessionIdentity.changed();
+                    if (!active.isEmpty()) {
+                        if (repository == null) throw new IllegalStateException("Missing exact statistics owner");
+                        repository.endSession();
+                    }
+                    if (!statistics.getString("active_session_identity", "").isEmpty()
+                            || statistics.getLong("active_session_start_ms", 0) != 0
+                            || !statistics.edit().commit())
+                        throw new IllegalStateException("Physical statistics end was not acknowledged");
+                    if (!main.edit().remove(KEY_MANAGED_DEVICE_SESSION).commit())
+                        throw new IllegalStateException("Physical owner retirement was not acknowledged");
+                    acknowledged = false; finished = true;
+                }
+            }
+        }
+        public synchronized boolean startAcknowledged() { return acknowledged && !finished; }
+        public synchronized boolean finishAcknowledged() { return finished; }
+    }
+    private static void requireManagedWorker(Context context) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Managed physical writes require the owner worker");
+        if (AppRuntimeGateway.current(context) == null)
+            throw new SecurityException("Managed physical writes require the installed gateway");
+    }
+
     /** Effective runtime scope; All Apps never changes the saved checkbox selection. */
     public Set<String> getIncludedPackages() {
         migrateAppSelection();

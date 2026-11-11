@@ -100,6 +100,23 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         super.dump(fd, writer, args);
     }
     private static final String TAG = "ScreenshotA11y";
+    // Managed shell is neutral until an exact reserved attachment is delivered. Never reuse this
+    // service instance for another owner, even after the selected attachment retires.
+    private AccessibilityServiceConnection managedConnection;
+    private boolean managedShell;
+    private boolean managedOsConnected;
+    private com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess managedServiceAccess;
+    private DeviceAccessibilityAttachment managedAttachment;
+    private boolean managedModulesOnly;
+    private PopupStormManager.ServiceParticipation managedPopups;
+    private final java.util.List<OverlayController> retiredManagedOverlays = new java.util.ArrayList<>();
+    private final java.util.List<OcrTextSmutDetector> retiredManagedOcr = new java.util.ArrayList<>();
+    private final java.util.List<ScheduledExecutorService> ownedManagedWorkers = new java.util.ArrayList<>();
+    private volatile boolean managedCloseStarted, managedBackStarted, managedBackReturned;
+    private boolean managedCallbacksSealed;
+    // Compatibility teardown has no whole-resource drain proof. Retain bootstrap occupancy for
+    // this process instead of closing it on onDestroy/shutdownNow and admitting a false successor.
+    private com.subhub.app.runtime.AppRuntimeGateway.LegacyWork legacyServiceWork;
     private static final String DIAGNOSTICS_MODE = "Accessibility screenshot";
     private static volatile boolean running;
     private static volatile boolean recognitionActive;
@@ -257,11 +274,32 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private long lastWorldCacheQueryY = Long.MIN_VALUE;
     private long lastWorldCacheQueryDocument = Long.MIN_VALUE;
     private String lastWorldCacheQuerySurface = "";
-    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final android.os.Handler osMain = new android.os.Handler(android.os.Looper.getMainLooper());
+    private AccessibilityTaskQueues pipelineCallbacks = new AccessibilityTaskQueues();
+    private final AtomicInteger nativeScreenshotRequests = new AtomicInteger();
+    private final PipelineMain main = new PipelineMain();
+    private final class PipelineMain {
+        boolean post(Runnable action) { return post(action, () -> {}); }
+        boolean post(Runnable action, Runnable discarded) { return postDelayed(action, discarded, 0L); }
+        boolean postDelayed(Runnable action, long delayMillis) { return postDelayed(action, () -> {}, delayMillis); }
+        private boolean postDelayed(Runnable action, Runnable discarded, long delayMillis) {
+            DeviceAccessibilityAttachment exact = managedAttachment;
+            AccessibilityTaskQueues queues = pipelineCallbacks;
+            return queues.post(callback -> osMain.postDelayed(callback, delayMillis), action,
+                    exact == null ? action : () -> exact.postNormal(action, discarded));
+        }
+        void removeCallbacks(Runnable action) { pipelineCallbacks.removeCallbacks(action); }
+        android.os.Looper getLooper() { return osMain.getLooper(); }
+    }
+
     private final com.subhub.app.detection.PipelineIdlePolicy idlePolicy = new com.subhub.app.detection.PipelineIdlePolicy();
     private Runnable idleRetirement;
     private volatile long idleGeneration;
     private boolean powerReceiverRegistered;
+    private android.content.BroadcastReceiver managedPowerReceiver;
+    private android.content.SharedPreferences.OnSharedPreferenceChangeListener managedPreferences;
+    private boolean managedPowerAttempted, managedPreferencesAttempted;
+    private final java.util.List<DetectionEngine> failedManagedModels = new java.util.ArrayList<>();
     private static volatile ScreenshotAccessibilityService censorInstance;
     private com.subhub.app.censor.android.CensorScreenState censorScreen;
     private boolean screenSuspended;
@@ -487,7 +525,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         // Capture the observed boundary before cancellation or native retirement can delay it.
         if (changed || action != null) durationChanged();
         if (!eligible) {
-            PopupStormManager.get().syncServiceParticipation(this, false);
+            syncPopupParticipation( false);
             if (subliminalOverlay != null) subliminalOverlay.setEligible(false);
         }
         if (productQualificationRoute && Build.VERSION.SDK_INT >= 34 && productSession != null) productSession.screenStateChanged(action);
@@ -499,7 +537,21 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (eligible) screenSuspended = false;
     }
     private void durationChanged() {
-        com.subhub.app.stats.DailyDurationRecorder.changed(System.currentTimeMillis(), SystemClock.elapsedRealtime());
+        long wall = System.currentTimeMillis(), elapsed = SystemClock.elapsedRealtime();
+        DeviceAccessibilityAttachment exact = managedAttachment;
+        if (exact == null) {
+            com.subhub.app.stats.DailyDurationRecorder.changed(wall, elapsed);
+            return;
+        }
+        // Startup/end clock transitions belong to the backend lifecycle. NORMAL snapshots use
+        // its immutable session stamp and statistics identity, never a later global DEVICE owner.
+        if (!exact.active()) return;
+        if (!exact.component.durationChanged(wall, elapsed)) {
+            exact.postNormal(() -> {
+                if (!exact.component.durationChanged(wall, elapsed))
+                    throw new IllegalStateException("Nested DEVICE duration admission refused");
+            }, () -> {});
+        }
     }
 
     private void schedulePipelineInitialization() {
@@ -514,7 +566,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         idleGeneration++;
         if (idleRetirement != null) main.removeCallbacks(idleRetirement);
         OcrTextSmutDetector retiredText = screenshotText; screenshotText = null;
-        if (retiredText != null) retiredText.close(); // Its lease defers SDK close until callbacks release pixels.
+        closeOcrDetector(retiredText); // Its lease defers SDK close until callbacks release pixels.
         // The capture barrier precedes each lane's retirement and any later wake initialization.
         worker.execute(() -> {
             inferenceWorker.execute(() -> {
@@ -527,10 +579,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             });
         });
     }
+    private void closeOcrDetector(OcrTextSmutDetector retired) {
+        if (retired == null) return;
+        if (managedAttachment != null) retiredManagedOcr.add(retired);
+        retired.close();
+    }
     private void closeScreenDetector(DetectionEngine retired) {
         try { if (retired != null) retired.close(); }
         catch (RuntimeException | Error failure) {
             screenRetirementFailed = true;
+            if (managedAttachment != null) { failedManagedModels.add(retired); managedAttachment.fail(); }
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, failure);
             main.post(this::deactivateRecognition);
         }
@@ -539,18 +597,215 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        if (managedShell) {
+            if (managedServiceAccess != null) {
+                boolean reconnected = !managedOsConnected;
+                managedOsConnected = true;
+                if (reconnected && managedConnection != null && managedConnection.retired()) registerManagedSource();
+            }
+            return;
+        }
+        if (deviceInitialized) return;
+        com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess access;
+        try {
+            access = com.subhub.app.runtime.AppRuntimeGateway.services(this);
+        } catch (RuntimeException failure) {
+            managedShell = true; // Installed route failure can never revive legacy DEVICE state.
+            Log.e(TAG, "Managed Accessibility ingress unavailable", failure);
+            return;
+        }
+        if (access != null) {
+            managedShell = true;
+            managedOsConnected = true;
+            managedServiceAccess = access;
+            registerManagedSource();
+            return;
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Accessibility screenshot capture requires Android 11 or newer");
             disableSelf();
             return;
         }
+        try {
+            legacyServiceWork = com.subhub.app.runtime.AppRuntimeGateway.beginLegacyWork(this);
+        } catch (RuntimeException unavailable) {
+            managedShell = true; // Preparing/failed bootstrap is also fail-closed, not legacy null.
+            Log.e(TAG, "Legacy Accessibility admission unavailable", unavailable);
+            return;
+        }
         initializeDeviceRuntime();
     }
 
+    private void registerManagedSource() {
+        if (!managedOsConnected || managedServiceAccess == null) return;
+        com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess access = managedServiceAccess;
+        managedConnection = new AccessibilityServiceConnection(() -> this,
+                new AccessibilityServiceConnection.Port() {
+                    @Override public java.util.concurrent.CompletableFuture<Void> connected(
+                            RuntimeCaptureHost.Connection connection, RuntimeCaptureHost.Completion completion) {
+                        return access.accessibilityConnected(connection, completion);
+                    }
+                    @Override public java.util.concurrent.CompletableFuture<Void> disconnected(
+                            RuntimeCaptureHost.Connection connection) {
+                        return access.disconnected(connection);
+                    }
+                    @Override public java.util.concurrent.CompletableFuture<Void> rejected(
+                            RuntimeCaptureHost.Connection connection, RuntimeCaptureHost.Request request,
+                            RuntimeCaptureHost.Rejection reason) {
+                        return access.rejected(connection, request, reason);
+                    }
+                    @Override public java.util.concurrent.CompletableFuture<Void> drained(
+                            RuntimeCaptureHost.Connection connection, RuntimeCaptureHost.Selection selection) {
+                        return access.attachmentDrained(connection, selection);
+                    }
+                }, new AccessibilityServiceConnection.MainQueue() {
+                    @Override public boolean post(Runnable callback) { return osMain.post(callback); }
+                    @Override public boolean postDelayed(Runnable callback, long delayMillis) {
+                        return osMain.postDelayed(callback, delayMillis);
+                    }
+                }, this::managedConnectionRetired);
+        try { managedConnection.connect(); }
+        catch (RuntimeException failure) { Log.e(TAG, "Managed Accessibility connection failed", failure); }
+    }
+
+    private void managedConnectionRetired(AccessibilityServiceConnection exact) {
+        if (!managedOsConnected || managedConnection != exact || exact.occupied()) return;
+        // Old callbacks keep their old connection/attachment. This is a fresh logical generation
+        // on the same still-bound OS source, never adoption of old DEVICE state or its resources.
+        registerManagedSource();
+    }
+
+    private void registerRuntimePreferences() {
+        if (managedAttachment == null) { settings.preferences().registerOnSharedPreferenceChangeListener(listener); return; }
+        DeviceAccessibilityAttachment exact = managedAttachment;
+        managedPreferences = (preferences, key) -> exact.postNormal(
+                () -> listener.onSharedPreferenceChanged(preferences, key), () -> {});
+        managedPreferencesAttempted = true;
+        settings.preferences().registerOnSharedPreferenceChangeListener(managedPreferences);
+    }
+    private CensorLabCensorSession.Subscription observeLab(Runnable action) {
+        DeviceAccessibilityAttachment exact = managedAttachment;
+        return exact == null ? CensorLabCensorSession.observe(() -> main.post(action))
+                : CensorLabCensorSession.observe(() -> exact.postNormal(action, () -> {}));
+    }
+
+    private PopupStormManager popupManager() {
+        return managedPopups == null ? PopupStormManager.get() : managedPopups.manager();
+    }
+    private void syncPopupParticipation(boolean eligible) {
+        if (managedPopups == null) PopupStormManager.get().syncServiceParticipation(this, eligible);
+        else managedPopups.setEligible(eligible);
+    }
+
+    public RuntimeCaptureHost.Attachment prepareDeviceAttachment(RuntimeCaptureHost.DeviceRequest request) {
+        if (request.connection.accessibility().service() != this) throw new SecurityException("Foreign Accessibility host");
+        return DeviceAccessibilityAttachment.prepare(request);
+    }
+    void attachManagedDevice(DeviceAccessibilityAttachment exact) {
+        if (managedAttachment != null && managedAttachment != exact || deviceInitialized)
+            throw new SecurityException("Accessibility service still owns an earlier pipeline");
+        if (exact.request().plan.capturesPixels() && Build.VERSION.SDK_INT < 30
+                || exact.request().connection.accessibility().service() != this)
+            throw new SecurityException("Wrong screenshot source");
+        managedAttachment = exact;
+        managedModulesOnly = !exact.request().plan.capturesPixels();
+        initializeDeviceRuntime();
+    }
+    void activateManagedDevice(DeviceAccessibilityAttachment exact) {
+        if (managedAttachment != exact || exact.sealed()) return;
+        reevaluateRecognition(); reevaluateSubliminals();
+    }
+    void deliverManagedEvent(DeviceAccessibilityAttachment exact, AccessibilityEvent event) {
+        if (managedAttachment != exact || exact.sealed() || !deviceInitialized) return;
+        refreshCensorScreen(null); handleAccessibilityEvent(event);
+    }
+    void sealManagedDevice(DeviceAccessibilityAttachment exact) {
+        if (managedAttachment != exact) return;
+        running = false; recognitionActive = false; captureEpoch.invalidate();
+        if (managedPopups != null) managedPopups.seal();
+        if (hardcoreSettingsGuard != null) hardcoreSettingsGuard.seal();
+    }
+
+    void beginManagedDeviceClose(DeviceAccessibilityAttachment exact) {
+        if (managedAttachment != exact) return; // Preparation-only attachment created no resources.
+        if (managedCloseStarted) return;
+        managedCloseStarted = true;
+        if (censorInstance == this) censorInstance = null;
+        screenshotScheduler.stop();
+        main.removeCallbacks(timerTick); main.removeCallbacks(anchorTelemetry);
+        main.removeCallbacks(settledHardcoreGuardRefresh); main.removeCallbacks(settledTextRefresh);
+        main.removeCallbacks(contentTextRefresh); main.removeCallbacks(staleAccessibilityTextExpiry);
+        main.removeCallbacks(settledScrollTrace);
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        if (managedPowerAttempted) {
+            getApplicationContext().unregisterReceiver(managedPowerReceiver); managedPowerAttempted = false;
+        }
+        if (managedPreferencesAttempted) {
+            settings.preferences().unregisterOnSharedPreferenceChangeListener(managedPreferences); managedPreferencesAttempted = false;
+        }
+        if (labCensorSubscription != null) { labCensorSubscription.close(); labCensorSubscription = null; }
+        if (scrollLookup != null) scrollLookup.close();
+        stopExperimentalAnchorSampler();
+        discardPendingInference(); clearQualityBackfill(); cancelPendingTextConfirmation();
+        LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter; scenePresenter = null;
+        if (presenter != null) presenter.close();
+        if (overlay != null) { retireOverlay(overlay); overlay = null; }
+        if (productSession != null) productSession.close();
+        OcrTextSmutDetector ocr = screenshotText; screenshotText = null; closeOcrDetector(ocr);
+        if (managedPopups != null) managedPopups.closeFromFreshMainQueue();
+        if (hardcoreSettingsGuard != null) hardcoreSettingsGuard.closeFromFreshMainQueue();
+        if (subliminalOverlay != null) subliminalOverlay.close();
+    }
+
+    boolean managedDeviceResourcesDrained(DeviceAccessibilityAttachment exact) {
+        // An attachment rejected before it became this service's owner constructed no resources.
+        // Do not adopt or wait on another attachment's (or the compatibility pipeline's) state.
+        if (managedAttachment != exact) return true;
+        if (!managedCloseStarted || pipelineCallbacks.failed() || !failedManagedModels.isEmpty()) return false;
+        for (OverlayController retired : retiredManagedOverlays)
+            if (!retired.managedResourcesDrained() || !retired.nativeResourcesRetired()) return false;
+        for (OcrTextSmutDetector retired : retiredManagedOcr) if (!retired.managedResourcesDrained()) return false;
+        if (nativeScreenshotRequests.get() != 0 || pipelineCallbacks.outstanding() != 0) return false;
+        if (managedPopups != null && !managedPopups.managedResourcesDrained()) return false;
+        if (hardcoreSettingsGuard != null && !hardcoreSettingsGuard.managedResourcesDrained()) return false;
+        if (subliminalOverlay != null && !subliminalOverlay.managedResourcesDrained()) return false;
+        if (productSession != null && !productSession.managedResourcesDrained()) return false;
+        if (!managedBackStarted) {
+            managedBackStarted = true;
+            Runnable dispose = () -> {
+              try { exact.cleanup(() -> {
+                if (Build.VERSION.SDK_INT >= 29 && gpuBitmapPreparer != null) { gpuBitmapPreparer.close(); gpuBitmapPreparer = null; }
+                if (detector != null) { detector.close(); detector = null; }
+                if (fastDetector != null) { fastDetector.close(); fastDetector = null; }
+                if (motionEstimator != null) { motionEstimator.close(); motionEstimator = null; }
+                if (preparedFrameRecorder != null) { preparedFrameRecorder.close(); preparedFrameRecorder = null; }
+                if (chromeGeometryProbe != null) { chromeGeometryProbe.close(); chromeGeometryProbe = null; }
+                qualityBackfillRunner.close();
+                managedBackReturned = true;
+              }); } catch (RuntimeException | Error uncertain) {
+                exact.fail(); // FutureTask may swallow the exception; failed retirement stays owned.
+                throw uncertain;
+              }
+            };
+            // GPU resources must retire on their actual capture worker after all borrowers return.
+            if (worker == null) dispose.run(); else worker.execute(dispose);
+            return false;
+        }
+        if (!managedBackReturned || pipelineCallbacks.outstanding() != 0) return false;
+        if (!managedCallbacksSealed) {
+            managedCallbacksSealed = true; pipelineCallbacks.seal(() -> {});
+            for (ScheduledExecutorService lane : ownedManagedWorkers) lane.shutdown();
+        }
+        if (!pipelineCallbacks.drained()) return false;
+        for (ScheduledExecutorService lane : ownedManagedWorkers) if (!lane.isTerminated()) return false;
+        return true;
+    }
+
     /** Inactive integration seam: the future gateway selects this DEVICE path explicitly. */
-    @RequiresApi(Build.VERSION_CODES.R)
     private void initializeDeviceRuntime() {
         if (deviceInitialized) return;
+        if (!managedModulesOnly && Build.VERSION.SDK_INT < 30)
+            throw new IllegalStateException("Screenshot capture requires API30");
         // Keep partial construction owned by this branch, never fall through into INTERNAL.
         deviceInitialized = true;
         tapTracker = CensorTapTracker.shared();
@@ -564,19 +819,54 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         powerFilter.addAction(android.content.Intent.ACTION_SCREEN_OFF);
         powerFilter.addAction(android.content.Intent.ACTION_SCREEN_ON);
         powerFilter.addAction(android.content.Intent.ACTION_USER_PRESENT);
-        androidx.core.content.ContextCompat.registerReceiver(this, powerReceiver, powerFilter,
-                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
-        powerReceiverRegistered = true;
+        if (managedAttachment == null) {
+            androidx.core.content.ContextCompat.registerReceiver(this, powerReceiver, powerFilter,
+                    androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+            powerReceiverRegistered = true;
+        } else {
+            DeviceAccessibilityAttachment exact = managedAttachment;
+            managedPowerReceiver = new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                    String action = intent == null ? null : intent.getAction();
+                    exact.postNormal(() -> powerReceiver.onReceive(ScreenshotAccessibilityService.this,
+                            new android.content.Intent(action)), () -> {});
+                }
+            };
+            managedPowerAttempted = true;
+            androidx.core.content.ContextCompat.registerReceiver(getApplicationContext(), managedPowerReceiver, powerFilter,
+                    androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+        }
         stats = new StatsRepository(this);
         timers = new AppTimerManager(this);
         penance = new PenanceManager(this);
-        productQualificationRoute = ProductCensorQualification.enabled(this);
-        hardcoreSettingsGuard = new HardcoreSettingsGuard(this);
-        subliminalOverlay = new SubliminalOverlayController(this);
+        productQualificationRoute = !managedModulesOnly && ProductCensorQualification.enabled(this);
+        if (managedAttachment == null) {
+            hardcoreSettingsGuard = new HardcoreSettingsGuard(this);
+            subliminalOverlay = new SubliminalOverlayController(this);
+        } else {
+            DeviceAccessibilityAttachment exact = managedAttachment;
+            managedPopups = PopupStormManager.managedDevice(this, exact.request(), exact.component);
+            hardcoreSettingsGuard = HardcoreSettingsGuard.managedDevice(this, exact.request(), exact.component);
+            subliminalOverlay = new SubliminalOverlayController(this,
+                    new com.subhub.app.subliminal.SubliminalSettingsRepository(this),
+                    new SubliminalOverlayController.Effects() {
+                        @Override public boolean run(Runnable effect) { return exact.component.normal(effect); }
+                        @Override public void recordImpression() {
+                            stats.recordSubliminalImpression(); new AchievementManager(ScreenshotAccessibilityService.this).checkAchievements(stats.load());
+                        }
+                        @Override public boolean revoked() { return exact.sealed(); }
+                        @Override public void failed() { exact.fail(); }
+                    });
+        }
         configureAccessibilityCadence(settings.loadDetectorConfig());
+        if (managedModulesOnly) {
+            registerRuntimePreferences();
+            running = true; durationChanged(); main.post(timerTick);
+            return; // API26+ source modules only: no pixel/model/OCR/capture worker construction.
+        }
         if (productQualificationRoute && Build.VERSION.SDK_INT >= 34) {
             qualificationBoundPid = Process.myPid();
-            settings.preferences().registerOnSharedPreferenceChangeListener(listener);
+            registerRuntimePreferences();
             running = true;
             connectProductQualification();
             durationChanged();
@@ -587,7 +877,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         accessibilityText = new AccessibilityTextSmutDetector(smutTextClassifier);
         screenshotText = censorScreen.eligible() ? new OcrTextSmutDetector(smutTextClassifier) : null;
         motionEstimator = new ScrollFrameMotionEstimator();
-        settings.preferences().registerOnSharedPreferenceChangeListener(listener);
+        registerRuntimePreferences();
         running = true;
         durationChanged();
 
@@ -633,7 +923,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         main.post(this::reevaluateRecognition);
         main.post(this::scheduleIdleRetirement);
         main.post(this::reevaluateSubliminals);
-        labCensorSubscription = CensorLabCensorSession.observe(() -> main.post(() -> {
+        labCensorSubscription = observeLab(() -> {
             if (!running || labCensorSubscription == null) return;
             // Detach usage at the session boundary; Lab must not count as normal Limits time.
             usageSession.reset();
@@ -647,7 +937,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             reevaluateSubliminals();
             dwellTracker.clear();
             tapTracker.clear();
-        }));
+        });
         main.post(timerTick);
         chromeGeometryProbe = ChromeGeometryProbe.startIfArmed(this);
     }
@@ -720,20 +1010,20 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 }
             }
         });
-        labCensorSubscription = CensorLabCensorSession.observe(() -> main.post(() -> {
+        labCensorSubscription = observeLab(() -> {
             if (!running || productSession == null) return;
             usageSession.reset();
             usageForegroundPackage = "";
             dwellTracker.clear(); tapTracker.clear();
             productSession.ownershipChanged();
             syncProductParticipation(); reevaluateSubliminals();
-        }));
+        });
         productSession.request();
     }
 
     private void syncProductParticipation() {
         AppModeManager mode = new AppModeManager(this);
-        PopupStormManager.get().syncServiceParticipation(this,
+        syncPopupParticipation(
                 foregroundEffectsEligible() && foregroundLimitHandoff.effectsAllowed() && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage) && mode.shouldShowPopups(foregroundPackage));
     }
 
@@ -940,6 +1230,8 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             return;
         }
         traceCaptureStage(requestUptime, "accepted");
+        DeviceAccessibilityAttachment requestAttachment = managedAttachment;
+        boolean sdkInvocationAttempted = false;
         try {
             long requestedEpoch = captureEpoch.token();
             long requestedScrollX = cumulativeScrollX.get();
@@ -966,21 +1258,36 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 return;
             }
             long requestedDocumentEpoch = visualDocumentEpoch.get();
+            AtomicBoolean terminalReturned = new AtomicBoolean();
             TakeScreenshotCallback callback = new TakeScreenshotCallback() {
                 @Override
                 public void onSuccess(ScreenshotResult result) {
                     traceCaptureStage(requestUptime, "callback-success");
                     try {
+                        // A late native result belongs to this captured attachment, never whatever
+                        // owner the still-bound OS service may select next. Discard the SDK resource
+                        // only after its actual close returns; terminal accounting stays in finally.
+                        if (requestAttachment != null && requestAttachment.sealed()) {
+                            try { result.getHardwareBuffer().close(); }
+                            catch (RuntimeException | Error uncertain) {
+                                requestAttachment.fail();
+                                throw uncertain;
+                            }
+                            return;
+                        }
                         process(result, requestedEpoch, requestedScrollX, requestedScrollY,
                                 requestedGeneration, requestUptime,
                                 activeWindowId, requestedDocumentEpoch, requestId, requestedLabCensor);
                     } finally {
                         traceCaptureStage(requestUptime, "callback-exit");
+                        if (terminalReturned.compareAndSet(false, true)) nativeScreenshotRequests.decrementAndGet();
                     }
                 }
 
                 @Override
                 public void onFailure(int errorCode) {
+                    try {
+                    if (requestAttachment != null && requestAttachment.sealed()) return;
                     traceCaptureStage(requestUptime, "callback-failure-" + errorCode);
                     if (errorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
                         DiagnosticsRepository.failCode(
@@ -989,6 +1296,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     }
                     traceCaptureAdmission("failure", requestId, "platform-" + errorCode);
                     finishScreenshotRequest(requestId);
+                    } finally {
+                        if (terminalReturned.compareAndSet(false, true)) nativeScreenshotRequests.decrementAndGet();
+                    }
                 }
             };
             // Android 14+ can capture the foreground app window directly. Unlike a display capture,
@@ -1000,6 +1310,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 return;
             }
             traceCaptureStage(requestUptime, "dispatch");
+            // An ambiguous SDK throw is not a terminal callback. Keep this source occupied until
+            // its actual result callback returns; queued worker execution is independently counted.
+            nativeScreenshotRequests.incrementAndGet();
+            sdkInvocationAttempted = true;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                         && activeWindowId >= 0) {
@@ -1014,7 +1328,15 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 traceCaptureAdmission("dispatch", requestId, "api-return");
             }
         } catch (RuntimeException error) {
-            // A synchronous framework/foreground failure must not strand the in-flight owner.
+            if (requestAttachment != null && sdkInvocationAttempted) {
+                // Binder may have accepted this request before throwing. Neither a scheduler reset
+                // nor another capture can prove that old SDK callback/resource was never admitted.
+                // Seal and retain the exact request until a real terminal callback; no blind retry.
+                requestAttachment.requestStopAfterUncertainCapture();
+                Log.w(TAG, "Accessibility screenshot dispatch outcome uncertain", error);
+                return;
+            }
+            // Preserve compatibility recovery for legacy dispatch and proved pre-invocation failure.
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, error);
             Log.w(TAG, "Could not dispatch accessibility screenshot", error);
             traceCaptureAdmission("failure", requestId, "dispatch-exception");
@@ -2184,7 +2506,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private void scheduleImmediateQualityRefresh() {
         if (!BuildConfig.IMMEDIATE_QUALITY_EXPERIMENT
                 || !immediateQualityScheduled.compareAndSet(false, true)) return;
-        main.post(() -> Choreographer.getInstance().postFrameCallback(frameTime -> {
+        main.post(() -> postPipelineFrame(() -> {
             immediateQualityScheduled.set(false);
             LateQualityPresentation source = pendingLateQualityPresentation.get();
             DisplayedQualityBasis displayed = displayedQualityBasis;
@@ -3082,7 +3404,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                     PenanceInfraction.CENSORED_DWELL, charged, now);
         }
         if (recordNormalEffects) {
-            PopupStormManager.get().updateTrackedObjects(tracks, width, height);
+            popupManager().updateTrackedObjects(tracks, width, height);
         }
         DiagnosticsRepository.Snapshot diagnostics = DiagnosticsRepository.recordFrame(
                 DIAGNOSTICS_MODE, inferenceMs, preprocessMs, runtimeMs, postprocessMs,
@@ -3448,7 +3770,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             PenanceChargeNotifier.show(this, penance,
                     PenanceInfraction.CENSORED_DWELL, charged, now);
         }
-        PopupStormManager.get().updateTrackedObjects(tracks, width, height);
+        popupManager().updateTrackedObjects(tracks, width, height);
     }
 
     static long captureDelayMs(DetectorConfig config) {
@@ -3587,9 +3909,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 ? FAST_INFERENCE_RESOLUTION : configured;
     }
 
-    private static ScheduledExecutorService newScheduledWorker(
+    private ScheduledExecutorService newScheduledWorker(
             String name, int androidPriority) {
-        return Executors.newSingleThreadScheduledExecutor(runnable -> {
+        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(() -> {
                 Process.setThreadPriority(androidPriority);
                 runnable.run();
@@ -3597,6 +3919,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             thread.setDaemon(true);
             return thread;
         });
+        if (managedAttachment == null) return pipelineCallbacks.wrapLegacy(executor);
+        ScheduledExecutorService lane = pipelineCallbacks.wrap(executor);
+        ownedManagedWorkers.add(lane);
+        return lane;
     }
 
     static boolean shouldEstimateFrameMotion(
@@ -5209,6 +5535,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     private void reloadSettings() {
         if (settings == null) return;
+        if (managedModulesOnly) {
+            popupManager().reloadSettings(this);
+            if (subliminalOverlay != null) subliminalOverlay.updateSettings();
+            reevaluateRecognition(); reevaluateSubliminals(); durationChanged(); return;
+        }
         if (productQualificationRoute) {
             reloadProductSettings(null);
             return;
@@ -5248,7 +5579,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             scheduleQualityDetectorInitialization(config);
         }
         if (tracker != null) tracker.setConfig(accessibilityTrackerConfig(config));
-        PopupStormManager.get().reloadSettings(this);
+        popupManager().reloadSettings(this);
         main.post(() -> {
             if (subliminalOverlay != null) subliminalOverlay.updateSettings();
             reevaluateRecognition();
@@ -5279,7 +5610,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             if (Build.VERSION.SDK_INT < 34 || !running || productSession == null) return;
             configureAccessibilityCadence(settings.loadDetectorConfig());
             if (key == null) productSession.ownershipChanged(); else productSession.settingsChanged(key);
-            PopupStormManager.get().reloadSettings(this);
+            popupManager().reloadSettings(this);
             if (subliminalOverlay != null) subliminalOverlay.updateSettings();
             syncProductParticipation(); reevaluateSubliminals();
             durationChanged();
@@ -5288,6 +5619,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (managedShell) {
+            AccessibilityServiceConnection exact = managedConnection;
+            try { if (exact != null) exact.event(event); }
+            catch (RuntimeException failure) { Log.e(TAG, "Managed Accessibility event failed", failure); }
+            return;
+        }
         if (!deviceInitialized) return;
         try {
             refreshCensorScreen(null);
@@ -5557,6 +5894,13 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     private void handleAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
+        if (managedModulesOnly) {
+            long now = System.currentTimeMillis();
+            syncForegroundFromActiveRoot(now); accountForegroundUsage(now); enforceForegroundLimit(now);
+            reevaluateRecognition(); reevaluateSubliminals(); refreshHardcoreSettingsGuard();
+            if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_CLICKED) recordCensoredTap(event, foregroundPackage);
+            return;
+        }
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             // Event packages can describe notification overlays or stale windows. Only a live
@@ -5878,7 +6222,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         }
         if (overlay != null) overlay.clear();
         reevaluateSubliminals();
-        PopupStormManager.get().updateDetections(Collections.emptyList());
+        popupManager().updateDetections(Collections.emptyList());
         if (enforceForegroundLimit(System.currentTimeMillis())) return;
         if (!productQualificationRoute) reevaluateRecognition();
     }
@@ -6041,7 +6385,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (!usageLimitHandoff.accountingAllowed()) return true;
         deactivateRecognition();
         reevaluateSubliminals();
-        PopupStormManager.get().syncServiceParticipation(this, false);
+        syncPopupParticipation( false);
         boolean repeated = blockedPackage.equals(lastBlockedPackage)
                 && nowMillis - lastBlockedAtMillis < 3_000L;
         lastBlockedPackage = blockedPackage;
@@ -6078,8 +6422,14 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private void reevaluateRecognition() {
         if (!running || settings == null) return;
         refreshCensorScreen(null);
+        if (managedModulesOnly) {
+            boolean eligible = foregroundEffectsEligible() && foregroundLimitHandoff.effectsAllowed()
+                    && !HardcoreSettingsGuard.isSettingsPackage(foregroundPackage)
+                    && new AppModeManager(this).shouldShowPopups(foregroundPackage);
+            syncPopupParticipation(eligible); return;
+        }
         if (!censorScreen.eligible()) {
-            PopupStormManager.get().syncServiceParticipation(this, false);
+            syncPopupParticipation( false);
             if (subliminalOverlay != null) subliminalOverlay.setEligible(false);
             return;
         }
@@ -6109,7 +6459,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 + " settingsPackage=" + settingsPackage);
         if (shouldRun && !recognitionActive) activateRecognition();
         else if (!shouldRun && recognitionActive) deactivateRecognition();
-        PopupStormManager.get().syncServiceParticipation(this,
+        syncPopupParticipation(
                 live != null && live.packageName.equals(foregroundPackage) && censorScreen.eligible()
                         && foregroundLimitHandoff.effectsAllowed() && !settingsPackage && appMode.shouldShowPopups(foregroundPackage));
     }
@@ -6322,8 +6672,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             firstOverlayReported.set(false);
             lastFastOverlayGeneration = Long.MIN_VALUE;
             resetScrollCompensation();
-            overlay = new OverlayController(
-                    this, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
+            if (managedAttachment == null) {
+                overlay = new OverlayController(this, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
+            } else {
+                DeviceAccessibilityAttachment exact = managedAttachment;
+                ScheduledExecutorService artwork = newScheduledWorker("SubHub-censor-artwork", Process.THREAD_PRIORITY_BACKGROUND);
+                com.subhub.app.overlay.LegacyRenderDependencies dependencies =
+                        com.subhub.app.overlay.LegacyRenderDependencies.managedDevice(exact.request(), exact.component,
+                                settings, new com.subhub.app.capture.CustomImageManager(this), tapTracker, artwork);
+                overlay = OverlayController.managedDevice(this, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, dependencies);
+            }
             CensorAppearance appearance = settings.loadAppearance();
             overlayNeedsSourceFrame = appearance.requiresSourceFrame();
             overlay.setAppearance(appearance);
@@ -6357,18 +6715,24 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             LatestFrameBroker<PendingScenePresentation> presenter = scenePresenter;
             scenePresenter = null;
             if (presenter != null) presenter.close();
-            if (overlay != null) overlay.close();
+            if (overlay != null) retireOverlay(overlay);
             overlay = null;
             DiagnosticsRepository.fail(DIAGNOSTICS_MODE, failure);
             Log.e(TAG, "Recognition activation failed", failure);
         }
     }
 
+    private void retireOverlay(OverlayController retired) {
+        if (managedAttachment == null) { retired.close(); return; }
+        retiredManagedOverlays.add(retired); // Retain before a native attempt can throw.
+        retired.seal(); retired.closeFromFreshMainQueue();
+    }
+
     private void deactivateRecognition() {
         if (productQualificationRoute) {
             if (Build.VERSION.SDK_INT >= 34 && productSession != null) productSession.stop();
             recognitionActive = false;
-            PopupStormManager.get().updateDetections(Collections.emptyList());
+            popupManager().updateDetections(Collections.emptyList());
             durationChanged();
             dwellTracker.clear(); tapTracker.clear();
             return;
@@ -6387,9 +6751,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         scenePresenter = null;
         if (presenter != null) presenter.close();
         DiagnosticsRepository.stop(DIAGNOSTICS_MODE);
-        if (overlay != null) overlay.close();
+        if (overlay != null) retireOverlay(overlay);
         overlay = null;
-        PopupStormManager.get().updateDetections(Collections.emptyList());
+        popupManager().updateDetections(Collections.emptyList());
         dwellTracker.clear();
         tapTracker.clear();
         resetTextSnapshots();
@@ -6427,11 +6791,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 if (!running || recognitionActive || idleGeneration != generation) return;
                 DetectionEngine oldFast = fastDetector;
                 fastDetector = null;
-                if (oldFast != null) inferenceWorker.execute(oldFast::close);
+                if (oldFast != null) inferenceWorker.execute(() -> closeScreenDetector(oldFast));
                 qualityInferenceWorker.execute(() -> {
                     if (!running || recognitionActive || idleGeneration != generation) return;
                     DetectionEngine oldQuality = detector; detector = null;
-                    if (oldQuality != null) oldQuality.close();
+                    if (oldQuality != null) closeScreenDetector(oldQuality);
                 });
             });
         };
@@ -6523,11 +6887,17 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
                 ? DiagnosticsRepository.overlayText(snapshot) : "";
     }
 
+    private boolean postPipelineFrame(Runnable action) {
+        return pipelineCallbacks.post(callback -> {
+            Choreographer.getInstance().postFrameCallback(frameTimeNanos -> callback.run());
+            return true;
+        }, action);
+    }
+
     /** Latest-only presenter: one closed scene is sampled and applied on each display tick. */
     private LatestFrameBroker<PendingScenePresentation> createScenePresenter() {
         return new LatestFrameBroker<>(
-                command -> main.post(() -> Choreographer.getInstance()
-                        .postFrameCallback(frameTimeNanos -> command.run())),
+                command -> main.post(() -> postPipelineFrame(command)),
                 PendingScenePresentation::present,
                 PendingScenePresentation::dispose,
                 1);
@@ -7076,7 +7446,23 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     }
 
     @Override
+    public boolean onUnbind(android.content.Intent intent) {
+        managedOsConnected = false;
+        AccessibilityServiceConnection exact = managedConnection;
+        try { if (exact != null) exact.disconnect(); }
+        catch (RuntimeException failure) { Log.e(TAG, "Managed Accessibility disconnect failed", failure); }
+        return super.onUnbind(intent);
+    }
+
+    @Override
     public void onDestroy() {
+        managedOsConnected = false;
+        if (managedShell) {
+            AccessibilityServiceConnection exact = managedConnection;
+            try { if (exact != null) exact.disconnect(); }
+            finally { super.onDestroy(); }
+            return; // Never clear DEVICE settings, taps, usage or popup state for a neutral shell.
+        }
         if (!deviceInitialized) {
             // Unsupported/unselected OS shells have no DEVICE state to account, stop or clear.
             super.onDestroy();
@@ -7098,7 +7484,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         if (scrollLookupWorker != null) scrollLookupWorker.shutdown();
         main.removeCallbacks(timerTick);
         deactivateRecognition();
-        PopupStormManager.get().stop();
+        popupManager().stop();
         if (settings != null) {
             settings.preferences().unregisterOnSharedPreferenceChangeListener(listener);
         }

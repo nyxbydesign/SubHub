@@ -45,6 +45,18 @@ final class DeviceContinuationScope {
         frame.borrows++;
         return new Borrow(frame);
     }
+    /** Full identity is a constraint, never authority: the exact executable frame is mandatory. */
+    Borrow admitManaged(RuntimeLease.Identity expected, Mutation mutation, boolean startup) {
+        if (!lease.identity.equals(Objects.requireNonNull(expected)))
+            throw new SecurityException("Managed DEVICE owner changed");
+        Frame frame = HELD.get();
+        Phase required = startup ? Phase.STARTUP : Phase.CLEANUP;
+        if (frame == null || frame.scope != this || !frame.inside || frame.phase != required)
+            throw new SecurityException("Missing exact managed DEVICE phase");
+        if (startup ? mutation != Mutation.START_OR_REARM : mutation != Mutation.END)
+            throw new SecurityException("Managed mutation does not match its phase");
+        return admit(mutation);
+    }
     private void held(Phase phase, Runnable action) {
         Objects.requireNonNull(action);
         Frame previous = HELD.get();

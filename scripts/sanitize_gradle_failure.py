@@ -104,7 +104,38 @@ LINT_SOURCES = {
 # Source labels are reviewed literals, not filenames copied from compiler output.
 # Cover every tracked app/src/test Java file, including pre-existing tests/helpers.
 # New/renamed files require an explicit allowlist edit; unknown paths stay unknown.
+# Fixed new production-integration labels; messages, paths and symbols remain omitted.
+JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/appmode/AppModeManager.java": "main_app_mode_manager",
+    b"app/src/main/java/com/subhub/app/appmode/ProtectionSessionManager.java": "main_protection_session_manager",
+    b"app/src/main/java/com/subhub/app/appmode/SessionExpiryAlarms.java": "main_session_expiry_alarms",
+    b"app/src/main/java/com/subhub/app/capture/ScreenCaptureManager.java": "main_screen_capture_manager",
+    b"app/src/main/java/com/subhub/app/commitment/CommitmentManager.java": "main_commitment_manager",
+    b"app/src/main/java/com/subhub/app/overlay/OwnedWindowRetirement.java": "main_owned_window_retirement",
+    b"app/src/main/java/com/subhub/app/popup/PopupStormManager.java": "main_popup_storm_manager",
+    b"app/src/main/java/com/subhub/app/runtime/AndroidDeviceBackend.java": "main_android_device_backend",
+    b"app/src/main/java/com/subhub/app/runtime/AndroidDeviceStartLifecycle.java": "main_android_device_start_lifecycle",
+    b"app/src/main/java/com/subhub/app/runtime/AndroidRuntimeFactory.java": "main_android_runtime_factory",
+    b"app/src/main/java/com/subhub/app/runtime/AppRuntimeGateway.java": "main_app_runtime_gateway",
+    b"app/src/main/java/com/subhub/app/runtime/DeviceContinuationScope.java": "main_device_continuation_scope",
+    b"app/src/main/java/com/subhub/app/runtime/DeviceRuntimeEffects.java": "main_device_runtime_effects",
+    b"app/src/main/java/com/subhub/app/runtime/InternalRuntimeOwner.java": "main_internal_runtime_owner",
+    b"app/src/main/java/com/subhub/app/security/HardcoreSettingsGuard.java": "main_hardcore_settings_guard",
+    b"app/src/main/java/com/subhub/app/service/AccessibilityServiceConnection.java": "main_accessibility_service_connection",
+    b"app/src/main/java/com/subhub/app/service/AccessibilityTaskQueues.java": "main_accessibility_task_queues",
+    b"app/src/main/java/com/subhub/app/service/DeviceAccessibilityAttachment.java": "main_device_accessibility_attachment",
+    b"app/src/main/java/com/subhub/app/service/DeviceProjectionAttachment.java": "main_device_projection_attachment",
+    b"app/src/main/java/com/subhub/app/service/LatestFrameBroker.java": "main_latest_frame_broker",
+    b"app/src/main/java/com/subhub/app/service/ManagedAccessibilitySignals.java": "main_managed_accessibility_signals",
+    b"app/src/main/java/com/subhub/app/service/ScreenCaptureService.java": "main_screen_capture_service",
+    b"app/src/main/java/com/subhub/app/service/ScreenshotAccessibilityService.java": "main_screenshot_accessibility_service",
+    b"app/src/main/java/com/subhub/app/stats/DailyDurationRecorder.java": "main_daily_duration_recorder",
+}
+
 JAVAC_SOURCES = {
+    b"app/src/test/java/com/subhub/app/service/LatestFrameBrokerAsyncTest.java": "unit_latest_frame_broker_async",
+    b"app/src/test/java/com/subhub/app/service/ManagedAccessibilitySignalsTest.java": "unit_managed_accessibility_signals",
+    b"app/src/test/java/com/subhub/app/service/AccessibilityTaskQueuesTest.java": "unit_accessibility_task_queues",
     b"app/src/test/java/com/subhub/app/FoundationTest.java": "unit_foundation",
     b"app/src/test/java/com/subhub/app/StringCapitalizationTest.java": "unit_string_capitalization",
     b"app/src/test/java/com/subhub/app/activity/ActivityDomainTest.java": "unit_activity_domain",
@@ -500,12 +531,13 @@ class Diagnostics:
         error = JAVAC_LINE.fullmatch(line)
         if not error:
             return
-        source = JAVAC_SOURCES.get(error[1])
+        sources = {**JAVAC_SOURCES, **JAVAC_MAIN_SOURCES}
+        source = sources.get(error[1])
         if source is None and JAVAC_ABSOLUTE_PATH.fullmatch(error[1]):
             # Accept a Linux checkout prefix without using or publishing it.
             # Do not normalize traversal, escapes, URLs or malformed paths.
             if not any(part in (b".", b"..") for part in error[1].split(b"/")):
-                for path, label in JAVAC_SOURCES.items():
+                for path, label in sources.items():
                     if error[1].endswith(b"/" + path):
                         source = label
                         break

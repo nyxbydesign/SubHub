@@ -2,6 +2,13 @@ name: Android CI
 
 on:
   workflow_dispatch:
+    inputs:
+      native_suite:
+        description: "Optional native suite on an already provisioned host; none runs canonical CI only"
+        required: true
+        default: none
+        type: choice
+        options: [none, extra-time, subhub-pass, reconnect, battery, device-pass, dummy-preview]
   pull_request:
     branches: [master, dev]
 
@@ -9,8 +16,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve ordinary canonical cancellation, but never cancel an opted-in guest
+  # merely because another run arrives. Its owned teardown must finish.
+  group: android-ci-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.native_suite != 'none' && github.run_id || 'canonical' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || inputs.native_suite == 'none' }}
 
 jobs:
   build:
@@ -31,7 +40,7 @@ jobs:
         env:
           RELEASE_NOTES_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace scripts.test_verify_canonical_ci scripts.test_sanitize_gradle_failure
+          python3 -m unittest scripts.test_generate_release_notes scripts.test_release_version scripts.test_release_candidate_policy scripts.test_analyze_replacement_trace scripts.test_verify_canonical_ci scripts.test_sanitize_gradle_failure scripts.test_native_ci_policy scripts.test_native_preprovisioned scripts.test_run_extra_time_native scripts.test_extra_time_native_inventory
           python3 scripts/generate_release_notes.py --tag "$RELEASE_NOTES_REF" --check-only
       - name: Test, lint, and build universal APK
         shell: bash
@@ -81,5 +90,36 @@ jobs:
         with:
           name: SubHub-universal-debug
           path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  native:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.native_suite != 'none'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      NATIVE_SUITE: ${{ inputs.native_suite }}
+      EXTRA_TIME_SELECTORS: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build paired APKs and run the selected native contracts once
+        run: python3 scripts/run_extra_time_native.py --suite "$NATIVE_SUITE"
+      - name: Retain synthetic native evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubHub-extra-time-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/reports/extra-time-native/
           if-no-files-found: error
           retention-days: 14

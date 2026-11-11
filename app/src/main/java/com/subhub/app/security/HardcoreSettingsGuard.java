@@ -35,6 +35,15 @@ public final class HardcoreSettingsGuard {
     private static final int MAX_BADGES = 4;
     private static final int MAX_CLICKABLE_ANCESTOR_DEPTH = 8;
 
+    private com.subhub.app.runtime.DeviceRuntimeEffects.DeviceComponent deviceComponent;
+    private final android.os.Handler managedMain = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final com.subhub.app.overlay.OwnedWindowRetirement managedWindows =
+            new com.subhub.app.overlay.OwnedWindowRetirement();
+    private final List<View> retiringBadges = new ArrayList<>();
+    private final List<Rect> pendingBadgeBounds = new ArrayList<>();
+    private int pendingSampleWindowId;
+    private volatile boolean managedSealed, managedClosed, managedFailed, managedWindowsClosed;
+    private final java.util.concurrent.atomic.AtomicInteger managedCallbacks = new java.util.concurrent.atomic.AtomicInteger();
     private final AccessibilityService service;
     private final Context overlayContext;
     private final WindowManager windows;
@@ -47,6 +56,53 @@ public final class HardcoreSettingsGuard {
         this.service = service;
         overlayContext = createOverlayContext(service);
         windows = overlayContext.getSystemService(WindowManager.class);
+    }
+
+    /** Construct under the exact DEVICE component's STARTUP permission. */
+    public static HardcoreSettingsGuard managedDevice(AccessibilityService host,
+            com.subhub.app.service.RuntimeCaptureHost.DeviceRequest request,
+            com.subhub.app.runtime.DeviceRuntimeEffects.DeviceComponent component) {
+        requireManagedMain();
+        if (!request.owner().equals(component.owner())) throw new SecurityException("Hardcore owner mismatch");
+        HardcoreSettingsGuard guard = new HardcoreSettingsGuard(host);
+        guard.deviceComponent = component;
+        return guard;
+    }
+
+    /** Memory-only fence. Screenshot completions still release their own resources/counts. */
+    public void seal() { managedSealed = true; }
+
+    /** Call inside real Cleanup, from a fresh main Handler dispatch outside traversal. */
+    public void closeFromFreshMainQueue() {
+        requireManagedMain();
+        if (deviceComponent == null) throw new IllegalStateException("Not a managed Hardcore guard");
+        seal();
+        if (managedClosed) return;
+        managedClosed = true;
+        retiringBadges.addAll(badges);
+        badges.clear(); guardedBounds.clear(); sampledBounds.clear(); pendingBadgeBounds.clear();
+        try {
+            for (View badge : new ArrayList<>(retiringBadges)) retireBadge(badge);
+            managedWindowsClosed = managedWindows.isEmpty();
+        } catch (RuntimeException | Error uncertain) { markManagedFailure(); throw uncertain; }
+    }
+
+    /** Actual cached receipts; no main-thread View inspection or generic sentinel. */
+    public boolean managedResourcesDrained() {
+        return deviceComponent != null && managedClosed && managedWindowsClosed && !managedFailed
+                && managedCallbacks.get() == 0 && !backgroundSampleRunning.get();
+    }
+
+    private void markManagedFailure() { managedFailed = true; managedSealed = true; }
+
+    private void retireBadge(View badge) {
+        managedWindows.removeFromFreshMainQueue(windows, badge);
+        retiringBadges.remove(badge);
+    }
+
+    private static void requireManagedMain() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Hardcore windows require main thread");
     }
 
     private static Context createOverlayContext(AccessibilityService service) {
@@ -63,6 +119,14 @@ public final class HardcoreSettingsGuard {
     }
 
     public void refresh(String foregroundPackage, AccessibilityNodeInfo root) {
+        if (deviceComponent != null) {
+            requireManagedMain();
+            if (!managedSealed) deviceComponent.normal(() -> {
+                if (!managedSealed) refreshNow(foregroundPackage, root);
+            });
+        } else refreshNow(foregroundPackage, root);
+    }
+    private void refreshNow(String foregroundPackage, AccessibilityNodeInfo root) {
         boolean hardcore = new HardcoreModeManager(service).isEnabled();
         boolean domMode = ControllerPinManager.isDomModeActive();
         // The accessibility tree can be very large in scrolling feeds. Reject every non-Settings
@@ -82,11 +146,52 @@ public final class HardcoreSettingsGuard {
         }
         List<Rect> controls = new ArrayList<>();
         collectControls(root, controls, new int[]{0});
+        if (deviceComponent != null) pendingSampleWindowId = root.getWindowId();
         updateBadges(controls);
         requestBackgroundSample(root.getWindowId());
     }
 
     public void clear() {
+        if (deviceComponent != null) {
+            requireManagedMain();
+            if (managedSealed) return;
+            pendingBadgeBounds.clear();
+            List<View> removed = new ArrayList<>(badges);
+            retiringBadges.addAll(removed);
+            badges.clear(); guardedBounds.clear(); sampledBounds.clear();
+            if (removed.isEmpty()) return;
+            managedCallbacks.incrementAndGet();
+            Runnable removal = new Runnable() {
+                @Override public void run() {
+                    boolean finished = true;
+                    try {
+                        if (managedSealed) return;
+                        if (!deviceComponent.normal(() -> {
+                            if (!managedSealed) {
+                                for (View badge : removed)
+                                    if (retiringBadges.contains(badge)) retireBadge(badge);
+                                if (retiringBadges.isEmpty()) {
+                                    List<Rect> latest = new ArrayList<>(pendingBadgeBounds);
+                                    pendingBadgeBounds.clear();
+                                    for (Rect bounds : latest) if (showBadge(bounds)) guardedBounds.add(new Rect(bounds));
+                                    requestBackgroundSample(pendingSampleWindowId);
+                                }
+                            }
+                        })) {
+                            if (managedMain.postDelayed(this, 16L)) finished = false;
+                            else markManagedFailure();
+                        }
+                    } catch (RuntimeException | Error uncertain) { markManagedFailure(); }
+                    finally { if (finished) managedCallbacks.decrementAndGet(); }
+                }
+            };
+            try {
+                if (!managedMain.post(removal)) { markManagedFailure(); managedCallbacks.decrementAndGet(); }
+            } catch (RuntimeException | Error uncertain) {
+                markManagedFailure(); managedCallbacks.decrementAndGet(); throw uncertain;
+            }
+            return;
+        }
         for (View badge : badges) {
             try { windows.removeViewImmediate(badge); } catch (RuntimeException ignored) {}
         }
@@ -125,6 +230,11 @@ public final class HardcoreSettingsGuard {
             }
         }
         clear();
+        if (deviceComponent != null && !retiringBadges.isEmpty()) {
+            // Keep only the latest desired layout; do not accumulate native windows while queued.
+            for (Rect bounds : clipped) pendingBadgeBounds.add(new Rect(bounds));
+            return;
+        }
         for (Rect bounds : clipped) {
             if (showBadge(bounds)) guardedBounds.add(new Rect(bounds));
         }
@@ -267,20 +377,29 @@ public final class HardcoreSettingsGuard {
         // Neutral fallback is visible only until the Settings-window sample arrives.
         badge.setBackground(new ColorDrawable(0xFF211E24));
         badge.setOnTouchListener((view, event) -> {
+            if (deviceComponent != null && managedSealed) return true;
             if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                Runnable blocked = () -> {
                 Log.i(TAG, "Blocked protected App Info action at " + bounds);
                 TamperTributeReporter.record(service);
                 Toast.makeText(service, R.string.hardcore_settings_blocked,
                         Toast.LENGTH_SHORT).show();
+                };
+                if (deviceComponent == null) blocked.run(); else deviceComponent.normal(blocked);
             }
             return true;
         });
 
         try {
+            if (deviceComponent != null) {
+                managedWindows.adding(badge);
+                badges.add(badge); // Keep even a failed/partial add until verified cleanup.
+            }
             windows.addView(badge, layoutParams(bounds));
-            badges.add(badge);
+            if (deviceComponent == null) badges.add(badge);
             return true;
         } catch (RuntimeException error) {
+            if (deviceComponent != null) markManagedFailure();
             Log.w(TAG, "Could not attach Hardcore Settings guard", error);
             return false;
         }
@@ -290,6 +409,8 @@ public final class HardcoreSettingsGuard {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                 || badges.isEmpty() || sameBounds(guardedBounds, sampledBounds)
                 || !backgroundSampleRunning.compareAndSet(false, true)) return;
+        if (deviceComponent != null && managedSealed) { backgroundSampleRunning.set(false); return; }
+        try {
         service.takeScreenshotOfWindow(windowId, service.getMainExecutor(),
                 new AccessibilityService.TakeScreenshotCallback() {
                     @Override public void onSuccess(AccessibilityService.ScreenshotResult result) {
@@ -299,12 +420,22 @@ public final class HardcoreSettingsGuard {
                         try {
                             wrapped = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
                             if (wrapped != null) readable = wrapped.copy(Bitmap.Config.ARGB_8888, false);
-                            if (readable != null) applySampledBackgrounds(readable);
+                            if (readable != null && !managedSealed) {
+                                if (deviceComponent == null) applySampledBackgrounds(readable);
+                                else {
+                                    Bitmap sample = readable;
+                                    deviceComponent.normal(() -> applySampledBackgrounds(sample));
+                                }
+                            }
                         } finally {
-                            if (readable != null) readable.recycle();
-                            if (wrapped != null) wrapped.recycle();
-                            buffer.close();
-                            backgroundSampleRunning.set(false);
+                            try {
+                                if (readable != null) readable.recycle();
+                                if (wrapped != null) wrapped.recycle();
+                                buffer.close();
+                            } catch (RuntimeException | Error uncertain) {
+                                if (deviceComponent != null) markManagedFailure();
+                                throw uncertain;
+                            } finally { backgroundSampleRunning.set(false); }
                         }
                     }
 
@@ -313,6 +444,11 @@ public final class HardcoreSettingsGuard {
                         Log.d(TAG, "Settings background sample unavailable: " + errorCode);
                     }
                 });
+        } catch (RuntimeException | Error uncertain) {
+            if (deviceComponent != null) markManagedFailure();
+            backgroundSampleRunning.set(false);
+            throw uncertain;
+        }
     }
 
     private void applySampledBackgrounds(Bitmap screenshot) {

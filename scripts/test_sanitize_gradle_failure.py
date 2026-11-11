@@ -238,6 +238,26 @@ class JavacDiagnosticTest(unittest.TestCase):
             self.assertTrue((ROOT / source.decode("ascii")).is_file())
             self.assertRegex(label, r"^unit_[a-z0-9_]{1,59}$")
 
+    def test_production_integration_labels_are_literals_and_do_not_publish_messages(self):
+        module = ast.parse((ROOT / "scripts/sanitize_gradle_failure.py").read_text(encoding="utf-8"))
+        declaration = next(node.value for node in module.body if isinstance(node, ast.Assign)
+                           and any(isinstance(target, ast.Name) and target.id == "JAVAC_MAIN_SOURCES"
+                                   for target in node.targets))
+        self.assertIsInstance(declaration, ast.Dict)
+        self.assertEqual(safe.JAVAC_MAIN_SOURCES, ast.literal_eval(declaration))
+        self.assertEqual(len(declaration.keys), len(safe.JAVAC_MAIN_SOURCES))
+        self.assertTrue(all(isinstance(node, ast.Constant) for node in declaration.keys + declaration.values))
+        self.assertFalse(set(safe.JAVAC_MAIN_SOURCES) & set(safe.JAVAC_SOURCES))
+        self.assertEqual(len(safe.JAVAC_MAIN_SOURCES), len(set(safe.JAVAC_MAIN_SOURCES.values())))
+        for source, label in safe.JAVAC_MAIN_SOURCES.items():
+            self.assertTrue((ROOT / source.decode("ascii")).is_file())
+            self.assertRegex(label, r"^main_[a-z0-9_]{1,59}$")
+            for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):
+                _, result = self.report(self.header(b"incompatible types: PRIVATE_TOKEN cannot be converted to OtherPRIVATE", source=prefix+source))
+                self.assertEqual([{"category": "incompatible_types", "source": label, "line": 37}], result["javac"])
+            _, result = self.report(self.header(source=b"/home/private/../"+source))
+            self.assertEqual([{"category": "cannot_find_symbol", "source": "unknown", "line": None}], result["javac"])
+
     def test_every_fixed_source_maps_from_relative_and_linux_absolute_headers(self):
         for source, label in safe.JAVAC_SOURCES.items():
             for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):

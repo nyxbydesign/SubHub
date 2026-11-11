@@ -19,6 +19,8 @@ public final class AppRuntimeGateway {
     public enum StartState { ACTIVE, CANCELLED, NOT_READY, OCCUPIED, RECOVERY_REQUIRED, FAILED }
     public enum RearmReason { BOOT, PAUSE_RESTORE, COMMITMENT, EXPIRY, RESUME }
     public enum Mutation { ARM, DISARM, SAVE_ARMED, SAVE_DISARMED, PROJECTION_STARTED, PROJECTION_STOPPED }
+    /** New managed physical lifecycle only; ordinary legacy rearm keeps its separate API. */
+    public enum ManagedDevicePhase { STARTUP, CLEANUP }
 
     /** User-selected duration/capture values; neither this object nor its fields grant authority. */
     public static final class DeviceStartSpec {
@@ -90,6 +92,12 @@ public final class AppRuntimeGateway {
                 RuntimeSessionIdentity.ComponentObservation expected, Runnable admittedLegacyAction);
         /** Short main-safe capability check only; never journal IO, waiting or acquiring RuntimeMutex. */
         DeviceMutationPermit admitDeviceMutation(Mutation mutation);
+        default DeviceMutationPermit admitManagedDeviceMutation(RuntimeLease.Identity expected,
+                Mutation mutation, ManagedDevicePhase phase) {
+            throw new DeviceAdmissionException("Managed DEVICE lifecycle authority is unavailable");
+        }
+        /** Required before installation; absent routing must fail, never revive the legacy path. */
+        default ServiceAccess serviceAccess() { throw new DeviceAdmissionException("Service ownership is not qualified"); }
     }
     private static volatile AppRuntimeGateway installed;
     static final RuntimeMutex PHYSICAL_MUTEX = new RuntimeMutex(RuntimeSessionIdentity.LOCK);
@@ -184,6 +192,87 @@ public final class AppRuntimeGateway {
         if (value != null && value.application != application) throw new SecurityException("Different physical application");
         return value;
     }
+    /** Null only before installation. Failure of an installed route never means legacy fallback. */
+    public static ServiceAccess services(Context physical) {
+        AppRuntimeGateway gateway = current(physical);
+        if (gateway == null) return null;
+        ServiceAccess result = Objects.requireNonNull(gateway.backend.serviceAccess());
+        if (result.application != gateway.application) throw new SecurityException("Different physical service access");
+        return result;
+    }
+    /**
+     * Typed service ingress onto the same serial owner lane. Receipts mean the gateway method
+     * actually returned, not that its later main delivery, native resource or service drained.
+     * The transport/selection registry obligations remain with that exact factory throughout.
+     */
+    public static final class ServiceAccess {
+        private final Application application;
+        private final com.subhub.app.service.RuntimeCaptureHost.Gateway gateway;
+        private final java.util.concurrent.Executor owner;
+        private final java.util.function.Consumer<Throwable> failureFence;
+        ServiceAccess(Application application, com.subhub.app.service.RuntimeCaptureHost.Gateway gateway,
+                java.util.concurrent.Executor owner, java.util.function.Consumer<Throwable> failureFence) {
+            this.application=Objects.requireNonNull(application); this.gateway=Objects.requireNonNull(gateway);
+            this.owner=Objects.requireNonNull(owner); this.failureFence=Objects.requireNonNull(failureFence);
+        }
+        public CompletableFuture<Void> accessibilityConnected(com.subhub.app.service.RuntimeCaptureHost.Connection connection,
+                com.subhub.app.service.RuntimeCaptureHost.Completion completion) {
+            Objects.requireNonNull(connection);Objects.requireNonNull(completion);
+            return dispatch(()->gateway.accessibilityConnected(connection,completion));
+        }
+        public CompletableFuture<Void> claimProjection(com.subhub.app.service.RuntimeCaptureHost.Connection connection,
+                String token,com.subhub.app.service.RuntimeCaptureHost.Completion completion) {
+            Objects.requireNonNull(connection);Objects.requireNonNull(token);Objects.requireNonNull(completion);
+            return dispatch(()->gateway.claimProjection(connection,token,completion));
+        }
+        public CompletableFuture<Void> disconnected(com.subhub.app.service.RuntimeCaptureHost.Connection connection) {
+            Objects.requireNonNull(connection);return dispatch(()->gateway.disconnected(connection));
+        }
+        public CompletableFuture<Void> rejected(com.subhub.app.service.RuntimeCaptureHost.Connection connection,
+                com.subhub.app.service.RuntimeCaptureHost.Request request,com.subhub.app.service.RuntimeCaptureHost.Rejection reason) {
+            Objects.requireNonNull(connection);Objects.requireNonNull(request);Objects.requireNonNull(reason);
+            return dispatch(()->gateway.rejected(connection,request,reason));
+        }
+        public CompletableFuture<Void> attachmentDrained(com.subhub.app.service.RuntimeCaptureHost.Connection connection,
+                com.subhub.app.service.RuntimeCaptureHost.Selection selection) {
+            Objects.requireNonNull(connection);Objects.requireNonNull(selection);
+            return dispatch(()->gateway.attachmentDrained(connection,selection));
+        }
+        private CompletableFuture<Void> dispatch(Runnable action) {
+            Ingress ingress=new Ingress(action);
+            Throwable failed=null;
+            try {owner.execute(ingress::run);}
+            catch(RuntimeException|Error uncertain){failed=uncertain;fence(uncertain);}
+            ingress.dispatched(failed);return ingress.result;
+        }
+        private void fence(Throwable failure) {
+            // A broken observer must not convert unknown dispatch into an admitted success.
+            try {failureFence.accept(failure);}catch(RuntimeException|Error observerFailure){
+                if(observerFailure!=failure)try{failure.addSuppressed(observerFailure);}catch(RuntimeException|Error ignored){/* Failure receipt still wins. */}
+            }
+        }
+        private final class Ingress {
+            final Runnable action;final CompletableFuture<Void> result=new CompletableFuture<>();
+            final java.util.concurrent.atomic.AtomicBoolean entered=new java.util.concurrent.atomic.AtomicBoolean();
+            boolean returned,dispatched,completed;Throwable actionFailure,dispatchFailure;
+            Ingress(Runnable action){this.action=action;result.whenComplete((v,f)->{if(result.isCancelled())fence(new java.util.concurrent.CancellationException("Service ingress response withdrawn"));});}
+            void run(){
+                if(!entered.compareAndSet(false,true))return;
+                Throwable failure=null;
+                try {action.run();}catch(RuntimeException|Error failed){failure=failed;fence(failed);}
+                synchronized(this){actionFailure=failure;returned=true;}finish();
+            }
+            void dispatched(Throwable failure){synchronized(this){dispatchFailure=failure;dispatched=true;}finish();}
+            void finish(){
+                Throwable failure;
+                synchronized(this){
+                    if(completed||!dispatched||!returned&&dispatchFailure==null)return;
+                    completed=true;failure=dispatchFailure!=null?dispatchFailure:actionFailure;
+                }
+                if(failure==null)result.complete(null);else result.completeExceptionally(failure);
+            }
+        }
+    }
     public CompletableFuture<DeviceStart> deviceStart(DeviceStartSpec specification) {
         return Objects.requireNonNull(backend.deviceStart(Objects.requireNonNull(specification)));
     }
@@ -206,4 +295,18 @@ public final class AppRuntimeGateway {
         }
         return Objects.requireNonNull(gateway.backend.admitDeviceMutation(mutation));
     }
+    /**
+     * Strict new managed lifecycle boundary. A copied identity only constrains comparison; the
+     * installed backend must find an already-held exact executable phase/owner continuation.
+     * Unlike generic old setters, managed transitions can never use preinstallation legacy work.
+     */
+    public static DeviceMutationPermit admitManagedDeviceMutation(Context physical,RuntimeLease.Identity expected,
+            Mutation mutation,ManagedDevicePhase phase) {
+        Objects.requireNonNull(expected);Objects.requireNonNull(mutation);Objects.requireNonNull(phase);
+        if(expected.target.kind!=RuntimeTarget.Kind.DEVICE)throw new DeviceAdmissionException("Not a DEVICE lifecycle owner");
+        AppRuntimeGateway gateway=current(physical);
+        if(gateway==null)throw new DeviceAdmissionException("Managed DEVICE lifecycle requires the installed owner");
+        return Objects.requireNonNull(gateway.backend.admitManagedDeviceMutation(expected,mutation,phase));
+    }
+
 }

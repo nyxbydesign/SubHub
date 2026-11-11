@@ -74,8 +74,12 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.assertLess(events.index('if (!deviceInitialized) return'), events.index('refreshCensorScreen'))
 
     def test_inactive_contract_is_not_an_installed_gateway(self):
-        self.assertNotIn('RuntimeCaptureHost.', self.projection)
-        self.assertNotIn('RuntimeCaptureHost.', self.accessibility)
+        # Services now have explicit typed consumers, but no production caller installs them.
+        for path in (ROOT / 'app/src/main/java').rglob('*.java'):
+            self.assertNotIn('AppRuntimeGateway.install(', path.read_text(), path.name)
+            self.assertNotIn('new AndroidDeviceBackend(', path.read_text(), path.name)
+        self.assertIn('prepareDeviceAttachment(', self.projection)
+        self.assertIn('prepareDeviceAttachment(', self.accessibility)
         self.assertNotRegex(self.host, r'static\s+(?:volatile\s+)?Gateway\s+')
         self.assertNotIn('getSharedPreferences(', self.host)
         self.assertNotIn('CensorTapTracker.shared()', self.host)
