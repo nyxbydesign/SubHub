@@ -27,6 +27,7 @@ public final class OwnedResourceRegistry {
     private final Object permitLock = new Object();
     private volatile Mode mode = Mode.RESERVED;
     private DrainReceipt receipt;
+    private RuntimeFenceObservation firstFence;
 
     OwnedResourceRegistry(RuntimeMutex mutex, RuntimeLease lease, Runnable requiredComponentClosed) {
         this.mutex = mutex; this.lease = lease; this.requiredComponentClosed = requiredComponentClosed;
@@ -63,13 +64,46 @@ public final class OwnedResourceRegistry {
             mode = Mode.ACTIVE; return true;
         }
     }
-    void seal() { mutex.requireHeld(); synchronized (permitLock) { mode = Mode.SEALED; } }
+    void seal() {
+        mutex.requireHeld();
+        String zone = mode == Mode.SEALED ? null : RuntimeFenceObservation.captureZoneOrUnavailable();
+        synchronized (permitLock) { sealNowLocked(zone); }
+    }
+    private void sealNowLocked(String normalizedZone) {
+        if (mode != Mode.SEALED) {
+            mode = Mode.SEALED; // A clock/allocation failure cannot prevent the actual fence.
+            firstFence = RuntimeFenceObservation.observeNowOrUnavailable(normalizedZone);
+        }
+    }
+    void seal(RuntimeFenceObservation observed) {
+        mutex.requireHeld(); synchronized (permitLock) { sealLocked(observed); }
+    }
+    private void sealLocked(RuntimeFenceObservation observed) {
+        if (mode != Mode.SEALED) {
+            mode = Mode.SEALED;
+            firstFence = observed; // Missing/invalid evidence is never replaced by later cleanup time.
+        }
+    }
+    /** Exact lease observation only; no RuntimeMutex, IO, resampling or effect authority. */
+    public RuntimeFenceObservation firstFence(RuntimeLease requested) {
+        synchronized (permitLock) {
+            if (requested != lease) throw new SecurityException("Different runtime capability");
+            if (mode != Mode.SEALED || firstFence == null || firstFence.at <= 0)
+                throw new IllegalStateException("First runtime fence clock is unavailable");
+            return firstFence;
+        }
+    }
 
     /** Immediate exact-capability fence, even while the owner worker is awaiting journal fsync. */
     public void fence(RuntimeLease requested) {
+        if (requested != lease) throw new SecurityException("Different runtime capability");
+        String zone = mode == Mode.SEALED ? null : RuntimeFenceObservation.captureZoneOrUnavailable();
+        synchronized (permitLock) { sealNowLocked(zone); }
+    }
+    void fence(RuntimeLease requested, RuntimeFenceObservation observed) {
         synchronized (permitLock) {
             if (requested != lease) throw new SecurityException("Different runtime capability");
-            mode = Mode.SEALED;
+            sealLocked(observed);
         }
     }
 
