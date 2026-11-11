@@ -10,6 +10,23 @@ import java.util.concurrent.Executor;
 import org.junit.Test;
 
 public final class RuntimeStartGatewayTest {
+    @Test public void internalProjectionReservesPixelAndModuleComponents() {
+        AndroidRuntimeFactory.InternalStartPlan plan = AndroidRuntimeFactory.InternalStartPlan.select(
+                true, com.subhub.app.settings.CaptureMethod.SCREEN_RECORDING, 35);
+        assertTrue(plan.requiresProjection());
+        assertTrue(plan.components.contains(com.subhub.app.service.InternalLegacyProjectionCapture.COMPONENT));
+        assertTrue(plan.components.contains(com.subhub.app.service.OwnedProjectionBinding.COMPONENT));
+        assertTrue(plan.components.contains(com.subhub.app.service.InternalAccessibilityModules.LIMITS));
+    }
+    @Test public void internalPlanNeverSubstitutesModuleOnlyForAnUnreadyPixelSource() {
+        assertThrows(IllegalStateException.class, () -> AndroidRuntimeFactory.InternalStartPlan.select(
+                true, com.subhub.app.settings.CaptureMethod.APP_MODE, 35));
+        AndroidRuntimeFactory.InternalStartPlan modules = AndroidRuntimeFactory.InternalStartPlan.select(
+                false, com.subhub.app.settings.CaptureMethod.SCREEN_RECORDING, 26);
+        assertEquals(com.subhub.app.service.RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES, modules.source.mode);
+        assertFalse(modules.requiresProjection());
+        assertFalse(modules.components.contains(com.subhub.app.service.OwnedProjectionBinding.COMPONENT));
+    }
     @Test public void reservedDeviceBlocksInternalBeforeAnyPrompt() {
         Fixture f = new Fixture(); RuntimeStartGateway.Admission device = f.reserve(RuntimeTarget.DEVICE);
         assertEquals(ActiveRuntimeCoordinator.Result.OK, device.result);

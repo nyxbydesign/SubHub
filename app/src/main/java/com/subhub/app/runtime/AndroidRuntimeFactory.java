@@ -20,6 +20,8 @@ import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.service.RuntimeCaptureHost;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
+import com.subhub.app.settings.CaptureMethod;
+import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.stats.OwnerObservation;
 import com.subhub.app.stats.StatsRepository;
@@ -478,22 +480,109 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         DeviceContinuationScope.Borrow held=selected.device.effects.borrowMutation(kind);return held::close;
     }
 
-    /** Same serial broker lane as native saves; missing clock/capture components cannot activate. */
-    CompletableFuture<RuntimeStartGateway.Admission> reserveInternal(InternalSubRecord expected, Set<String> components) {
+    /** The controller chooses settings, not an arbitrary component list or a fallback source. */
+    static final class InternalStartPlan {
+        final RuntimeCaptureHost.CapturePlan source;
+        final Set<String> components;
+        private InternalStartPlan(RuntimeCaptureHost.CapturePlan source, Set<String> components) {
+            this.source = source;
+            this.components = Set.copyOf(components);
+        }
+        boolean requiresProjection() { return source.mode == RuntimeCaptureHost.Mode.PROJECTION; }
+        static InternalStartPlan select(boolean censor, CaptureMethod selected, int sdkInt) {
+            Objects.requireNonNull(selected);
+            if (censor && selected != CaptureMethod.SCREEN_RECORDING)
+                throw new IllegalStateException("The selected Demo Censor source is not ready");
+            boolean projection = censor && selected == CaptureMethod.SCREEN_RECORDING;
+            Set<String> required = new java.util.LinkedHashSet<>(Set.of(
+                    InternalRuntimeOwner.ACCOUNTING_COMPONENT,
+                    com.subhub.app.service.InternalRuntimeSession.COMPONENT,
+                    InternalSessionClockBinding.COMPONENT,
+                    com.subhub.app.service.InternalAccessibilityModules.COMPONENT,
+                    com.subhub.app.service.InternalAccessibilityModules.LIMITS,
+                    com.subhub.app.service.InternalAccessibilityModules.WHISPERS,
+                    com.subhub.app.service.InternalAccessibilityModules.POPUPS));
+            if (projection) {
+                required.add(com.subhub.app.service.InternalLegacyProjectionCapture.COMPONENT);
+                required.add(com.subhub.app.service.OwnedProjectionBinding.COMPONENT);
+            }
+            RuntimeCaptureHost.Mode mode = projection
+                    ? RuntimeCaptureHost.Mode.PROJECTION : RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES;
+            return new InternalStartPlan(new RuntimeCaptureHost.CapturePlan(mode, sdkInt), required);
+        }
+    }
+    static final class InternalStartAdmission {
+        final RuntimeStartAttempt attempt;
+        final InternalStartPlan plan;
+        private final InternalSubRecord configuration;
+        private InternalStartAdmission(RuntimeStartAttempt attempt, InternalStartPlan plan, InternalSubRecord configuration) {
+            this.attempt = attempt;
+            this.plan = plan;
+            this.configuration = configuration;
+        }
+    }
+    /** Same serial broker lane as editor saves. Competing starts cannot replace a pending witness. */
+    CompletableFuture<InternalStartAdmission> reserveInternal(InternalSubRecord expected, long controllerRevision) {
         requireUsable(); retireTerminalRouting();
         if(visibility!=null)throw new SecurityException("Visibility mutation owns admission");
-        Set<String> required=Set.copyOf(components);
-        if(!required.containsAll(Set.of(InternalRuntimeOwner.ACCOUNTING_COMPONENT,
-                com.subhub.app.service.InternalRuntimeSession.COMPONENT,"internal_session_clock",
-                "internal_accessibility_modules","internal_foreground","internal_whispers","internal_popups")))
-            throw new IllegalArgumentException("Incomplete INTERNAL component plan");
-        return starts.reserve(internalAuthority.observe(data,expected),required).thenApply(admitted->{
-            if(admitted.attempt!=null){pendingAttempt=admitted.attempt;admittedCapability=new AdmittedCapability(admitted.attempt.lease(),coordinator.resources(admitted.attempt.lease()));
-                internalHandoffs.entrySet().removeIf(entry -> entry.getValue().settled);
-                internalHandoffs.put(admitted.attempt.lease(), new InternalHandoff(admitted.attempt, expected));
-                if(recoveryRequired)starts.cancel(admitted.attempt);}
-            return admitted;
+        ActiveRuntimeCoordinator.Observation existing = coordinator.observe();
+        if (existing.persisted == null || existing.quarantined || !existing.startupReconciled)
+            throw new IllegalStateException("Runtime ownership needs reconciliation");
+        if (existing.effectivePhase() != RuntimeOwnerStore.Phase.IDLE)
+            throw new IllegalStateException("Another runtime already owns capture");
+        SharedPreferences main = data.configuration.snapshotPreferences(expected, SettingsRepository.PREFERENCES_NAME);
+        InternalStartPlan plan = InternalStartPlan.select(main.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true),
+                SettingsRepository.forPreferences(main).loadCaptureMethod(), android.os.Build.VERSION.SDK_INT);
+        return starts.reserve(internalAuthority.observe(data, expected, controllerRevision), plan.components).thenApply(admitted -> {
+            requireWorker();
+            RuntimeStartAttempt attempt = admitted.attempt;
+            if (admitted.result != ActiveRuntimeCoordinator.Result.OK || attempt == null)
+                throw new IllegalStateException("Demo Start was refused: " + admitted.result);
+            pendingAttempt = attempt;
+            admittedCapability = new AdmittedCapability(attempt.lease(), coordinator.resources(attempt.lease()));
+            internalHandoffs.entrySet().removeIf(entry -> entry.getValue().settled);
+            internalHandoffs.put(attempt.lease(), new InternalHandoff(attempt, expected));
+            if (recoveryRequired) {
+                starts.cancel(attempt);
+                throw new IllegalStateException("Runtime dispatch requires recovery");
+            }
+            return new InternalStartAdmission(attempt, plan, expected);
         });
+    }
+    /** Observations are captured from Android before entering this owner-lane method. */
+    CompletableFuture<InternalAccessibilityAssembly> beginInternalStart(InternalStartAdmission admitted,
+            boolean accessibilityReady, boolean overlayReady,
+            com.subhub.app.service.InternalLimitsBinding.LocalIntervention limitsNotice,
+            com.subhub.app.censor.android.OwnedLegacyCensorData.LocalNotice assessmentNotice) {
+        requireWorker();
+        Objects.requireNonNull(admitted);
+        try {
+            requireUsable();
+            Objects.requireNonNull(limitsNotice);
+            Objects.requireNonNull(assessmentNotice);
+            NeutralAccessibility neutral = neutralAccessibility;
+            if (!accessibilityReady || neutral == null || !neutral.connection.isConnected()
+                    || neutral.connection.occupied()
+                    || admitted.plan.requiresProjection() && (!overlayReady
+                    || !approvedProjection.containsKey(admitted.attempt.lease())))
+                throw new IllegalStateException("The selected Demo permissions are unavailable");
+            return begin(admitted.attempt, owner -> owner.equals(admitted.attempt.identity())).thenApply(started -> {
+                InternalRuntimeOwner owner = assembleInternal(started, admitted.configuration);
+                try {
+                    return admitted.plan.requiresProjection()
+                            ? awaitInternalProjection(owner, limitsNotice, assessmentNotice)
+                            : awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice, null);
+                } catch (RuntimeException | Error failed) {
+                    owner.runtime.requestStop();
+                    throw failed;
+                }
+            }).whenComplete((assembled, failure) -> {
+                if (failure != null) starts.cancel(admitted.attempt);
+            });
+        } catch (RuntimeException | Error failed) {
+            starts.cancel(admitted.attempt);
+            throw failed;
+        }
     }
     CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt attempt, RuntimeStartAttempt.Permission kind) {
         requireUsable(); return starts.permission(attempt, kind);

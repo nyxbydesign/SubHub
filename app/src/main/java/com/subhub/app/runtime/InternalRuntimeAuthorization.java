@@ -20,15 +20,18 @@ final class InternalRuntimeAuthorization {
      * before its normal reservation path. Actual visibility/configuration mutation routes must
      * revoke availability before admission; this observation is not a replacement for that route.
      */
-    RuntimeAdmissionAuthority.Witness observe(InternalSubData data, InternalSubRecord expected) {
+    RuntimeAdmissionAuthority.Witness observe(InternalSubData data, InternalSubRecord expected,
+            long expectedControllerRevision) {
         requireOwnerWorker.run(); Objects.requireNonNull(data); Objects.requireNonNull(expected);
+        ControllerPinManager.InternalStartWitness controller = ControllerPinManager.captureInternalStartWitness(physical);
+        if (controller.revision != expectedControllerRevision)
+            throw new SecurityException("Demo Start belongs to an earlier controller workspace");
         RuntimeTarget target = RuntimeTarget.internal(expected.targetId);
         RuntimeAdmissionAuthority.AvailabilityPublication availability = authority.beginAvailability(target);
         if (!com.subhub.app.configuration.LegacyPackMigration.isReady(physical)
                 || !data.ownerDataReady() || !expected.visible || !expected.equals(data.acknowledged())
                 || !expected.equals(data.configuration.read()))
             throw new SecurityException("Internal profile/configuration changed before start");
-        ControllerPinManager.InternalStartWitness controller = ControllerPinManager.captureInternalStartWitness(physical);
         if (!authority.completeAvailability(availability, expected.generation, expected.configurationRevision, true))
             throw new SecurityException("Internal availability observation was superseded");
         RuntimeAdmissionAuthority.AuthorizationPublication publication = authority.beginAuthorization(target, RuntimeOrigin.LOCAL_UI);

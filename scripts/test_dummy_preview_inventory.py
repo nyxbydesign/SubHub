@@ -17,12 +17,13 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(224, len(selected))
-            self.assertEqual(224, len(set(selected)))
+            self.assertEqual(226, len(selected))
+            self.assertEqual(226, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
             self.assertEqual(27, len(inventory))
             self.assertEqual(17, len(inventory["com.subhub.app.service.AccessibilityServiceConnectionTest"]["selectedMethods"]))
             self.assertEqual(3, len(inventory["com.subhub.app.capture.ScreenCaptureTerminalPoolAndroidTest"]["selectedMethods"]))
+            self.assertEqual(5, len(inventory["com.subhub.app.service.ScreenCaptureOwnerTransportAndroidTest"]["selectedMethods"]))
             self.assertEqual(4, len(inventory["com.subhub.app.overlay.ManagedDeviceRendererAndroidTest"]["selectedMethods"]))
             self.assertEqual(3, len(inventory["com.subhub.app.overlay.LegacyRenderDependenciesAndroidTest"]["selectedMethods"]))
             self.assertEqual(7, len(inventory["com.subhub.app.runtime.DeviceStartResultRegistryAndroidTest"]["selectedMethods"]))
