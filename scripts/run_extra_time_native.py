@@ -508,15 +508,16 @@ def missing_screenshots(expected, exported):
 
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
-        "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
-        "extra-time-sub-approved", "extra-time-sub-declined", "extra-time-sub-repeated-request"],
+        "extra-time-overview-collapsed", "extra-time-overview-update-needed", "extra-time-overview-pending",
+        "extra-time-dom-review", "extra-time-overview-approved", "extra-time-overview-declined",
+        "extra-time-overview-repeated-request"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt": [
         "extra-time-dom-remote-icon"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission": [
-        "extra-time-sub-unavailable"],
+        "extra-time-overview-unavailable"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation": [
-        "extra-time-sub-support-unconfirmed"],
-    LARGE_FONT: ["extra-time-sub-large-font", "extra-time-sub-shared-only-large-font", "extra-time-dom-large-font"],
+        "extra-time-overview-support-unconfirmed"],
+    LARGE_FONT: ["extra-time-overview-large-font", "extra-time-overview-shared-only-large-font", "extra-time-dom-large-font"],
     "com.subhub.app.penance.TributeSettingsRestoreAndroidTest#rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation": [
         "tribute-rules-grouping", "tribute-spending-limits"],
 }

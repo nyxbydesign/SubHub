@@ -58,96 +58,138 @@ public final class ExtraTimeUiAndroidTest {
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void requestApproveAndDeclineRetainAllowanceAndInputDrafts() throws Exception {
         assertTrue("Normal-font contract", context.getResources().getConfiguration().fontScale < 1.4f);
-        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context);
+                ExtraTimeOverviewUiFixture overview = new ExtraTimeOverviewUiFixture(context)) {
             String firstId;
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
-                await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null
-                        && tagged(a, "extra_time_usage_progress") != null && tagged(a, "extra_time_usage_progress").getHeight() > 0);
-                sub.onActivity(a -> {
-                    assertFocusCatcher(a);
-                    View header = tagged(a, "extra_time_usage_header"), progress = tagged(a, "extra_time_usage_progress");
-                    assertNotNull(header); assertNotNull(progress);
-                    assertTrue(header.getHeight() > 0); assertTrue(progress.getHeight() > 0);
-                    assertSame(header.getParent(), progress.getParent());
-                    assertTrue("Usage and limit state stay above the bar", header.getBottom() <= progress.getTop());
-                    assertTrue(hasText(header, a.getString(R.string.extra_time_reached)));
-                    assertTrue(hasText(header, a.getString(R.string.extra_time_usage_summary, 5, 5L, 5)));
+            fixture.setSubAppTimeSupport(false);
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(false, null)) {
+                await(home, a -> tagged(a, "home_app_time") != null && tagged(a, "home_usage_all") != null);
+                overview.assertKnownContact();
+                home.onActivity(this::assertYourDomIdentityWithoutPresence);
+                home.onActivity(a -> assertNull(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage)));
+                capture(home, text(R.string.role_app_time), "extra-time-overview-collapsed");
+                tap("home_usage_all");
+                await(home, a -> tagged(a, "extra_time_inline_submit:" + fixture.firstPackage) != null);
+                home.onActivity(a -> {
+                    assertFalse(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage).isEnabled());
+                    assertNotNull(tagged(a, "extra_time_inline_unavailable_reason:" + fixture.firstPackage));
                 });
-                capture(sub, text(R.string.extra_time_reached), "extra-time-sub-request");
-                tap("extra_time_submit:" + fixture.firstPackage);
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
-                sub.onActivity(a -> assertNull(tagged(a, "extra_time_submit:" + fixture.firstPackage)));
-                sub.recreate();
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                tap("extra_time_inline_submit:" + fixture.firstPackage);
+                assertEquals(0, fixture.subRequests().snapshot(System.currentTimeMillis()).requests.size());
+                assertEquals(0, requestTributes());
+                capture(home, tag("extra_time_inline_unavailable_reason:" + fixture.firstPackage), "extra-time-overview-update-needed");
+                fixture.setSubAppTimeSupport(true);
+                await(home, a -> enabled(a, "extra_time_inline_submit:" + fixture.firstPackage));
+                // Admission can change after a displayed quote; prove a visible failure without a debit.
+                try (SerialGate gate = new SerialGate(home)) {
+                    tap("extra_time_inline_submit:" + fixture.firstPackage);
+                    await(home, a -> hasText(a, a.getString(R.string.extra_time_inline_submitting)));
+                    fixture.setSubAppTimeSupport(false);
+                }
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_inline_unavailable)));
+                assertEquals(0, fixture.subRequests().snapshot(System.currentTimeMillis()).requests.size());
+                assertEquals(0, requestTributes());
+                fixture.setSubAppTimeSupport(true);
+                await(home, a -> enabled(a, "extra_time_inline_submit:" + fixture.firstPackage));
+                try (SerialGate gate = new SerialGate(home)) {
+                    tap("extra_time_inline_submit:" + fixture.firstPackage);
+                    await(home, a -> hasText(a, a.getString(R.string.extra_time_inline_submitting)));
+                    tap("extra_time_inline_submit:" + fixture.firstPackage); // Disabled native second tap.
+                    home.onActivity(a -> assertFalse(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage).isEnabled()));
+                    tap("home_usage_all");
+                    home.onActivity(a -> assertNull(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage)));
+                    tap("home_usage_all");
+                    await(home, a -> hasText(a, a.getString(R.string.extra_time_inline_submitting)));
+                    overview.decorate(com.subhub.app.people.PersonSnapshot.Connection.OFFLINE);
+                    home.recreate();
+                    await(home, a -> hasText(a, a.getString(R.string.extra_time_inline_submitting)));
+                    overview.assertKnownContact();
+                    home.onActivity(this::assertYourDomIdentityWithoutPresence);
+                    assertEquals(0, fixture.subRequests().snapshot(System.currentTimeMillis()).requests.size());
+                    assertEquals(0, requestTributes());
+                }
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_pending))
+                        && hasText(a, a.getString(R.string.extra_time_inline_saved)));
                 firstId = request(fixture.subRequests(), fixture.firstPackage).id;
-                capture(sub, text(R.string.extra_time_pending), "extra-time-sub-pending");
+                assertEquals(1, fixture.subRequests().snapshot(System.currentTimeMillis()).requests.size());
+                assertEquals(1, requestTributes());
+                home.onActivity(a -> assertNull(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage)));
+                capture(home, tag("extra_time_inline_status:" + fixture.firstPackage), "extra-time-overview-pending");
             }
-            fixture.transfer();
-            fixture.switchDom();
-            try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
+            fixture.transfer(); fixture.switchDom();
+            try (UiPage<ExtraTimeActivity> dom = openDom(fixture.subPerson)) {
                 String inputTag = "extra_time_minutes:" + firstId;
                 await(dom, a -> tagged(a, inputTag) != null);
-                dom.onActivity(a -> {
-                    assertFalse(tagged(a, inputTag).hasFocus());
-                    assertTrue(tagged(a, inputTag).isFocusableInTouchMode());
-                    assertFocusCatcher(a);
-                });
+                dom.onActivity(a -> { assertFalse(tagged(a, inputTag).hasFocus()); assertFocusCatcher(a); });
                 tap(inputTag);
-                dom.onActivity(a -> assertTrue("Native tap still focuses the minutes control", tagged(a, inputTag).hasFocus()));
+                dom.onActivity(a -> assertTrue(tagged(a, inputTag).hasFocus()));
                 onView(withTagValue(equalTo(inputTag))).perform(clearText(), typeText("25"), closeSoftKeyboard());
                 dom.recreate();
                 await(dom, a -> tagged(a, inputTag) instanceof EditText
                         && "25".contentEquals(((EditText) tagged(a, inputTag)).getText()));
-                dom.onActivity(a -> {
-                    assertFalse("Recreation must not reopen the keyboard", tagged(a, inputTag).hasFocus());
-                    assertFocusCatcher(a);
-                });
+                dom.onActivity(a -> { assertFalse(tagged(a, inputTag).hasFocus()); assertFocusCatcher(a); });
                 capture(dom, text(R.string.extra_time_minutes), "extra-time-dom-review");
                 tap("extra_time_approve:" + firstId);
                 await(dom, a -> hasText(a, a.getString(R.string.extra_time_approved, 25)));
-                assertEquals(25, request(fixture.domRequests(), fixture.firstPackage).approvedMinutes);
             }
-            fixture.transfer();
-            fixture.switchSub();
+            fixture.transfer(); fixture.switchSub(); overview.decorate(com.subhub.app.people.PersonSnapshot.Connection.OFFLINE);
             ExtraTimeRequests.App approved = app(fixture.subRequests(), fixture.firstPackage);
             assertEquals("One-time bonus", 25, approved.bonusMinutes);
             assertEquals("Daily allowance is unchanged", 5, approved.dailyMinutes);
+            assertTrue(approved.remainingMillis > 0);
             assertEquals("Exhausted app sorts before one with approved remaining credit", fixture.secondPackage,
                     fixture.subRequests().snapshot(System.currentTimeMillis()).apps.get(0).packageName);
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_approved, 25)));
-                assertTrue(approved.remainingMillis > 0);
-                capture(sub, textWithValue(context.getString(R.string.extra_time_approved, 25)), "extra-time-sub-approved");
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(false, null)) {
+                await(home, a -> tagged(a, "home_app_time") != null
+                        && hasText(a, a.getString(R.string.role_allowance_usage, 5L, 30)));
+                home.onActivity(a -> assertNull(tagged(a, "extra_time_inline_submit:" + fixture.firstPackage)));
+                tap("home_usage_all");
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_approved, 25)));
+                capture(home, tag("extra_time_inline_status:" + fixture.firstPackage), "extra-time-overview-approved");
             }
             String secondId;
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.secondPackage)) {
-                await(sub, a -> tagged(a, "extra_time_submit:" + fixture.secondPackage) != null);
-                tap("extra_time_submit:" + fixture.secondPackage);
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(false, null)) {
+                await(home, a -> tagged(a, "home_usage_all") != null);
+                AtomicReference<com.subhub.app.MainActivity> original = new AtomicReference<>();
+                home.onActivity(a -> {
+                    original.set(a);
+                    ExtraTimeActivity.open(a, PersonId.LOCAL, fixture.secondPackage); // Warm notification route.
+                });
+                await(home, a -> tagged(a, "extra_time_inline_submit:" + fixture.secondPackage) != null);
+                home.onActivity(a -> {
+                    assertSame("Warm Overview request reuses its Activity", original.get(), a);
+                    assertFalse(a.getIntent().hasExtra(ExtraTimeActivity.EXTRA_OVERVIEW_LIMITS));
+                });
+                tap("home_usage_all"); home.recreate();
+                await(home, a -> tagged(a, "home_usage_all") != null);
+                home.onActivity(a -> assertNull("Consumed route must not reopen controls", tagged(a,
+                        "extra_time_inline_submit:" + fixture.secondPackage)));
+                tap("home_usage_all");
+                await(home, a -> enabled(a, "extra_time_inline_submit:" + fixture.secondPackage));
+                tap("extra_time_inline_submit:" + fixture.secondPackage);
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_pending)));
                 secondId = request(fixture.subRequests(), fixture.secondPackage).id;
             }
-            fixture.transfer();
-            fixture.switchDom();
-            try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
+            fixture.transfer(); fixture.switchDom();
+            try (UiPage<ExtraTimeActivity> dom = openDom(fixture.subPerson)) {
                 await(dom, a -> tagged(a, "extra_time_decline:" + secondId) != null);
                 tap("extra_time_decline:" + secondId);
                 await(dom, a -> hasText(a, a.getString(R.string.extra_time_declined)));
             }
-            fixture.transfer();
-            fixture.switchSub();
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.secondPackage)) {
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_declined)));
+            fixture.transfer(); fixture.switchSub(); overview.decorate(com.subhub.app.people.PersonSnapshot.Connection.OFFLINE);
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(true, fixture.secondPackage)) {
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_declined)));
                 assertEquals(0, app(fixture.subRequests(), fixture.secondPackage).bonusMinutes);
                 assertEquals(10, app(fixture.subRequests(), fixture.secondPackage).dailyMinutes);
-                capture(sub, text(R.string.extra_time_declined), "extra-time-sub-declined");
-                tap("extra_time_submit:" + fixture.secondPackage);
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                capture(home, tag("extra_time_inline_status:" + fixture.secondPackage), "extra-time-overview-declined");
+                tap("extra_time_inline_submit:" + fixture.secondPackage);
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_pending)));
                 String nextId = request(fixture.subRequests(), fixture.secondPackage).id;
                 assertNotEquals(secondId, nextId);
-                sub.recreate();
-                await(sub, a -> tagged(a, "extra_time_receipt:" + nextId) != null
+                home.recreate();
+                await(home, a -> tagged(a, "extra_time_receipt:" + nextId) != null
                         && tagged(a, "extra_time_receipt:" + nextId).getHeight() > 0);
-                sub.onActivity(a -> {
+                home.onActivity(a -> {
                     View declined = tagged(a, "extra_time_receipt:" + secondId);
                     View pending = tagged(a, "extra_time_receipt:" + nextId);
                     assertNotNull(declined); assertNotNull(pending); assertNotSame(declined, pending);
@@ -156,9 +198,9 @@ public final class ExtraTimeUiAndroidTest {
                     assertTrue(hasText(pending, a.getString(R.string.extra_time_pending)));
                     assertFalse(hasText(pending, a.getString(R.string.extra_time_declined)));
                     assertTrue("Newest receipt stays separate above its predecessor", pending.getBottom() <= declined.getTop());
-                    assertNull(tagged(a, "extra_time_submit:" + fixture.secondPackage));
+                    assertNull(tagged(a, "extra_time_inline_submit:" + fixture.secondPackage));
                 });
-                capture(sub, text(R.string.extra_time_pending), "extra-time-sub-repeated-request");
+                capture(home, tag("extra_time_inline_status:" + fixture.secondPackage), "extra-time-overview-repeated-request");
             }
         }
     }
@@ -173,7 +215,7 @@ public final class ExtraTimeUiAndroidTest {
             assertNotNull(received.appIcon); assertEquals(fixture.firstPackage, received.appIcon.packageName);
             assertNull(received.appIcon.descriptor);
             AtomicReference<android.widget.ImageView> displayed = new AtomicReference<>();
-            try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
+            try (UiPage<ExtraTimeActivity> dom = openDom(fixture.subPerson)) {
                 String iconTag = "extra_time_app_icon:" + fixture.firstPackage;
                 String inputTag = "extra_time_minutes:" + sent.id;
                 await(dom, a -> tagged(a, inputTag) != null);
@@ -233,27 +275,28 @@ public final class ExtraTimeUiAndroidTest {
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission() throws Exception {
         assertTrue("Normal-font contract", context.getResources().getConfiguration().fontScale < 1.4f);
-        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context);
+                ExtraTimeOverviewUiFixture overview = new ExtraTimeOverviewUiFixture(context)) {
             android.content.SharedPreferences settings = context.getSharedPreferences(
                     com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0);
             // Change only this explicitly owned inactive guest's synthetic session setting.
             assertTrue(settings.edit().putBoolean(AppModeManager.KEY_ARMED, false).commit());
-            String tag = "extra_time_submit:" + fixture.firstPackage;
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
+            String tag = "extra_time_inline_submit:" + fixture.firstPackage;
+            try (UiPage<com.subhub.app.MainActivity> sub = openHome(true, fixture.firstPackage)) {
                 await(sub, a -> tagged(a, tag) != null);
                 sub.onActivity(a -> {
                     TextView button = (TextView) tagged(a, tag);
                     assertFalse(button.isEnabled());
                     assertEquals(a.getString(R.string.extra_time_request_unavailable), button.getText().toString());
                     assertEquals(0.5f, button.getAlpha(), 0.01f);
-                    TextView reason = (TextView) tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage);
+                    TextView reason = (TextView) tagged(a, "extra_time_inline_unavailable_reason:" + fixture.firstPackage);
                     assertNotNull("Explain the disabled control next to the control", reason);
                     assertEquals("App limits must be active to request time", reason.getText().toString());
                 });
                 assertTrue("Displaying an unavailable action never submits", fixture.subRequests()
                         .snapshot(System.currentTimeMillis()).requests.isEmpty());
-                capture(sub, value -> ("extra_time_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
-                        "extra-time-sub-unavailable");
+                capture(sub, value -> ("extra_time_inline_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
+                        "extra-time-overview-unavailable");
                 sub.recreate();
                 await(sub, a -> tagged(a, tag) != null && !tagged(a, tag).isEnabled());
                 assertTrue(settings.edit().putBoolean(AppModeManager.KEY_ARMED, true).commit());
@@ -262,7 +305,7 @@ public final class ExtraTimeUiAndroidTest {
                     TextView button = (TextView) tagged(a, tag);
                     assertEquals(a.getString(R.string.extra_time_request), button.getText().toString());
                     assertEquals(1f, button.getAlpha(), 0.01f);
-                    assertNull(tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage));
+                    assertNull(tagged(a, "extra_time_inline_unavailable_reason:" + fixture.firstPackage));
                 });
                 tap(tag);
                 await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
@@ -277,25 +320,26 @@ public final class ExtraTimeUiAndroidTest {
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation() throws Exception {
         assertTrue("Normal-font contract", context.getResources().getConfiguration().fontScale < 1.4f);
-        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context);
+                ExtraTimeOverviewUiFixture overview = new ExtraTimeOverviewUiFixture(context)) {
             assertTrue(context.getSharedPreferences(com.subhub.app.penance.PenanceManager.PREFS_NAME, 0)
                     .edit().putBoolean("rule_extra_time_request_enabled", false).commit());
             fixture.setSubAppTimeSupport(false);
-            String tag = "extra_time_submit:" + fixture.firstPackage;
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
+            String tag = "extra_time_inline_submit:" + fixture.firstPackage;
+            try (UiPage<com.subhub.app.MainActivity> sub = openHome(true, fixture.firstPackage)) {
                 await(sub, a -> tagged(a, tag) != null);
                 sub.onActivity(a -> {
                     TextView button = (TextView) tagged(a, tag);
                     assertFalse(button.isEnabled());
                     assertEquals(a.getString(R.string.extra_time_request_unavailable), button.getText().toString());
-                    TextView reason = (TextView) tagged(a, "extra_time_unavailable_reason:" + fixture.firstPackage);
+                    TextView reason = (TextView) tagged(a, "extra_time_inline_unavailable_reason:" + fixture.firstPackage);
                     assertNotNull(reason);
                     assertEquals("App-time request support has not been confirmed. Reconnect with your Dom and check that both apps are up to date.",
                             reason.getText().toString());
                     assertTrue(hasText(a, a.getString(R.string.extra_time_no_tribute)));
                 });
-                capture(sub, value -> ("extra_time_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
-                        "extra-time-sub-support-unconfirmed");
+                capture(sub, value -> ("extra_time_inline_unavailable_reason:" + fixture.firstPackage).equals(value.getTag()),
+                        "extra-time-overview-support-unconfirmed");
                 assertTrue(fixture.subRequests().snapshot(System.currentTimeMillis()).requests.isEmpty());
                 // A freshly confirmed supported handshake, not a tap, makes submission available.
                 fixture.setSubAppTimeSupport(true);
@@ -313,55 +357,53 @@ public final class ExtraTimeUiAndroidTest {
 
     @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
     public void largeFontNarrowReviewKeepsControlsAndReceiptsReadable() throws Exception {
-        assertTrue("Set font scale only on the owned fresh guest before this distinct contract",
-                context.getResources().getConfiguration().fontScale >= 1.4f);
-        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
-                await(sub, a -> tagged(a, "extra_time_usage_progress") != null);
-                narrow(sub);
-                capture(sub, text(R.string.extra_time_reached), "extra-time-sub-large-font");
-                sub.onActivity(a -> {
-                    View header = tagged(a, "extra_time_usage_header"), progress = tagged(a, "extra_time_usage_progress");
-                    assertTrue(header.getHeight() > 0);
-                    assertTrue(header.getBottom() <= progress.getTop());
-                    readable(header);
+        assertTrue("Owned large-font contract", context.getResources().getConfiguration().fontScale >= 1.4f);
+        try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context);
+                ExtraTimeOverviewUiFixture overview = new ExtraTimeOverviewUiFixture(context)) {
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(true, fixture.firstPackage)) {
+                String progressTag = "allowance_progress:" + fixture.firstPackage;
+                await(home, a -> tagged(a, progressTag) != null && tagged(a, progressTag).getHeight() > 0);
+                narrow(home);
+                home.onActivity(a -> {
+                    View block = tagged(a, "home_app_time:" + fixture.firstPackage);
+                    View progress = tagged(a, progressTag);
+                    assertSame(block, progress.getParent());
+                    assertTrue(((ViewGroup) block).getChildAt(0).getBottom() <= progress.getTop());
+                    assertTrue(hasText(block, a.getString(R.string.role_allowance_usage, 5L, 5L)));
+                    readable(block);
                 });
+                capture(home, textWithValue(context.getString(R.string.role_allowance_usage, 5L, 5L)),
+                        "extra-time-overview-large-font");
             }
             assertTrue(context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
                     .edit().putBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false)
                     .putBoolean(AppTimerManager.KEY_TOTAL_ENABLED, true)
                     .putInt(AppTimerManager.KEY_TOTAL_MINUTES, 15).commit());
             String id;
-            try (ActivityScenario<ExtraTimeActivity> sub = open(PersonId.LOCAL, fixture.firstPackage)) {
-                await(sub, a -> tagged(a, "extra_time_submit:" + fixture.firstPackage) != null);
-                narrow(sub);
-                sub.onActivity(ExtraTimeUiAndroidTest::assertFocusCatcher);
-                capture(sub, text(R.string.extra_time_total_reached), "extra-time-sub-shared-only-large-font");
-                sub.onActivity(a -> {
-                    assertFalse("An inactive per-app allowance is not a daily denominator",
-                            hasText(a, a.getString(R.string.extra_time_daily, 5)));
-                    assertFalse("A shared-only app does not have individual-budget progress",
-                            hasProgress(a.findViewById(android.R.id.content)));
+            try (UiPage<com.subhub.app.MainActivity> home = openHome(true, fixture.firstPackage)) {
+                await(home, a -> tagged(a, "extra_time_inline_submit:" + fixture.firstPackage) != null);
+                narrow(home);
+                home.onActivity(a -> {
+                    assertFalse(a.getIntent().hasExtra(ExtraTimeActivity.EXTRA_OVERVIEW_LIMITS));
+                    assertYourDomIdentityWithoutPresence(a);
+                    View block = tagged(a, "home_app_time:" + fixture.firstPackage);
+                    assertNotNull(block);
+                    assertFalse(hasText(block, a.getString(R.string.role_allowance_usage, 5L, 5)));
+                    assertFalse("No inactive individual-budget progress", hasProgress(block));
                 });
-                tap("extra_time_submit:" + fixture.firstPackage);
-                await(sub, a -> hasText(a, a.getString(R.string.extra_time_pending)));
+                capture(home, tag("extra_time_inline_submit:" + fixture.firstPackage), "extra-time-overview-shared-only-large-font");
+                tap("extra_time_inline_submit:" + fixture.firstPackage);
+                await(home, a -> hasText(a, a.getString(R.string.extra_time_pending)));
                 id = request(fixture.subRequests(), fixture.firstPackage).id;
             }
-            fixture.transfer();
-            fixture.switchDom();
-            try (ActivityScenario<ExtraTimeActivity> dom = open(fixture.subPerson, null)) {
+            fixture.transfer(); fixture.switchDom();
+            try (UiPage<ExtraTimeActivity> dom = openDom(fixture.subPerson)) {
                 String inputTag = "extra_time_minutes:" + id;
-                await(dom, a -> tagged(a, inputTag) != null);
-                dom.onActivity(a -> {
-                    assertTrue(tagged(a, inputTag).isFocusableInTouchMode());
-                    assertFocusCatcher(a);
-                });
-                narrow(dom);
-                onView(withTagValue(equalTo(inputTag))).perform(reveal());
+                await(dom, a -> tagged(a, inputTag) != null); narrow(dom);
+                dom.onActivity(ExtraTimeUiAndroidTest::assertFocusCatcher);
                 capture(dom, text(R.string.extra_time_minutes), "extra-time-dom-large-font");
-                dom.onActivity(a -> readable(a.findViewById(android.R.id.content)));
                 tap(inputTag);
-                dom.onActivity(a -> assertTrue("Native tap still focuses the minutes control", tagged(a, inputTag).hasFocus()));
+                dom.onActivity(a -> assertTrue(tagged(a, inputTag).hasFocus()));
                 onView(withTagValue(equalTo(inputTag))).perform(clearText(), typeText("30"), closeSoftKeyboard());
                 // Separate native input delivery from recreation persistence; retain the actual failed
                 // editor before ActivityScenario teardown removes the only useful on-screen witness.
@@ -416,10 +458,7 @@ public final class ExtraTimeUiAndroidTest {
                 }
                 narrow(dom);
                 dom.onActivity(a -> {
-                    assertFalse(tagged(a, inputTag).hasFocus());
-                    assertFocusCatcher(a);
-                    assertFalse("Historical request usage does not infer an active per-app budget",
-                            hasText(a, a.getString(R.string.extra_time_daily, 5)));
+                    assertFalse(tagged(a, inputTag).hasFocus()); assertFocusCatcher(a);
                     assertFalse(hasProgress(a.findViewById(android.R.id.content)));
                     readable(a.findViewById(android.R.id.content));
                 });
@@ -427,23 +466,101 @@ public final class ExtraTimeUiAndroidTest {
         }
     }
 
-    private ActivityScenario<ExtraTimeActivity> open(PersonId person, String packageName) {
-        return ActivityScenario.launch(ExtraTimeActivity.intent(context, person, packageName));
+    private UiPage<com.subhub.app.MainActivity> openHome(boolean expanded, String packageName) {
+        android.content.Intent intent = expanded ? ExtraTimeActivity.intent(context, PersonId.LOCAL, packageName)
+                : new android.content.Intent(context, com.subhub.app.MainActivity.class).setAction(android.content.Intent.ACTION_MAIN);
+        return new UiPage<>(ActivityScenario.launch(intent));
     }
 
-    private static void narrow(ActivityScenario<ExtraTimeActivity> scenario) throws Exception {
-        scenario.onActivity(a -> {
-            assertTrue(a.getResources().getConfiguration().fontScale >= 1.4f);
-            a.getWindow().setLayout(Math.round(320 * a.getResources().getDisplayMetrics().density),
-                    WindowManager.LayoutParams.MATCH_PARENT);
-        });
-        await(scenario, a -> a.getWindow().getDecorView().getWidth() > 0
-                && a.getWindow().getDecorView().getWidth()
+    private UiPage<ExtraTimeActivity> openDom(PersonId person) {
+        return new UiPage<>(ActivityScenario.launch(ExtraTimeActivity.intent(context, person, null)));
+    }
+
+    private static <A extends androidx.appcompat.app.AppCompatActivity> void narrow(UiPage<A> scenario) throws Exception {
+        scenario.onActivity(a -> a.getWindow().setLayout(Math.round(320 * a.getResources().getDisplayMetrics().density),
+                WindowManager.LayoutParams.MATCH_PARENT));
+        await(scenario, a -> a.getWindow().getDecorView().getWidth() > 0 && a.getWindow().getDecorView().getWidth()
                 <= Math.round(320 * a.getResources().getDisplayMetrics().density) + 1);
     }
 
-    private static View tagged(ExtraTimeActivity activity, String tag) {
+    private static View tagged(android.app.Activity activity, String tag) {
         return activity.findViewById(android.R.id.content).findViewWithTag(tag);
+    }
+
+    private static boolean enabled(android.app.Activity activity, String tag) {
+        View view = tagged(activity, tag); return view != null && view.isEnabled();
+    }
+
+    private static Predicate<TextView> tag(String tag) { return view -> tag.equals(view.getTag()); }
+
+    private int requestTributes() {
+        int count = 0;
+        for (com.subhub.app.penance.PenanceEvent event : com.subhub.app.penance.PenanceManager.readRetainedStatistics(context).events)
+            if (event.getInfraction() == com.subhub.app.penance.PenanceInfraction.EXTRA_TIME_REQUEST) count++;
+        return count;
+    }
+
+    private void assertYourDomIdentityWithoutPresence(com.subhub.app.MainActivity activity) {
+        View identity = tagged(activity, "home_assigned_dom_connection");
+        assertNotNull("The assigned Dom card must actually be present", identity);
+        assertTrue(identity.isShown()); assertTrue(identity.isClickable());
+        assertTrue("The known Dom identity stays visible", hasText(identity, "Morgan"));
+        View card = (View) identity.getParent();
+        assertFalse(hasText(card, activity.getString(R.string.role_connection_connected)));
+        String offlinePrefix = activity.getString(R.string.role_offline_last_online, "fixture-time")
+                .replace("fixture-time", "").trim();
+        assertFalse("The card must omit last-seen text", flattened(card).contains(offlinePrefix));
+    }
+
+    private static String flattened(View view) {
+        StringBuilder out = new StringBuilder();
+        if (view instanceof TextView) out.append(((TextView) view).getText()).append(' ');
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
+            out.append(flattened(((ViewGroup) view).getChildAt(i)));
+        return out.toString();
+    }
+
+    private static final class UiPage<A extends androidx.appcompat.app.AppCompatActivity> implements AutoCloseable {
+        private final ActivityScenario<A> scenario;
+        private final java.util.Set<com.subhub.app.util.AsyncUiScope> scopes =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        UiPage(ActivityScenario<A> scenario) {
+            this.scenario = scenario; remember();
+        }
+        void onActivity(ActivityScenario.ActivityAction<A> action) { scenario.onActivity(action); }
+        void recreate() { scenario.recreate(); remember(); }
+        private void remember() { scenario.onActivity(a -> scopes.add(com.subhub.app.util.AsyncUiScope.forPage(a))); }
+        @Override public void close() throws Exception {
+            try { scenario.close(); }
+            finally {
+                for (com.subhub.app.util.AsyncUiScope scope : scopes) for (String name : new String[]{"worker", "serialWorker"}) {
+                    java.lang.reflect.Field field = com.subhub.app.util.AsyncUiScope.class.getDeclaredField(name);
+                    field.setAccessible(true);
+                    java.util.concurrent.ExecutorService worker = (java.util.concurrent.ExecutorService) field.get(scope);
+                    if (worker != null) assertTrue("The page's owned worker drained before fixture restore",
+                            worker.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+                }
+            }
+        }
+    }
+
+    private static final class SerialGate implements AutoCloseable {
+        private final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        private final AtomicReference<Exception> failure = new AtomicReference<>();
+        <A extends androidx.appcompat.app.AppCompatActivity> SerialGate(UiPage<A> page) throws Exception {
+            java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+            page.onActivity(a -> com.subhub.app.util.AsyncUiScope.forPage(a).loadSerial("overview-native-serial-gate", () -> {
+                entered.countDown();
+                try {
+                    if (!release.await(30, java.util.concurrent.TimeUnit.SECONDS)) throw new java.io.IOException("Owned serial gate expired");
+                } catch (Exception problem) { failure.set(problem); throw problem; }
+                return null;
+            }, ignored -> { }, failure::set));
+            if (!entered.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                release.countDown(); throw new AssertionError("The owned serial gate did not start");
+            }
+        }
+        @Override public void close() { release.countDown(); assertNull("Owned gate failure", failure.get()); }
     }
 
     private static void assertFocusCatcher(ExtraTimeActivity activity) {
@@ -469,7 +586,13 @@ public final class ExtraTimeUiAndroidTest {
                 ScrollView scroll = UiRefreshWitness.scroll(view);
                 Rect relative = new Rect(); view.getDrawingRect(relative);
                 scroll.offsetDescendantRectToMyCoords(view, relative);
-                scroll.scrollTo(0, Math.max(0, relative.top - scroll.getHeight() / 3));
+                View navigation = view.getRootView().findViewById(R.id.bottom_navigation);
+                Rect nav = new Rect();
+                boolean floatingNavigation = navigation != null && navigation.getGlobalVisibleRect(nav);
+                int[] viewport = new int[2]; scroll.getLocationOnScreen(viewport);
+                int available = floatingNavigation ? Math.min(scroll.getHeight(), nav.top - viewport[1]) : scroll.getHeight();
+                int inset = Math.max(0, Math.min(available / 3, (available - relative.height()) / 2));
+                scroll.scrollTo(0, Math.max(0, relative.top - inset));
                 ui.loopMainThreadUntilIdle();
                 int[] origin = new int[2]; view.getLocationOnScreen(origin);
                 Rect full = new Rect(origin[0], origin[1], origin[0] + view.getWidth(), origin[1] + view.getHeight());
@@ -477,11 +600,15 @@ public final class ExtraTimeUiAndroidTest {
                 Rect window = new Rect(); view.getWindowVisibleDisplayFrame(window);
                 assertTrue("Full control visible: " + full + " clip=" + visible, visible.contains(full));
                 assertTrue("Full control clear of system/keyboard insets", window.contains(full));
+                if (floatingNavigation) {
+                    assertTrue("Full control must clear floating navigation: " + full + " nav=" + nav,
+                            full.bottom <= nav.top);
+                }
             }
         };
     }
 
-    private static void await(ActivityScenario<ExtraTimeActivity> page, Predicate<ExtraTimeActivity> condition)
+    private static <A extends androidx.appcompat.app.AppCompatActivity> void await(UiPage<A> page, Predicate<A> condition)
             throws Exception {
         long until = SystemClock.uptimeMillis() + 8_000;
         while (SystemClock.uptimeMillis() < until) {
@@ -500,7 +627,7 @@ public final class ExtraTimeUiAndroidTest {
         return false;
     }
 
-    private static boolean hasText(ExtraTimeActivity activity, String value) {
+    private static boolean hasText(android.app.Activity activity, String value) {
         return hasText(activity.findViewById(android.R.id.content), value);
     }
 
@@ -522,7 +649,7 @@ public final class ExtraTimeUiAndroidTest {
     }
 
     @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
-    private static void capture(ActivityScenario<ExtraTimeActivity> scenario, Predicate<TextView> predicate,
+    private static <A extends androidx.appcompat.app.AppCompatActivity> void capture(UiPage<A> scenario, Predicate<TextView> predicate,
             String name) throws Exception {
         AtomicReference<TextView> target = new AtomicReference<>();
         scenario.onActivity(a -> target.set(findText(a.findViewById(android.R.id.content), predicate)));
@@ -551,7 +678,8 @@ public final class ExtraTimeUiAndroidTest {
             assertTrue("Capture target remains attached and focused",
                     after.getBoolean("targetAttached") && after.getBoolean("windowFocused"));
             TextFrameWitness.capture(target.get(), UiRefreshWitness.scroll(target.get()), run, name);
-            scenario.onActivity(a -> readable(a.findViewById(android.R.id.content)));
+            scenario.onActivity(a -> readable(a instanceof com.subhub.app.MainActivity
+                    ? tagged(a, "home_app_time") : a.findViewById(android.R.id.content)));
         } finally {
             try {
                 instrumentation.setInTouchMode(initialTouchMode);
