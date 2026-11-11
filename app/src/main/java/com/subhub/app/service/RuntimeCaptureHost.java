@@ -13,6 +13,7 @@ import com.subhub.app.penance.CensorTapTracker;
 import com.subhub.app.popup.ScopedDetectionHints;
 import com.subhub.app.runtime.RuntimeConfiguration;
 import com.subhub.app.runtime.DeviceRuntimeEffects;
+import com.subhub.app.runtime.AndroidDeviceStatisticsSource;
 import com.subhub.app.runtime.RuntimeEnvironment;
 import com.subhub.app.runtime.RuntimeExecution;
 import com.subhub.app.runtime.RuntimeLease;
@@ -194,13 +195,32 @@ public final class RuntimeCaptureHost {
     /** Existing DEVICE dependencies remain behind this factory and never enter InternalRequest. */
     public static final class DeviceRequest extends Request {
         public final DeviceRuntimeEffects effects;
+        private final AndroidDeviceStatisticsSource statistics;
         private final DeviceFactory dependencies;
+        /**
+         * Source-less transport/renderer contract only. It cannot supply physical statistics and
+         * the concrete runtime factory refuses to deliver it as a managed DEVICE attachment.
+         */
         public DeviceRequest(Connection connection, CapturePlan plan, RuntimeExecution<?> execution,
                 DeviceRuntimeEffects effects, DeviceFactory dependencies) {
             super(connection, plan, execution); this.dependencies = Objects.requireNonNull(dependencies);
             this.effects = Objects.requireNonNull(effects);
+            statistics = null;
             if (owner().target.kind != RuntimeTarget.Kind.DEVICE || !owner().equals(effects.owner()))
                 throw new SecurityException("DEVICE attachment requires exact DEVICE execution");
+        }
+        public DeviceRequest(Connection connection, CapturePlan plan, RuntimeExecution<?> execution,
+                DeviceRuntimeEffects effects, AndroidDeviceStatisticsSource statistics, DeviceFactory dependencies) {
+            super(connection, plan, execution); this.dependencies = Objects.requireNonNull(dependencies);
+            this.effects = Objects.requireNonNull(effects); this.statistics = Objects.requireNonNull(statistics);
+            if (owner().target.kind != RuntimeTarget.Kind.DEVICE || !owner().equals(effects.owner()))
+                throw new SecurityException("DEVICE attachment requires exact DEVICE execution");
+            statistics.requireOwner(owner());
+        }
+        /** No lookup or fallback to the device-global current stamp. */
+        public AndroidDeviceStatisticsSource requireStatisticsSource() {
+            if (statistics == null) throw new SecurityException("DEVICE statistics source was not supplied");
+            return statistics;
         }
         @Override protected Attachment prepareAttachment() { return dependencies.prepare(this); }
     }

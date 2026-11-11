@@ -131,7 +131,7 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
                         : RuntimeCaptureHost.Mode.ACCESSIBILITY_DISPLAY;
                 RuntimeCaptureHost.CapturePlan selected = new RuntimeCaptureHost.CapturePlan(mode, config.sdkInt);
                 factory.awaitAccessibility(exact.runtime, selected, connection -> new RuntimeCaptureHost.DeviceRequest(
-                        connection, selected, exact.runtime, exact.effects, request -> {
+                        connection, selected, exact.runtime, exact.effects, exact.statisticsSource(), request -> {
                             if (!(request.connection.accessibility().service() instanceof ScreenshotAccessibilityService))
                                 throw new SecurityException("Different physical Accessibility service");
                             return ((ScreenshotAccessibilityService) request.connection.accessibility().service()).prepareDeviceAttachment(request);
@@ -140,7 +140,7 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
             if (config.plan.capture == CaptureMethod.SCREEN_RECORDING) {
                 RuntimeCaptureHost.CapturePlan selected = new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.PROJECTION, config.sdkInt);
                 AndroidRuntimeFactory.ProjectionTransport transport = factory.awaitProjection(exact.runtime, selected,
-                        connection -> new RuntimeCaptureHost.DeviceRequest(connection, selected, exact.runtime, exact.effects, request -> {
+                        connection -> new RuntimeCaptureHost.DeviceRequest(connection, selected, exact.runtime, exact.effects, exact.statisticsSource(), request -> {
                             if (!(request.connection.projection().service() instanceof ScreenCaptureService))
                                 throw new SecurityException("Different physical projection service");
                             return ((ScreenCaptureService) request.connection.projection().service()).prepareDeviceAttachment(request);
@@ -172,18 +172,35 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
             return factory.cancel(admission.attempt);
         }
         private void fail(Throwable failure) {
-            if (failed == null) failed = Objects.requireNonNull(failure);
-            factory.cancel(admission.attempt);
-            AndroidRuntimeFactory.ProjectionTransport transport = projection;
-            if (transport != null) transport.cancelBeforeLaunch(); // False retains a launched/uncertain obligation.
-            AndroidRuntimeFactory.DeviceAssembly exact = assembly;
-            if (exact != null) exact.runtime.requestStop();
-            synchronized (this) { settle(); }
+            final Throwable original;
+            synchronized (this) {
+                if (failed == null) failed = Objects.requireNonNull(failure);
+                original = failed;
+            }
+            // Cancellation may have dispatched before throwing. Preserve that uncertainty; do not
+            // retry native launch/disposal or skip the independent runtime fence/future settlement.
+            completeFailureSteps(original,
+                    () -> factory.cancel(admission.attempt),
+                    () -> { AndroidRuntimeFactory.ProjectionTransport exact = projection;
+                        if (exact != null) exact.cancelBeforeLaunch(); },
+                    () -> { AndroidRuntimeFactory.DeviceAssembly exact = assembly;
+                        if (exact != null) exact.runtime.requestStop(); },
+                    () -> { synchronized (this) { settle(); } });
         }
         private void settle() {
             if (result == null || !readinessPostReturned || result.isDone()) return;
             if (failed != null) result.completeExceptionally(failed);
             else if (outcome != null) result.complete(outcome);
+        }
+    }
+    /** Each independent terminal obligation is attempted once per failure notification. */
+    static void completeFailureSteps(Throwable original, Runnable... steps) {
+        Objects.requireNonNull(original);
+        for (Runnable step : steps) {
+            try { step.run(); }
+            catch (RuntimeException | Error uncertain) {
+                if (uncertain != original) original.addSuppressed(uncertain);
+            }
         }
     }
     private boolean accessibilityReady() {

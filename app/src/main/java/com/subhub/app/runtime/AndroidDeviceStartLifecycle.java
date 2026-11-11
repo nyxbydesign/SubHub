@@ -22,6 +22,8 @@ final class AndroidDeviceStartLifecycle {
     private final ProtectionSessionManager.ManagedProjection projection;
     private boolean attempted, startAcknowledged;
 
+    private AndroidDeviceStatisticsSource statisticsSource;
+
     /** Owner worker: prepare all inert handles and register cleanup before the first mutation. */
     AndroidDeviceStartLifecycle(Application physical, AndroidRuntimeFactory factory,
             AndroidRuntimeFactory.DeviceAssembly assembly) {
@@ -56,6 +58,8 @@ final class AndroidDeviceStartLifecycle {
             assembly.effects.bindDurationObserver((source, wall, elapsed) ->
                     com.subhub.app.stats.DailyDurationRecorder.changedDevice(source, physical, stamp,
                             statisticsIdentity, owner, wall, elapsed));
+            statisticsSource = new AndroidDeviceStatisticsSource(assembly.effects, physical,
+                    assembly.runtime.identity(), stamp, statisticsIdentity, arm.acknowledgedStatisticsRepository());
             startAcknowledged = true;
         });
         if (!admitted) {
@@ -63,6 +67,7 @@ final class AndroidDeviceStartLifecycle {
             throw new SecurityException("DEVICE startup admission unavailable");
         }
         factory.deviceStartObserved(assembly);
+        factory.deviceStatisticsSource(assembly, statisticsSource);
         component.readyAsync(result -> {
             if (result != ActiveRuntimeCoordinator.Result.OK) assembly.runtime.requestStop();
         });

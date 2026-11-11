@@ -117,6 +117,11 @@ public final class AppModeManager {
                 }
             }
         }
+        /** Captured exact instance; callers must still obtain runtime admission before using it. */
+        public synchronized StatsRepository acknowledgedStatisticsRepository() {
+            if (!startAcknowledged() || repository == null) throw new SecurityException("Statistics startup not acknowledged");
+            return repository;
+        }
         public synchronized StatsRepository.SessionStamp statisticsStamp() {
             if (!startAcknowledged()) throw new SecurityException("Statistics start not acknowledged");
             return statisticsStamp;

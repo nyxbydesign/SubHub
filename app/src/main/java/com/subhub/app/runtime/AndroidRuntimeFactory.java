@@ -227,6 +227,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         final DeviceAdmission admission;
         final CompletableFuture<AppRuntimeGateway.StartResult> activation=new CompletableFuture<>();
         volatile com.subhub.app.appmode.RuntimeSessionIdentity.ComponentObservation componentObservation;
+        private volatile AndroidDeviceStatisticsSource statistics;
         // Set at the actual durable ACTIVE acknowledgement, before any fallible main/UI delivery.
         // False is not a rollback receipt: uncertain journal/write outcomes still require recovery.
         volatile boolean activeAcknowledged;
@@ -236,6 +237,11 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         DeviceAssembly(RuntimeLease lease,RuntimeExecution<DeviceConfiguration> runtime,DeviceRuntimeEffects effects,DeviceAdmission admission) {
             this.lease=lease;this.runtime=runtime;this.effects=effects;this.admission=admission;
             activation.whenComplete((v,f)->{if(activation.isCancelled())runtime.requestStop();});
+        }
+        AndroidDeviceStatisticsSource statisticsSource() {
+            AndroidDeviceStatisticsSource source=statistics;
+            if(source==null)throw new SecurityException("DEVICE statistics startup has not been acknowledged");
+            return source;
         }
     }
     private <T> CompletableFuture<T> deviceResult(CompletableFuture<CompletableFuture<T>> dispatched) {
@@ -399,6 +405,17 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         assembly.componentObservation=com.subhub.app.appmode.RuntimeSessionIdentity.componentObservation(physical);
         queueDeviceActivation(assembly);
     }
+    /** Bind immutable evidence only after the exact physical startup has returned its ACK. */
+    void deviceStatisticsSource(DeviceAssembly assembly,AndroidDeviceStatisticsSource source) {
+        requireUsable();requireDevice(assembly);Objects.requireNonNull(source);
+        if(!assembly.runtime.runStartupEffect(()->{
+            requireDevice(assembly);
+            if(assembly.componentObservation==null||assembly.statistics!=null
+                    ||!assembly.lease.identity.equals(source.owner()))
+                throw new SecurityException("Different or repeated DEVICE statistics startup source");
+            assembly.statistics=source;
+        }))throw new SecurityException("DEVICE statistics startup admission was revoked");
+    }
     /**
      * Narrow classification for an exact newly owned start, not CLEANUP or write authority.
      * The lifecycle must also hold its real Cleanup and prove each physical mutation receipt.
@@ -423,7 +440,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             if(selected==null||selected.device!=assembly||assembly.activation.isDone())return;
             // Actual start-transition completion supplies this evidence. Component placeholders
             // or service infrastructure alone cannot publish a completed physical DEVICE start.
-            if(assembly.componentObservation==null)return;
+            if(assembly.componentObservation==null||assembly.statistics==null)return;
             try {
                 ActiveRuntimeCoordinator.Result result=activate(assembly.runtime);
                 if(result==ActiveRuntimeCoordinator.Result.OK)assembly.activation.complete(new AppRuntimeGateway.StartResult(AppRuntimeGateway.StartState.ACTIVE,assembly.runtime.identity()));
@@ -607,6 +624,9 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             RuntimeCaptureHost.Request request=Objects.requireNonNull(pending.request.apply(connection));
             if(request.connection!=connection||request.execution()!=binding.runtime||request.plan!=pending.plan)
                 throw new SecurityException("Different capture request/plan");
+            if(binding.device!=null&&(!(request instanceof RuntimeCaptureHost.DeviceRequest)
+                    ||((RuntimeCaptureHost.DeviceRequest)request).requireStatisticsSource()!=binding.device.statisticsSource()))
+                throw new SecurityException("DEVICE attachment lacks its exact acknowledged statistics source");
             RuntimeCaptureHost.Attachment attachment=request.prepare();
             RuntimeCaptureHost.ProjectionGrant grant=pending.result==null?null:
                     new RuntimeCaptureHost.ProjectionGrant(request,pending.resultCode,pending.result);

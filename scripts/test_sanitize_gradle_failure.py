@@ -247,6 +247,8 @@ class JavacDiagnosticTest(unittest.TestCase):
         self.assertEqual(safe.JAVAC_MAIN_SOURCES, ast.literal_eval(declaration))
         self.assertEqual(len(declaration.keys), len(safe.JAVAC_MAIN_SOURCES))
         self.assertTrue(all(isinstance(node, ast.Constant) for node in declaration.keys + declaration.values))
+        tracked = subprocess.check_output(["git", "ls-files", "-z", "app/src/main/**/*.java"], cwd=ROOT)
+        self.assertEqual(set(tracked.rstrip(b"\0").split(b"\0")), set(safe.JAVAC_MAIN_SOURCES))
         self.assertFalse(set(safe.JAVAC_MAIN_SOURCES) & set(safe.JAVAC_SOURCES))
         self.assertEqual(len(safe.JAVAC_MAIN_SOURCES), len(set(safe.JAVAC_MAIN_SOURCES.values())))
         for source, label in safe.JAVAC_MAIN_SOURCES.items():
@@ -258,6 +260,23 @@ class JavacDiagnosticTest(unittest.TestCase):
             _, result = self.report(self.header(source=b"/home/private/../"+source))
             self.assertEqual([{"category": "cannot_find_symbol", "source": "unknown", "line": None}], result["javac"])
 
+    def test_common_java_language_errors_have_fixed_categories_only(self):
+        cases = [
+            (b"local variables referenced from a lambda expression must be final or effectively final", "captured_local_not_final"),
+            (b"variable PRIVATE_TOKEN might not have been initialized", "uninitialized_local"),
+            (b"variable PRIVATE_TOKEN might already have been assigned", "reassigned_final"),
+            (b"exception PRIVATE_TOKEN is never thrown in body of corresponding try statement", "unreachable_catch"),
+            (b"Alternatives in a multi-catch statement cannot be related by subclassing", "related_multi_catch"),
+            (b"PRIVATE_TOKEN in PRIVATE_CLASS cannot override PRIVATE_METHOD in PRIVATE_CLASS", "invalid_override"),
+            (b"cannot infer type arguments for PRIVATE_TOKEN<>", "type_inference"),
+            (b"invalid method reference", "invalid_method_reference"),
+            (b"unexpected type", "unexpected_type"),
+            (b"class PRIVATE_TOKEN is public, should be declared in a file named PRIVATE_TOKEN.java", "public_source_name"),
+        ]
+        for message, category in cases:
+            _, result = self.report(self.header(message))
+            self.assertEqual([{"category": category, "source": self.SOURCE_LABEL, "line": 37}], result["javac"])
+
     def test_every_fixed_source_maps_from_relative_and_linux_absolute_headers(self):
         for source, label in safe.JAVAC_SOURCES.items():
             for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):
@@ -268,6 +287,16 @@ class JavacDiagnosticTest(unittest.TestCase):
 
     def test_representative_javac_error_categories_never_copy_messages_or_symbols(self):
         cases = (
+            (b"local variables referenced from a lambda expression must be final or effectively final", "captured_local_not_final"),
+            (b"variable PRIVATE_TOKEN might not have been initialized", "uninitialized_local"),
+            (b"variable PRIVATE_TOKEN might already have been assigned", "reassigned_final"),
+            (b"exception PRIVATE_TOKEN is never thrown in body of corresponding try statement", "unreachable_catch"),
+            (b"Alternatives in a multi-catch statement cannot be related by subclassing", "related_multi_catch"),
+            (b"PRIVATE_TOKEN in PRIVATE_CLASS cannot override PRIVATE_METHOD in PRIVATE_CLASS", "invalid_override"),
+            (b"cannot infer type arguments for PRIVATE_TOKEN<>", "type_inference"),
+            (b"invalid method reference", "invalid_method_reference"),
+            (b"unexpected type", "unexpected_type"),
+            (b"class PRIVATE_TOKEN is public, should be declared in a file named PRIVATE_TOKEN.java", "public_source_name"),
             (b"cannot find symbol", "cannot_find_symbol"),
             (b"package private.PRIVATE_TOKEN does not exist", "missing_package"),
             (b"incompatible types: PRIVATE_TOKEN cannot be converted to OtherPRIVATE", "incompatible_types"),
