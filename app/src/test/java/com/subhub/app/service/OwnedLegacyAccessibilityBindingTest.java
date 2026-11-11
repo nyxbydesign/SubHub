@@ -65,6 +65,35 @@ public final class OwnedLegacyAccessibilityBindingTest {
         f.binding.close(); f.core.poll(); f.core.idle();
     }
 
+    @Test public void disconnectedSourceCannotDispatchAScreenshot() throws Exception {
+        Fixture f = new Fixture(); f.start();
+        f.source.connected = false;
+        assertFalse(f.binding.requestFrame(frame -> fail("Lost source started a screenshot")));
+        assertEquals(0, f.source.requests);
+        f.callbacks.drain(); f.core.poll(); f.core.idle();
+    }
+
+    @Test public void disconnectedSourceCannotPublishItsPendingScreenshot() throws Exception {
+        Fixture f = new Fixture(); f.start(); AtomicInteger completed = new AtomicInteger();
+        assertTrue(f.binding.requestFrame(frame -> { assertNull(frame); completed.incrementAndGet(); }));
+        f.source.connected = false;
+        assertFalse(f.binding.managedResourcesDrained());
+        f.source.succeed(); f.callbacks.drain(); f.core.poll();
+        assertEquals(1, completed.get()); assertEquals(1, f.source.releases); f.core.idle();
+    }
+
+    @Test public void disconnectedSourceFencesAnAlreadyTransferredRead() throws Exception {
+        Fixture f = new Fixture(); f.start();
+        AtomicReference<OwnedLegacyAccessibilityBinding<Object>.Frame> held = new AtomicReference<>();
+        assertTrue(f.binding.requestFrame(held::set)); f.source.succeed(); f.callbacks.drain();
+        f.source.connected = false;
+        assertFalse(held.get().read(pixels -> fail("Lost source exposed a raw frame")));
+        f.core.poll(); f.core.stopping();
+        assertEquals(0, f.source.releases);
+        held.get().close(); f.callbacks.drain(); f.core.poll();
+        assertEquals(1, f.source.releases); f.core.idle();
+    }
+
     @Test public void failedHardwareDisposalCannotPublishDrain() throws Exception {
         Fixture f = new Fixture(); f.start();
         AtomicReference<OwnedLegacyAccessibilityBinding<Object>.Frame> held = new AtomicReference<>();
@@ -113,7 +142,8 @@ public final class OwnedLegacyAccessibilityBindingTest {
     private static final class Source implements OwnedLegacyAccessibilityBinding.Endpoint<Object> {
         final Object pixels = new Object();
         Executor executor; OwnedLegacyAccessibilityBinding.Callback<Object> callback;
-        int requests, releases; boolean failRelease, throwAfterRequest;
+        int requests, releases; boolean connected = true, failRelease, throwAfterRequest;
+        @Override public boolean connected() { return connected; }
         @Override public void request(Executor delivery, OwnedLegacyAccessibilityBinding.Callback<Object> callback) {
             requests++; executor = delivery; this.callback = callback;
             if (throwAfterRequest) throw new IllegalStateException("Accepted native request then threw");

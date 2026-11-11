@@ -25,6 +25,7 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
     public static final String COMPONENT = "owned_accessibility_source";
     interface Callback<P> { void success(P pixels); void failure(); }
     interface Endpoint<P> {
+        boolean connected();
         /** Android supplies exactly one terminal callback for each accepted request. */
         void request(Executor delivery, Callback<P> callback);
         void release(P pixels);
@@ -61,14 +62,14 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
                 || request.plan.sdkInt < 30 || !request.connection.isConnected()
                 || request.connection.accessibility().service() != service)
             throw new IllegalArgumentException("Not this exact display-capture connection");
-        return new OwnedLegacyAccessibilityBinding<>(request.runtime, new AndroidEndpoint(service),
+        return new OwnedLegacyAccessibilityBinding<>(request.runtime, new AndroidEndpoint(service, request.connection),
                 ownedCallbacks, main::postDelayed);
     }
 
     /** Infrastructure receipt only; no screenshot request, model readiness or first-frame claim. */
     public void start() {
         if (!started.compareAndSet(false, true)) throw new IllegalStateException("Accessibility source already started");
-        if (!runtime.runStartupEffect(() -> { })) { runtime.requestStop(); return; }
+        if (!endpoint.connected() || !runtime.runStartupEffect(() -> { })) { runtime.requestStop(); return; }
         component.readyAsync(result -> { if (result != ActiveRuntimeCoordinator.Result.OK) runtime.requestStop(); });
     }
 
@@ -84,6 +85,7 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
         AtomicBoolean invoked = new AtomicBoolean();
         try {
             runtime.runEffect(() -> {
+                if (!sourceConnected()) return;
                 OwnedCaptureLifetime.Ticket pending = work.begin();
                 if (pending == null) return;
                 Pending request = new Pending(pending, receiver, runtime.configuration(), runtime.appliedConfigurationRevision());
@@ -100,6 +102,12 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
         } catch (RuntimeException | Error uncertain) {
             runtime.requestStop(); throw uncertain;
         } finally { invocation.close(); }
+    }
+
+    private boolean sourceConnected() {
+        if (endpoint.connected()) return true;
+        runtime.requestStop();
+        return false;
     }
 
     private final class Pending implements Callback<P> {
@@ -125,7 +133,7 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
             AtomicBoolean transferred = new AtomicBoolean();
             try {
                 runtime.runEffect(() -> {
-                    if (!work.open() || configuration != runtime.configuration()
+                    if (!sourceConnected() || !work.open() || configuration != runtime.configuration()
                             || revision != runtime.appliedConfigurationRevision()) return;
                     OwnedCaptureLifetime.Ticket held = work.begin();
                     if (held == null) return;
@@ -188,6 +196,7 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
         public boolean read(Consumer<P> read) {
             Objects.requireNonNull(read); AtomicBoolean entered = new AtomicBoolean();
             runtime.runEffect(() -> {
+                if (!sourceConnected()) return;
                 synchronized (this) {
                     if (retired || !held.current() || configuration != runtime.configuration()
                             || configurationRevision != runtime.appliedConfigurationRevision()) return;
@@ -222,7 +231,14 @@ public final class OwnedLegacyAccessibilityBinding<P> implements AutoCloseable {
     }
     private static final class AndroidEndpoint implements Endpoint<AccessibilityService.ScreenshotResult> {
         private final AccessibilityService service;
-        AndroidEndpoint(AccessibilityService service) { this.service = service; }
+        private final RuntimeCaptureHost.Connection connection;
+        AndroidEndpoint(AccessibilityService service, RuntimeCaptureHost.Connection connection) {
+            this.service = service;
+            this.connection = connection;
+        }
+        @Override public boolean connected() {
+            return connection.isConnected() && connection.accessibility().service() == service;
+        }
         @Override public void request(Executor executor, Callback<AccessibilityService.ScreenshotResult> callback) {
             if (Build.VERSION.SDK_INT < 30) throw new UnsupportedOperationException("Display screenshots require API30");
             if (Looper.myLooper() == Looper.getMainLooper())
