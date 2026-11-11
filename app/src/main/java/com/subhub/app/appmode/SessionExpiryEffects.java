@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import com.subhub.app.penance.HardcoreAutoPayManager;
 import com.subhub.app.remote.RemoteSessionClock;
+import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.service.ScreenCaptureService;
 
@@ -23,10 +24,14 @@ public final class SessionExpiryEffects {
     }
     public static void post(Context context, RuntimeSessionIdentity.ComponentObservation scope,
             ScreenCaptureService.StopTarget capture, boolean rearmIfHardcore, boolean showResume) {
-        new Handler(Looper.getMainLooper()).post(() -> {
+        Handler main = new Handler(Looper.getMainLooper());
+        AppRuntimeGateway.LegacyWork queued = AppRuntimeGateway.beginLegacyWork(context);
+        // A false return proves rejection. A throwing dispatch may still have enqueued work.
+        if (!main.post(() -> {
             try { dispatch(context, scope, capture, rearmIfHardcore, showResume); }
             catch (RuntimeException unavailable) { android.util.Log.w("SessionExpiry", "Session effects unavailable"); }
-        });
+            finally { queued.close(); }
+        })) queued.close();
     }
     private static void dispatch(Context context, RuntimeSessionIdentity.ComponentObservation scope,
             ScreenCaptureService.StopTarget capture, boolean rearmIfHardcore, boolean showResume) {

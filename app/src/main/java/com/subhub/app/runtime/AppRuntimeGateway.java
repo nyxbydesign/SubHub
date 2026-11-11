@@ -138,11 +138,17 @@ public final class AppRuntimeGateway {
      * Known installed/failed/preparing state refuses rather than falling back to legacy behavior.
      */
     public static LegacyWork beginLegacyWork(Context physical) {
+        LegacyWork work = tryBeginLegacyWork(physical);
+        if (work == null) throw new DeviceAdmissionException("Common runtime requires an admitted DEVICE continuation");
+        return work;
+    }
+    /** Null only when legacy admission has closed. It never authorizes a managed transition. */
+    public static LegacyWork tryBeginLegacyWork(Context physical) {
         Context context = Objects.requireNonNull(physical).getApplicationContext();
         if (!(context instanceof Application)) throw new SecurityException("Physical application required");
         bindPhysicalApplication((Application) context);
-        if (installed != null) throw new DeviceAdmissionException("Common runtime requires an admitted DEVICE continuation");
-        return new LegacyWork(BOOTSTRAP.legacyWork());
+        RuntimeInstallationBarrier.LegacyWork counted = BOOTSTRAP.tryLegacyWork();
+        return counted == null ? null : new LegacyWork(counted);
     }
     public static final class LegacyWork implements AutoCloseable {
         private final RuntimeInstallationBarrier.LegacyWork counted;

@@ -21,14 +21,20 @@ public final class RuntimeInstallationBarrierTest {
     }
     @Test public void sealingRejectsNewLegacyWorkBeforeInspectingQuiescence() {
         Fixture f = new Fixture(); var install = f.prepare(); assertNotNull(install);
+        assertNull(f.barrier.tryLegacyWork());
         assertThrows(SecurityException.class, f.barrier::legacyWork);
         f.mutex.runtime(() -> { install.abortBeforeProvisioning(); return null; });
-        assertTrue(f.barrier.legacyAdmissionOpen()); f.barrier.legacyWork().close();
+        var resumed = f.barrier.tryLegacyWork();
+        assertNotNull(resumed);
+        assertNull(f.prepare());
+        resumed.close();
+        assertNotNull(f.prepare());
     }
     @Test public void irreversibleFailureCannotFallBackToLegacyOrManufactureAnotherInstall() {
         Fixture f = new Fixture(); var install = f.prepare();
         f.mutex.runtime(() -> { install.beginProvisioning(); return null; }); install.failed();
         assertFalse(f.barrier.legacyAdmissionOpen()); assertNull(f.prepare());
+        assertNull(f.barrier.tryLegacyWork());
         assertThrows(SecurityException.class, f.barrier::legacyWork);
         assertThrows(SecurityException.class, () -> f.mutex.runtime(() -> { install.abortBeforeProvisioning(); return null; }));
     }

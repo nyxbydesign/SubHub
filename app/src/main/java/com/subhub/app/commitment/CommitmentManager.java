@@ -1,5 +1,6 @@
 package com.subhub.app.commitment;
 
+import com.subhub.app.runtime.AppRuntimeGateway;
 import android.content.Context;
 import android.content.SharedPreferences;
 
@@ -234,26 +235,32 @@ public final class CommitmentManager {
 
     /** Re-arms the persistent capture path when Android has already granted it. */
     public static void reinforceProtection(Context context) {
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local());
-            if (!current.pact || current.paused) return;
-            new AppModeManager(context).setArmed(true);
-            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null, false, true);
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local());
+                if (!current.pact || current.paused) return;
+                new AppModeManager(context).setArmed(true);
+                SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null, false, true);
+            }
         }
     }
 
     /** A sealed pact always re-arms; otherwise App Mode retains its stored state. */
     public static void applyBootPolicy(Context context) {
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            if (!isActive(context)) return;
-            String identity = preferences(context).getString("commitment_session_identity", "");
-            if (!SessionExpiryAlarms.validIdentity(identity)) {
-                identity = java.util.UUID.randomUUID().toString();
-                if (!preferences(context).edit().putString("commitment_session_identity", identity).commit()) return;
-                RuntimeSessionIdentity.changed();
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (!isActive(context)) return;
+                String identity = preferences(context).getString("commitment_session_identity", "");
+                if (!SessionExpiryAlarms.validIdentity(identity)) {
+                    identity = java.util.UUID.randomUUID().toString();
+                    if (!preferences(context).edit().putString("commitment_session_identity", identity).commit()) return;
+                    RuntimeSessionIdentity.changed();
+                }
+                scheduleExpiry(context, "");
+                reinforceProtection(context);
             }
-            scheduleExpiry(context, "");
-            reinforceProtection(context);
         }
     }
 
@@ -306,35 +313,38 @@ public final class CommitmentManager {
     }
 
     private static boolean expireLocked(Context context, String expectedIdentity, boolean dueOnly) {
-        SharedPreferences values = preferences(context);
-        String identity = values.getString("commitment_session_identity", "");
-        if (expectedIdentity != null && !expectedIdentity.equals(identity)) return false;
-        if (dueOnly && (values.getLong(KEY_ENDS_AT, 0L) == 0L
-                || remaining(values, RemoteSessionClock.local()) > 0L)) return false;
-        ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
-        String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
-                .getString("active_session_identity", "");
-        SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
-        // Only the due-alarm path creates a local expiry event; manual End has its own receipt.
-        long notificationSequence = values.getLong("notification_pact_expiry_sequence", 0);
-        boolean notifyExpiry = dueOnly && SessionExpiryAlarms.validIdentity(identity)
-                && notificationSequence < Long.MAX_VALUE;
-        if (notifyExpiry) {
-            edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
-            com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return false;
+            SharedPreferences values = preferences(context);
+            String identity = values.getString("commitment_session_identity", "");
+            if (expectedIdentity != null && !expectedIdentity.equals(identity)) return false;
+            if (dueOnly && (values.getLong(KEY_ENDS_AT, 0L) == 0L
+                    || remaining(values, RemoteSessionClock.local()) > 0L)) return false;
+            ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+            String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
+                    .getString("active_session_identity", "");
+            SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
+            // Only the due-alarm path creates a local expiry event; manual End has its own receipt.
+            long notificationSequence = values.getLong("notification_pact_expiry_sequence", 0);
+            boolean notifyExpiry = dueOnly && SessionExpiryAlarms.validIdentity(identity)
+                    && notificationSequence < Long.MAX_VALUE;
+            if (notifyExpiry) {
+                edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
+                com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
+            }
+            appendNativeStop(context, edit);
+            com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+            boolean saved = edit.commit();
+            RuntimeSessionIdentity.changed();
+            if (!saved) return false;
+            com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+            if (SessionExpiryAlarms.validIdentity(statistics))
+                com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
+            SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
+            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+            if (notifyExpiry) com.subhub.app.notifications.PeerNotifications.pactExpired(context, capture, notificationSequence);
+            return true;
         }
-        appendNativeStop(context, edit);
-        com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
-        boolean saved = edit.commit();
-        RuntimeSessionIdentity.changed();
-        if (!saved) return false;
-        com.subhub.app.remote.RemoteSessionNative.reconcile(context);
-        if (SessionExpiryAlarms.validIdentity(statistics))
-            com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
-        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
-        SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
-        if (notifyExpiry) com.subhub.app.notifications.PeerNotifications.pactExpired(context, capture, notificationSequence);
-        return true;
     }
 
     private static SharedPreferences preferences(Context context) {

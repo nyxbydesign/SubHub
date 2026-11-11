@@ -20,7 +20,14 @@ final class RuntimeInstallationBarrier {
 
     /** Main-safe short metadata operation, always BEFORE the legacy action/dispatch. */
     synchronized LegacyWork legacyWork() {
-        if (mode != Mode.LEGACY) throw new SecurityException("Legacy admission is closed");
+        LegacyWork ticket = tryLegacyWork();
+        if (ticket == null) throw new SecurityException("Legacy admission is closed");
+        return ticket;
+    }
+
+    /** OS deliveries may decline a sealed route without racing a separate open-state check. */
+    synchronized LegacyWork tryLegacyWork() {
+        if (mode != Mode.LEGACY) return null;
         LegacyWork ticket = new LegacyWork(); work.add(ticket); return ticket;
     }
     /**

@@ -11,15 +11,19 @@ import com.subhub.app.security.HardcoreReadinessNotificationManager;
 import com.subhub.app.security.ProtectionStopPolicy;
 import com.subhub.app.penance.HardcoreAutoPayManager;
 import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.runtime.AppRuntimeGateway;
 
 /** Restores persisted intent after boot without silently starting MediaProjection. */
 public final class BootReceiver extends BroadcastReceiver {
     public static final String ACTION_DISARM = "com.subhub.app.action.DISARM_APP_MODE";
 
     @Override public void onReceive(Context context, Intent intent) {
-        SessionReceiverLifetime.Work work = SessionReceiverLifetime.begin(this);
-        try { receive(context, intent); work.afterQueues(); }
-        catch (RuntimeException | Error failure) { work.failed(); throw failure; }
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            SessionReceiverLifetime.Work work = SessionReceiverLifetime.begin(this);
+            try { receive(context, intent); work.afterQueues(); }
+            catch (RuntimeException | Error failure) { work.failed(); throw failure; }
+        }
     }
 
     private void receive(Context context, Intent intent) {

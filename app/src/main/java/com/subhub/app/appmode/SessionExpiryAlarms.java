@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.net.Uri;
 import com.subhub.app.commitment.CommitmentExpiryReceiver;
 import com.subhub.app.penance.PaidPauseExpiryReceiver;
+import com.subhub.app.runtime.AppRuntimeGateway;
 import java.util.EnumMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,8 +37,9 @@ public final class SessionExpiryAlarms {
         final Context context;
         final String identity;
         final long trigger;
-        Command(Context context, String identity, long trigger) {
-            this.context = context; this.identity = identity; this.trigger = trigger;
+        final AppRuntimeGateway.LegacyWork delivery;
+        Command(Context context, String identity, long trigger, AppRuntimeGateway.LegacyWork delivery) {
+            this.context = context; this.identity = identity; this.trigger = trigger; this.delivery = delivery;
         }
     }
     private static final class Slot {
@@ -188,13 +190,17 @@ public final class SessionExpiryAlarms {
         if (!identity.isEmpty() && !validIdentity(identity)) throw new IllegalArgumentException("Invalid timer identity");
         // A delayed cleanup request is not authority to replace a newer committed timer intent.
         if (!identity.equals(storedIdentity(context, kind))) return;
+        AppRuntimeGateway.LegacyWork delivery = AppRuntimeGateway.beginLegacyWork(context);
         synchronized (LOCK) {
             Slot slot = SLOTS.get(kind);
             if (slot == null) { slot = new Slot(); SLOTS.put(kind, slot); }
             // Only the first retired generation can already exist in Android before this pending batch.
             // Later coalesced generations have never been scheduled; an in-flight one is tracked below.
-            if (slot.next == null) slot.retired = validIdentity(retired) ? retired : "";
-            slot.next = new Command(context, identity, trigger);
+            Command replaced = slot.next;
+            if (replaced == null) slot.retired = validIdentity(retired) ? retired : "";
+            slot.next = new Command(context, identity, trigger, delivery);
+            // The worker claims under this same lock, so the replaced command never reached Android.
+            if (replaced != null) replaced.delivery.close();
             if (!slot.running) {
                 slot.running = true;
                 Slot work = slot;
@@ -237,6 +243,10 @@ public final class SessionExpiryAlarms {
                 }
             } catch (RuntimeException failure) {
                 android.util.Log.w("SessionExpiry", "Timer delivery unavailable", failure);
+            } finally {
+                // Only the queue delivery returned. A persisted or native alarm is a separate
+                // occupancy fact, and a delivered broadcast must acquire its own admission.
+                command.delivery.close();
             }
         }
     }
