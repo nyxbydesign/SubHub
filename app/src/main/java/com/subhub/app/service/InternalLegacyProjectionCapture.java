@@ -97,26 +97,32 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
         displayWidth = width; displayHeight = height;
         adopted = new Snapshot(request.initialConfiguration); acknowledged = adopted;
         component = request.runtime.registerComponent(COMPONENT);
-        component.installShutdown(this::closeFromRuntime);
-        component.installConfigurationReceiver(new RuntimeExecution.ConfigurationReceiver<RuntimeConfiguration>() {
-            @Override public void apply(RuntimeConfiguration configuration) {
-                requireMain(); requireConfiguration(configuration);
-                revokeSource();
-                adopted = new Snapshot(configuration); acknowledged = null;
-                data.adopt(configuration);
-                if (overlay != null) overlay.adoptOwnedConfiguration(configuration);
-            }
-            @Override public void acknowledged(RuntimeConfiguration configuration) {
-                if (sealed.get() || adopted.configuration != configuration) throw new SecurityException("Unadopted projection ACK");
-                data.acknowledged(configuration);
-                if (overlay != null) overlay.acknowledgedConfiguration(configuration);
-                acknowledged = adopted; requestTick();
-            }
-        });
-        // Registration precedes every allocation; any partial constructor keeps its own obligation.
-        source = OwnedProjectionBinding.prepareProjection(request, width, height, densityDpi,
-                Objects.requireNonNull(producer), main);
-        frames = LatestFrameBroker.async(inference, this::process, Candidate::close);
+        try {
+            component.installConfigurationReceiver(new RuntimeExecution.ConfigurationReceiver<RuntimeConfiguration>() {
+                @Override public void apply(RuntimeConfiguration configuration) {
+                    requireMain(); requireConfiguration(configuration);
+                    revokeSource();
+                    adopted = new Snapshot(configuration); acknowledged = null;
+                    data.adopt(configuration);
+                    if (overlay != null) overlay.adoptOwnedConfiguration(configuration);
+                }
+                @Override public void acknowledged(RuntimeConfiguration configuration) {
+                    if (sealed.get() || adopted.configuration != configuration) throw new SecurityException("Unadopted projection ACK");
+                    data.acknowledged(configuration);
+                    if (overlay != null) overlay.acknowledgedConfiguration(configuration);
+                    acknowledged = adopted; requestTick();
+                }
+            });
+            source = OwnedProjectionBinding.prepareProjection(request, width, height, densityDpi,
+                    Objects.requireNonNull(producer), main);
+            frames = LatestFrameBroker.async(inference, this::process, Candidate::close);
+        } catch (RuntimeException | Error uncertain) {
+            cleanupFailed();
+            throw uncertain;
+        } finally {
+            // Publish the closer only after the returned resources, including a partial setup, are known.
+            component.installShutdown(this::closeFromRuntime);
+        }
     }
     @Override public RuntimeCaptureHost.InternalRequest request() { return request; }
     @Override public void attach(RuntimeCaptureHost.ProjectionGrant grant) {
@@ -382,7 +388,7 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
     @Override public void seal() {
         if (!sealed.compareAndSet(false, true)) return;
         sourceEligible = false;
-        cleanup(source::seal); // BEFORE any late View/source-frame release.
+        if (source != null) cleanup(source::seal); // BEFORE any late View/source-frame release.
         if (rendering != null) cleanup(rendering::seal);
         if (governor != null) cleanup(governor::sealOwned);
         cleanup(request.resources.taps::clear); popupHints = Collections.emptyList();
@@ -399,8 +405,8 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
         if (!closing.compareAndSet(false, true)) throw new IllegalStateException("Projection close repeated");
         cleanup(this::seal);
         cleanup(data::close);
-        cleanup(source::close);
-        cleanup(frames::close);
+        if (source != null) cleanup(source::close);
+        if (frames != null) cleanup(frames::close);
         cleanup(() -> work.seal(() -> {
             try {
                 inference.execute(() -> {

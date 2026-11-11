@@ -60,6 +60,26 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.assertIn('if (!deviceInitialized)', stop)
         self.assertNotIn('initializeDeviceRuntime()', stop)
 
+    def test_projection_owner_transport_cannot_replace_or_fall_back_to_device(self):
+        attach = body(self.projection, 'private void receiveManagedOwner(')
+        self.assertLess(attach.index('if (destroyed || deviceInitialized) return;'), attach.index('stopSelfResult('))
+        self.assertLess(attach.index('managedOwnerRoute = true;'), attach.index('AppRuntimeGateway.services('))
+        start = body(self.projection, 'public int onStartCommand(')
+        owner_only = body(start, 'if (managedOwnerRoute)')
+        self.assertIn('if (runtimeConnection == null) stopSelfResult(startId);', owner_only)
+        self.assertIn('return START_NOT_STICKY;', owner_only)
+        self.assertLess(start.index('if (managedOwnerRoute)'), start.index('initializeDeviceRuntime()'))
+
+    def test_projection_failed_preparation_retains_cleanup_for_returned_resources(self):
+        source = (SERVICE / 'InternalLegacyProjectionCapture.java').read_text(encoding='utf-8')
+        prepare = body(source, 'public InternalLegacyProjectionCapture(')
+        self.assertLess(prepare.index('source ='), prepare.index('component.installShutdown('))
+        self.assertLess(prepare.index('frames ='), prepare.index('component.installShutdown('))
+        cleanup = body(source, 'private void closeFromRuntime(')
+        self.assertIn('if (source != null) cleanup(source::close);', cleanup)
+        self.assertIn('if (frames != null) cleanup(frames::close);', cleanup)
+        self.assertIn('cleanup(data::close);', cleanup)
+
     def test_unselected_shell_cleanup_returns_before_device_cleanup(self):
         cleanup = body(self.projection, 'public void onDestroy()')
         neutral = body(cleanup, 'if (!deviceInitialized)')

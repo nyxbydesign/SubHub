@@ -95,6 +95,7 @@ public final class ScreenCaptureService extends Service {
     private PopupStormManager.ServiceParticipation managedPopup;
     private RuntimeCaptureHost.Connection runtimeConnection;
     private RuntimeCaptureHost.Selection runtimeSelection;
+    private boolean managedOwnerRoute;
     private final java.util.Map<RuntimeCaptureHost.Attachment, RuntimeCaptureHost.Selection> unclaimedSelections =
             new java.util.IdentityHashMap<>();
     private com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess runtimeServices;
@@ -499,6 +500,10 @@ public final class ScreenCaptureService extends Service {
             } else if (intent != null && ACTION_STOP_OWNED.equals(intent.getAction())) {
                 exact.postMain(() -> { stopOwned(stopTarget(intent)); }, () -> {});
             }
+            return START_NOT_STICKY;
+        }
+        if (managedOwnerRoute) {
+            if (runtimeConnection == null) stopSelfResult(startId);
             return START_NOT_STICKY;
         }
         if (intent != null && ACTION_START.equals(intent.getAction())
@@ -1117,7 +1122,12 @@ public final class ScreenCaptureService extends Service {
     }
 
     private void receiveManagedOwner(String token) {
-        if (destroyed || runtimeConnection != null) return; // This shell is never rebound to another owner.
+        if (destroyed || deviceInitialized) return; // An owner token cannot replace a DEVICE capture.
+        if (managedOwnerRoute) {
+            if (runtimeConnection == null) stopSelfResult(lastStartId);
+            return;
+        }
+        managedOwnerRoute = true;
         runtimeServices = com.subhub.app.runtime.AppRuntimeGateway.services(this);
         if (runtimeServices == null || token == null || token.isEmpty()) { stopSelfResult(lastStartId); return; }
         runtimeConnection = RuntimeCaptureHost.Connection.projection(new RuntimeCaptureHost.ProjectionHost() {
