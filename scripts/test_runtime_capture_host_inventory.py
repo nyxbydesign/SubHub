@@ -21,6 +21,7 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
     def setUp(self):
         self.projection = (SERVICE / 'ScreenCaptureService.java').read_text()
         self.accessibility = (SERVICE / 'ScreenshotAccessibilityService.java').read_text()
+        self.pipeline = (SERVICE / 'AccessibilityLegacyPipeline.java').read_text()
         self.host = (SERVICE / 'RuntimeCaptureHost.java').read_text()
 
     def test_android_routing_fixtures_are_not_mockable_android_unit_tests(self):
@@ -37,10 +38,12 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.assertIn('assertEquals("approved", grant.consume(request, request.connection).getAction())', native)
 
     def test_service_field_initializers_do_not_acquire_shared_taps(self):
-        for source in (self.projection, self.accessibility):
+        for source in (self.projection, self.pipeline):
             self.assertNotRegex(source, r'private\s+(?:final\s+)?CensorTapTracker\s+tapTracker\s*=')
             self.assertEqual(source.count('CensorTapTracker.shared()'), 1)
-            self.assertIn('CensorTapTracker.shared()', body(source, 'private void initializeDeviceRuntime()'))
+            self.assertIn('CensorTapTracker.shared()', body(source, 'void initializeDeviceRuntime()'))
+        for banned in ('CensorTapTracker.shared()', 'new SettingsRepository(', 'new StatsRepository('):
+            self.assertNotIn(banned, self.accessibility)
 
     def test_projection_creation_is_os_only(self):
         creation = body(self.projection, 'public void onCreate()')
@@ -58,20 +61,29 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.assertNotIn('initializeDeviceRuntime()', stop)
 
     def test_unselected_shell_cleanup_returns_before_device_cleanup(self):
-        for source in (self.projection, self.accessibility):
-            cleanup = body(source, 'public void onDestroy()')
-            neutral = body(cleanup, 'if (!deviceInitialized)')
-            self.assertIn('super.onDestroy()', neutral)
-            self.assertIn('return;', neutral)
-            for banned in ('stats', 'tapTracker', 'PopupStormManager', 'ForegroundAppState', 'AppModeManager'):
-                self.assertNotIn(banned, neutral)
+        cleanup = body(self.projection, 'public void onDestroy()')
+        neutral = body(cleanup, 'if (!deviceInitialized)')
+        self.assertIn('super.onDestroy()', neutral)
+        self.assertIn('return;', neutral)
+        shell = body(self.accessibility, 'public void onDestroy()')
+        self.assertIn('if (p != null) p.destroyLegacy()', shell)
+        self.assertIn('finally { super.onDestroy(); }', shell)
+        self.assertNotIn('initializeDeviceRuntime', shell)
+        pipeline_cleanup = body(self.pipeline, 'void destroyLegacy()')
+        pipeline_neutral = body(pipeline_cleanup, 'if (!deviceInitialized)')
+        self.assertIn('return;', pipeline_neutral)
+        for banned in ('stats', 'tapTracker', 'PopupStormManager', 'ForegroundAppState', 'AppModeManager'):
+            self.assertNotIn(banned, neutral)
+            self.assertNotIn(banned, pipeline_neutral)
 
     def test_accessibility_api_guard_and_neutral_event_fence(self):
         connect = body(self.accessibility, 'protected void onServiceConnected()')
         self.assertLess(connect.index('Build.VERSION_CODES.R'), connect.index('initializeDeviceRuntime()'))
         self.assertNotIn('MainThreadSampler', connect)
         events = body(self.accessibility, 'public void onAccessibilityEvent(')
-        self.assertLess(events.index('if (!deviceInitialized) return'), events.index('refreshCensorScreen'))
+        self.assertLess(events.index('if (managedShell)'), events.index('p.onLegacyAccessibilityEvent(event)'))
+        legacy = body(self.pipeline, 'void onLegacyAccessibilityEvent(')
+        self.assertLess(legacy.index('if (!deviceInitialized) return'), legacy.index('refreshCensorScreen'))
 
     def test_inactive_contract_is_not_an_installed_gateway(self):
         # Services now have explicit typed consumers, but no production caller installs them.

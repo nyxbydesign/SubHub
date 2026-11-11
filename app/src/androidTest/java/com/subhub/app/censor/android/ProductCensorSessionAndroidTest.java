@@ -2306,7 +2306,7 @@ public final class ProductCensorSessionAndroidTest {
             assertFalse("Fixture setup leaves ordinary budgets disabled", preferences.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false));
             assertFalse(preferences.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false));
             original = (AppTimerManager) censorField(actualService, "timers");
-            timersField = ScreenshotAccessibilityService.class.getDeclaredField("timers"); timersField.setAccessible(true);
+            timersField = actualService.getClass().getDeclaredField("timers"); timersField.setAccessible(true);
             assertTrue(usageName.matches("censor_screen_limits_[a-f0-9]{32}_usage"));
             assertFalse("Never borrow an existing usage database", context.getDatabasePath(databaseName).exists());
             assertTrue("Never borrow existing usage preferences", context.getSharedPreferences(usageName, Context.MODE_PRIVATE).getAll().isEmpty());
@@ -2493,8 +2493,7 @@ public final class ProductCensorSessionAndroidTest {
         awaitElapsed("Restore the owned guest's unlocked display", () -> CensorScreenState.interactiveUnlocked(context));
     }
     private static Object boundCensorService() throws Exception {
-        java.lang.reflect.Field field = ScreenshotAccessibilityService.class.getDeclaredField("censorInstance"); field.setAccessible(true);
-        Object service = field.get(null); assertNotNull(service); return service;
+        Object service = com.subhub.app.service.AccessibilityPipelineFixture.current(); assertNotNull(service); return service;
     }
     /** Read-only observation of the real recorder sampler; never substitutes its source or sink. */
     private static long capturedDurationSession() throws Exception {

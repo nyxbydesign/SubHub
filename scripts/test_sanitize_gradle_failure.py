@@ -82,6 +82,27 @@ class GradleDiagnosticTest(unittest.TestCase):
         self.assertEqual(["new_api"], report["lint"])
         self.assertEqual([], report["lintSources"])
 
+    def test_lint_reuses_fixed_compiler_labels_without_messages_or_lines(self):
+        for sources in (safe.JAVAC_MAIN_SOURCES, safe.JAVAC_SOURCES):
+            source = next(path for path in sources if path not in safe.LINT_SOURCES)
+            for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):
+                _, report = self.report(prefix + source + b":741: Error: PRIVATE_TOKEN [NewApi]\n")
+                self.assertEqual([sources[source]], report["lintSources"])
+                self.assertNotIn("741", json.dumps(report))
+                self.assertNotIn("PRIVATE", json.dumps(report))
+            _, report = self.report(source + b".unknown:741: Error: PRIVATE_TOKEN [NewApi]\n")
+            self.assertEqual([], report["lintSources"])
+
+    def test_lint_source_union_remains_bounded(self):
+        data = b"\n".join(path + b":741: Error: PRIVATE_TOKEN [NewApi]"
+                          for path in safe.LINT_SOURCE_LABELS)
+        code, report = self.report(data)
+        self.assertEqual(0, code)
+        self.assertEqual(safe.MAX_CATEGORIES, len(report["lintSources"]))
+        self.assertTrue(report["truncated"])
+        self.assertTrue(set(report["lintSources"]).issubset(set(safe.LINT_SOURCE_LABELS.values())))
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
     def test_unknown_or_malformed_lint_and_exception_text_cannot_emit_source(self):
         source = next(iter(safe.LINT_SOURCES))
         data = (source + b":1: Error: PRIVATE_TOKEN [PRIVATE_TOKEN]\n"

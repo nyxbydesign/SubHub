@@ -204,11 +204,11 @@ public final class RemoteSessionControlPeerAndroidTest {
     }
 
     @Test public void incompleteStartAssetsPreserveAcknowledgedReceiptThenApplyOriginalRequest() throws Exception {
-        java.lang.reflect.Field binding=com.subhub.app.service.ScreenshotAccessibilityService.class.getDeclaredField("running");
-        binding.setAccessible(true);boolean original=binding.getBoolean(null);
-        assertFalse("A pre-existing Accessibility binding is not owned by this fixture",original);
-        try {
-            binding.setBoolean(null,true);
+        assertFalse("A pre-existing Accessibility binding is not owned by this fixture",
+                com.subhub.app.service.ScreenshotAccessibilityService.isRunning());
+        try (com.subhub.app.service.AccessibilityPipelineFixture.StatusBinding binding =
+                new com.subhub.app.service.AccessibilityPipelineFixture.StatusBinding()) {
+            binding.install();
             configureReadyStart();Request request=queueStart();startsReady=false;
             exchange(null,null).success();
             RemoteSessionRuntime.Record first=sub.sessionControl(dt.localIdentity(),generation,RemoteSessionRuntime.Direction.INCOMING,request.id);
@@ -224,7 +224,7 @@ public final class RemoteSessionControlPeerAndroidTest {
             assertEquals(State.APPLIED,outgoing(request).result.state);assertTrue(outgoing(request).result.proof.active);
             assertEquals(request.digest(),outgoing(request).request.digest());assertEquals(request.expiresAt,outgoing(request).request.expiresAt);
             assertNotNull(nativeSession.marker());assertFalse(stats.activeSessionIdentity().isEmpty());
-        } finally { binding.setBoolean(null,original); }
+        }
     }
 
     private void configureReadyStart() throws Exception {

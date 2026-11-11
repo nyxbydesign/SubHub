@@ -107,6 +107,7 @@ LINT_SOURCES = {
 # Fixed tracked production-source labels; messages, paths and symbols remain omitted.
 # New or renamed sources require an explicit literal edit; unknown paths remain unknown.
 JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/service/AccessibilityLegacyPipeline.java": "main_service_accessibility_legacy_pipeline",
     b"app/src/main/java/com/subhub/app/runtime/AndroidDeviceStatisticsSource.java": "main_runtime_android_device_statistics_source",
     b"app/src/main/java/com/subhub/app/MainActivity.java": "main_main_activity",
     b"app/src/main/java/com/subhub/app/SubHubApp.java": "main_sub_hub_app",
@@ -1179,6 +1180,10 @@ JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/runtime/DeviceStartEntryFixture.java": "unit_device_start_entry_fixture",
     b"app/src/test/java/com/subhub/app/service/InternalLimitsAdmissionTest.java": "unit_internal_limits_admission",
 }
+# Reuse reviewed literal source labels for lint without emitting paths or messages.
+# Existing lint aliases take precedence; output remains bounded by MAX_CATEGORIES.
+LINT_SOURCE_LABELS = {**JAVAC_MAIN_SOURCES, **JAVAC_SOURCES, **LINT_SOURCES}
+
 # Match only an English javac error header. Multiline source excerpts, carets,
 # symbol/location/required/found details and arbitrary messages are never emitted.
 JAVAC_ERRORS = (
@@ -1278,7 +1283,7 @@ class Diagnostics:
             lint = LINT_LINE.fullmatch(line)
             if lint and lint[2] in LINT_ISSUES:
                 self.add("lint", LINT_ISSUES[lint[2]])
-                for path, label in LINT_SOURCES.items():
+                for path, label in LINT_SOURCE_LABELS.items():
                     if lint[1] == path or lint[1].endswith(b"/" + path):
                         self.add("lintSources", label)
                         break

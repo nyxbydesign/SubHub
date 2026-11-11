@@ -27,6 +27,7 @@ import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.service.ScreenshotAccessibilityService;
+import com.subhub.app.service.AccessibilityPipelineFixture;
 import com.subhub.app.settings.CensorAppearance;
 import com.subhub.app.settings.FeatureModuleManager;
 import java.lang.reflect.Field;
@@ -109,16 +110,16 @@ public final class CensorTapTributeAndroidTest {
                         .set(clicked.getWindowId() + 1);
                 wrongWindow.onAccessibilityEvent(clicked);
                 assertEquals(0, session.events());
-                Method record = ScreenshotAccessibilityService.class.getDeclaredMethod("recordCensoredTap",
+                Method record = AccessibilityPipelineFixture.type().getDeclaredMethod("recordCensoredTap",
                         AccessibilityEvent.class, String.class);
                 record.setAccessible(true);
                 AccessibilityEvent scroll = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_SCROLLED);
-                try { record.invoke(session.service(clicked), scroll, session.context.getPackageName()); }
+                try { record.invoke(AccessibilityPipelineFixture.pipeline(session.service(clicked)), scroll, session.context.getPackageName()); }
                 finally { scroll.recycle(); }
                 AccessibilityEvent missingSource = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_CLICKED);
                 missingSource.setPackageName(session.context.getPackageName());
                 missingSource.setEventTime(SystemClock.uptimeMillis());
-                try { record.invoke(session.service(clicked), missingSource, session.context.getPackageName()); }
+                try { record.invoke(AccessibilityPipelineFixture.pipeline(session.service(clicked)), missingSource, session.context.getPackageName()); }
                 finally { missingSource.recycle(); }
                 assertEquals(0, session.events());
             } finally { clicked.recycle(); }
@@ -133,12 +134,9 @@ public final class CensorTapTributeAndroidTest {
         Context real = InstrumentationRegistry.getInstrumentation().getTargetContext();
         ScopedPreferencesContext isolated = new ScopedPreferencesContext(real);
         boolean wasDom = ControllerPinManager.isDomModeActive();
-        Field active = ScreenshotAccessibilityService.class.getDeclaredField("recognitionActive");
-        active.setAccessible(true);
-        boolean wasActive = active.getBoolean(null);
+        boolean wasActive = ScreenshotAccessibilityService.isRecognitionActive();
         CensorTapTracker.shared().clear();
         ControllerPinManager.enterSubMode();
-        active.setBoolean(null, true);
         try (ActivityScenario<CensorTapFixtureActivity> scenario = ActivityScenario.launch(CensorTapFixtureActivity.class)) {
             AtomicReference<Button> button = new AtomicReference<>();
             scenario.onActivity(activity -> {
@@ -167,7 +165,7 @@ public final class CensorTapTributeAndroidTest {
             check.accept(session);
         } finally {
             isolated.restore();
-            active.setBoolean(null, wasActive);
+            assertEquals("Detached fixtures never change real binding status", wasActive, ScreenshotAccessibilityService.isRecognitionActive());
             if (wasDom) ControllerPinManager.enterDomMode(); else ControllerPinManager.enterSubMode();
             CensorTapTracker.shared().clear();
         }
@@ -205,6 +203,7 @@ public final class CensorTapTributeAndroidTest {
             Method attach = ContextWrapper.class.getDeclaredMethod("attachBaseContext", Context.class);
             attach.setAccessible(true);
             attach.invoke(service, context);
+            AccessibilityPipelineFixture.installDetachedEvents(service);
             set(service, "penance", manager);
             set(service, "foregroundPackage", context.getPackageName());
             ((java.util.concurrent.atomic.AtomicInteger) get(service, "activeApplicationWindowId")).set(event.getWindowId());
@@ -232,12 +231,12 @@ public final class CensorTapTributeAndroidTest {
         }
     }
     private static void set(Object instance, String fieldName, Object value) throws Exception {
-        Field field = ScreenshotAccessibilityService.class.getDeclaredField(fieldName);
-        field.setAccessible(true); field.set(instance, value);
+        Field field = AccessibilityPipelineFixture.type().getDeclaredField(fieldName);
+        field.setAccessible(true); field.set(AccessibilityPipelineFixture.pipeline((ScreenshotAccessibilityService) instance), value);
     }
     private static Object get(Object instance, String fieldName) throws Exception {
-        Field field = ScreenshotAccessibilityService.class.getDeclaredField(fieldName);
-        field.setAccessible(true); return field.get(instance);
+        Field field = AccessibilityPipelineFixture.type().getDeclaredField(fieldName);
+        field.setAccessible(true); return field.get(AccessibilityPipelineFixture.pipeline((ScreenshotAccessibilityService) instance));
     }
     private interface Check { void accept(Session session) throws Exception; }
 }

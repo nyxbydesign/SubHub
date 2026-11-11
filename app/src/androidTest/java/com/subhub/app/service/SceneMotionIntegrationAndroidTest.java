@@ -15,37 +15,29 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
-import org.junit.Before;
 import org.junit.After;
 import static org.junit.Assert.*;
 
 /** Exercise the service-to-coordinator wiring, without connecting or starting capture workers. */
 public final class SceneMotionIntegrationAndroidTest {
-    private boolean previousRecognitionActive;
-    private boolean previousRunning;
-
-    @Before public void allowSyntheticCaptureScope() throws Exception {
-        Field active = ScreenshotAccessibilityService.class.getDeclaredField("recognitionActive");
-        active.setAccessible(true);
-        previousRecognitionActive = active.getBoolean(null);
-        active.setBoolean(null, true);
-        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
-        running.setAccessible(true);
-        previousRunning = running.getBoolean(null);
+    private final java.util.List<AccessibilityLegacyPipeline> fixtures = new java.util.ArrayList<>();
+    private AccessibilityLegacyPipeline freshPipeline() throws Exception {
+        AccessibilityLegacyPipeline pipeline = new AccessibilityLegacyPipeline(new ScreenshotAccessibilityService());
+        Field active = AccessibilityLegacyPipeline.class.getDeclaredField("recognitionActive");
+        active.setAccessible(true); active.setBoolean(pipeline, true); fixtures.add(pipeline);
+        return pipeline;
     }
-
     @After public void restoreRecognitionScope() throws Exception {
-        Field active = ScreenshotAccessibilityService.class.getDeclaredField("recognitionActive");
-        active.setAccessible(true);
-        active.setBoolean(null, previousRecognitionActive);
-        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
-        running.setAccessible(true);
-        running.setBoolean(null, previousRunning);
+        for (AccessibilityLegacyPipeline pipeline : fixtures) {
+            AccessibilityPipelineFixture.set(pipeline, "recognitionActive", false);
+            AccessibilityPipelineFixture.set(pipeline, "running", false);
+        }
+        fixtures.clear();
     }
 
     @Test public void continuousServiceScenesSurviveMotionButNotNavigationOrSupersession() throws Exception {
         for (boolean settled : new boolean[] {false, true}) {
-            ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+            AccessibilityLegacyPipeline service = freshPipeline();
             long now = SystemClock.uptimeMillis();
             Object scene = begin(service, 1, now, settled, true);
             SceneTransactionCoordinator<Detection> coordinator = coordinator(service);
@@ -65,7 +57,7 @@ public final class SceneMotionIntegrationAndroidTest {
             assertFalse(coordinator.isPresentationCurrent(commit));
             motion(service);
             assertFalse(cancelled(replacement));
-            Method invalidate = ScreenshotAccessibilityService.class.getDeclaredMethod("invalidateCurrentScene", String.class);
+            Method invalidate = AccessibilityLegacyPipeline.class.getDeclaredMethod("invalidateCurrentScene", String.class);
             invalidate.setAccessible(true);
             invalidate.invoke(service, "test-document-change");
             assertTrue(cancelled(replacement));
@@ -75,7 +67,7 @@ public final class SceneMotionIntegrationAndroidTest {
     }
 
     @Test public void nonContinuousServiceSceneStillClosesForMotion() throws Exception {
-        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+        AccessibilityLegacyPipeline service = freshPipeline();
         long now = SystemClock.uptimeMillis();
         Object scene = begin(service, 1, now, false, false);
         assertNotNull(complete(service, scene).commit());
@@ -87,7 +79,7 @@ public final class SceneMotionIntegrationAndroidTest {
 
     @Test public void completedResultStillRejectsStructuralAndMotionScopeChanges() throws Exception {
         for (String scope : new String[] {"epoch", "document", "window", "motion", "stopped"}) {
-            ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+            AccessibilityLegacyPipeline service = freshPipeline();
             Object scene = begin(service, 1, SystemClock.uptimeMillis(), false, false);
             if (scope.equals("epoch")) ((CaptureEpoch) field(service, "captureEpoch")).invalidate();
             if (scope.equals("document")) ((AtomicLong) field(service, "visualDocumentEpoch")).incrementAndGet();
@@ -95,7 +87,7 @@ public final class SceneMotionIntegrationAndroidTest {
             if (scope.equals("window")) ((java.util.concurrent.atomic.AtomicInteger)
                     field(service, "activeApplicationWindowId")).set(2);
             if (scope.equals("stopped")) {
-                Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+                Field running = AccessibilityLegacyPipeline.class.getDeclaredField("running");
                 running.setAccessible(true);
                 running.setBoolean(service, false);
             }
@@ -106,13 +98,13 @@ public final class SceneMotionIntegrationAndroidTest {
     }
 
     @Test public void obsoleteLookupRecoveryCannotResetNewerDocument() throws Exception {
-        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+        AccessibilityLegacyPipeline service = freshPipeline();
         long now = SystemClock.uptimeMillis();
         begin(service, 1, now, false, true);
-        Field packageField = ScreenshotAccessibilityService.class.getDeclaredField("foregroundPackage");
+        Field packageField = AccessibilityLegacyPipeline.class.getDeclaredField("foregroundPackage");
         packageField.setAccessible(true);
         packageField.set(service, "fixture");
-        Class<?> pendingType = Class.forName(ScreenshotAccessibilityService.class.getName() + "$PendingScrollEvent");
+        Class<?> pendingType = Class.forName(AccessibilityLegacyPipeline.class.getName() + "$PendingScrollEvent");
         Constructor<?> constructor = pendingType.getDeclaredConstructors()[0];
         constructor.setAccessible(true);
         AccessibilityEvent event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_SCROLLED);
@@ -123,7 +115,7 @@ public final class SceneMotionIntegrationAndroidTest {
             scope.setAccessible(true);
             scope.set(pending, new ScrollLookupScope(1, 0, 1, 1, 1, "fixture", false));
             ((AtomicLong) field(service, "visualDocumentEpoch")).set(2);
-            Method recovery = ScreenshotAccessibilityService.class.getDeclaredMethod(
+            Method recovery = AccessibilityLegacyPipeline.class.getDeclaredMethod(
                     "recoverScrollLookupGap", pendingType, String.class);
             recovery.setAccessible(true);
             recovery.invoke(service, pending, "queue-age");
@@ -134,7 +126,7 @@ public final class SceneMotionIntegrationAndroidTest {
     }
 
     @Test public void completedPresentationIsCoalescedBeforeBlockedMainAndReleasedOnce() throws Exception {
-        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+        AccessibilityLegacyPipeline service = freshPipeline();
         java.util.ArrayDeque<Runnable> ticks = new java.util.ArrayDeque<>();
         java.util.ArrayList<Integer> presented = new java.util.ArrayList<>();
         java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
@@ -144,10 +136,10 @@ public final class SceneMotionIntegrationAndroidTest {
         LatestFrameBroker<Object> broker = new LatestFrameBroker<>(ticks::addLast,
                 packet -> invokePresentationPacket(packet, "present"),
                 packet -> invokePresentationPacket(packet, "dispose"), 1);
-        Field presenter = ScreenshotAccessibilityService.class.getDeclaredField("scenePresenter");
+        Field presenter = AccessibilityLegacyPipeline.class.getDeclaredField("scenePresenter");
         presenter.setAccessible(true);
         presenter.set(service, broker);
-        Method submit = ScreenshotAccessibilityService.class.getDeclaredMethod(
+        Method submit = AccessibilityLegacyPipeline.class.getDeclaredMethod(
                 "submitScenePresentation", String.class, Runnable.class, Runnable.class);
         submit.setAccessible(true);
         assertTrue(new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -198,8 +190,8 @@ public final class SceneMotionIntegrationAndroidTest {
     }
 
     @Test public void oldGenerationCanQueryButCannotInsertOrMoveEventCacheEvidence() throws Exception {
-        ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
-        Field surface = ScreenshotAccessibilityService.class.getDeclaredField("activeScrollSurfaceKey");
+        AccessibilityLegacyPipeline service = freshPipeline();
+        Field surface = AccessibilityLegacyPipeline.class.getDeclaredField("activeScrollSurfaceKey");
         surface.setAccessible(true);
         surface.set(service, "test");
         ((AtomicLong) field(service, "motionGeneration")).set(10);
@@ -223,25 +215,25 @@ public final class SceneMotionIntegrationAndroidTest {
 
     @Test public void sourceIdentitySnapshotDoesNotConsumeMotionOrSwapFastScrollNeighbors() throws Exception {
         for (int scroll : new int[] {400, -400}) {
-            ScreenshotAccessibilityService service = new ScreenshotAccessibilityService();
+            AccessibilityLegacyPipeline service = freshPipeline();
             Method attach = android.content.ContextWrapper.class.getDeclaredMethod(
                     "attachBaseContext", android.content.Context.class);
             attach.setAccessible(true);
-            attach.invoke(service, androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            attach.invoke(field(service, "host"), androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
                     .getTargetContext());
-            Method bounds = ScreenshotAccessibilityService.class.getDeclaredMethod("screenBounds");
+            Method bounds = AccessibilityLegacyPipeline.class.getDeclaredMethod("screenBounds");
             bounds.setAccessible(true);
             android.graphics.Rect viewport = (android.graphics.Rect) bounds.invoke(service);
             assertTrue(viewport.height() > 1600);
             ObjectTracker tracker = new ObjectTracker(DetectorConfig.builder().motionPrediction(false).build());
             tracker.update(List.of(phaseFace(500), phaseFace(900)), 1_000_000_000L);
             tracker.update(List.of(phaseFace(500), phaseFace(900)), 1_100_000_000L);
-            Field trackerField = ScreenshotAccessibilityService.class.getDeclaredField("tracker");
+            Field trackerField = AccessibilityLegacyPipeline.class.getDeclaredField("tracker");
             trackerField.setAccessible(true);
             trackerField.set(service, tracker);
             ((AtomicLong) field(service, "cumulativeScrollY")).set(scroll);
             ((AtomicLong) field(service, "pendingTrackerOffsetY")).set(-scroll);
-            Method snapshot = ScreenshotAccessibilityService.class.getDeclaredMethod(
+            Method snapshot = AccessibilityLegacyPipeline.class.getDeclaredMethod(
                     "identityTracksForSource", int.class, int.class, long.class, long.class);
             snapshot.setAccessible(true);
             @SuppressWarnings("unchecked") List<TrackedObject> sourceTracks = (List<TrackedObject>)
@@ -275,10 +267,10 @@ public final class SceneMotionIntegrationAndroidTest {
         field.setAccessible(true);
         return field.get(target);
     }
-    private static void updateCache(ScreenshotAccessibilityService service,
+    private static void updateCache(AccessibilityLegacyPipeline service,
             List<TrackedObject> tracks, long generation) throws Exception {
         Method update = null;
-        for (Method candidate : ScreenshotAccessibilityService.class.getDeclaredMethods()) {
+        for (Method candidate : AccessibilityLegacyPipeline.class.getDeclaredMethods()) {
             if (candidate.getName().equals("updateWorldCache")) update = candidate;
         }
         assertNotNull(update);
@@ -293,16 +285,16 @@ public final class SceneMotionIntegrationAndroidTest {
                 "test", generation, Collections.emptyList(), null);
     }
 
-    private static Object begin(ScreenshotAccessibilityService service, long sequence, long now,
+    private static Object begin(AccessibilityLegacyPipeline service, long sequence, long now,
             boolean settled, boolean continuous) throws Exception {
-        Field running = ScreenshotAccessibilityService.class.getDeclaredField("running");
+        Field running = AccessibilityLegacyPipeline.class.getDeclaredField("running");
         running.setAccessible(true);
         running.setBoolean(service, true);
         CaptureEpoch epoch = (CaptureEpoch) field(service, "captureEpoch");
         if (epoch.token() == 0) epoch.invalidate();
         ((AtomicLong) field(service, "motionGeneration")).set(1);
         ((java.util.concurrent.atomic.AtomicInteger) field(service, "activeApplicationWindowId")).set(1);
-        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod("stageScene", long.class,
+        Method method = AccessibilityLegacyPipeline.class.getDeclaredMethod("stageScene", long.class,
                 long.class, long.class, long.class, long.class, boolean.class, boolean.class,
                 boolean.class, SpatialRegionCache.Frame.class);
         method.setAccessible(true);
@@ -311,8 +303,8 @@ public final class SceneMotionIntegrationAndroidTest {
 
     @SuppressWarnings("unchecked")
     private static SceneTransactionCoordinator.Transition<Detection> complete(
-            ScreenshotAccessibilityService service, Object scene) throws Exception {
-        Class<?> frameType = Class.forName(ScreenshotAccessibilityService.class.getName() + "$InferenceFrame");
+            AccessibilityLegacyPipeline service, Object scene) throws Exception {
+        Class<?> frameType = Class.forName(AccessibilityLegacyPipeline.class.getName() + "$InferenceFrame");
         Constructor<?> constructor = frameType.getDeclaredConstructors()[0];
         constructor.setAccessible(true);
         SceneTransactionCoordinator.SceneKey stamp = key(scene);
@@ -322,14 +314,14 @@ public final class SceneMotionIntegrationAndroidTest {
                 false, false, now, 0L, 0L, stamp.motionGeneration(),
                 CaptureTimeReference.accessibility(false, now, now, now), false, 0L, 1L, "",
                 stamp.fastSequence(), 1, scene);
-        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod(
+        Method method = AccessibilityLegacyPipeline.class.getDeclaredMethod(
                 "completeFastScene", frameType, long.class, List.class);
         method.setAccessible(true);
         return (SceneTransactionCoordinator.Transition<Detection>) method.invoke(
                 service, frame, stamp.motionGeneration(), Collections.emptyList());
     }
-    private static void motion(ScreenshotAccessibilityService service) throws Exception {
-        Method method = ScreenshotAccessibilityService.class.getDeclaredMethod("invalidateNonReprojectableSceneForMotion");
+    private static void motion(AccessibilityLegacyPipeline service) throws Exception {
+        Method method = AccessibilityLegacyPipeline.class.getDeclaredMethod("invalidateNonReprojectableSceneForMotion");
         method.setAccessible(true);
         method.invoke(service);
     }
@@ -344,8 +336,8 @@ public final class SceneMotionIntegrationAndroidTest {
         return ((AtomicBoolean) field.get(scene)).get();
     }
     @SuppressWarnings("unchecked")
-    private static SceneTransactionCoordinator<Detection> coordinator(ScreenshotAccessibilityService service) throws Exception {
-        Field field = ScreenshotAccessibilityService.class.getDeclaredField("sceneCoordinator");
+    private static SceneTransactionCoordinator<Detection> coordinator(AccessibilityLegacyPipeline service) throws Exception {
+        Field field = AccessibilityLegacyPipeline.class.getDeclaredField("sceneCoordinator");
         field.setAccessible(true);
         return (SceneTransactionCoordinator<Detection>) field.get(service);
     }
