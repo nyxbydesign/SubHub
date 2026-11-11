@@ -47,6 +47,19 @@ class GradleDiagnosticTest(unittest.TestCase):
                 self.assertEqual([category], result["exceptions"])
                 self.assertFalse(result["unknownException"])
 
+    def test_compile_stages_and_failures_are_fixed_labels_without_diagnostic_text(self):
+        data = (b"> Task :app:processDebugResources UP-TO-DATE\n"
+                b"> Task :app:compileDebugJavaWithJavac FAILED\n"
+                b"> Task :app:compileDebugUnitTestJavaWithJavac FAILED PRIVATE_TOKEN\n"
+                b"/home/private/PRIVATE.java:17: error: PRIVATE_TOKEN\n"
+                b"* Exception is:\norg.gradle.api.tasks.TaskExecutionException: " + PRIVATE + b"\n"
+                b"Caused by: org.gradle.api.internal.tasks.compile.CompilationFailedException: "
+                + PRIVATE + b"\n")
+        _, result = self.report(data)
+        self.assertEqual({"resource_link": "up_to_date", "java_compile": "failed"}, result["tasks"])
+        self.assertEqual(["task_execution", "java_compilation"], result["exceptions"])
+        self.assertFalse(result["unknownException"])
+
     def test_exception_text_cannot_overwrite_task_status_and_failure_is_monotonic(self):
         data = (b"> Task :app:packageDebug FAILED\n* Exception is:\n"
                 b"java.io.IOException: PRIVATE_TOKEN\n> Task :app:packageDebug\n"

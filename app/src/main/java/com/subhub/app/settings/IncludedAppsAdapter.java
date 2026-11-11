@@ -15,7 +15,7 @@ final class IncludedAppsAdapter extends BaseAdapter {
     }
 
     private final Context context;
-    private final List<InstalledAppCatalog.Entry> entries;
+    private List<InstalledAppCatalog.Entry> entries;
     private final Set<String> included;
     private final Changed changed;
     private boolean editing;
@@ -29,6 +29,11 @@ final class IncludedAppsAdapter extends BaseAdapter {
         this.entries = entries;
         this.included = included;
         this.changed = changed;
+    }
+
+    void update(List<InstalledAppCatalog.Entry> values) {
+        entries = values;
+        notifyDataSetChanged();
     }
 
     void setEditing(boolean enabled) {

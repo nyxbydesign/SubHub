@@ -37,7 +37,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private com.subhub.app.stats.AchievementPreviewView subAchievements;
     private List<Object> renderedFavorite, renderedSummary, renderedRecent, renderedUsage, renderedRelationship;
     private long lastRefresh;
-    private boolean displayedDom, sessionPage;
+    private boolean displayedDom, sessionPage, refreshQueued;
     private AutoCloseable appIconObserver;
     private long appIconEpoch;
     private DeviceRolePreferences.Mode iconRole;
@@ -110,7 +110,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
     }
     @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeAppIcons(); }
-    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopAppIcons(); data.cancel("role-home"); }
+    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopAppIcons(); refreshQueued = false; data.cancel("role-home"); }
     @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
         stopAppIcons(); domBody.removeOnAttachStateChangeListener(this); subBody.removeOnAttachStateChangeListener(this);
         activity.getLifecycle().removeObserver(this);
@@ -153,6 +153,10 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         }
         if (sessionPage) return;
         if (dom) ensureDomSections();
+        if (data.isPending("role-home")) {
+            if (force || dom != displayedDom) refreshQueued = true;
+            return;
+        }
         long now = android.os.SystemClock.elapsedRealtime();
         if (!force && dom == displayedDom && now - lastRefresh < 5_000L) return;
         displayedDom = dom;
@@ -182,42 +186,53 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
                     access, relationshipUnavailable);
         }, loaded -> {
-            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
-                    || dom != domWorkspace() || sessionPage
-                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
-            boolean current = loaded.access != null
-                    && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
-            homeAccess = current ? loaded.access : null;
-            if (dom) {
-                if (!current) {
-                    renderDomUnavailable(R.string.relationships_unavailable);
+            try {
+                if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                        || dom != domWorkspace() || sessionPage
+                        || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
+                boolean current = loaded.access != null
+                        && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
+                homeAccess = current ? loaded.access : null;
+                if (dom) {
+                    if (!current) {
+                        renderDomUnavailable(R.string.relationships_unavailable);
+                        return;
+                    }
+                    renderDom(loaded.people);
+                }
+                else if (!loaded.people.isEmpty()) {
+                    taskSummary = loaded.tasks;
+                    subFormal = !current || !loaded.access.legacy;
+                    subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
+                    renderSub(loaded.people.get(0), current ? loaded.dom : null);
+                }
+            } finally { finishRefresh(); }
+        }, failure -> {
+            try {
+                if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
+                        || dom != domWorkspace()
+                        || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
+                relationship.setVisibility(View.GONE);
+                if (dom) {
+                    renderDomUnavailable(failure instanceof RelationshipUnavailable
+                            ? R.string.relationships_unavailable : R.string.role_person_unavailable);
                     return;
                 }
-                renderDom(loaded.people);
-            }
-            else if (!loaded.people.isEmpty()) {
-                taskSummary = loaded.tasks;
-                subFormal = !current || !loaded.access.legacy;
-                subRelationshipUnavailable = loaded.relationshipUnavailable || !current;
-                renderSub(loaded.people.get(0), current ? loaded.dom : null);
-            }
-        }, failure -> {
-            if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
-                    || dom != domWorkspace()
-                    || dom && !ControllerPinManager.isDomWorkspaceUnlocked()) return;
-            relationship.setVisibility(View.GONE);
-            if (dom) {
-                renderDomUnavailable(failure instanceof RelationshipUnavailable
-                        ? R.string.relationships_unavailable : R.string.role_person_unavailable);
-                return;
-            }
-            renderedRelationship = null;
-            LinearLayout target = subBody;
-            target.removeAllViews();
-            PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
-                    ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
-            PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
+                renderedRelationship = null;
+                LinearLayout target = subBody;
+                target.removeAllViews();
+                PersonUi.text(target, activity.getString(failure instanceof RelationshipUnavailable
+                        ? R.string.relationships_unavailable : R.string.role_person_unavailable), false);
+                PersonUi.action(target, R.string.role_retry, () -> refresh(true), false);
+            } finally { finishRefresh(); }
         });
+    }
+
+    private void finishRefresh() {
+        if (!refreshQueued) return;
+        refreshQueued = false;
+        if (activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+            refresh(true);
     }
 
     private void renderDomUnavailable(int message) {
@@ -381,7 +396,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         com.subhub.app.journal.JournalPreview.addOverview(OverviewUi.card(domPeople), true,
                 () -> com.subhub.app.journal.JournalRoutes.own(activity, true));
         domPeople.addView(domRecent, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(domFavorite, activity.getString(R.string.role_loading), false);
+        PersonUi.text(domFavorite, activity.getString(R.string.role_data_unknown), false);
         com.subhub.app.activity.ActivityPreview.addOverview(domBody, data, "home-activity-preview");
         domAchievements = achievementPreview(domBody);
         helpSafety(domBody, "home_help:dom");

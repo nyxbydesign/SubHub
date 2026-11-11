@@ -81,7 +81,7 @@ public final class ExtraTimeActivity extends PreferencePage {
         content.setDefaultFocusHighlightEnabled(false);
         page.addView(content, new LinearLayout.LayoutParams(-1, -2));
         data = AsyncUiScope.forPage(this);
-        PersonUi.text(content, getString(R.string.role_loading), false);
+        PersonUi.text(content, getString(R.string.role_data_unknown), false);
     }
 
     @Override protected void onResume() {

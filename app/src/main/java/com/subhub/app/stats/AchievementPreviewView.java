@@ -1,7 +1,6 @@
 package com.subhub.app.stats;
 
 import android.content.Intent;
-import android.content.res.ColorStateList;
 import android.view.Gravity;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -105,12 +104,11 @@ public final class AchievementPreviewView extends LinearLayout {
                 : getContext().getString(R.string.achievements_next_fmt,
                         getContext().getString(preview.next.getName()), formatProgress(preview)), false);
         next.setTag("achievement_next");
-        ProgressBar progress = new ProgressBar(getContext(), null, android.R.attr.progressBarStyleHorizontal);
+        ProgressBar progress = new ProgressBar(getContext(), null, 0, R.style.Widget_SubHub_ProgressMeter);
         progress.setMax(100);
         if (preview.next != null && !preview.progress.isKnown()) progress.setVisibility(GONE);
         progress.setProgress(preview.next == null ? 100 : preview.progress.percent());
-        progress.setProgressTintList(ColorStateList.valueOf(getContext().getColor(R.color.accent_text)));
-        addView(progress, new LayoutParams(-1, PersonUi.dp(getContext(), 6)));
+        addView(progress, new LayoutParams(-1, getResources().getDimensionPixelSize(R.dimen.progress_meter_height)));
     }
 
     private void recentBadges(AchievementManager achievements) {

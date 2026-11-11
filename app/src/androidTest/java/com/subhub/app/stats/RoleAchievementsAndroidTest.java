@@ -107,19 +107,19 @@ public final class RoleAchievementsAndroidTest {
         saved.edit().putStringSet("unlocked", new LinkedHashSet<>(Collections.singletonList("first_session")))
                 .putStringSet("pending_notifications", new LinkedHashSet<>(Collections.singletonList("first_session"))).commit();
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        assertEquals(17, dom.all().size());
+        assertEquals(20, dom.all().size());
         List<AchievementManager.Achievement> awarded = dom.checkDomAchievements(facts());
         assertFalse(awarded.isEmpty());
         long timestamp = dom.getUnlockedAt("dom_subs_1");
         assertTrue(dom.checkDomAchievements(facts()).isEmpty());
         assertEquals(timestamp, dom.getUnlockedAt("dom_subs_1"));
-        for (AchievementManager.Achievement value : dom.takePendingNotifications()) assertTrue(value.getId().startsWith("dom_"));
+        for (AchievementManager.Achievement value : dom.takePendingNotifications()) assertEquals(AchievementRole.DOM, value.getRole());
         assertFalse(dom.isUnlocked("first_session"));
         ControllerPinManager.enterSubMode();
         assertTrue(dom.all().isEmpty());
         assertTrue(dom.takePendingNotifications().isEmpty());
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        assertEquals(57, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
+        assertEquals(54, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
         assertFalse(sub.isUnlocked("dom_subs_1"));
         assertEquals("first_session", sub.takePendingNotifications().get(0).getId());
         ControllerPinManager.enterDomMode();
@@ -141,8 +141,8 @@ public final class RoleAchievementsAndroidTest {
         AchievementManager dom = AchievementManager.forWorkspace(context);
         assertEquals(1, DomAchievementCatalog.target("dom_subs_1"));
         assertEquals(10, DomAchievementCatalog.target("dom_sessions_10"));
-        assertEquals(3_600, DomAchievementCatalog.target("dom_time_1hr"));
-        assertEquals(1_000, DomAchievementCatalog.target("dom_tribute_10"));
+        assertEquals(36_000, DomAchievementCatalog.target("dom_time_1hr"));
+        assertEquals(10_000, DomAchievementCatalog.target("dom_tribute_10"));
         assertTrue(dom.isUnlocked("dom_subs_1"));
         assertEquals(receivedAt, dom.getUnlockedAt("dom_subs_1"));
         assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
@@ -155,6 +155,105 @@ public final class RoleAchievementsAndroidTest {
         assertEquals(before, saved.getAll());
     }
 
+    @Test public void movedBadgesAndHigherGoalsPreserveEarnedDatesWithoutReawarding() {
+        SharedPreferences saved = context.getSharedPreferences("betablocker_achievements", 0);
+        Set<String> earned = new LinkedHashSet<>(Arrays.asList("first_custom_phrase", "phrase_library",
+                "paypal_vault", "dom_time_1hr", "dom_tribute_10"));
+        long date = 1_790_000_000_000L;
+        SharedPreferences.Editor edit = saved.edit().putStringSet("unlocked", earned)
+                .putStringSet("pending_notifications", earned);
+        for (String id : earned) edit.putLong("unlocked_at." + id, date);
+        assertTrue(edit.commit());
+        AchievementManager dom = AchievementManager.forWorkspace(context);
+        for (String id : earned) { assertTrue(dom.isUnlocked(id)); assertEquals(date, dom.getUnlockedAt(id)); }
+        assertTrue(dom.checkDomAchievements(DomStatsSnapshot.empty()).isEmpty());
+        assertEquals(earned.size(), dom.takePendingNotifications().size());
+        assertTrue(dom.takePendingNotifications().isEmpty());
+        ControllerPinManager.enterSubMode();
+        AchievementManager sub = AchievementManager.forWorkspace(context);
+        for (String id : earned) assertFalse(sub.isUnlocked(id));
+        assertTrue(sub.takePendingNotifications().isEmpty());
+        assertEquals(earned, saved.getStringSet("unlocked", Collections.emptySet()));
+    }
+
+    @Test public void liveStreakAndTimedLockProgressDoNotRequireSessionRestart() {
+        ControllerPinManager.enterSubMode();
+        long day = 24L * 60L * 60L * 1000L, now = System.currentTimeMillis();
+        java.time.LocalDate firstDay = java.time.LocalDate.now().minusDays(6);
+        long startedAt = firstDay.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        String startDay = firstDay.toString();
+        SharedPreferences stats = context.getSharedPreferences(StatsRepository.PREFS_NAME, 0);
+        assertTrue(stats.edit().putInt("current_streak", 1).putString("last_session_date", startDay)
+                .putLong("active_session_start_ms", startedAt).commit());
+        StatsSnapshot snapshot = new StatsRepository(context, false).retainedSnapshot();
+        assertEquals(7, snapshot.getCurrentStreak());
+        SharedPreferences main = new SettingsRepository(context).preferences();
+        assertTrue(main.edit().remove("commitment_longest_elapsed_ms").remove("commitment_started_once")
+                .remove("commitment_started_at").remove("commitment_ends_at").remove("commitment_duration").commit());
+        AchievementManager manager = new AchievementManager(context);
+        manager.checkRetainedAchievements(snapshot);
+        assertTrue(manager.isUnlocked("streak_7"));
+        assertTrue(main.edit().putLong("commitment_started_at", now - 3 * day)
+                .putLong("commitment_ends_at", now + 7 * day).putLong("commitment_duration", 10 * day)
+                .remove("commitment_boot").remove("commitment_ends_elapsed").commit());
+        AchievementManager.Achievement lock = manager.all().stream()
+                .filter(value -> "pact_long_haul".equals(value.getId())).findFirst().get();
+        assertEquals(7 * day / 1000, manager.progress(lock, snapshot).getTarget());
+        assertTrue(manager.progress(lock, snapshot).getCurrent() >= 3 * day / 1000);
+        manager.checkRetainedAchievements(snapshot);
+        assertTrue(manager.isUnlocked("pact_sealed")); assertFalse(manager.isUnlocked("pact_long_haul"));
+        assertTrue(main.edit().putLong("commitment_started_at", now - 8 * day)
+                .putLong("commitment_ends_at", now + 2 * day).commit());
+        Map<String, ?> before = main.getAll();
+        manager.checkRetainedAchievements(snapshot);
+        assertTrue(manager.isUnlocked("pact_long_haul")); assertEquals(before, main.getAll());
+    }
+
+    @Test public void exactlySevenDayLockRemainsEarnableAfterExpiryAndLaterShortLocks() {
+        ControllerPinManager.enterSubMode();
+        long day = 24L * 60L * 60L * 1000L, now = System.currentTimeMillis();
+        SharedPreferences main = new SettingsRepository(context).preferences();
+        assertTrue(main.edit().putLong("commitment_started_at", now - 7 * day - 1)
+                .putLong("commitment_ends_at", now - 1).putLong("commitment_duration", 7 * day)
+                .remove("commitment_boot").remove("commitment_ends_elapsed")
+                .remove("commitment_longest_elapsed_ms").remove("commitment_started_once").commit());
+        // Both natural expiry and native/manual Stop use this same transactional clear.
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            SharedPreferences.Editor edit = main.edit();
+            com.subhub.app.commitment.CommitmentManager.appendNativeStop(context, edit);
+            assertTrue(edit.commit());
+        }
+        assertFalse(main.contains("commitment_started_at"));
+        assertEquals(7 * day, com.subhub.app.commitment.CommitmentManager.observedElapsedMillis(context));
+        assertTrue(com.subhub.app.commitment.CommitmentManager.observedStarted(context));
+        assertTrue(main.edit().putLong("commitment_started_at", now)
+                .putLong("commitment_ends_at", now + day).putLong("commitment_duration", day).commit());
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            SharedPreferences.Editor edit = main.edit();
+            com.subhub.app.commitment.CommitmentManager.appendNativeStop(context, edit);
+            assertTrue(edit.commit());
+        }
+        AchievementManager manager = new AchievementManager(context);
+        manager.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        assertTrue(manager.isUnlocked("pact_sealed")); assertTrue(manager.isUnlocked("pact_long_haul"));
+        long earned = manager.getUnlockedAt("pact_long_haul");
+        manager.checkRetainedAchievements(new StatsRepository(context, false).retainedSnapshot());
+        assertEquals(earned, manager.getUnlockedAt("pact_long_haul"));
+    }
+
+    @Test public void retainedStatisticsIdentityRejectsWorkspaceAndAuthorityChanges() {
+        StatisticsDisplayIdentity original = new StatisticsDisplayIdentity(context);
+        assertTrue(original.current());
+        ControllerPinManager.enterSubMode();
+        assertFalse(original.current());
+        ControllerPinManager.enterDomMode();
+        assertFalse(original.current());
+        StatisticsDisplayIdentity fresh = new StatisticsDisplayIdentity(context);
+        assertTrue(fresh.current());
+        People.installRemoteAuthority(() -> true);
+        assertFalse(fresh.current());
+    }
+
     @Test public void backgroundSubMilestonesKeepTheirOwnCatalogDuringDomUse() {
         context.getSharedPreferences(StatsRepository.PREFS_NAME, 0).edit().putLong("total_blocks_all_time", 1).commit();
         AchievementManager events = new AchievementManager(context);
@@ -162,7 +261,7 @@ public final class RoleAchievementsAndroidTest {
         assertTrue(events.isUnlocked("first_block"));
         AchievementManager dom = AchievementManager.forWorkspace(context);
         assertFalse(dom.isUnlocked("first_block"));
-        for (AchievementManager.Achievement value : dom.takePendingNotifications()) assertTrue(value.getId().startsWith("dom_"));
+        for (AchievementManager.Achievement value : dom.takePendingNotifications()) assertEquals(AchievementRole.DOM, value.getRole());
         ControllerPinManager.enterSubMode();
         assertTrue(AchievementManager.forWorkspace(context).isUnlocked("first_block"));
     }

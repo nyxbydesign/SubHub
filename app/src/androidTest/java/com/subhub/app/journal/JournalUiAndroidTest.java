@@ -541,6 +541,79 @@ public final class JournalUiAndroidTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    public void queuedRefreshCannotKeepPrivateRowsOrPlaybackAfterControllerLock() throws Exception {
+        ControllerPinManager.enterDomMode();
+        String id = seed(true, "Private queued-read fixture", null, List.of(), false);
+        File sound = new File(context.getCacheDir(), "journal-held-read-" + UUID.randomUUID() + ".wav");
+        // Actual silent PCM playback verifies decoder teardown without microphone permission.
+        int bytes = 8_000 * 2 * 30;
+        java.nio.ByteBuffer wave = java.nio.ByteBuffer.allocate(44 + bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        wave.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(36 + bytes)
+                .put("WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16)
+                .putShort((short) 1).putShort((short) 1).putInt(8_000).putInt(16_000)
+                .putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(bytes);
+        java.nio.file.Files.write(sound.toPath(), wave.array());
+        CountDownLatch started = new CountDownLatch(2), release = new CountDownLatch(1);
+        JournalAudioPlayer[] playback = new JournalAudioPlayer[1];
+        try (ActivityScenario<JournalActivity> scenario = launch(true, PersonId.LOCAL)) {
+            try {
+                await(scenario, a -> tagged(a, "journal_entry:" + id) != null); tap("journal_entry:" + id);
+                await(scenario, a -> tagged(a, "journal_text_body") != null);
+                scenario.onActivity(a -> {
+                    // Register the real native player with this page's normal teardown owner.
+                    playback[0] = new JournalAudioPlayer(a, Uri.fromFile(sound), () -> fail("Fixture audio unavailable"));
+                    ((android.widget.LinearLayout) privateField(a, "content")).addView(playback[0]);
+                    ((List<JournalAudioPlayer>) privateField(a, "players")).add(playback[0]);
+                    playback[0].findViewWithTag("journal_play").performClick();
+                });
+                await(scenario, a -> privateField(playback[0], "player") != null
+                        && ((android.media.MediaPlayer) privateField(playback[0], "player")).isPlaying());
+                scenario.onActivity(a -> {
+                    com.subhub.app.util.AsyncUiScope work = com.subhub.app.util.AsyncUiScope.forPage(a);
+                    work.cancel("journal-screen");
+                    for (int index = 0; index < 2; index++) work.load("journal-gate:" + index, () -> {
+                        started.countDown();
+                        if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Fixture gate timed out");
+                        return true;
+                    }, ignored -> { }, failure -> { });
+                });
+                assertTrue("Both page workers are held", started.await(5, TimeUnit.SECONDS));
+                scenario.onActivity(a -> {
+                    try {
+                        java.lang.reflect.Method refresh = JournalActivity.class.getDeclaredMethod("refresh");
+                        refresh.setAccessible(true); refresh.invoke(a);
+                    } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+                    assertTrue(com.subhub.app.util.AsyncUiScope.forPage(a).isPending("journal-screen"));
+                    assertNotNull(tagged(a, "journal_text_body"));
+                    ControllerPinManager.enterSubMode();
+                });
+                // Exercise the recurring poll, not a completed read: private content must disappear
+                // while the queue is still held, including the actively playing native decoder.
+                await(scenario, a -> tagged(a, "journal_unavailable") != null);
+                assertEquals(1L, release.getCount());
+                scenario.onActivity(a -> {
+                    assertNull(tagged(a, "journal_text_body"));
+                    assertNull(privateField(playback[0], "player"));
+                    assertTrue(((List<?>) privateField(a, "players")).isEmpty());
+                    assertFalse(com.subhub.app.util.AsyncUiScope.forPage(a).isPending("journal-screen"));
+                });
+                release.countDown();
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(a -> assertNull(tagged(a, "journal_text_body")));
+            } finally { release.countDown(); }
+        } finally { java.nio.file.Files.deleteIfExists(sound.toPath()); }
+    }
+
+    private static Object privateField(Object owner, String name) {
+        try {
+            java.lang.reflect.Field field = owner.getClass().getDeclaredField(name);
+            field.setAccessible(true); return field.get(owner);
+        } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+    }
+
     private String seed(boolean dom, String text, JournalAttachment audio, List<JournalAttachment> files, boolean shared) throws Exception {
         String id = UUID.randomUUID().toString().replace("-", ""); long now = System.currentTimeMillis();
         runtime.save(dom, new JournalEntry(id, now, now, text, audio, files), shared, shared); remember(dom, id);

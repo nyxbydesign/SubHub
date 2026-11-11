@@ -1153,7 +1153,7 @@
     <string name="limits_minutes_per_day">min/day</string>
     <string name="limits_manage_apps">Manage included apps</string>
     <string name="limits_no_apps">No included apps</string>
-    <string name="limits_loading_apps">Loading apps…</string>
+    <string name="limits_loading_apps">App details not yet available</string>
     <string name="limits_usage_remaining">%1$s used · %2$s left</string>
     <string name="limits_usage_only">%1$s used</string>
     <string name="limits_reached">Limit reached</string>
@@ -1176,4 +1176,7 @@
     <string name="stats_remote_history_private">Session history stays on the Sub device.</string>
     <string name="home_subs_total">Subs</string>
     <string name="home_local_sub_count">%1$d local</string>
+    <string name="dom_activity_mark_all_read">Mark all activities as read</string>
+    <string name="dom_activity_read_failed">Could not mark activities as read. Try again.</string>
+    <string name="dom_activity_refresh_failed">Could not update activity. Showing saved entries.</string>
 </resources>

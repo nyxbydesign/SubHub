@@ -9,7 +9,6 @@ import com.subhub.app.censor.engine.CensorEngine;
 import com.subhub.app.censor.engine.SceneEngine;
 
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -27,6 +26,8 @@ public final class StatsRepository {
     private static final String NATIVE_STARTED_FACT = "remote_native_started_fact";
     private static final String NATIVE_ENDED = "remote_native_ended_identity";
     private static final String KEY_ACTIVE_DATES = "active_dates";
+    static final String ACTIVE_DATE_CLOCKS = "active_date_clocks_v1";
+    static final String ACTIVE_DATE_PROVENANCE_SINCE = "active_date_provenance_since_v1";
     private static final String KEY_ALL_CATEGORIES_CENSORS = "all_categories_censors";
     private static final String KEY_BORDER_COLOR_CHANGED = "border_color_changed";
     private static final String KEY_BORDER_EFFECTS_TRIED = "border_effects_tried";
@@ -38,6 +39,7 @@ public final class StatsRepository {
     private static final String KEY_CUSTOM_PHRASES_COUNT = "custom_phrases_count";
     private static final String KEY_EXPORTED_IMAGES = "exported_images_count";
     private static final String KEY_LAST_SESSION_DATE = "last_session_date";
+    static final String LAST_SESSION_ZONE = "last_session_zone_v1";
     private static final String KEY_LONGEST_SESSION = "longest_session_seconds";
     private static final String KEY_PEAK_SESSION_BLOCKS = "peak_session_blocks";
     private static final String KEY_SESSIONS_COUNT = "sessions_count";
@@ -225,7 +227,7 @@ public final class StatsRepository {
                         .putLong(KEY_LONGEST_SESSION, Math.max(preferences.getLong(KEY_LONGEST_SESSION, 0), durationSeconds))
                         .putString(KEY_SESSION_HISTORY, appendedSessionHistory(entry))
                         .putLong(DailyStatsStore.STAMP, observedAt).putString(DailyStatsStore.ZONE, session.zone);
-                nativeStartStreak(edit, session);
+                recordSessionStreak(edit, session.startedAt, observedAt, session.zone);
                 boolean saved = edit.commit(); refreshSessionMemory();
                 if (saved) { syncDaily(); durationChanged(); }
                 return saved;
@@ -293,6 +295,7 @@ public final class StatsRepository {
                         .putString(NATIVE_ENDED, expected).putLong("remote_native_ended_at", observedAt)
                         .putLong(DailyStatsStore.STAMP, observedAt)
                         .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
+                recordSessionStreak(edit, started, observedAt, activeSessionZone());
                 boolean saved = edit.commit(); refreshSessionMemory();
                 if (saved) { syncDaily(); durationChanged(); }
                 return saved;
@@ -301,14 +304,15 @@ public final class StatsRepository {
     }
 
     private void nativeStartStreak(SharedPreferences.Editor edit, NativeSession session) {
-        String date = java.time.Instant.ofEpochMilli(session.startedAt).atZone(java.time.ZoneId.of(session.zone))
-                .toLocalDate().toString();
-        String previous = preferences.getString(KEY_LAST_SESSION_DATE, "");
-        int old = Math.max(0, preferences.getInt(KEY_CURRENT_STREAK, 0));
-        int streak = date.equals(previous) ? old
-                : java.time.LocalDate.parse(date).minusDays(1).toString().equals(previous)
-                        ? old == Integer.MAX_VALUE ? old : old + 1 : 1;
-        edit.putInt(KEY_CURRENT_STREAK, streak).putString(KEY_LAST_SESSION_DATE, date);
+        recordSessionStreak(edit, session.startedAt, session.startedAt, session.zone);
+    }
+
+    private void recordSessionStreak(SharedPreferences.Editor edit, long start, long end, String zone) {
+        SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
+                preferences.getString(KEY_LAST_SESSION_DATE, ""), preferences.getString(LAST_SESSION_ZONE, null),
+                start, end, zone);
+        edit.putInt(KEY_CURRENT_STREAK, streak.days).putString(KEY_LAST_SESSION_DATE, streak.lastDay)
+                .putString(LAST_SESSION_ZONE, zone);
     }
 
     private boolean flushNativeState() {
@@ -370,9 +374,15 @@ public final class StatsRepository {
     }
 
     public int recordTrackIds(List<Integer> trackIds, Set<String> enabledCategories) {
+        return recordTrackIds(trackIds, enabledCategories, 0);
+    }
+
+    /** The production path samples once; the explicit clock also permits exact civil-day regressions. */
+    int recordTrackIds(List<Integer> trackIds, Set<String> enabledCategories, long observedAt) {
         synchronized (SESSION_LOCK) {
             restoreActiveSession();
             if (sessionStartMs == 0) return 0;
+            if (observedAt <= 0) observedAt = System.currentTimeMillis();
             int added = 0;
             for (Integer id : trackIds) if (id != null && SEEN_TRACK_IDS.add(id)) added++;
             if (added == 0) return 0;
@@ -383,8 +393,7 @@ public final class StatsRepository {
             if (sessionBlocks > preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0)) {
                 edit.putInt(KEY_PEAK_SESSION_BLOCKS, sessionBlocks);
             }
-            Set<String> dates = mutableSet(KEY_ACTIVE_DATES);
-            if (dates.add(today())) edit.putStringSet(KEY_ACTIVE_DATES, dates);
+            recordActivityDate(edit, observedAt);
             if (enabledCategories != null && enabledCategories.containsAll(ALL_CATEGORIES)) {
                 edit.putLong(KEY_ALL_CATEGORIES_CENSORS,
                         preferences.getLong(KEY_ALL_CATEGORIES_CENSORS, 0) + added);
@@ -419,13 +428,13 @@ public final class StatsRepository {
             SharedPreferences.Editor edit = preferences.edit()
                     .putInt(KEY_ACTIVE_SESSION_BLOCKS, nextBlocks).putLong(KEY_TOTAL_BLOCKS, total);
             if (nextBlocks > preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0)) edit.putInt(KEY_PEAK_SESSION_BLOCKS, nextBlocks);
-            Set<String> dates = mutableSet(KEY_ACTIVE_DATES);
-            if (dates.add(today())) edit.putStringSet(KEY_ACTIVE_DATES, dates);
+            long observedAt = System.currentTimeMillis();
+            recordActivityDate(edit, observedAt);
             if (enabledCategories != null && enabledCategories.containsAll(ALL_CATEGORIES)) {
                 edit.putLong(KEY_ALL_CATEGORIES_CENSORS,
                         Math.addExact(preferences.getLong(KEY_ALL_CATEGORIES_CENSORS, 0), count));
             }
-            edit.putLong(DailyStatsStore.STAMP, System.currentTimeMillis())
+            edit.putLong(DailyStatsStore.STAMP, observedAt)
                     .putString(DailyStatsStore.ZONE, java.time.ZoneId.systemDefault().getId());
             boolean acknowledged;
             try { acknowledged = edit.commit(); }
@@ -439,6 +448,36 @@ public final class StatsRepository {
             syncDaily();
             sourceChanged();
             return new EvidenceRecord(EvidenceStatus.COMMITTED, count, load());
+        }
+    }
+
+    private void recordActivityDate(SharedPreferences.Editor edit, long observedAt) {
+        java.time.ZoneId clock = java.time.ZoneId.systemDefault();
+        String date = java.time.Instant.ofEpochMilli(observedAt).atZone(clock).toLocalDate().toString();
+        Set<String> dates = mutableSet(KEY_ACTIVE_DATES);
+        if (dates.add(date)) edit.putStringSet(KEY_ACTIVE_DATES, dates);
+        Set<String> clocks = mutableSet(ACTIVE_DATE_CLOCKS);
+        if (clocks.add(clock.getId() + ";" + date)) edit.putStringSet(ACTIVE_DATE_CLOCKS, clocks);
+        long since = ActivityDateHistory.earliest(preferences.getLong(ACTIVE_DATE_PROVENANCE_SINCE, 0), sessionStartMs);
+        edit.putLong(ACTIVE_DATE_PROVENANCE_SINCE, since);
+    }
+
+    /** Pure retained read. Raw activity dates stay available for display, not modern streak proof. */
+    void addActivityHistory(RetainedStatistics history, long dailyIdentifiedSince) {
+        synchronized (SESSION_LOCK) {
+            long since = ActivityDateHistory.earliest(dailyIdentifiedSince,
+                    preferences.getLong(ACTIVE_DATE_PROVENANCE_SINCE, 0));
+            for (SessionEntry entry : getSessionHistory())
+                if (!entry.identity().isEmpty()) since = ActivityDateHistory.earliest(since, entry.getStartMillis());
+            try {
+                requireSessionIdentity(preferences.getString("active_session_identity", ""));
+                since = ActivityDateHistory.earliest(since, preferences.getLong(KEY_ACTIVE_SESSION_START, 0));
+            } catch (IllegalArgumentException invalid) { /* No identified active session. */ }
+            Set<String> raw = mutableSet(KEY_ACTIVE_DATES), encoded = mutableSet(ACTIVE_DATE_CLOCKS);
+            history.activeDates(raw);
+            history.legacyActivityDates(ActivityDateHistory.legacy(raw, encoded, since));
+            for (java.util.Map.Entry<String, Set<String>> dates : ActivityDateHistory.calendars(encoded).entrySet())
+                history.calendarDates(dates.getKey(), dates.getValue());
         }
     }
 
@@ -460,6 +499,7 @@ public final class StatsRepository {
             if (durationSeconds > preferences.getLong(KEY_LONGEST_SESSION, 0)) {
                 edit.putLong(KEY_LONGEST_SESSION, durationSeconds);
             }
+            recordSessionStreak(edit, started, System.currentTimeMillis(), activeSessionZone());
             edit.apply();
             appendSessionHistory(new SessionEntry(started, durationSeconds, sessionBlocks,
                     activeLong(KEY_ACTIVE_SESSION_LIMITED_APP_MILLIS),
@@ -492,35 +532,45 @@ public final class StatsRepository {
     }
 
     public StatsSnapshot load() {
-        return load(true);
+        return load(true, System.currentTimeMillis());
     }
 
-    StatsSnapshot retainedSnapshot() { return load(false); }
+    StatsSnapshot retainedSnapshot() { return retainedSnapshot(System.currentTimeMillis()); }
 
-    boolean observedSessionActive() { return observedSessionStart() > 0; }
+    /** Read-only observation at one clock instant, shared by progress and regression checks. */
+    StatsSnapshot retainedSnapshot(long observedAt) { return load(false, observedAt); }
 
-    private long observedSessionStart() {
-        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0L), now = System.currentTimeMillis();
+    boolean observedSessionActive() { return observedSessionStart(System.currentTimeMillis()) > 0; }
+
+    private long observedSessionStart(long now) {
+        long start = preferences.getLong(KEY_ACTIVE_SESSION_START, 0L);
         return start > 0 && start <= now && now - start <= 366L * 24L * 60L * 60L * 1000L ? start : 0;
     }
 
-    private StatsSnapshot load(boolean restore) {
+    private StatsSnapshot load(boolean restore, long now) {
         synchronized (SESSION_LOCK) {
             if (restore) restoreActiveSession();
-            long observedStart = restore ? sessionStartMs : observedSessionStart();
+            long observedStart = restore ? sessionStartMs : observedSessionStart(now);
             long protectedSeconds = preferences.getLong(KEY_TOTAL_PROTECTED_TIME, 0);
             long totalSessionSeconds = preferences.getLong(KEY_TOTAL_SESSION_TIME, 0);
             long currentSessionSeconds = 0;
             if (observedStart > 0) {
                 currentSessionSeconds = Math.max(0,
-                        (System.currentTimeMillis() - observedStart) / 1000);
+                        (now - observedStart) / 1000);
                 protectedSeconds += currentSessionSeconds;
                 totalSessionSeconds += currentSessionSeconds;
             }
+            // A stopped streak keeps the calendar used to persist its last civil date.
+            // Legacy records without a zone retain their previous device-calendar interpretation.
+            String streakZone = observedStart > 0 ? activeSessionZone()
+                    : preferences.getString(LAST_SESSION_ZONE, java.time.ZoneId.systemDefault().getId());
+            LocalDate streakToday = SessionStreak.today(now, streakZone);
+            SessionStreak streak = SessionStreak.through(preferences.getInt(KEY_CURRENT_STREAK, 0),
+                    preferences.getString(KEY_LAST_SESSION_DATE, ""), preferences.getString(LAST_SESSION_ZONE, null),
+                    observedStart, now, streakZone);
             return new StatsSnapshot(preferences.getLong(KEY_TOTAL_BLOCKS, 0),
                     totalSessionSeconds, preferences.getInt(KEY_SESSIONS_COUNT, 0),
-                    preferences.getInt(KEY_CURRENT_STREAK, 0),
-                    preferences.getString(KEY_LAST_SESSION_DATE, ""), protectedSeconds,
+                    streak.current(streakToday), streak.lastDay, protectedSeconds,
                     restore ? sessionBlocks : observedStart > 0 ? preferences.getInt(KEY_ACTIVE_SESSION_BLOCKS, 0) : 0,
                     preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0),
                     preferences.getLong(KEY_LONGEST_SESSION, 0),
@@ -547,7 +597,7 @@ public final class StatsRepository {
                     preferences.getLong(KEY_TAMPER_EVENTS, 0L),
                     activeLong(KEY_ACTIVE_SESSION_TAMPER_EVENTS),
                     preferences.getLong(KEY_POPUP_IMPRESSIONS, 0L),
-                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS));
+                    activeLong(KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS), streakToday, streakZone, streak.current(streakToday));
         }
     }
 
@@ -691,15 +741,9 @@ public final class StatsRepository {
                 KEY_ACTIVE_SESSION_POPUP_IMPRESSIONS, 1L);
     }
     private void updateStreak() {
-        String today = today();
-        String previous = preferences.getString(KEY_LAST_SESSION_DATE, "");
-        int streak;
-        if (today.equals(previous)) streak = preferences.getInt(KEY_CURRENT_STREAK, 0);
-        else if (LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_LOCAL_DATE)
-                .equals(previous)) streak = preferences.getInt(KEY_CURRENT_STREAK, 0) + 1;
-        else streak = 1;
-        preferences.edit().putInt(KEY_CURRENT_STREAK, streak)
-                .putString(KEY_LAST_SESSION_DATE, today).apply();
+        SharedPreferences.Editor edit = preferences.edit();
+        recordSessionStreak(edit, sessionStartMs, sessionStartMs, activeSessionZone());
+        edit.apply();
     }
 
     private String activeSessionZone() {
@@ -850,9 +894,6 @@ public final class StatsRepository {
             if (track.isConfirmed() && track.getFramesMissing() == 0) ids.add(track.getId());
         }
         return ids;
-    }
-    private static String today() {
-        return LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
     }
 
     public static final class SessionEntry {

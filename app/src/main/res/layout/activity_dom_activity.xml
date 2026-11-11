@@ -16,6 +16,11 @@
                 android:background="?android:attr/selectableItemBackground" />
             <TextView android:id="@+id/dom_activity_unread_count" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:textSize="14sp" android:textColor="@color/text_secondary" />
+            <TextView android:id="@+id/dom_activity_mark_all_read_action" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
+                android:text="@string/dom_activity_mark_all_read" android:textSize="14sp" android:textColor="@color/accent_text"
+                android:clickable="true" android:focusable="true" android:visibility="gone"
+                android:background="?android:attr/selectableItemBackground" />
             <TextView android:id="@+id/dom_activity_latest_action" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:minHeight="48dp" android:gravity="center_vertical"
                 android:text="@string/dom_activity_latest" android:textSize="14sp" android:textColor="@color/accent_text"

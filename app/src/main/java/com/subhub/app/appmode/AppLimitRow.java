@@ -18,11 +18,11 @@ import com.subhub.app.R;
 /** One app's retained daily allowance and live recorded usage, with no nested card surface. */
 final class AppLimitRow extends LinearLayout {
     final EditText allowance;
-    final String appLabel;
+    String appLabel;
     private final String packageName;
-    private final Drawable localIcon;
+    private Drawable localIcon;
     private final ImageView image;
-    private final TextView usage;
+    private final TextView usage, title;
     private final ProgressBar progress;
     private String receipt = "";
 
@@ -47,7 +47,7 @@ final class AppLimitRow extends LinearLayout {
         labelParams.setMarginStart(dp(8));
         labelParams.setMarginEnd(dp(8));
         header.addView(labels, labelParams);
-        TextView title = text(name, 14, false);
+        title = text(name, 14, false);
         title.setTypeface(null, Typeface.BOLD);
         labels.addView(title, new LayoutParams(-1, -2));
         usage = text("", 11, true);
@@ -73,16 +73,18 @@ final class AppLimitRow extends LinearLayout {
             inputParams.topMargin = dp(4);
             addView(allowance, inputParams);
         } else header.addView(allowance, inputParams);
-        progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
+        progress = new ProgressBar(context, null, 0, R.style.Widget_SubHub_ProgressMeter);
         progress.setMax(100);
-        progress.setProgressTintList(
-                android.content.res.ColorStateList.valueOf(context.getColor(R.color.accent_mid)));
-        progress.setProgressBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(
-                        context.getColor(R.color.outline_subtle)));
-        LayoutParams progressParams = new LayoutParams(-1, dp(3));
+        LayoutParams progressParams = new LayoutParams(-1, getResources().getDimensionPixelSize(R.dimen.progress_meter_height));
         progressParams.topMargin = dp(4);
         labels.addView(progress, progressParams);
+    }
+
+    void metadata(String name, Drawable icon) {
+        appLabel = name; localIcon = icon;
+        if (!android.text.TextUtils.equals(title.getText(), name)) title.setText(name);
+        allowance.setContentDescription(getContext().getString(R.string.app_timer_allowance_accessibility, name));
+        refreshAppIcon();
     }
 
     void refreshAppIcon() { com.subhub.app.configuration.FeatureEditorAppIcons.bind(image, packageName, localIcon); }

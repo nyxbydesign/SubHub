@@ -21,6 +21,7 @@ public final class ContractActivity extends RolePage {
     private boolean expandedAbout;
     private String atmosphereSummary;
     private boolean contractUnknown;
+    private java.util.List<Object> renderedContract;
     private final Map<String, View> details = new LinkedHashMap<>();
     private final Map<String, ImageView> indicators = new LinkedHashMap<>();
     private final Map<String, View> headers = new LinkedHashMap<>();
@@ -60,7 +61,17 @@ public final class ContractActivity extends RolePage {
                 atmosphere = AtmosphereContractDetails.local(application).summary;
             }
             return new ContractData(person, atmosphere);
-        }, value -> { atmosphereSummary = value.atmosphere; renderPage(() -> render(value.person)); }, failure -> unavailable());
+        }, value -> {
+            atmosphereSummary = value.atmosphere;
+            java.util.List<Object> signature = PersonPresentation.contract(value.person);
+            java.util.Collections.addAll(signature, value.person.contractDom, value.person.contractDomId,
+                    value.person.contractDomContact, atmosphereSummary,
+                    People.keyholder(), com.subhub.app.relationships.RelationshipUi.provider(),
+                    ControllerPinManager.domWorkspaceRevision());
+            if (signature.equals(renderedContract)) return;
+            renderedContract = signature;
+            renderPage(() -> render(value.person));
+        }, failure -> { renderedContract = null; unavailable(); });
     }
 
     private void render(PersonSnapshot person) {

@@ -157,7 +157,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         }
         setVisibility(VISIBLE);
         if (model.mode() == RelationshipPresentation.Mode.LOADING) {
-            text(R.string.role_loading, "relationship_loading"); return;
+            text(R.string.role_data_unknown, "relationship_loading"); return;
         }
         if (model.mode() == RelationshipPresentation.Mode.UNAVAILABLE) {
             text(R.string.relationships_unavailable, "relationship_unavailable");
@@ -188,7 +188,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
         }
         if (saved != null || operation != null) {
             if (selected != null) summaryNames(selected, "");
-            if (model.busy()) text(R.string.role_loading, "relationship_operation_status");
+            if (model.busy()) text(R.string.role_action_pending, "relationship_operation_status");
             else if (model.recoveryState() == RelationshipPresentation.RecoveryState.UNKNOWN)
                 text("Couldn’t verify this link request.", "relationship_operation_status");
             else if (model.recoveryState() == RelationshipPresentation.RecoveryState.ABSENT_NEVER_CREATED)
@@ -426,7 +426,7 @@ public final class RelationshipPanel extends LinearLayout implements DefaultLife
             if (!scope.includes(id)) continue;
             if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context)
                     || !access.current(RelationshipUi::provider)) throw new IllegalStateException("Relationship context changed");
-            PersonSnapshot value = repository.load(id);
+            PersonSnapshot value = repository.loadSummary(id);
             if (!id.equals(value.id)) throw new IllegalStateException("Relationship projection differs");
             if (!access.legacy && !com.subhub.app.people.FavoriteSubStore.eligible(value))
                 throw new IllegalStateException("Relationship projection is not eligible");
