@@ -136,6 +136,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/appmode/ExtraTimeActivity.java": "main_appmode_extra_time_activity",
     b"app/src/main/java/com/subhub/app/appmode/ExtraTimeAllowance.java": "main_appmode_extra_time_allowance",
     b"app/src/main/java/com/subhub/app/appmode/ExtraTimeEntry.java": "main_appmode_extra_time_entry",
+    b"app/src/main/java/com/subhub/app/appmode/ExtraTimeOverviewController.java": "main_appmode_extra_time_overview_controller",
     b"app/src/main/java/com/subhub/app/appmode/ExtraTimeViews.java": "main_appmode_extra_time_views",
     b"app/src/main/java/com/subhub/app/appmode/ForegroundAppState.java": "main_appmode_foreground_app_state",
     b"app/src/main/java/com/subhub/app/appmode/LegacyAppSelection.java": "main_appmode_legacy_app_selection",

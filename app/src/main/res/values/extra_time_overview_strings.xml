@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="extra_time_inline_submitting">Submitting request…</string>
+    <string name="extra_time_inline_saved">Request saved on this device. Waiting for your Dom.</string>
+    <string name="extra_time_inline_unavailable">Requests are unavailable right now. Refresh your connection and try again.</string>
+    <string name="extra_time_inline_changed">The request details changed. Review the amount and try again.</string>
+    <string name="extra_time_inline_unconfirmed">Request status could not be confirmed. Refresh or retry.</string>
+    <string name="extra_time_inline_refresh">Checking request availability…</string>
+</resources>
