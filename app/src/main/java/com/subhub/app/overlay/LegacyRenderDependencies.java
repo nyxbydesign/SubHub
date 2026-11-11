@@ -3,12 +3,14 @@ package com.subhub.app.overlay;
 import android.content.Context;
 import android.graphics.Bitmap;
 import com.subhub.app.capture.CustomImagePool;
+import com.subhub.app.capture.CustomImageManager;
 import com.subhub.app.censor.android.OwnedCensorArtworkSource;
 import com.subhub.app.detection.DetectionPreset;
 import com.subhub.app.diagnostics.CensorLabCensorSession;
 import com.subhub.app.diagnostics.CensorLabLog;
 import com.subhub.app.penance.CensorTapTracker;
 import com.subhub.app.runtime.RuntimeConfiguration;
+import com.subhub.app.runtime.DeviceRuntimeEffects;
 import com.subhub.app.service.RuntimeCaptureHost;
 import com.subhub.app.settings.SettingsRepository;
 import java.util.*;
@@ -25,7 +27,9 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     }
     final CustomImagePool images;
     final CensorTapTracker taps;
-    private final boolean internal;
+    private final boolean internal, managed;
+    private volatile DeviceOwned selectedDevice;
+    private volatile DeviceArtwork wantedDeviceArtwork, loadedDeviceArtwork;
     final Callbacks callbacks = new Callbacks();
     private volatile Owned selected;
     private volatile RuntimeConfiguration acknowledged, loaded;
@@ -41,31 +45,60 @@ public final class LegacyRenderDependencies implements AutoCloseable {
             this.request = request; this.source = source; this.configuration = configuration;
         }
     }
-    /** The old DEVICE constructor is the only path that opens physical image settings/shared taps. */
+    private static final class DeviceOwned {
+        final RuntimeCaptureHost.DeviceRequest request;
+        final DeviceRuntimeEffects.DeviceComponent component;
+        final SettingsRepository settings;
+        final CustomImageManager source;
+        DeviceOwned(RuntimeCaptureHost.DeviceRequest request, DeviceRuntimeEffects.DeviceComponent component,
+                SettingsRepository settings, CustomImageManager source) {
+            this.request = request; this.component = component; this.settings = settings; this.source = source;
+        }
+    }
+    private static final class DeviceArtwork {
+        final DeviceOwned owner;
+        final DetectionPreset preset;
+        DeviceArtwork(DeviceOwned owner, DetectionPreset preset) { this.owner = owner; this.preset = preset; }
+    }
+    /** The default DEVICE constructor preserves the old unbound image/settings/shared-tap path. */
     static LegacyRenderDependencies device(Context context) {
-        return new LegacyRenderDependencies(new CustomImagePool(context), CensorTapTracker.shared(), null);
+        return new LegacyRenderDependencies(new CustomImagePool(context), CensorTapTracker.shared(), null, null);
     }
     /** Caller owns this exclusive executor until managedResourcesDrained; no editor Context. */
     public static LegacyRenderDependencies owned(RuntimeCaptureHost.InternalRequest request, ExecutorService loader) {
         Objects.requireNonNull(request); Objects.requireNonNull(loader);
         Owned state = new Owned(request, new OwnedCensorArtworkSource(request.storage, request.initialConfiguration),
                 request.initialConfiguration);
-        return new LegacyRenderDependencies(CustomImagePool.owned(loader), request.resources.taps, state);
+        return new LegacyRenderDependencies(CustomImagePool.owned(loader), request.resources.taps, state, null);
     }
-    private LegacyRenderDependencies(CustomImagePool images, CensorTapTracker taps, Owned owned) {
-        this.images = images; this.taps = taps; selected = owned; internal = owned != null;
+    /**
+     * Exact DEVICE attachment only, under its STARTUP effect. All physical inputs are explicitly
+     * selected by that service factory; this method has no Context-based data fallback.
+     */
+    public static LegacyRenderDependencies managedDevice(RuntimeCaptureHost.DeviceRequest request,
+            DeviceRuntimeEffects.DeviceComponent component, SettingsRepository settings,
+            CustomImageManager source, CensorTapTracker taps, ExecutorService loader) {
+        Objects.requireNonNull(request); Objects.requireNonNull(component);
+        if (!request.owner().equals(component.owner())) throw new SecurityException("Foreign DEVICE render component");
+        DeviceOwned state = new DeviceOwned(request, component, Objects.requireNonNull(settings), Objects.requireNonNull(source));
+        return new LegacyRenderDependencies(CustomImagePool.owned(Objects.requireNonNull(loader)),
+                Objects.requireNonNull(taps), null, state);
+    }
+    private LegacyRenderDependencies(CustomImagePool images, CensorTapTracker taps, Owned owned, DeviceOwned device) {
+        this.images = images; this.taps = taps; selected = owned; selectedDevice = device;
+        internal = owned != null; managed = internal || device != null;
         acknowledged = owned == null ? null : owned.configuration;
-        renderDemand.set(owned != null);
+        renderDemand.set(managed);
     }
     void requireMain() {
-        if (internal && android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
+        if (managed && android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
             throw new IllegalStateException("Owned legacy renderer belongs on main");
     }
     void requireHost(Context context) {
         requireMain();
-        Owned state = requireOwned();
-        Context expected = state.request.connection.kind == RuntimeCaptureHost.Kind.PROJECTION
-                ? state.request.connection.projection().service() : state.request.connection.accessibility().service();
+        RuntimeCaptureHost.Request request = internal ? requireOwned().request : requireDevice().request;
+        Context expected = request.connection.kind == RuntimeCaptureHost.Kind.PROJECTION
+                ? request.connection.projection().service() : request.connection.accessibility().service();
         if (context != expected) throw new SecurityException("Renderer requires the exact real service host");
     }
     /** Construction-only snapshot. Initial accounting ACK already belongs to this exact request. */
@@ -77,7 +110,15 @@ public final class LegacyRenderDependencies implements AutoCloseable {
             throw new IllegalStateException("Owned renderer must install its initial snapshot before adoption");
         return state.configuration;
     }
+    SettingsRepository initialDeviceSettings() { requireMain(); return requireDevice().settings; }
+    private DeviceOwned requireDevice() {
+        DeviceOwned state = selectedDevice;
+        if (!managed || internal || state == null || !callbacks.open()) throw new Unavailable();
+        if (!state.request.connection.isConnected()) { fail(); throw new Unavailable(); }
+        return state;
+    }
     boolean internal() { return internal; }
+    boolean managed() { return managed; }
     boolean open() { return callbacks.open(); }
     boolean labActive() { return !internal && CensorLabCensorSession.isActive(); }
     void trace(String tag, String message) { if (!internal) CensorLabLog.i(tag, message); }
@@ -109,7 +150,14 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     }
     void appearanceChanged(Runnable ready) {
         if (internal) artworkWanted = true;
-        else images.reloadAsync(ready);
+        else if (managed) {
+            DeviceOwned state = requireDevice();
+            DeviceArtwork next = new DeviceArtwork(state, state.settings.loadDetectionPreset());
+            // Match normal reloadAsync publication fencing immediately, not just its ready signal.
+            // The old displayed set stays available until the next admitted decode is ready.
+            images.supersedePending();
+            wantedDeviceArtwork = next;
+        } else images.reloadAsync(ready);
     }
     /**
      * Explicit post-ACK/ACTIVE reconciliation. False means pending/busy; the attachment retains its
@@ -117,6 +165,7 @@ public final class LegacyRenderDependencies implements AutoCloseable {
      */
     public boolean reconcileArtwork(Runnable ready) {
         requireMain();
+        if (!internal && managed) return reconcileDeviceArtwork(ready);
         Owned state = requireOwned();
         if (!artworkWanted) return true;
         if (images.cleanupFailed()) {
@@ -146,6 +195,39 @@ public final class LegacyRenderDependencies implements AutoCloseable {
         return false;
     }
 
+    private boolean reconcileDeviceArtwork(Runnable ready) {
+        DeviceOwned state = requireDevice();
+        if (images.cleanupFailed()) { fail(); throw new IllegalStateException("DEVICE artwork cleanup is uncertain"); }
+        DeviceArtwork demand = wantedDeviceArtwork;
+        if (demand == null || demand == loadedDeviceArtwork && !images.needsRetry()) return true;
+        if (images.pending()) return false;
+        final long epoch = artworkEpoch;
+        images.loadOwnedAsync(obsolete -> {
+            if (!deviceArtworkCurrent(demand, epoch) || obsolete.getAsBoolean()) return Collections.emptyList();
+            java.util.concurrent.atomic.AtomicReference<List<Bitmap>> output = new java.util.concurrent.atomic.AtomicReference<>();
+            if (!state.component.normal(() -> {
+                if (!deviceArtworkCurrent(demand, epoch) || obsolete.getAsBoolean()) output.set(Collections.emptyList());
+                else output.set(state.source.loadEnabledBitmaps(demand.preset.getCustomImageDimension(), demand.preset.getCustomImageCount()));
+            })) throw new CustomImagePool.Deferred();
+            return output.get();
+        }, () -> {
+            if (deviceArtworkCurrent(demand, epoch)) {
+                loadedDeviceArtwork = demand;
+                if (ready != null) ready.run();
+            }
+        });
+        return false;
+    }
+    private boolean deviceArtworkCurrent(DeviceArtwork demand, long epoch) {
+        if (!demand.owner.request.connection.isConnected()) {
+            try { demand.owner.request.execution().requestStop(); }
+            finally { seal(); }
+            return false;
+        }
+        return selectedDevice == demand.owner && wantedDeviceArtwork == demand
+                && artworkEpoch == epoch && callbacks.open();
+    }
+
     /** Worker consumption, decoder checkpoints and completion all retain the exact connection. */
     private boolean artworkCurrent(Owned state, long epoch) {
         if (!state.request.connection.isConnected()) {
@@ -160,19 +242,29 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     }
 
     void fail() {
-        Owned state = selected;
-        try { if (state != null) state.request.runtime.requestStop(); }
-        finally { if (internal) seal(); }
+        Owned state = selected; DeviceOwned device = selectedDevice;
+        try {
+            if (state != null) state.request.runtime.requestStop();
+            if (device != null) device.request.execution().requestStop();
+        } finally { if (managed) seal(); }
     }
     boolean tryNormal(Runnable effect) {
-        Owned observed = selected;
-        if (internal && (images.cleanupFailed()
-                || observed != null && !observed.request.connection.isConnected())) { fail(); return false; }
+        Owned observed = selected; DeviceOwned deviceObserved = selectedDevice;
+        if (managed && (images.cleanupFailed()
+                || observed != null && !observed.request.connection.isConnected()
+                || deviceObserved != null && !deviceObserved.request.connection.isConnected())) { fail(); return false; }
         AtomicBoolean ran = new AtomicBoolean();
         try { callbacks.direct(() -> {
             Owned state = selected;
-            if (!internal) { effect.run(); ran.set(true); }
-            else if (state != null && acknowledged == state.configuration
+            DeviceOwned device = selectedDevice;
+            if (!managed) { effect.run(); ran.set(true); }
+            else if (device != null) {
+                device.component.normal(() -> {
+                    if (selectedDevice == device && callbacks.open() && device.request.connection.isConnected()) {
+                        effect.run(); ran.set(true);
+                    }
+                });
+            } else if (state != null && acknowledged == state.configuration
                     && state.request.runtime.configuration() == state.configuration
                     && state.request.runtime.appliedConfigurationRevision() == state.configuration.configRevision) {
                 state.request.runtime.runEffect(() -> {
@@ -187,7 +279,7 @@ public final class LegacyRenderDependencies implements AutoCloseable {
                 });
             }
         }); } catch (RuntimeException | Error uncertain) {
-            if (internal) cleanupUncertain();
+            if (managed) cleanupUncertain();
             throw uncertain;
         }
         return ran.get();
@@ -198,20 +290,21 @@ public final class LegacyRenderDependencies implements AutoCloseable {
         command(() -> result.set(effect.get())); return result.get();
     }
     /** A refused draw/timing callback is demand for a fresh render, never permission to replay it. */
-    void deferRendering() { if (internal && callbacks.open()) renderDemand.set(true); }
+    void deferRendering() { if (managed && callbacks.open()) renderDemand.set(true); }
     boolean takeRenderDemand() { return renderDemand.getAndSet(false); }
     boolean needsRenderReconciliation() { return renderDemand.get(); }
     /** Immediate fence only; already admitted draw/load/callback work stays counted. */
     public void seal() {
-        callbacks.seal(); selected = null; acknowledged = null; loaded = null; renderDemand.set(false);
+        callbacks.seal(); selected = null; selectedDevice = null;
+        acknowledged = null; loaded = null; wantedDeviceArtwork = null; loadedDeviceArtwork = null; renderDemand.set(false);
     }
     void transientArtworkRetirement() {
         if (artworkEpoch == Long.MAX_VALUE) throw new IllegalStateException("Artwork epoch exhausted");
         artworkEpoch++;
-        loaded = null;
+        loaded = null; loadedDeviceArtwork = null;
         images.invalidate();
     }
-    void cleanupUncertain() { if (internal) { resourceFailure.set(true); fail(); } }
+    void cleanupUncertain() { if (managed) { resourceFailure.set(true); fail(); } }
     public boolean cleanupFailed() { return resourceFailure.get() || images.cleanupFailed(); }
     public boolean managedResourcesDrained() {
         return !resourceFailure.get() && callbacks.drained() && images.managedResourcesDrained();

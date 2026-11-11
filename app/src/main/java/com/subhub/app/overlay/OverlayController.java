@@ -34,7 +34,7 @@ public final class OverlayController implements AutoCloseable {
         this.windowType = windowType;
     }
 
-    private OverlayController(Context context, int windowType, LegacyRenderDependencies dependencies) {
+    private OverlayController(Context context, int windowType, LegacyRenderDependencies dependencies, boolean device) {
         dependencies.requireHost(context);
         this.dependencies = dependencies;
         windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
@@ -43,8 +43,8 @@ public final class OverlayController implements AutoCloseable {
         // STARTUP construction, not a NORMAL command or a new adoption/ACK transaction.
         // Install before this controller can escape. CUSTOM only records artwork demand here.
         try {
-            com.subhub.app.settings.SettingsRepository initial = com.subhub.app.settings.SettingsRepository
-                    .forPreferences(dependencies.initialConfiguration().main);
+            com.subhub.app.settings.SettingsRepository initial = device ? dependencies.initialDeviceSettings()
+                    : com.subhub.app.settings.SettingsRepository.forPreferences(dependencies.initialConfiguration().main);
             view.setAppearance(initial.loadAppearance());
             view.setMaxExtrapolationMs(initial.loadDetectorConfig().getMaxExtrapolationMs());
         } catch (RuntimeException | Error failure) {
@@ -60,7 +60,12 @@ public final class OverlayController implements AutoCloseable {
 
     /** Hidden until exact NORMAL admission. Constructor belongs under the attachment's STARTUP gate. */
     public static OverlayController owned(Context physicalHost, int windowType, LegacyRenderDependencies dependencies) {
-        return new OverlayController(physicalHost, windowType, dependencies);
+        return new OverlayController(physicalHost, windowType, dependencies, false);
+    }
+
+    /** Explicit DEVICE attachment renderer; its inputs already belong to the selected DEVICE. */
+    public static OverlayController managedDevice(Context physicalHost, int windowType, LegacyRenderDependencies dependencies) {
+        return new OverlayController(physicalHost, windowType, dependencies, true);
     }
 
     public void show() {
@@ -129,7 +134,7 @@ public final class OverlayController implements AutoCloseable {
             windowAttempted = true;
             try { windowManager.addView(view, params); }
             catch (RuntimeException | Error uncertain) {
-                if (dependencies.internal()) { closureFailed = true; dependencies.fail(); }
+                if (dependencies.managed()) { closureFailed = true; dependencies.fail(); }
                 throw uncertain;
             }
             attached = true;
@@ -497,12 +502,12 @@ public final class OverlayController implements AutoCloseable {
         closureStarted = true;
         dependencies.seal();
         try {
-            if (attached || dependencies.internal() && windowAttempted) {
+            if (attached || dependencies.managed() && windowAttempted) {
                 try {
                     windowManager.removeViewImmediate(view);
                     attached = false;
                 } catch (IllegalArgumentException missing) {
-                    if (dependencies.internal()) closureFailed = true;
+                    if (dependencies.managed()) closureFailed = true;
                     else attached = false; // Existing DEVICE missing-window behavior.
                 } catch (RuntimeException | Error uncertain) {
                     closureFailed = true;

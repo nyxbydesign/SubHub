@@ -1789,7 +1789,7 @@ final class CensorOverlayView extends View {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             postExpectedPresentationCallback(++frameCallbackGeneration);
         } else {
-            if (!dependencies.internal()) Choreographer.getInstance().postFrameCallback(frameCallback);
+            if (!dependencies.managed()) Choreographer.getInstance().postFrameCallback(frameCallback);
             else dependencies.callbacks.<Long>dispatch(frameCallback, value -> deliverFrameCallback(() -> frameCallback.doFrame(value)), callback -> {
                 Choreographer.getInstance().postFrameCallback(callback::accept); return true;
             });
@@ -1806,7 +1806,7 @@ final class CensorOverlayView extends View {
             invalidate();
             scheduleNextFrame(presentationFrameTimeMillis);
         };
-        if (!dependencies.internal()) Choreographer.getInstance().postVsyncCallback(action::accept);
+        if (!dependencies.managed()) Choreographer.getInstance().postVsyncCallback(action::accept);
         else dependencies.callbacks.<Choreographer.FrameData>dispatch(frameCallback, value -> deliverFrameCallback(() -> action.accept(value)), callback -> {
             Choreographer.getInstance().postVsyncCallback(callback::accept); return true;
         });
@@ -1864,7 +1864,7 @@ final class CensorOverlayView extends View {
     private void stopFrameCallback() {
         if (!frameCallbackPosted) return;
         frameCallbackGeneration++;
-        if (dependencies.internal()) dependencies.callbacks.cancel(frameCallback);
+        if (dependencies.managed()) dependencies.callbacks.cancel(frameCallback);
         else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             Choreographer.getInstance().removeFrameCallback(frameCallback);
         }
@@ -1872,7 +1872,7 @@ final class CensorOverlayView extends View {
     }
 
     private void removeRenderCallback(Runnable action) {
-        if (dependencies.internal()) dependencies.callbacks.cancel(action);
+        if (dependencies.managed()) dependencies.callbacks.cancel(action);
         else removeCallbacks(action);
     }
 
@@ -1884,7 +1884,7 @@ final class CensorOverlayView extends View {
     }
 
     private boolean postRenderDelayed(Runnable action, long delay) {
-        if (!dependencies.internal()) return postDelayed(action, delay);
+        if (!dependencies.managed()) return postDelayed(action, delay);
         return dependencies.callbacks.dispatch(action, ignored -> {
             if (!dependencies.tryNormal(action)) dependencies.deferRendering();
         }, callback -> renderCallbacks.postDelayed(() -> callback.accept(null), delay));
@@ -1898,7 +1898,7 @@ final class CensorOverlayView extends View {
     }
 
     private void releaseResources(boolean terminal) {
-        if (terminal && dependencies.internal()) dependencies.close();
+        if (terminal && dependencies.managed()) dependencies.close();
         tapTracker.clearDisplayed(this);
         removeRenderCallback(refreshDisplayedTapGeometry);
         clearPersonCoverage();
@@ -1943,7 +1943,7 @@ final class CensorOverlayView extends View {
     protected void onDetachedFromWindow() {
         // A same-owner window can be detached/re-attached by Android. Retire its paint inputs,
         // but keep the explicit data binding until the controller requests terminal closure.
-        release(!dependencies.internal() || !dependencies.open());
+        release(!dependencies.managed() || !dependencies.open());
         super.onDetachedFromWindow();
     }
 

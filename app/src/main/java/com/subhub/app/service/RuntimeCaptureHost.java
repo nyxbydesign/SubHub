@@ -12,6 +12,7 @@ import com.subhub.app.internal.InternalStorageScope;
 import com.subhub.app.penance.CensorTapTracker;
 import com.subhub.app.popup.ScopedDetectionHints;
 import com.subhub.app.runtime.RuntimeConfiguration;
+import com.subhub.app.runtime.DeviceRuntimeEffects;
 import com.subhub.app.runtime.RuntimeEnvironment;
 import com.subhub.app.runtime.RuntimeExecution;
 import com.subhub.app.runtime.RuntimeLease;
@@ -190,11 +191,13 @@ public final class RuntimeCaptureHost {
 
     /** Existing DEVICE dependencies remain behind this factory and never enter InternalRequest. */
     public static final class DeviceRequest extends Request {
+        public final DeviceRuntimeEffects effects;
         private final DeviceFactory dependencies;
         public DeviceRequest(Connection connection, CapturePlan plan, RuntimeExecution<?> execution,
-                DeviceFactory dependencies) {
+                DeviceRuntimeEffects effects, DeviceFactory dependencies) {
             super(connection, plan, execution); this.dependencies = Objects.requireNonNull(dependencies);
-            if (owner().target.kind != RuntimeTarget.Kind.DEVICE)
+            this.effects = Objects.requireNonNull(effects);
+            if (owner().target.kind != RuntimeTarget.Kind.DEVICE || !owner().equals(effects.owner()))
                 throw new SecurityException("DEVICE attachment requires exact DEVICE execution");
         }
         @Override protected Attachment prepareAttachment() { return dependencies.prepare(this); }

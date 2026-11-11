@@ -6,6 +6,7 @@ import android.app.Activity;
 import android.app.Service;
 import android.content.Intent;
 import com.subhub.app.runtime.ActiveRuntimeCoordinator;
+import com.subhub.app.runtime.DeviceRuntimeEffects;
 import com.subhub.app.runtime.RuntimeAdmissionAuthority;
 import com.subhub.app.runtime.RuntimeExecution;
 import com.subhub.app.runtime.RuntimeLease;
@@ -32,13 +33,27 @@ public final class RuntimeCaptureHostAndroidTest {
     }
 
     @Test public void deviceRequestCannotCarryInternalExecution() throws Exception {
+        Execution internal = execution(RuntimeTarget.internal("dummy_sub_preview"));
+        Execution device = execution(RuntimeTarget.DEVICE);
         assertThrows(SecurityException.class, () -> new RuntimeCaptureHost.DeviceRequest(
-                projection(), plan(), execution(RuntimeTarget.internal("dummy_sub_preview")), FakeAttachment::new));
+                projection(), plan(), internal.runtime, device.effects, FakeAttachment::new));
     }
 
     @Test public void requestRejectsDifferentCaptureHostKind() throws Exception {
+        Execution device = execution(RuntimeTarget.DEVICE);
         assertThrows(IllegalArgumentException.class, () -> new RuntimeCaptureHost.DeviceRequest(
-                RuntimeCaptureHost.Connection.accessibility(() -> null), plan(), execution(RuntimeTarget.DEVICE), FakeAttachment::new));
+                RuntimeCaptureHost.Connection.accessibility(() -> null), plan(), device.runtime, device.effects, FakeAttachment::new));
+    }
+
+    @Test public void deviceRequestRequiresItsOwnEffectsCapability() throws Exception {
+        Execution first = execution(RuntimeTarget.DEVICE), second = execution(RuntimeTarget.DEVICE);
+        assertThrows(SecurityException.class, () -> new RuntimeCaptureHost.DeviceRequest(
+                projection(), plan(), first.runtime, second.effects, FakeAttachment::new));
+        assertThrows(NullPointerException.class, () -> new RuntimeCaptureHost.DeviceRequest(
+                projection(), plan(), first.runtime, null, FakeAttachment::new));
+        RuntimeCaptureHost.DeviceRequest exact = new RuntimeCaptureHost.DeviceRequest(
+                projection(), plan(), first.runtime, first.effects, FakeAttachment::new);
+        assertSame(first.effects, exact.effects);
     }
 
     @Test public void selectedRequestClaimsOnlyItsExactLiveConnectionOnce() throws Exception {
@@ -57,8 +72,9 @@ public final class RuntimeCaptureHostAndroidTest {
 
     @Test public void preparationIsSingleUseEvenWhenFactoryThrows() throws Exception {
         AtomicInteger attempts = new AtomicInteger();
+        Execution device = execution(RuntimeTarget.DEVICE);
         RuntimeCaptureHost.DeviceRequest request = new RuntimeCaptureHost.DeviceRequest(
-                projection(), plan(), execution(RuntimeTarget.DEVICE), value -> {
+                projection(), plan(), device.runtime, device.effects, value -> {
                     attempts.incrementAndGet(); throw new IllegalStateException("partial preparation");
                 });
         assertThrows(IllegalStateException.class, request::prepare);
@@ -68,8 +84,9 @@ public final class RuntimeCaptureHostAndroidTest {
 
     @Test public void preparationCannotReturnAnotherRequestsAttachment() throws Exception {
         FakeAttachment foreign = new FakeAttachment(request());
+        Execution device = execution(RuntimeTarget.DEVICE);
         RuntimeCaptureHost.DeviceRequest request = new RuntimeCaptureHost.DeviceRequest(
-                projection(), plan(), execution(RuntimeTarget.DEVICE), ignored -> foreign);
+                projection(), plan(), device.runtime, device.effects, ignored -> foreign);
         assertThrows(SecurityException.class, request::prepare);
     }
 
@@ -86,10 +103,11 @@ public final class RuntimeCaptureHostAndroidTest {
         RuntimeCaptureHost.DeviceRequest request = request();
         assertThrows(IllegalArgumentException.class,
                 () -> new RuntimeCaptureHost.ProjectionGrant(request, Activity.RESULT_CANCELED, new Intent()));
+        Execution device = execution(RuntimeTarget.DEVICE);
         RuntimeCaptureHost.DeviceRequest display = new RuntimeCaptureHost.DeviceRequest(
                 RuntimeCaptureHost.Connection.accessibility(() -> null),
                 new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.ACCESSIBILITY_DISPLAY, 30),
-                execution(RuntimeTarget.DEVICE), FakeAttachment::new);
+                device.runtime, device.effects, FakeAttachment::new);
         assertThrows(IllegalArgumentException.class,
                 () -> new RuntimeCaptureHost.ProjectionGrant(display, Activity.RESULT_OK, new Intent()));
         assertNotNull(new RuntimeCaptureHost.Selection(display, display.prepare(), null));
@@ -126,8 +144,9 @@ public final class RuntimeCaptureHostAndroidTest {
     @Test public void connectionRetainsExactSelectionUntilVerifiedDrain() throws Exception {
         RuntimeCaptureHost.DeviceRequest first = request();
         RuntimeCaptureHost.Selection old = selection(first);
+        Execution device = execution(RuntimeTarget.DEVICE);
         RuntimeCaptureHost.DeviceRequest second = new RuntimeCaptureHost.DeviceRequest(first.connection, plan(),
-                execution(RuntimeTarget.DEVICE), FakeAttachment::new);
+                device.runtime, device.effects, FakeAttachment::new);
         RuntimeCaptureHost.Selection next = selection(second);
         assertTrue(old.claim(first.connection)); assertTrue(first.connection.occupied());
         assertFalse(next.claim(first.connection));
@@ -151,7 +170,8 @@ public final class RuntimeCaptureHostAndroidTest {
                 new RuntimeCaptureHost.ProjectionGrant(request, Activity.RESULT_OK, new Intent()));
     }
     private static RuntimeCaptureHost.DeviceRequest request() throws Exception {
-        return new RuntimeCaptureHost.DeviceRequest(projection(), plan(), execution(RuntimeTarget.DEVICE), FakeAttachment::new);
+        Execution device = execution(RuntimeTarget.DEVICE);
+        return new RuntimeCaptureHost.DeviceRequest(projection(), plan(), device.runtime, device.effects, FakeAttachment::new);
     }
     private static RuntimeCaptureHost.CapturePlan plan() {
         return new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.PROJECTION, 26);
@@ -177,7 +197,12 @@ public final class RuntimeCaptureHostAndroidTest {
     }
 
     /** Real pure coordinator/lease; reflection only accesses its package-private execution constructor. */
-    private static RuntimeExecution<?> execution(RuntimeTarget target) throws Exception {
+    private static final class Execution {
+        final RuntimeExecution<?> runtime;
+        final DeviceRuntimeEffects effects;
+        Execution(RuntimeExecution<?> runtime, DeviceRuntimeEffects effects) { this.runtime = runtime; this.effects = effects; }
+    }
+    private static Execution execution(RuntimeTarget target) throws Exception {
         RuntimeMutex mutex = new RuntimeMutex(new Object());
         RuntimeAdmissionAuthority authority = new RuntimeAdmissionAuthority(mutex);
         RuntimeOwnerStore.Backend backend = new RuntimeOwnerStore.Backend() {
@@ -199,6 +224,13 @@ public final class RuntimeCaptureHostAndroidTest {
         Constructor<?> constructor = RuntimeExecution.class.getDeclaredConstructor(
                 ActiveRuntimeCoordinator.class, RuntimeLease.class, Object.class);
         constructor.setAccessible(true);
-        return (RuntimeExecution<?>) constructor.newInstance(coordinator, admitted.lease, "fixture configuration");
+        RuntimeExecution<?> runtime = (RuntimeExecution<?>) constructor.newInstance(coordinator, admitted.lease, "fixture configuration");
+        DeviceRuntimeEffects effects = null;
+        if (target.kind == RuntimeTarget.Kind.DEVICE) {
+            Constructor<DeviceRuntimeEffects> effectConstructor = DeviceRuntimeEffects.class.getDeclaredConstructor(
+                    ActiveRuntimeCoordinator.class, RuntimeExecution.class, RuntimeLease.class);
+            effectConstructor.setAccessible(true); effects = effectConstructor.newInstance(coordinator, runtime, admitted.lease);
+        }
+        return new Execution(runtime, effects);
     }
 }

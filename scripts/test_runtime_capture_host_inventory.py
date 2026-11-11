@@ -30,7 +30,7 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.assertEqual(['projectionRetainsEverySupportedLegacyApi',
                           'displayAndModernWindowGuardsAreNotInterchangeable'],
                          re.findall(r'@Test public void (\w+)\(', unit))
-        self.assertEqual(14, len(re.findall(r'@Test public void (\w+)\(', native)))
+        self.assertEqual(15, len(re.findall(r'@Test public void (\w+)\(', native)))
         self.assertIn('@RunWith(AndroidJUnit4.class)', native)
         self.assertIn('permissionPayloadIsCapturedInsteadOfMutableIntentAlias', native)
         self.assertIn('assertEquals("approved", grant.consume(request, request.connection).getAction())', native)

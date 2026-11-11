@@ -142,6 +142,52 @@ public final class CustomImagePoolLifetimeTest {
         finally { leave.countDown(); close.join(5000); }
         assertFalse(close.isAlive()); assertNull(failed.get()); assertTrue(state.drained());
     }
+    @Test public void supersedeDuringDecodeRejectsOutputAndPreservesPublishedBorrow() {
+        Queue q = new Queue(); List<String> disposed = new ArrayList<>();
+        CustomImagePool.State<String> state = new CustomImagePool.State<>(q, disposed::add);
+        state.seed(List.of("published")); CustomImagePool.State<String>.Read held = state.borrow();
+        state.request(obsolete -> {
+            state.supersedePending(); assertTrue(obsolete.getAsBoolean());
+            assertEquals("published", state.unleased(0)); return List.of("superseded");
+        }, () -> fail("Superseded ready"));
+        q.drain(); assertEquals("published", state.unleased(0)); assertEquals(List.of("superseded"), disposed);
+        state.request(obsolete -> List.of("replacement"), null); q.drain();
+        assertEquals("replacement", state.unleased(0)); assertEquals("published", held.image(0));
+        state.close(); assertFalse(state.drained()); assertEquals(List.of("superseded", "replacement"), disposed);
+        held.close(); assertEquals(List.of("superseded", "replacement", "published"), disposed); assertTrue(state.drained());
+    }
+    @Test public void repeatedSupersedesCoalesceWithoutStartingOrRetiringCurrent() {
+        Queue q = new Queue(); List<String> disposed = new ArrayList<>();
+        CustomImagePool.State<String> state = new CustomImagePool.State<>(q, disposed::add);
+        state.seed(List.of("published"));
+        state.request(obsolete -> { fail("Superseded queued decode"); return List.of(); }, null);
+        for (int i = 0; i < 100; i++) state.supersedePending();
+        assertEquals(1, q.tasks.size()); assertEquals("published", state.unleased(0)); assertTrue(disposed.isEmpty());
+        state.request(obsolete -> List.of("latest"), null); assertEquals(1, q.tasks.size()); q.drain();
+        assertEquals("latest", state.unleased(0)); assertEquals(List.of("published"), disposed);
+        state.close(); q.drain(); assertTrue(state.drained());
+    }
+    @Test public void supersedeCannotRetireUncertainDispatchBeforeActualReturn() {
+        Queue q = new Queue(); q.throwAfterEnqueue = true;
+        CustomImagePool.State<String> state = new CustomImagePool.State<>(q, value -> {});
+        assertThrows(IllegalStateException.class, () -> state.request(obsolete -> List.of("never"), null));
+        state.supersedePending(); state.close(); assertFalse(state.drained()); q.drain(); assertTrue(state.drained());
+    }
+    @Test public void supersededOutputDisposalFailureStaysLatchedAfterClose() {
+        Queue q = new Queue(); CustomImagePool.State<String> state = new CustomImagePool.State<>(q, value -> { throw new IllegalStateException("Disposal uncertain"); });
+        state.request(obsolete -> { state.supersedePending(); return List.of("obsolete"); }, () -> fail("Not current"));
+        q.drain(); assertTrue(state.failed()); state.close(); state.close(); assertFalse(state.drained());
+    }
+    @Test public void supersedeAfterCloseCannotReviveDescriptorsOrImages() {
+        Queue q = new Queue(); CustomImagePool.State<String> state = new CustomImagePool.State<>(q, value -> {});
+        state.close(); state.supersedePending(); state.request(obsolete -> { fail("Closed load"); return List.of(); }, null);
+        assertTrue(q.tasks.isEmpty()); assertTrue(state.isEmpty()); assertTrue(state.drained());
+    }
+    @Test public void supersedeRevisionExhaustionCannotReopenPublication() throws Exception {
+        Queue q = new Queue(); CustomImagePool.State<String> state = new CustomImagePool.State<>(q, value -> {});
+        java.lang.reflect.Field revision = state.getClass().getDeclaredField("revision"); revision.setAccessible(true); revision.setLong(state, Long.MAX_VALUE);
+        assertThrows(IllegalStateException.class, state::supersedePending); assertTrue(state.failed()); state.close(); assertFalse(state.drained());
+    }
     private static void await(CountDownLatch latch) {
         try { assertTrue(latch.await(5, TimeUnit.SECONDS)); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }

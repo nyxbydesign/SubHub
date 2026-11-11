@@ -81,6 +81,11 @@ public final class CustomImagePool implements AutoCloseable {
         if (state == null) throw new IllegalStateException("Explicit owned artwork required");
         state.invalidate();
     }
+    /** Obsoletes queued/in-flight output without retiring the last published DEVICE image set. */
+    public void supersedePending() {
+        if (state == null) throw new IllegalStateException("Explicit owned artwork required");
+        state.supersedePending();
+    }
     public boolean pending() { return state != null && state.pending(); }
     public boolean needsRetry() { return state != null && state.needsRetry(); }
     public boolean cleanupFailed() { return state != null && state.failed(); }
@@ -353,6 +358,13 @@ public final class CustomImagePool implements AutoCloseable {
                 T image = borrowed.image(id); if (image == null) return false;
                 reader.accept(image); return true;
             }
+        }
+        synchronized void supersedePending() {
+            if (closed) return;
+            if (revision == Long.MAX_VALUE) { failed = true; throw new IllegalStateException("Artwork revision exhausted"); }
+            // Publication uses this same monitor/revision. Keep current and all actual borrowers;
+            // the old runner remains counted and disposes any superseded output on return.
+            revision++; pending = null; retry = false;
         }
         void invalidate() {
             Batch<T> retired;

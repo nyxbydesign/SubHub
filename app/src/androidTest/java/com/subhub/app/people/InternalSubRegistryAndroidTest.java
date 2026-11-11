@@ -221,6 +221,39 @@ public final class InternalSubRegistryAndroidTest {
         }
     }
 
+    @Test public void firstCreateReceiptKeepsBirthAcrossVisibleMigrationAndReopen() throws Exception {
+        assertTrue(owned.legacy.edit().putBoolean("enabled", true).commit());
+        assertTrue(InternalSubData.loadIfProvisioned(owned));
+        InternalSubData data = InternalSubData.get(owned);
+        String birth = owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.ORIGINAL_GENERATION, "");
+        String receipt = owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, "");
+        assertEquals("v1:PENDING:" + UUID.fromString(birth), receipt);
+        assertNotEquals(birth, data.acknowledged().generation); // Legacy setVisible rotated once.
+        assertFalse(DummySubPreview.toggle(owned));
+        assertEquals(receipt, owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, ""));
+        forgetCached(); assertTrue(InternalSubData.loadIfProvisioned(owned));
+        assertEquals(birth, owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.ORIGINAL_GENERATION, ""));
+        assertEquals(receipt, owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, ""));
+    }
+
+    @Test public void orphanPhysicalReceiptCannotBeOverwrittenByLegacyMigration() {
+        String retained = "v1:READY:" + UUID.randomUUID();
+        assertTrue(owned.registry.edit().putString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, retained).commit());
+        assertTrue(owned.legacy.edit().putBoolean("enabled", true).commit());
+        assertThrows(IllegalStateException.class, () -> InternalSubData.loadIfProvisioned(owned));
+        assertFalse(new File(root, "internal_subs").exists());
+        assertFalse(owned.registry.contains("provisioning"));
+        assertEquals(retained, owned.registry.getString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, ""));
+    }
+
+    @Test public void orphanOwnerDataRegistryCannotCreateReplacementProfile() {
+        assertTrue(owned.ownerRegistry.edit().putString("runtime_v1", "ready").commit());
+        assertThrows(IllegalStateException.class, () -> InternalSubData.provision(owned));
+        assertFalse(new File(root, "internal_subs").exists());
+        assertTrue(owned.registry.getAll().isEmpty());
+        assertEquals("ready", owned.ownerRegistry.getString("runtime_v1", ""));
+    }
+
     private void forgetCached() throws Exception {
         Field open = InternalSubData.class.getDeclaredField("OPEN"); open.setAccessible(true);
         InternalSubData data;

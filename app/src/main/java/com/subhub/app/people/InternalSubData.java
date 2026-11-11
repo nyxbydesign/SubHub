@@ -225,6 +225,8 @@ public final class InternalSubData {
         String state = registry.getString(STATE, "");
         if ("ready".equals(state)) return get(app);
         if (!state.isEmpty()) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+        com.subhub.app.runtime.RuntimeJournalMigration.requirePristineRegistries(registry.getAll(),
+                app.getSharedPreferences("subhub_internal_owner_data_registry", 0).getAll());
         Boolean legacy = legacyVisibility(app);
         // Admission orders this data-only migration before any later controller revocation.
         synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
@@ -233,6 +235,10 @@ public final class InternalSubData {
         }
         synchronized (InternalSubData.class) {
             if (FAILED.contains(app)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+            // A caller may have observed empty metadata before another first-create finished.
+            // Revalidate at the in-process claim boundary; never overwrite its READY/receipt.
+            com.subhub.app.runtime.RuntimeJournalMigration.requirePristineRegistries(registry.getAll(),
+                    app.getSharedPreferences("subhub_internal_owner_data_registry", 0).getAll());
             // Claim once before any disk work. No global monitor spans fsync or callbacks.
             FAILED.add(app);
         }
@@ -244,11 +250,20 @@ public final class InternalSubData {
             value = new InternalSubData(FileInternalSubBackend.createNew(parent(app, true, directorySync),
                     InternalProfileAdapter.fromProfileData(new ProfileData(app.getString(R.string.dummy_sub_title),
                             app.getString(R.string.dummy_sub_description), "")), InternalConfigurationStore.defaults()));
+            // Preserve the birth generation before legacy visibility rotates the current route.
+            String originalGeneration = value.store.read().generation;
             // The private owner data must acknowledge initialization before profile READY publication.
             value.initializeOwnerData(app, OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE);
             if (Boolean.TRUE.equals(legacy)) value.store.setVisible(value.store.read(), true);
             // Carry only the old visible/hidden choice. No old editor, physical profile, or session authority is imported.
-            if (!registry.edit().putString(STATE, "ready").commit()) {
+            // Exact historical read-only visibility migration (or explicit first toggle) is the
+            // only producer. This receipt and profile READY share one acknowledged commit. Never
+            // add a missing receipt in get/load/open: newer partial/corrupt data needs recovery.
+            String ownerCreation = com.subhub.app.runtime.RuntimeJournalMigration.firstCreationReceipt(
+                    originalGeneration);
+            if (!registry.edit().putString(STATE, "ready")
+                    .putString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, ownerCreation)
+                    .putString(com.subhub.app.runtime.RuntimeJournalMigration.ORIGINAL_GENERATION, originalGeneration).commit()) {
                 throw new IllegalStateException("Internal Sub provisioning was not acknowledged");
             }
             synchronized (InternalSubData.class) { OPEN.put(app, value); FAILED.remove(app); }
