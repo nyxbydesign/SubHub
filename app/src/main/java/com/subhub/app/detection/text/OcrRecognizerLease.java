@@ -8,6 +8,8 @@ final class OcrRecognizerLease implements AutoCloseable {
     private final Runnable release;
     private boolean retired;
     private boolean released;
+    private boolean releaseReturned;
+    private boolean releaseFailed;
     private int tasks;
 
     OcrRecognizerLease(Runnable release) { this.release = Objects.requireNonNull(release); }
@@ -24,7 +26,7 @@ final class OcrRecognizerLease implements AutoCloseable {
             retired = true;
             releaseNow = releaseIfDrained();
         }
-        if (releaseNow) release.run();
+        if (releaseNow) releaseResource();
     }
 
     private void finished() {
@@ -33,7 +35,20 @@ final class OcrRecognizerLease implements AutoCloseable {
             tasks--;
             releaseNow = releaseIfDrained();
         }
-        if (releaseNow) release.run();
+        if (releaseNow) releaseResource();
+    }
+
+    /** Native release must actually return successfully; task-zero or a close request is not drain. */
+    synchronized boolean managedResourcesDrained() {
+        return retired && tasks == 0 && released && releaseReturned && !releaseFailed;
+    }
+
+    private void releaseResource() {
+        boolean failed = true;
+        try { release.run(); failed = false; }
+        finally {
+            synchronized (this) { releaseFailed = failed; releaseReturned = true; }
+        }
     }
 
     private boolean releaseIfDrained() {

@@ -149,6 +149,11 @@ public final class OcrTextSmutDetector implements AutoCloseable {
         return factory.create(text, bounds, match, width, height, "TEXT_SMUT_OCR_");
     }
 
+    /** Includes warm-up/detection SDK tasks and the actual recognizer.close return.
+     * This is model retirement only; the caller separately owns queued result callbacks and pixels.
+     */
+    public boolean managedResourcesDrained() { return lifetime.managedResourcesDrained(); }
+
     @Override public void close() {
         lifetime.close();
     }

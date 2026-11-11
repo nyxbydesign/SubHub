@@ -10,6 +10,10 @@ import com.subhub.app.penance.InternalPenanceRules;
 import com.subhub.app.penance.OwnerPenanceLedger;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.runtime.RuntimeLease;
+import com.subhub.app.runtime.InternalSessionClock;
+import com.subhub.app.runtime.RuntimeExecution;
+import com.subhub.app.runtime.RuntimeConfiguration;
+import com.subhub.app.penance.PaidPauseRuleSettings;
 import com.subhub.app.runtime.OwnedResourceRegistry;
 import com.subhub.app.stats.OwnerStatisticsStore;
 import com.subhub.app.stats.OwnerObservation;
@@ -248,11 +252,46 @@ public final class InternalOwnerDataBroker {
         catch (SecurityException | IllegalStateException unavailable) { return -1; }
         return handle.acknowledgedRevision;
     }
+    /** Data-only clock evidence; a LIVE persisted row is recovery-required, never resumed authority. */
+    public CompletableFuture<InternalSessionClock.Snapshot> readSessionClock(String generation) {
+        return broker.submitRead(generation, handle -> {
+            InternalSessionClock.State state = readClock(handle);
+            return state == null ? null : InternalSessionClock.observe(state);
+        });
+    }
     /** Explicit bounded data repair. This neither resumes enforcement nor clears a runtime journal. */
     public CompletableFuture<Void> reconcileInterruptedSession(String generation, long controllerRevision, String session) {
-        return broker.submitRecovery(generation, controllerRevision, handle -> {
-            return handle.observeAck(() -> { handle.statistics.reconcileInterruptedSession(session); return null; });
-        });
+        return reconcileInterruptedSession(generation, controllerRevision, session, OwnerObservation.capture(System.currentTimeMillis()));
+    }
+    public CompletableFuture<Void> reconcileInterruptedSession(String generation, long controllerRevision, String session,
+            OwnerObservation observed) {
+        Objects.requireNonNull(observed);
+        return broker.submitRecovery(generation, controllerRevision, handle -> handle.observeAck(() ->
+                handle.statistics.transaction(() -> {
+                    InternalSessionClock.State clock = readClock(handle);
+                    if (clock != null && clock.phase == InternalSessionClock.Phase.LIVE)
+                        writeClock(handle, InternalSessionClock.recover(clock, session, observed));
+                    handle.statistics.reconcileInterruptedSession(session); return null;
+                })));
+    }
+    private static InternalSessionClock.State readClock(Handle handle) {
+        return InternalSessionClock.decode(handle.preferences.preferences(InternalSessionClock.NAMESPACE).getAll());
+    }
+    private static void writeClock(Handle handle, InternalSessionClock.State clock) {
+        SharedPreferences.Editor edit = handle.preferences.preferences(InternalSessionClock.NAMESPACE).edit().clear();
+        for (Map.Entry<String, Object> field : InternalSessionClock.encode(clock).entrySet()) {
+            Object value = field.getValue(); String key = field.getKey();
+            if (value instanceof String) edit.putString(key, (String) value);
+            else if (value instanceof Long) edit.putLong(key, (Long) value);
+            else if (value instanceof Integer) edit.putInt(key, (Integer) value);
+            else if (value instanceof Boolean) edit.putBoolean(key, (Boolean) value);
+            else if (value instanceof java.util.Set<?>) {
+                java.util.Set<String> strings = new java.util.TreeSet<>();
+                for (Object member : (java.util.Set<?>) value) strings.add((String) member);
+                edit.putStringSet(key, strings);
+            } else throw new IllegalArgumentException("Unsupported clock field");
+        }
+        edit.apply(); // Staged in the enclosing owner transaction; caller returns only after ACK.
     }
     public final class TaskAccess {
         private final String generation;
@@ -398,6 +437,69 @@ public final class InternalOwnerDataBroker {
                 started = receipt; return receipt;
             });
         }
+        private volatile RuntimeExecution<RuntimeConfiguration> clockRuntime;
+        /** Same acknowledged statistics session and exact in-process execution, never a persisted lease. */
+        public InternalSessionClock.State initializeSessionClock(RuntimeExecution<RuntimeConfiguration> execution,
+                InternalSessionClock.Sample startedAt, java.security.SecureRandom random) {
+            queue.requireWrite(OwnedResourceRegistry.Effect.STARTUP);
+            Objects.requireNonNull(execution); Objects.requireNonNull(startedAt); Objects.requireNonNull(random);
+            if (!identity().equals(execution.identity()) || clockRuntime != null)
+                throw new SecurityException("Clock execution is different or already bound");
+            java.util.concurrent.atomic.AtomicReference<InternalSessionClock.State> receipt = new java.util.concurrent.atomic.AtomicReference<>();
+            if (!execution.runStartupEffect(() -> receipt.set(binding.held(OwnedResourceRegistry.Effect.STARTUP, handle -> {
+                SessionObservation observation = started;
+                if (observation == null || ended || observation.startedAt != startedAt.calendar.at
+                        || !observation.zone.equals(startedAt.calendar.zone))
+                    throw new SecurityException("Clock does not match this acknowledged session start");
+                acknowledgedSessionStamp();
+                RuntimeConfiguration configuration = execution.configuration();
+                if (!identity().equals(configuration.owner)) throw new SecurityException("Different clock configuration owner");
+                InternalSessionClock.Selection selection = new InternalSessionClock.Selection(
+                        configuration.duration.getLong("duration", -1), configuration.duration.getLong("minimum", 3_600_000),
+                        configuration.duration.getLong("maximum", 86_400_000), configuration.duration.getBoolean("hidden", false));
+                return handle.atomic(() -> {
+                    InternalSessionClock.State clock = InternalSessionClock.begin(readClock(handle), identity(), startedAt, selection, random);
+                    writeClock(handle, clock); return clock;
+                });
+            })))) throw new SecurityException("Clock startup effect refused");
+            clockRuntime = execution;
+            return Objects.requireNonNull(receipt.get(), "Clock startup did not acknowledge");
+        }
+        private InternalSessionClock.Rules clockRules(RuntimeConfiguration expected) {
+            RuntimeExecution<RuntimeConfiguration> exact = clockRuntime;
+            if (exact == null || expected == null || !identity().equals(expected.owner)
+                    || expected != exact.configuration() || expected.configRevision != exact.appliedConfigurationRevision())
+                throw new SecurityException("Clock configuration is not this execution's acknowledged revision");
+            InternalPenanceRules penance = new InternalPenanceRules(expected.penance);
+            PaidPauseRuleSettings pause = PaidPauseRuleSettings.configuration(expected.penance);
+            return new InternalSessionClock.Rules(expected.configRevision, penance.isEnabled(), pause.isEnabled(),
+                    pause.isEnabled(), pause.getPriceCents(), pause.getDurationMinutes(), penance.getCurrency());
+        }
+        private InternalSessionClock.State clockOperation(RuntimeConfiguration expected,
+                java.util.function.BiFunction<Handle, InternalSessionClock.Rules, InternalSessionClock.State> operation) {
+            queue.requireWrite(OwnedResourceRegistry.Effect.NORMAL); clockRules(expected);
+            java.util.concurrent.atomic.AtomicReference<InternalSessionClock.State> receipt = new java.util.concurrent.atomic.AtomicReference<>();
+            if (!clockRuntime.runEffect(() -> receipt.set(normal(acknowledgedSessionStamp(), handle ->
+                    handle.atomic(() -> operation.apply(handle, clockRules(expected)))))))
+                throw new SecurityException("Clock NORMAL effect refused");
+            return Objects.requireNonNull(receipt.get(), "Clock operation did not acknowledge");
+        }
+        public InternalSessionClock.State tickSessionClock(RuntimeConfiguration expected, InternalSessionClock.Sample observed) {
+            return clockOperation(expected, (handle, rules) -> {
+                InternalSessionClock.State before = Objects.requireNonNull(readClock(handle), "Clock not initialized");
+                InternalSessionClock.State next = InternalSessionClock.tick(before, identity(), observed, rules);
+                if (next != before) writeClock(handle, next); return next;
+            });
+        }
+        /** Exact active config + optimistic sequence; captured event time never grants authority. */
+        public InternalSessionClock.State simulateSessionPause(RuntimeConfiguration expected, InternalSessionClock.Sample observed,
+                long expectedSequence, String requestId) {
+            return clockOperation(expected, (handle, rules) -> {
+                InternalSessionClock.State before = Objects.requireNonNull(readClock(handle), "Clock not initialized");
+                InternalSessionClock.State next = InternalSessionClock.pause(before, identity(), observed, rules, expectedSequence, requestId);
+                writeClock(handle, next); return next;
+            });
+        }
         private <T> T normal(StatsRepository.SessionStamp expected, Function<Handle, T> operation) {
             return binding.held(OwnedResourceRegistry.Effect.NORMAL, handle -> {
                 if (expected == null || expected != acknowledgedSessionStamp()
@@ -477,9 +579,18 @@ public final class InternalOwnerDataBroker {
             normal(acknowledgedSessionStamp(), handle -> { handle.statistics.checkpoint(observed.at); return null; });
         }
         public CompletableFuture<Void> finishAndRelease(long now, Runnable afterDrained) {
+            return finishAndRelease(OwnerObservation.capture(now), afterDrained);
+        }
+        public CompletableFuture<Void> finishAndRelease(OwnerObservation firstFence, Runnable afterDrained) {
+            Objects.requireNonNull(firstFence);
             return binding.stop(handle -> {
                 if (ended || started == null) throw new IllegalStateException("Own session start was not acknowledged");
-                handle.observeAck(() -> { handle.statistics.finishSession(binding.identity().session, now); return null; });
+                handle.observeAck(() -> handle.statistics.transaction(() -> {
+                    InternalSessionClock.State clock = readClock(handle);
+                    if (clock != null && (clock.phase == InternalSessionClock.Phase.LIVE || clock.session.equals(identity().session)))
+                        writeClock(handle, InternalSessionClock.finish(clock, identity(), firstFence));
+                    handle.statistics.finishSession(binding.identity().session, firstFence.at); return null;
+                }));
                 ended = true; return null;
             }, afterDrained);
         }

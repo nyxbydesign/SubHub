@@ -74,6 +74,8 @@ public final class ScreenCaptureService extends Service {
     private static final int NOTIFICATION_ID = 1701;
     private static final String ACTION_START = "com.subhub.app.action.START";
     private static final String ACTION_STOP = "com.subhub.app.action.STOP";
+    private static final String ACTION_ATTACH_OWNER = "com.subhub.app.action.ATTACH_RUNTIME_OWNER";
+    private static final String EXTRA_OWNER_TOKEN = "runtime_owner_token";
     private static final String ACTION_STOP_OWNED = "com.subhub.app.action.STOP_OWNED_CAPTURE";
     private static final String EXTRA_RESULT_CODE = "projection_result_code";
     private static final String EXTRA_RESULT_DATA = "projection_result_data";
@@ -148,6 +150,14 @@ public final class ScreenCaptureService extends Service {
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
                 .putExtra(EXTRA_RESULT_DATA, resultData);
+    }
+
+    /** Inactive owner transport only. The token is routing metadata, never a grant or lease. */
+    public static Intent ownerStartIntent(Context physical, String opaqueToken) {
+        if (opaqueToken == null || !UUID.fromString(opaqueToken).toString().equals(opaqueToken))
+            throw new IllegalArgumentException("Missing or malformed runtime owner token");
+        return new Intent(physical, ScreenCaptureService.class).setAction(ACTION_ATTACH_OWNER)
+                .putExtra(EXTRA_OWNER_TOKEN, opaqueToken);
     }
 
     public static Intent stopIntent(Context context) {
