@@ -108,6 +108,7 @@ public final class PaidPauseManager implements PaidPauseRuleSettings {
     /** Called only after the matching checkout is recorded as paid. */
     public boolean activate() {
         synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!AppRuntimeGateway.legacyMutationAllowed()) return false;
             if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
             if (!canPurchase()) return false;
             boolean rearm = isProtectionRunning();

@@ -81,6 +81,15 @@ final class RuntimeInstallationBarrier {
             mutex.requireHeld();
             synchronized (RuntimeInstallationBarrier.this) { require(Mode.IRREVERSIBLE); mode = Mode.INSTALLED; }
         }
+        /** Caller holds the physical lock and has proved journal IDLE and actual host retirement. */
+        void restoreLegacy() {
+            mutex.requireHeld();
+            synchronized (RuntimeInstallationBarrier.this) {
+                require(Mode.INSTALLED);
+                mode = Mode.LEGACY;
+                installation = null;
+            }
+        }
         void failed() {
             synchronized (RuntimeInstallationBarrier.this) {
                 if (installation != this || mode == Mode.LEGACY || mode == Mode.INSTALLED)

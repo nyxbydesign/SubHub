@@ -136,6 +136,12 @@ public final class AppRuntimeGateway {
         default CompletableFuture<Boolean> endInternal(InternalStartSpec specification, RuntimeLease.Identity owner) {
             return CompletableFuture.completedFuture(false);
         }
+        default CompletableFuture<InternalVisibilityBarrier.Permit> internalVisibility(Context physical,
+                InternalVisibilityBarrier.Request request) {
+            CompletableFuture<InternalVisibilityBarrier.Permit> refused = new CompletableFuture<>();
+            refused.completeExceptionally(new InternalVisibilityBarrier.UnavailableException());
+            return refused;
+        }
         /**
          * expected is actual immutable component evidence, not authority or a caller-trusted string.
          * Verify current exact DEVICE lease + actual component identities. Hold counted authority
@@ -182,6 +188,39 @@ public final class AppRuntimeGateway {
         proof.installed();
         installed = value;
     }
+    static synchronized void restoreLegacy(Application application, Backend exact,
+            RuntimeInstallationBarrier.Installation proof) {
+        bindPhysicalApplication(application);
+        if (installed == null || installed.backend != exact || preparedInstallation != proof)
+            throw new SecurityException("Different Demo runtime installation");
+        proof.restoreLegacy();
+        installed = null;
+        preparedInstallation = null;
+    }
+
+    public static CompletableFuture<InternalStart> openInternalStart(Context source, InternalStartSpec specification) {
+        Context physical = Objects.requireNonNull(source).getApplicationContext();
+        if (!(physical instanceof Application application)) throw new SecurityException("Physical application required");
+        AppRuntimeGateway current = current(application);
+        return current == null ? AndroidRuntimeFactory.openTemporaryDemo(application, specification)
+                : current.internalStart(specification);
+    }
+    static void resumeLegacyAccessibility(Application physical) {
+        if (installed == null && BOOTSTRAP.legacyAdmissionOpen())
+            com.subhub.app.service.ScreenshotAccessibilityService.resumeLegacySource(physical);
+    }
+    /** For legacy transitions whose full synchronous body holds the shared session lock. */
+    public static boolean legacyMutationAllowed() {
+        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime lock required");
+        return BOOTSTRAP.legacyAdmissionOpen();
+    }
+
+    public static CompletableFuture<InternalVisibilityBarrier.Permit> prepareDemoVisibility(Context physical,
+            InternalVisibilityBarrier.Request request) {
+        AppRuntimeGateway gateway = physical == null ? null : current(physical);
+        return gateway == null ? prepareInitialDemoVisibility(physical)
+                : gateway.backend.internalVisibility(physical, request);
+    }
     private static synchronized void bindPhysicalApplication(Application application) {
         Objects.requireNonNull(application);
         if (bootstrapApplication == null) bootstrapApplication = application;
@@ -209,7 +248,7 @@ public final class AppRuntimeGateway {
         return counted == null ? null : new LegacyWork(counted);
     }
     /** Allows profile-only edits before the first owner journal has ever been provisioned. */
-    public static CompletableFuture<InternalVisibilityBarrier.Permit> prepareInitialDemoVisibility(Context physical) {
+    private static CompletableFuture<InternalVisibilityBarrier.Permit> prepareInitialDemoVisibility(Context physical) {
         CompletableFuture<InternalVisibilityBarrier.Permit> response = new CompletableFuture<>();
         if (!(physical instanceof Application) || android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
                 || !demoVisibilityPending.compareAndSet(false, true)) {
@@ -221,11 +260,17 @@ public final class AppRuntimeGateway {
             ticket = beginLegacyWork(physical);
             android.content.SharedPreferences registry = physical.getSharedPreferences(RuntimeJournalMigration.REGISTRY, 0);
             String original = registry.getString(RuntimeJournalMigration.ORIGINAL_GENERATION, "");
-            if (!"ready".equals(registry.getString(RuntimeJournalMigration.PROFILE_STATE, ""))
-                    || !RuntimeJournalMigration.firstCreationReceipt(original).equals(
-                            registry.getString(RuntimeJournalMigration.RECEIPT, "")))
+            String receipt = registry.getString(RuntimeJournalMigration.RECEIPT, "");
+            if (!"ready".equals(registry.getString(RuntimeJournalMigration.PROFILE_STATE, "")))
                 throw new InternalVisibilityBarrier.UnavailableException();
-            SQLiteRuntimeOwnerBackend.requireNoOwnerEvidence((Application) physical);
+            if (RuntimeJournalMigration.firstCreationReceipt(original).equals(receipt)) {
+                SQLiteRuntimeOwnerBackend.requireNoOwnerEvidence((Application) physical);
+            } else if (RuntimeJournalMigration.matchesEstablishedReceipt(receipt, original)) {
+                try (SQLiteRuntimeOwnerBackend journal = new SQLiteRuntimeOwnerBackend(physical)) {
+                    if (journal.read().phase != RuntimeOwnerStore.Phase.IDLE)
+                        throw new InternalVisibilityBarrier.UnavailableException();
+                }
+            } else throw new InternalVisibilityBarrier.UnavailableException();
             LegacyWork exact = ticket;
             response.complete(new InternalVisibilityBarrier.Permit() {
                 @Override public void requireCurrent() {

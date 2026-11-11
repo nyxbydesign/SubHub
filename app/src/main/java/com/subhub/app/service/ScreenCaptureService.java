@@ -541,6 +541,17 @@ public final class ScreenCaptureService extends Service {
             if (!deviceInitialized) stopSelfResult(startId);
             return START_NOT_STICKY;
         }
+        try (var admitted = com.subhub.app.runtime.AppRuntimeGateway.tryBeginLegacyWork(this)) {
+            if (admitted == null) {
+                stopSelfResult(startId);
+                return START_NOT_STICKY;
+            }
+            return startLegacyProjection(intent, startId);
+        }
+    }
+
+    private int startLegacyProjection(Intent intent, int startId) {
+        legacyProjectionAttempted = true;
         initializeDeviceRuntime();
         if (!MediaProjectionLeaseRegistry.acquire(
                 MediaProjectionLeaseRegistry.Owner.PROTECTION)) {
@@ -601,6 +612,10 @@ public final class ScreenCaptureService extends Service {
         reconcileCensorScreen();
         return START_NOT_STICKY;
     }
+
+    private static volatile boolean legacyProjectionAttempted;
+
+    public static boolean legacyProjectionNeedsHandoff() { return legacyProjectionAttempted; }
 
     private void startPipeline(long generation, long transition) {
         synchronized (resources) {

@@ -28,17 +28,23 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
     private final AndroidRuntimeFactory factory;
     private final InternalLimitsBinding.LocalIntervention internalLimitsNotice;
     private final OwnedLegacyCensorData.LocalNotice internalAssessmentNotice;
+    private final boolean demoOnly;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     AndroidDeviceBackend(Application physical, AndroidRuntimeFactory factory,
             InternalLimitsBinding.LocalIntervention internalLimitsNotice,
-            OwnedLegacyCensorData.LocalNotice internalAssessmentNotice) {
+            OwnedLegacyCensorData.LocalNotice internalAssessmentNotice, boolean demoOnly) {
         this.physical = Objects.requireNonNull(physical); this.factory = Objects.requireNonNull(factory);
         this.internalLimitsNotice = Objects.requireNonNull(internalLimitsNotice);
         this.internalAssessmentNotice = Objects.requireNonNull(internalAssessmentNotice);
+        this.demoOnly = demoOnly;
     }
     @Override public CompletableFuture<AppRuntimeGateway.DeviceStart> deviceStart(AppRuntimeGateway.DeviceStartSpec specification) {
         CompletableFuture<AppRuntimeGateway.DeviceStart> result = new CompletableFuture<>();
+        if (demoOnly) {
+            result.completeExceptionally(new AppRuntimeGateway.DeviceAdmissionException("End the current Demo session first"));
+            return result;
+        }
         factory.reserveDevice(specification).whenComplete((admission, failure) -> {
             if (failure != null) { result.completeExceptionally(failure); return; }
             DeviceConfiguration config = admission.configuration;
@@ -81,6 +87,10 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
     @Override public CompletableFuture<Boolean> endInternal(AppRuntimeGateway.InternalStartSpec specification,
             RuntimeLease.Identity owner) {
         return factory.endInternal(specification, owner);
+    }
+    @Override public CompletableFuture<com.subhub.app.people.InternalVisibilityBarrier.Permit> internalVisibility(
+            android.content.Context context, com.subhub.app.people.InternalVisibilityBarrier.Request request) {
+        return factory.prepare(context, request);
     }
     @Override public AppRuntimeGateway.DeviceMutationPermit admitManagedDeviceMutation(
             RuntimeLease.Identity expected, AppRuntimeGateway.Mutation mutation,

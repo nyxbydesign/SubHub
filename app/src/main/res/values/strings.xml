@@ -717,6 +717,7 @@
     <string name="penance_history_tap">censor tap</string>
     <string name="penance_history_app_open">included app opened</string>
     <string name="penance_charge_toast">%1$s · +%2$s tribute · %3$s due</string>
+    <string name="demo_tribute_recorded">Simulated tribute recorded: %1$s</string>
     <string name="penance_status_open">due</string>
     <string name="penance_status_mercy">grace period</string>
     <string name="penance_status_checkout">pending payment</string>

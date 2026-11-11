@@ -51,6 +51,12 @@ public final class RuntimeJournalMigration {
         if (!generation.toString().equals(originalGeneration)) throw new IllegalArgumentException("Invalid original generation");
         return encode(Phase.PENDING, generation);
     }
+    static boolean matchesEstablishedReceipt(String encoded, String originalGeneration) {
+        try {
+            Receipt receipt = decode(encoded);
+            return receipt.phase == Phase.READY && receipt.originalGeneration.toString().equals(originalGeneration);
+        } catch (IOException invalid) { return false; }
+    }
 
     <H extends AutoCloseable> H open(Evidence evidence, Journal<H> journal,
             CreationAdmission admission) throws Exception {

@@ -16,6 +16,9 @@ import java.util.List;
 public final class ScreenshotAccessibilityService extends AccessibilityService {
     private static final String TAG = "ScreenshotA11y";
     private volatile AccessibilityLegacyPipeline pipeline;
+    private AccessibilityLegacyPipeline parkedLegacy;
+    private static ScreenshotAccessibilityService liveShell;
+    private java.util.concurrent.CompletableFuture<Void> retiringDemoSource;
     private AccessibilityServiceConnection managedConnection;
 
     private boolean managedShell;
@@ -31,6 +34,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        liveShell = this;
         if (managedShell) {
             if (managedServiceAccess != null) {
                 boolean reconnected = !managedOsConnected;
@@ -39,6 +43,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             }
             return;
         }
+        managedOsConnected = true;
         if (pipeline != null) return;
         com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess access;
         try {
@@ -55,6 +60,10 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             registerManagedSource();
             return;
         }
+        connectLegacy();
+    }
+
+    private void connectLegacy() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Accessibility screenshot capture requires Android 11 or newer");
             disableSelf();
@@ -67,8 +76,81 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
             Log.e(TAG, "Legacy Accessibility admission unavailable", unavailable);
             return;
         }
-        pipeline = new AccessibilityLegacyPipeline(this);
-        pipeline.initializeDeviceRuntime();
+        AccessibilityLegacyPipeline previous = parkedLegacy;
+        parkedLegacy = null;
+        if (previous != null) {
+            pipeline = previous;
+            previous.resumeParkedLegacy();
+        } else {
+            pipeline = new AccessibilityLegacyPipeline(this);
+            pipeline.initializeDeviceRuntime();
+        }
+    }
+
+    /** The factory still seals and checks every other legacy admission before provisioning. */
+    public static boolean parkLegacyForDemo(android.app.Application physical) {
+        requireShellMain();
+        ScreenshotAccessibilityService shell = liveShell;
+        if (shell == null) return true;
+        if (shell.getApplication() != physical || shell.managedShell) return false;
+        AccessibilityLegacyPipeline current = shell.pipeline;
+        if (current == null) return shell.legacyServiceWork == null;
+        if (shell.legacyServiceWork == null || !current.parkLegacy()) return false;
+        shell.parkedLegacy = current;
+        shell.pipeline = null;
+        shell.legacyServiceWork.close();
+        shell.legacyServiceWork = null;
+        return true;
+    }
+
+    public static void connectDemoSource(android.app.Application physical,
+            com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess access) {
+        requireShellMain();
+        ScreenshotAccessibilityService shell = liveShell;
+        if (shell == null || !shell.managedOsConnected) return;
+        if (shell.getApplication() != physical || shell.pipeline != null || shell.legacyServiceWork != null)
+            throw new SecurityException("Accessibility still owns a legacy source");
+        if (shell.managedConnection != null) {
+            if (shell.managedServiceAccess != access) throw new SecurityException("Accessibility gateway changed");
+            return;
+        }
+        shell.managedShell = true;
+        shell.managedServiceAccess = access;
+        shell.registerManagedSource();
+    }
+
+    public static java.util.concurrent.CompletableFuture<Void> retireDemoSource(android.app.Application physical,
+            com.subhub.app.runtime.AppRuntimeGateway.ServiceAccess access) {
+        requireShellMain();
+        ScreenshotAccessibilityService shell = liveShell;
+        if (shell == null || shell.managedConnection == null)
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        if (shell.getApplication() != physical || shell.managedServiceAccess != access)
+            throw new SecurityException("Different Accessibility Demo source");
+        if (shell.retiringDemoSource != null) return shell.retiringDemoSource;
+        var result = new java.util.concurrent.CompletableFuture<Void>();
+        shell.retiringDemoSource = result;
+        if (shell.managedConnection.retired()) result.complete(null);
+        else shell.managedConnection.disconnect();
+        return result;
+    }
+
+    public static void resumeLegacySource(android.app.Application physical) {
+        requireShellMain();
+        ScreenshotAccessibilityService shell = liveShell;
+        if (shell == null || !shell.managedOsConnected) return;
+        if (shell.getApplication() != physical || shell.pipeline != null || shell.legacyServiceWork != null) return;
+        if (shell.managedConnection != null && !shell.managedConnection.retired())
+            throw new SecurityException("Accessibility Demo source still owns callbacks");
+        shell.managedConnection = null;
+        shell.managedServiceAccess = null;
+        shell.retiringDemoSource = null;
+        shell.managedShell = false;
+        shell.connectLegacy();
+    }
+
+    private static void requireShellMain() {
+        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Accessibility handoff requires main");
     }
 
     private void registerManagedSource() {
@@ -108,7 +190,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         // Old callbacks keep their old connection/attachment. This is a fresh logical generation
         // on the same still-bound OS source, never adoption of old DEVICE state or its resources.
         pipeline = null; // Exact old selection/resource/gateway receipts returned even if OS disconnected.
-        if (managedOsConnected) registerManagedSource();
+        if (!managedOsConnected && liveShell == this) liveShell = null;
+        if (retiringDemoSource != null) retiringDemoSource.complete(null);
+        else if (managedOsConnected) registerManagedSource();
     }
 
     public RuntimeCaptureHost.Attachment prepareDeviceAttachment(RuntimeCaptureHost.DeviceRequest request) {
@@ -362,6 +446,12 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         try {
             if (managedShell) { AccessibilityServiceConnection exact = managedConnection; if (exact != null) exact.disconnect(); }
             else { AccessibilityLegacyPipeline p = pipeline; if (p != null) p.destroyLegacy(); }
-        } finally { super.onDestroy(); }
+        } finally {
+            if (liveShell == this && managedConnection == null) liveShell = null;
+            AccessibilityLegacyPipeline dormant = parkedLegacy;
+            parkedLegacy = null;
+            try { if (dormant != null) dormant.destroyLegacy(); }
+            finally { super.onDestroy(); }
+        }
     }
 }

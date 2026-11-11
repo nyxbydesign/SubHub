@@ -464,6 +464,12 @@ public final class PopupStormManager {
     /** A capture instance passes its original signature rather than adopting whatever replaced it. */
     public ServiceParticipation startOwned(Context source, String expectedSignature) {
         if (deviceRequest != null) throw new IllegalStateException("Use exact managed participation");
+        try (var admitted = com.subhub.app.runtime.AppRuntimeGateway.tryBeginLegacyWork(source)) {
+            return admitted == null ? null : startLegacyParticipation(source, expectedSignature);
+        }
+    }
+
+    private ServiceParticipation startLegacyParticipation(Context source, String expectedSignature) {
         // Claim before posting so an already queued preview timeout cannot stop
         // an effect that a real service has adopted from another thread.
         long token;
@@ -510,6 +516,12 @@ public final class PopupStormManager {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             throw new IllegalStateException("Popup previews must be requested on the main thread");
         }
+        try (var admitted = com.subhub.app.runtime.AppRuntimeGateway.tryBeginLegacyWork(source)) {
+            return admitted == null ? PreviewResult.UNAVAILABLE : previewLegacy(source);
+        }
+    }
+
+    private PreviewResult previewLegacy(Context source) {
         initialize(source);
         settings = PopupStormSettings.load(source);
         if (!settings.isAcknowledged()

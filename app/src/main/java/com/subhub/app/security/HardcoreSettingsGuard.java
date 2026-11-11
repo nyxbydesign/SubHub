@@ -51,6 +51,7 @@ public final class HardcoreSettingsGuard {
     private final List<Rect> guardedBounds = new ArrayList<>();
     private final List<Rect> sampledBounds = new ArrayList<>();
     private final AtomicBoolean backgroundSampleRunning = new AtomicBoolean();
+    private boolean legacyWindowAttempted;
 
     public HardcoreSettingsGuard(AccessibilityService service) {
         this.service = service;
@@ -391,6 +392,7 @@ public final class HardcoreSettingsGuard {
         });
 
         try {
+            if (deviceComponent == null) legacyWindowAttempted = true;
             if (deviceComponent != null) {
                 managedWindows.adding(badge);
                 badges.add(badge); // Keep even a failed/partial add until verified cleanup.
@@ -403,6 +405,11 @@ public final class HardcoreSettingsGuard {
             Log.w(TAG, "Could not attach Hardcore Settings guard", error);
             return false;
         }
+    }
+
+    public boolean canParkLegacy() {
+        requireManagedMain();
+        return deviceComponent == null && !legacyWindowAttempted && !backgroundSampleRunning.get();
     }
 
     private void requestBackgroundSample(int windowId) {

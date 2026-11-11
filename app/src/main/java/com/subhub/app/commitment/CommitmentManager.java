@@ -70,6 +70,7 @@ public final class CommitmentManager {
     /** Selects once; neither UI recreation nor reboot draws another duration. */
     public static boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
         synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!AppRuntimeGateway.legacyMutationAllowed()) return false;
             if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context) || isActive(context)) return false;
             long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
             RemoteSessionClock.Sample now = RemoteSessionClock.local();

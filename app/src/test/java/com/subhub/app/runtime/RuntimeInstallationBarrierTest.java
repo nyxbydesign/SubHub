@@ -38,11 +38,20 @@ public final class RuntimeInstallationBarrierTest {
         assertThrows(SecurityException.class, f.barrier::legacyWork);
         assertThrows(SecurityException.class, () -> f.mutex.runtime(() -> { install.abortBeforeProvisioning(); return null; }));
     }
-    @Test public void installedBoundaryNeverReopensLegacy() {
+    @Test public void installedBoundaryRequiresExactRetirementBeforeReopeningLegacy() {
         Fixture f = new Fixture(); var install = f.prepare();
         f.mutex.runtime(() -> { install.beginProvisioning(); install.installed(); return null; });
         assertThrows(SecurityException.class, f.barrier::legacyWork); assertNull(f.prepare());
         assertThrows(SecurityException.class, install::failed);
+        assertThrows(IllegalStateException.class, install::restoreLegacy);
+        f.mutex.runtime(() -> { install.restoreLegacy(); return null; });
+        try (var resumed = f.barrier.legacyWork()) {
+            assertTrue(f.barrier.legacyAdmissionOpen());
+            assertNull(f.prepare());
+        }
+        var next = f.prepare();
+        assertNotNull(next);
+        assertThrows(SecurityException.class, () -> f.mutex.runtime(() -> { install.restoreLegacy(); return null; }));
     }
     @Test public void unacknowledgedPreparationCannotPublishInstalled() {
         Fixture f = new Fixture(); var install = f.prepare();

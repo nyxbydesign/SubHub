@@ -103,8 +103,7 @@ public final class InternalVisibilityBarrier {
         public UnavailableException() { super("Internal visibility awaits exact runtime owner reconciliation"); }
     }
     // Before first provisioning, the bootstrap barrier can prove that no runtime can own the profile.
-    private static final Provider BEFORE_RUNTIME = (physical, request) ->
-            com.subhub.app.runtime.AppRuntimeGateway.prepareInitialDemoVisibility(physical);
+    private static final Provider BEFORE_RUNTIME = com.subhub.app.runtime.AppRuntimeGateway::prepareDemoVisibility;
     private static volatile Provider provider = BEFORE_RUNTIME;
     public static synchronized void install(Provider qualifiedRuntimeProvider) {
         if (provider != BEFORE_RUNTIME) throw new IllegalStateException("Visibility provider already installed");

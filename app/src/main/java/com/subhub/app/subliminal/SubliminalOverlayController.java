@@ -253,6 +253,10 @@ public final class SubliminalOverlayController implements AutoCloseable {
 
     /** A runtime may release this component only after its exact window and callbacks are gone. */
     public boolean managedResourcesDrained() { requireMain(); return lifetime.drained(); }
+    public boolean canParkLegacy() {
+        requireMain();
+        return !eligible && !lifetime.hasWindow() && lifetime.pendingCallbacks() == 0;
+    }
 
     public void close(Runnable afterDrained) {
         requireMain();

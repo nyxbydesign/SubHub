@@ -128,6 +128,7 @@ final class AccessibilityLegacyPipeline {
     
     private static final String DIAGNOSTICS_MODE = "Accessibility screenshot";
     private volatile boolean running;
+    private boolean legacyParked, legacyCaptureWindowAttempted;
     private volatile boolean recognitionActive;
     private static final long MIN_TEXT_REFRESH_MS = 120L;
     private static final long TEXT_CANDIDATE_CONFIRM_MS = 48L;
@@ -316,6 +317,7 @@ final class AccessibilityLegacyPipeline {
     private volatile boolean screenRetirementFailed;
     private final android.content.BroadcastReceiver powerReceiver = new android.content.BroadcastReceiver() {
         @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+            if (legacyParked) return;
             if (android.content.Intent.ACTION_SCREEN_OFF.equals(intent.getAction())
                     || android.content.Intent.ACTION_SCREEN_ON.equals(intent.getAction())
                     || android.content.Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
@@ -341,6 +343,7 @@ final class AccessibilityLegacyPipeline {
     private boolean productQualificationRoute;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener listener =
             (preferences, key) -> {
+                if (legacyParked) return;
                 if (DiagnosticsRepository.PREF_OVERLAY.equals(key)) {
                     refreshDiagnosticsOverlay();
                     return;
@@ -5562,7 +5565,7 @@ final class AccessibilityLegacyPipeline {
     }
 
     void onLegacyAccessibilityEvent(AccessibilityEvent event) {
-        if (!deviceInitialized) return;
+        if (!deviceInitialized || legacyParked) return;
         try {
             refreshCensorScreen(null);
             handleAccessibilityEvent(event);
@@ -6610,6 +6613,7 @@ final class AccessibilityLegacyPipeline {
             lastFastOverlayGeneration = Long.MIN_VALUE;
             resetScrollCompensation();
             if (managedAttachment == null) {
+                legacyCaptureWindowAttempted = true;
                 overlay = new OverlayController(host, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
             } else {
                 DeviceAccessibilityAttachment exact = managedAttachment;
@@ -7384,6 +7388,33 @@ final class AccessibilityLegacyPipeline {
     }
 
     
+
+    /** Park only a legacy shell with no native window history and no accepted effect left. */
+    boolean parkLegacy() {
+        if (!running || legacyParked || managedAttachment != null || productQualificationRoute
+                || recognitionActive || legacyCaptureWindowAttempted || overlay != null
+                || nativeScreenshotRequests.get() != 0 || pipelineCallbacks.failed()
+                || hardcoreSettingsGuard == null || !hardcoreSettingsGuard.canParkLegacy()
+                || subliminalOverlay == null || !subliminalOverlay.canParkLegacy()
+                || PopupStormManager.physicalResourcesOccupied()) return false;
+        main.removeCallbacks(timerTick);
+        if (idleRetirement != null) main.removeCallbacks(idleRetirement);
+        if (pipelineCallbacks.outstanding() != 0 || hasPendingScrollLookup()) {
+            main.post(timerTick);
+            return false;
+        }
+        legacyParked = true;
+        running = false;
+        return true;
+    }
+
+    void resumeParkedLegacy() {
+        if (!legacyParked) return;
+        legacyParked = false;
+        running = true;
+        reloadSettings();
+        main.post(timerTick);
+    }
 
     void destroyLegacy() {
         if (!deviceInitialized) {

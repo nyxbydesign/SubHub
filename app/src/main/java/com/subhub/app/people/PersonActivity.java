@@ -45,7 +45,7 @@ public final class PersonActivity extends RolePage {
     private AppRuntimeGateway.InternalStatus demoRuntime;
     private final DeviceStartViewModel.Ui demoUi = new DeviceStartViewModel.Ui() {
         @Override public boolean available() {
-            return demoUiResumed && !isFinishing() && !isDestroyed() && demoGateway() != null;
+            return demoUiResumed && !isFinishing() && !isDestroyed() && demoAuthorized();
         }
         @Override public boolean granted(RuntimeStartAttempt.Permission permission) {
             return demoPermissionGranted(permission);
@@ -118,10 +118,14 @@ public final class PersonActivity extends RolePage {
         super.onDestroy();
     }
 
-    private AppRuntimeGateway demoGateway() {
-        if (!internal || !DummySubPreview.ID.equals(personId) || !DummySubPreview.isAllowed(this)) return null;
+    private boolean demoAuthorized() {
+        if (!internal || !DummySubPreview.ID.equals(personId) || !DummySubPreview.isAllowed(this)) return false;
         InternalSubData data = InternalSubData.peek(this);
-        return data != null && data.ownerDataReady() ? AppRuntimeGateway.current(this) : null;
+        return data != null && data.ownerDataReady();
+    }
+
+    private AppRuntimeGateway demoGateway() {
+        return demoAuthorized() ? AppRuntimeGateway.current(this) : null;
     }
 
     private boolean demoPermissionGranted(RuntimeStartAttempt.Permission permission) {
@@ -150,11 +154,12 @@ public final class PersonActivity extends RolePage {
         if (demoStartAction == null) return;
         boolean active = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE;
         boolean idle = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.IDLE;
+        boolean canOpen = idle || demoRuntime == null && demoGateway() == null;
         demoStartAction.setText(active ? R.string.role_end_session : R.string.role_start_session);
         demoStartAction.setEnabled(demoStart != null && demoUi.available() && !demoEndPending && !demoStart.busy()
-                && (active || idle && FeatureEditorSession.canEdit(this, "duration")));
+                && (active || canOpen && FeatureEditorSession.canEdit(this, "duration")));
         if (demoServiceLabel != null)
-            demoServiceLabel.setText(active ? R.string.status_active : idle ? R.string.status_inactive : R.string.role_unknown_data);
+            demoServiceLabel.setText(active ? R.string.status_active : canOpen ? R.string.status_inactive : R.string.role_unknown_data);
     }
 
     private AppRuntimeGateway.InternalStartSpec demoSpecification() {
@@ -164,7 +169,11 @@ public final class PersonActivity extends RolePage {
     }
 
     private boolean stillObservingDemo(AppRuntimeGateway gateway, AppRuntimeGateway.InternalStartSpec expected) {
-        if (!demoUi.available() || demoGateway() != gateway) return false;
+        return demoGateway() == gateway && sameDemoProfile(expected);
+    }
+
+    private boolean sameDemoProfile(AppRuntimeGateway.InternalStartSpec expected) {
+        if (!demoUi.available()) return false;
         var actual = demoSpecification();
         return expected.target.equals(actual.target) && expected.generation.equals(actual.generation)
                 && expected.configurationRevision == actual.configurationRevision
@@ -177,7 +186,11 @@ public final class PersonActivity extends RolePage {
         if (!immediate && now < nextDemoObservation) return;
         nextDemoObservation = now + 1000;
         AppRuntimeGateway gateway = demoGateway();
-        if (gateway == null) return;
+        if (gateway == null) {
+            demoRuntime = null;
+            updateDemoStartAction();
+            return;
+        }
         var expected = demoSpecification();
         demoStatusPending = true;
         gateway.internalStatus(expected).whenComplete((observed, failure) -> runOnUiThread(() -> {
@@ -189,32 +202,32 @@ public final class PersonActivity extends RolePage {
     }
 
     private void beginDemoStart() {
-        if (!demoUi.available() || !guardTarget() || demoStart.busy() || demoEndPending || demoRuntime == null) return;
+        if (!demoUi.available() || !guardTarget() || demoStart.busy() || demoEndPending) return;
         AppRuntimeGateway gateway = demoGateway();
-        if (gateway == null) return;
-        if (demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE) {
+        if (gateway != null && demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE) {
             var expected = demoSpecification();
             var owner = demoRuntime.owner;
             demoEndPending = true;
             updateDemoStartAction();
             gateway.endInternal(expected, owner).whenComplete((ended, failure) -> runOnUiThread(() -> {
                 demoEndPending = false;
-                if (!stillObservingDemo(gateway, expected)) return;
-                if ((failure != null || !Boolean.TRUE.equals(ended)) && demoStartStatus != null)
+                if (!sameDemoProfile(expected)) return;
+                if ((failure != null || !Boolean.TRUE.equals(ended)) && demoStartStatus != null) {
+                    demoStartStatus.setText(R.string.internal_sub_session_unavailable);
                     demoStartStatus.setVisibility(View.VISIBLE);
+                }
                 demoRuntime = null;
                 observeDemoRuntime(true);
                 updateDemoStartAction();
             }));
             return;
         }
-        if (demoRuntime.phase != AppRuntimeGateway.InternalPhase.IDLE) return;
+        if (gateway != null && (demoRuntime == null || demoRuntime.phase != AppRuntimeGateway.InternalPhase.IDLE)) return;
         android.content.Context physical = getApplicationContext();
         long controllerRevision = ControllerPinManager.domWorkspaceRevision();
         if (demoStartStatus != null) demoStartStatus.setVisibility(View.GONE);
-        demoStart.beginInternal(gateway, () -> FeatureEditorSession.acknowledgeInternalDuration(this).thenApply(saved -> {
-            if (!DummySubPreview.current(physical, saved.generation, controllerRevision)
-                    || gateway != AppRuntimeGateway.current(physical))
+        demoStart.beginInternal(physical, () -> FeatureEditorSession.acknowledgeInternalDuration(this).thenApply(saved -> {
+            if (!DummySubPreview.current(physical, saved.generation, controllerRevision))
                 throw new SecurityException("Demo Start authority changed");
             return new AppRuntimeGateway.InternalStartSpec(saved.targetId, saved.generation,
                     saved.configurationRevision, controllerRevision);
@@ -560,7 +573,7 @@ public final class PersonActivity extends RolePage {
                 session.addView(duration, new LinearLayout.LayoutParams(-1, -2));
                 FeatureEditorSession.bind(this, findViewById(android.R.id.content), "duration", duration::validateSelection);
                 demoStartStatus = PersonUi.text(session, getString(R.string.internal_sub_session_unavailable), false);
-                demoStartStatus.setVisibility(demoGateway() == null ? View.VISIBLE : View.GONE);
+                demoStartStatus.setVisibility(demoAuthorized() ? View.GONE : View.VISIBLE);
                 updateDemoStartAction();
                 PersonUi.row(session, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
                         getString(R.string.dummy_sub_defaults), () -> {

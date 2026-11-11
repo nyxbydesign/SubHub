@@ -171,6 +171,10 @@ public final class DeviceStartViewModel extends ViewModel {
             Supplier<CompletableFuture<AppRuntimeGateway.InternalStartSpec>> acknowledged) {
         return beginInternal(gateway::internalStart, acknowledged);
     }
+    public boolean beginInternal(android.content.Context physical,
+            Supplier<CompletableFuture<AppRuntimeGateway.InternalStartSpec>> acknowledged) {
+        return beginInternal(specification -> AppRuntimeGateway.openInternalStart(physical, specification), acknowledged);
+    }
 
     boolean beginInternal(Function<AppRuntimeGateway.InternalStartSpec, CompletableFuture<AppRuntimeGateway.InternalStart>> admit,
             Supplier<CompletableFuture<AppRuntimeGateway.InternalStartSpec>> acknowledged) {

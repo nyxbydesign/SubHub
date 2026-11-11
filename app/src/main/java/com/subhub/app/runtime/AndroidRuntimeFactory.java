@@ -35,16 +35,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Concrete physical journal, owner-data and service-delivery assembly. INACTIVE: no application
- * caller installs this factory, the facade, the visibility provider or INTERNAL Start yet.
- *
- * The final installer must first complete the DEVICE/remote/boot/cleanup admission inventory and
- * actual service resource observers. prepareAfterLegacyQuiescence is not an invitation to infer
- * those obligations from false service flags: the existing bootstrap tickets must cover every
- * preinstallation prompt, mutation, service handoff and resource lifetime. Legacy active sessions
- * are refused, never adopted/rewritten. Non-IDLE old-process journals remain recovery-required.
+ * Physical journal, owner data and service delivery for the temporary Demo runtime.
+ * Installation requires quiescent legacy routes and independent persisted-state proof.
+ * Non-IDLE old-process journals require reconciliation.
  */
 final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, InternalVisibilityBarrier.Provider {
+    private static final AtomicBoolean openingDemo = new AtomicBoolean();
     private final Application physical;
     private final InternalSubData data;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -93,6 +89,105 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     private final String devicePlanGeneration = UUID.randomUUID().toString();
     private long devicePlanRevision;
     private final AppRuntimeGateway.ServiceAccess services;
+    private AndroidDeviceBackend temporaryDemoBackend;
+    private boolean retireDemoWhenIdle, retiringDemo;
+    private volatile boolean retiredDemo;
+
+    static CompletableFuture<AppRuntimeGateway.InternalStart> openTemporaryDemo(Application app,
+            AppRuntimeGateway.InternalStartSpec specification) {
+        CompletableFuture<AppRuntimeGateway.InternalStart> response = new CompletableFuture<>();
+        InternalSubData host = InternalSubData.peek(app);
+        if (host == null || !host.ownerDataReady() || !openingDemo.compareAndSet(false, true)) {
+            response.completeExceptionally(new IllegalStateException("Demo runtime is unavailable"));
+            return response;
+        }
+        Handler main = new Handler(Looper.getMainLooper());
+        try {
+            if (!main.post(() -> {
+                if (response.isCancelled()) { openingDemo.set(false); return; }
+                try {
+                    if (ScreenCaptureService.legacyProjectionNeedsHandoff()
+                            || new com.subhub.app.security.HardcoreModeManager(app).isAdminActive()
+                            || !ScreenshotAccessibilityService.parkLegacyForDemo(app))
+                        throw new IllegalStateException("The current Accessibility source has not retired");
+                    host.execute(() -> {
+                        try {
+                            if (response.isCancelled()) throw new java.util.concurrent.CancellationException();
+                            var controller = ControllerPinManager.captureInternalStartWitness(app);
+                            InternalSubRecord record = host.acknowledged();
+                            if (controller.revision != specification.controllerRevision || !record.visible
+                                    || !record.generation.equals(specification.generation)
+                                    || record.configurationRevision != specification.configurationRevision
+                                    || !specification.target.equals(RuntimeTarget.internal(record.targetId)))
+                                throw new SecurityException("Demo profile or controller changed");
+                            AndroidRuntimeFactory factory = prepareAfterLegacyQuiescence(app, host);
+                            factory.installTemporaryDemo(specification, response);
+                        } catch (RuntimeException | Error unavailable) {
+                            openingDemo.set(false);
+                            main.post(() -> AppRuntimeGateway.resumeLegacyAccessibility(app));
+                            response.completeExceptionally(unavailable);
+                        }
+                    });
+                } catch (RuntimeException | Error unavailable) {
+                    openingDemo.set(false);
+                    AppRuntimeGateway.resumeLegacyAccessibility(app);
+                    response.completeExceptionally(unavailable);
+                }
+            })) throw new IllegalStateException("Demo Accessibility handoff could not be queued");
+        } catch (RuntimeException | Error unavailable) {
+            openingDemo.set(false);
+            response.completeExceptionally(unavailable);
+        }
+        return response;
+    }
+
+    private void installTemporaryDemo(AppRuntimeGateway.InternalStartSpec specification,
+            CompletableFuture<AppRuntimeGateway.InternalStart> response) {
+        requireWorker();
+        AndroidDeviceBackend backend = new AndroidDeviceBackend(physical, this,
+                (identity, packageName, limit) -> android.widget.Toast.makeText(physical,
+                        limit == com.subhub.app.appmode.AppTimerManager.LimitStatus.COMBINED
+                                ? com.subhub.app.R.string.app_timer_blocked_total
+                                : com.subhub.app.R.string.app_timer_blocked_app, android.widget.Toast.LENGTH_SHORT).show(),
+                (kind, cents, currency, at) -> android.widget.Toast.makeText(physical,
+                        physical.getString(com.subhub.app.R.string.demo_tribute_recorded,
+                                formatAssessment(cents, currency)),
+                        android.widget.Toast.LENGTH_SHORT).show(), true);
+        AppRuntimeGateway.PHYSICAL_MUTEX.runtime(() -> {
+            AppRuntimeGateway.install(physical, backend, installation);
+            temporaryDemoBackend = backend;
+            return null;
+        });
+        if (!main.post(() -> {
+            try {
+                ScreenshotAccessibilityService.connectDemoSource(physical, services);
+                backend.internalStart(specification).whenComplete((attempt, failure) -> {
+                    dispatchTemporaryRetirement();
+                    if (failure != null) response.completeExceptionally(failure);
+                    else if (!response.complete(attempt)) attempt.cancel();
+                });
+            } catch (RuntimeException | Error unavailable) {
+                dispatchTemporaryRetirement();
+                response.completeExceptionally(unavailable);
+            } finally { openingDemo.set(false); }
+        })) {
+            retireDemoWhenIdle = true;
+            openingDemo.set(false);
+            retireTerminalRouting();
+            response.completeExceptionally(new IllegalStateException("Demo source could not be queued"));
+        }
+    }
+
+    private static String formatAssessment(int cents, String currency) {
+        var format = java.text.NumberFormat.getCurrencyInstance();
+        format.setCurrency(java.util.Currency.getInstance(currency));
+        return format.format(java.math.BigDecimal.valueOf(cents, 2));
+    }
+
+    private void dispatchTemporaryRetirement() {
+        try { executeLifecycle(() -> retireDemoWhenIdle = true); }
+        catch (RuntimeException | Error uncertain) { serviceIngressFailed(uncertain); }
+    }
 
     /**
      * Owner-data serial worker ONLY. No hook calls this until all old route/resource counting is
@@ -107,7 +202,8 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         return AppRuntimeGateway.PHYSICAL_MUTEX.runtime(() -> {
             RuntimeInstallationBarrier.Installation proof = AppRuntimeGateway.prepareInstallation(app);
             if (proof == null) throw new IllegalStateException("Legacy work is still owned");
-            if (observeLegacyOccupancy(app) != ActiveRuntimeCoordinator.Occupancy.CLEAR) {
+            if (ScreenCaptureService.legacyProjectionNeedsHandoff()
+                    || observeLegacyOccupancy(app) != ActiveRuntimeCoordinator.Occupancy.CLEAR) {
                 proof.abortBeforeProvisioning();
                 throw new IllegalStateException("Existing DEVICE state must finish normally before internal runtime installation");
             }
@@ -171,7 +267,9 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             throw new IllegalStateException("Physical ownership requires its serial owner worker");
     }
     private void requireUsable() {
-        requireWorker(); if(recoveryRequired||starts.needsRecovery())throw new IllegalStateException("Physical runtime needs recovery");
+        requireWorker();
+        if (retiredDemo || retiringDemo || recoveryRequired || starts.needsRecovery())
+            throw new IllegalStateException("Physical runtime is retiring or needs recovery");
     }
 
     /** Exact physical producer, never an externally injected gateway or arbitrary service executor. */
@@ -1209,6 +1307,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     }
     /** Only durable terminal IDLE, never a Stop request or a guessed cancelled callback. */
     private void retireTerminalRouting() {
+        if (retiredDemo) return;
         requireWorker(); ActiveRuntimeCoordinator.Observation state=coordinator.observe();
         Binding pendingStop = current;
         if (pendingStop != null && pendingStop.internalEnd != null
@@ -1243,14 +1342,60 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             if (terminal != null && terminal.internalEnd != null) {
                 if (recoveryRequired || starts.needsRecovery())
                     terminal.internalEnd.completeExceptionally(new IllegalStateException("Demo retirement needs reconciliation"));
-                else terminal.internalEnd.complete(true);
+                else if (temporaryDemoBackend == null) terminal.internalEnd.complete(true);
             }
             if (terminal != null && terminal.device != null && terminal.device.explicitLocalEnd != null) {
                 if (recoveryRequired || starts.needsRecovery())
                     terminal.device.endFailed(new IllegalStateException("DEVICE retirement needs reconciliation"));
                 else terminal.device.explicitLocalEnd.complete(true);
             }
+            if (temporaryDemoBackend != null && retireDemoWhenIdle && !retiringDemo && !recoveryRequired
+                    && !starts.needsRecovery() && selections.isEmpty() && visibility == null)
+                retireTemporaryDemo();
         }
+    }
+
+    private void retireTemporaryDemo() {
+        retiringDemo = true;
+        Binding terminal = current;
+        CompletableFuture<Boolean> end = terminal == null ? null : terminal.internalEnd;
+        if (!main.post(() -> {
+            try {
+                ScreenshotAccessibilityService.retireDemoSource(physical, services).whenComplete((ignored, failure) -> {
+                    try {
+                        executeLifecycle(() -> {
+                            try {
+                                if (failure != null || !selections.isEmpty() || neutralAccessibility != null
+                                        || !projection.isEmpty() || recoveryRequired || starts.needsRecovery()
+                                        || coordinator.observe().persisted.phase != RuntimeOwnerStore.Phase.IDLE)
+                                    throw new IllegalStateException("Demo source did not retire", failure);
+                                AppRuntimeGateway.PHYSICAL_MUTEX.runtime(() -> {
+                                    journal.close();
+                                    AppRuntimeGateway.restoreLegacy(physical, temporaryDemoBackend, installation);
+                                    retiredDemo = true;
+                                    return null;
+                                });
+                                if (!main.post(() -> {
+                                    try {
+                                        AppRuntimeGateway.resumeLegacyAccessibility(physical);
+                                        if (end != null) end.complete(true);
+                                    } catch (RuntimeException | Error restoreFailure) {
+                                        failTemporaryRetirement(end, restoreFailure);
+                                    }
+                                })) throw new IllegalStateException("Accessibility restoration could not be queued");
+                            } catch (RuntimeException | Error uncertain) {
+                                failTemporaryRetirement(end, uncertain);
+                            }
+                        });
+                    } catch (RuntimeException | Error uncertain) { failTemporaryRetirement(end, uncertain); }
+                });
+            } catch (RuntimeException | Error uncertain) { failTemporaryRetirement(end, uncertain); }
+        })) failTemporaryRetirement(end, new IllegalStateException("Demo retirement could not be queued"));
+    }
+
+    private void failTemporaryRetirement(CompletableFuture<Boolean> end, Throwable failure) {
+        recoveryRequired = true;
+        if (end != null) end.completeExceptionally(failure);
     }
     private void dispatchOwner(Runnable action,Binding binding) {
         try {executeLifecycle(action);}catch(RuntimeException|Error uncertain){recoveryRequired=true;binding.runtime.requestStop();throw uncertain;}
@@ -1409,7 +1554,9 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             SharedPreferences main=app.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
             SharedPreferences penance=app.getSharedPreferences(PenanceManager.PREFS_NAME,0);
             SharedPreferences stats=app.getSharedPreferences(StatsRepository.PREFS_NAME,0);
-            if(main.getBoolean(AppModeManager.KEY_ARMED,false)||!main.getString("managed_device_session_v1","").isEmpty()
+            if(main.getBoolean(AppModeManager.KEY_ARMED,false)
+                    ||main.getBoolean(com.subhub.app.security.HardcoreModeManager.KEY_REQUESTED, false)
+                    ||!main.getString("managed_device_session_v1","").isEmpty()
                     ||main.getBoolean("media_projection_session_desired",false)||main.getLong("commitment_ends_at",0)!=0
                     ||!main.getString("commitment_session_identity","").isEmpty()
                     ||penance.getLong("paid_pause_active_until",0)!=0||!penance.getString("paid_pause_session_identity","").isEmpty()

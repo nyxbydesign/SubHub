@@ -1,4 +1,4 @@
-"""Source guards for the inactive host split, not OS/runtime/cleanup qualification."""
+"""Source guards for service routing and the temporary Demo installation."""
 from pathlib import Path
 import re
 import unittest
@@ -53,12 +53,14 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
 
     def test_projection_actions_route_before_initialization(self):
         start = body(self.projection, 'public int onStartCommand(')
-        initialization = start.index('initializeDeviceRuntime()')
+        initialization = start.index('return startLegacyProjection(')
         for boundary in ('intent == null', 'ACTION_STOP_OWNED', 'ACTION_STOP.equals', '!ACTION_START.equals'):
             self.assertLess(start.index(boundary), initialization)
         stop = start[start.index('if (ACTION_STOP.equals'):start.index('if (!ACTION_START.equals')]
         self.assertIn('if (!deviceInitialized)', stop)
         self.assertNotIn('initializeDeviceRuntime()', stop)
+        self.assertLess(start.index('AppRuntimeGateway.tryBeginLegacyWork('), initialization)
+        self.assertIn('initializeDeviceRuntime()', body(self.projection, 'private int startLegacyProjection('))
 
     def test_projection_owner_transport_cannot_replace_or_fall_back_to_device(self):
         attach = body(self.projection, 'private void receiveManagedOwner(')
@@ -68,7 +70,7 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         owner_only = body(start, 'if (managedOwnerRoute)')
         self.assertIn('if (runtimeConnection == null) stopSelfResult(startId);', owner_only)
         self.assertIn('return START_NOT_STICKY;', owner_only)
-        self.assertLess(start.index('if (managedOwnerRoute)'), start.index('initializeDeviceRuntime()'))
+        self.assertLess(start.index('if (managedOwnerRoute)'), start.index('return startLegacyProjection('))
 
     def test_projection_failed_preparation_retains_cleanup_for_returned_resources(self):
         source = (SERVICE / 'InternalLegacyProjectionCapture.java').read_text(encoding='utf-8')
@@ -97,20 +99,25 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
             self.assertNotIn(banned, pipeline_neutral)
 
     def test_accessibility_api_guard_and_neutral_event_fence(self):
-        connect = body(self.accessibility, 'protected void onServiceConnected()')
+        connect = body(self.accessibility, 'private void connectLegacy()')
         self.assertLess(connect.index('Build.VERSION_CODES.R'), connect.index('initializeDeviceRuntime()'))
         self.assertNotIn('MainThreadSampler', connect)
         events = body(self.accessibility, 'public void onAccessibilityEvent(')
         self.assertLess(events.index('if (managedShell)'), events.index('p.onLegacyAccessibilityEvent(event)'))
         legacy = body(self.pipeline, 'void onLegacyAccessibilityEvent(')
-        self.assertLess(legacy.index('if (!deviceInitialized) return'), legacy.index('refreshCensorScreen'))
+        self.assertLess(legacy.index('if (!deviceInitialized || legacyParked) return'), legacy.index('refreshCensorScreen'))
 
-    def test_inactive_contract_is_not_an_installed_gateway(self):
-        # Services now have explicit typed consumers, but no production caller installs them.
+    def test_only_the_temporary_demo_factory_installs_a_gateway(self):
         for path in (ROOT / 'app/src/main/java').rglob('*.java'):
             source = path.read_text(encoding='utf-8')
-            self.assertNotIn('AppRuntimeGateway.install(', source, path.name)
-            self.assertNotIn('new AndroidDeviceBackend(', source, path.name)
+            if path.name == 'AndroidRuntimeFactory.java':
+                install = body(source, 'private void installTemporaryDemo(')
+                self.assertEqual(1, source.count('AppRuntimeGateway.install('))
+                self.assertEqual(1, source.count('new AndroidDeviceBackend('))
+                self.assertIn('AppRuntimeGateway.install(physical, backend, installation)', install)
+            else:
+                self.assertNotIn('AppRuntimeGateway.install(', source, path.name)
+                self.assertNotIn('new AndroidDeviceBackend(', source, path.name)
         self.assertIn('prepareDeviceAttachment(', self.projection)
         self.assertIn('prepareDeviceAttachment(', self.accessibility)
         self.assertNotRegex(self.host, r'static\s+(?:volatile\s+)?Gateway\s+')
