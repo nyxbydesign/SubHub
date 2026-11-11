@@ -778,9 +778,12 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                     || admitted.plan.requiresProjection() && (!overlayReady
                     || !approvedProjection.containsKey(admitted.attempt.lease())))
                 throw new IllegalStateException("The selected Demo permissions are unavailable");
-            return begin(admitted.attempt, owner -> owner.equals(admitted.attempt.identity())).thenApply(started -> {
+            return begin(admitted.attempt, owner -> owner.equals(admitted.attempt.identity())).thenCompose(started -> {
                 InternalRuntimeOwner owner = assembleInternal(started, admitted.configuration);
-                try {
+                return owner.prepared().thenCompose(acknowledged -> submitDevice(() -> {
+                    if (neutralAccessibility != neutral || !neutral.connection.isConnected()
+                            || neutral.connection.occupied())
+                        throw new IllegalStateException("The selected Demo Accessibility source disconnected");
                     if (admitted.plan.requiresProjection())
                         return awaitInternalProjection(owner, limitsNotice, assessmentNotice);
                     if (admitted.plan.source.mode == RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW) {
@@ -794,10 +797,9 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                                         }));
                     }
                     return awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice, null);
-                } catch (RuntimeException | Error failed) {
-                    owner.runtime.requestStop();
-                    throw failed;
-                }
+                })).whenComplete((assembly, failure) -> {
+                    if (failure != null) owner.runtime.requestStop();
+                });
             }).whenComplete((assembled, failure) -> {
                 if (failure != null) starts.cancel(admitted.attempt);
             });

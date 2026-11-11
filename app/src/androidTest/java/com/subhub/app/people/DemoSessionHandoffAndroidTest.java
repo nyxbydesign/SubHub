@@ -18,6 +18,8 @@ import androidx.test.runner.lifecycle.Stage;
 import com.subhub.app.R;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.runtime.AppRuntimeGateway;
+import com.subhub.app.runtime.RuntimeOwnerStore;
+import com.subhub.app.runtime.SQLiteRuntimeOwnerBackend;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.service.ScreenshotAccessibilityService;
@@ -39,7 +41,12 @@ public final class DemoSessionHandoffAndroidTest {
         assertEquals("Grant notifications on the disposable guest before testing the capture handoff",
                 android.content.pm.PackageManager.PERMISSION_GRANTED,
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS));
-        assertTrue(context.getSharedPreferences("subhub_internal_registry", 0).getAll().isEmpty());
+        boolean reuse = "true".equals(InstrumentationRegistry.getArguments().getString("demo_handoff_reuse"));
+        if (reuse) {
+            try (var journal = new SQLiteRuntimeOwnerBackend(context)) {
+                assertEquals(RuntimeOwnerStore.Phase.IDLE, journal.read().phase);
+            }
+        } else assertTrue(context.getSharedPreferences("subhub_internal_registry", 0).getAll().isEmpty());
         assertFalse(LocalSessionControls.isActive(context));
         var resolver = context.getContentResolver();
         String originalServices = Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
@@ -48,11 +55,12 @@ public final class DemoSessionHandoffAndroidTest {
         assertNotEquals("1", originalEnabled);
         UiAutomation automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         try {
-            assertTrue(ControllerPinManager.setPin(context, "2468"));
+            if (!ControllerPinManager.isConfigured(context)) assertTrue(ControllerPinManager.setPin(context, "2468"));
             assertTrue(ControllerPinManager.verify(context, "2468"));
             assertTrue(DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
             OnboardingState.complete(context);
-            assertTrue(DummySubPreview.toggle(context));
+            if (reuse) InternalSubData.get(context);
+            if (!DummySubPreview.isEnabled(context)) assertTrue(DummySubPreview.toggle(context));
             String component = new ComponentName(context, ScreenshotAccessibilityService.class).flattenToString();
             accessibilitySettings(automation, component, "1");
             await("ordinary Accessibility source to bind", ScreenshotAccessibilityService::isRunning);
