@@ -39,8 +39,10 @@ public final class PersonActivity extends RolePage {
     private TextView currentCountdown;
     private DeviceStartViewModel demoStart;
     private DeviceStartResultRegistry demoResults;
-    private TextView demoStartAction, demoStartStatus;
-    private boolean demoUiResumed, demoSessionActive;
+    private TextView demoStartAction, demoStartStatus, demoServiceLabel;
+    private boolean demoUiResumed, demoStatusPending, demoEndPending;
+    private long nextDemoObservation;
+    private AppRuntimeGateway.InternalStatus demoRuntime;
     private final DeviceStartViewModel.Ui demoUi = new DeviceStartViewModel.Ui() {
         @Override public boolean available() {
             return demoUiResumed && !isFinishing() && !isDestroyed() && demoGateway() != null;
@@ -63,7 +65,9 @@ public final class PersonActivity extends RolePage {
         @Override public void changed() { updateDemoStartAction(); }
         @Override public void completed(AppRuntimeGateway.StartState state) {
             if (state == AppRuntimeGateway.StartState.ACTIVE) {
-                if (demoStartAction != null) demoStartAction.setEnabled(false);
+                demoRuntime = null;
+                observeDemoRuntime(true);
+                updateDemoStartAction();
                 refreshInternal(true);
             } else if (demoStartStatus != null) {
                 demoStartStatus.setText(R.string.internal_sub_session_unavailable);
@@ -103,6 +107,7 @@ public final class PersonActivity extends RolePage {
         if (demoStart == null || !guardTarget()) return;
         demoUiResumed = true;
         demoStart.attach(demoUi);
+        observeDemoRuntime(true);
         updateDemoStartAction();
     }
 
@@ -143,14 +148,67 @@ public final class PersonActivity extends RolePage {
 
     private void updateDemoStartAction() {
         if (demoStartAction == null) return;
-        demoStartAction.setEnabled(demoStart != null && demoUi.available() && !demoSessionActive
-                && !demoStart.busy() && FeatureEditorSession.canEdit(this, "duration"));
+        boolean active = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE;
+        boolean idle = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.IDLE;
+        demoStartAction.setText(active ? R.string.role_end_session : R.string.role_start_session);
+        demoStartAction.setEnabled(demoStart != null && demoUi.available() && !demoEndPending && !demoStart.busy()
+                && (active || idle && FeatureEditorSession.canEdit(this, "duration")));
+        if (demoServiceLabel != null)
+            demoServiceLabel.setText(active ? R.string.status_active : idle ? R.string.status_inactive : R.string.role_unknown_data);
+    }
+
+    private AppRuntimeGateway.InternalStartSpec demoSpecification() {
+        var record = InternalSubData.get(this).acknowledged();
+        return new AppRuntimeGateway.InternalStartSpec(record.targetId, record.generation,
+                record.configurationRevision, ControllerPinManager.domWorkspaceRevision());
+    }
+
+    private boolean stillObservingDemo(AppRuntimeGateway gateway, AppRuntimeGateway.InternalStartSpec expected) {
+        if (!demoUi.available() || demoGateway() != gateway) return false;
+        var actual = demoSpecification();
+        return expected.target.equals(actual.target) && expected.generation.equals(actual.generation)
+                && expected.configurationRevision == actual.configurationRevision
+                && expected.controllerRevision == actual.controllerRevision;
+    }
+
+    private void observeDemoRuntime(boolean immediate) {
+        if (!demoUi.available() || demoStatusPending) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!immediate && now < nextDemoObservation) return;
+        nextDemoObservation = now + 1000;
+        AppRuntimeGateway gateway = demoGateway();
+        if (gateway == null) return;
+        var expected = demoSpecification();
+        demoStatusPending = true;
+        gateway.internalStatus(expected).whenComplete((observed, failure) -> runOnUiThread(() -> {
+            demoStatusPending = false;
+            if (!stillObservingDemo(gateway, expected)) return;
+            demoRuntime = failure == null ? observed : null;
+            updateDemoStartAction();
+        }));
     }
 
     private void beginDemoStart() {
-        if (!demoUi.available() || demoSessionActive || !guardTarget() || demoStart.busy()) return;
+        if (!demoUi.available() || !guardTarget() || demoStart.busy() || demoEndPending || demoRuntime == null) return;
         AppRuntimeGateway gateway = demoGateway();
         if (gateway == null) return;
+        if (demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE) {
+            var expected = demoSpecification();
+            var owner = demoRuntime.owner;
+            demoEndPending = true;
+            updateDemoStartAction();
+            gateway.endInternal(expected, owner).whenComplete((ended, failure) -> runOnUiThread(() -> {
+                demoEndPending = false;
+                if (!stillObservingDemo(gateway, expected)) return;
+                if ((failure != null || !Boolean.TRUE.equals(ended)) && demoStartStatus != null)
+                    demoStartStatus.setVisibility(View.VISIBLE);
+                demoRuntime = null;
+                observeDemoRuntime(true);
+                updateDemoStartAction();
+            }));
+            return;
+        }
+        if (demoRuntime.phase != AppRuntimeGateway.InternalPhase.IDLE) return;
         android.content.Context physical = getApplicationContext();
         long controllerRevision = ControllerPinManager.domWorkspaceRevision();
         if (demoStartStatus != null) demoStartStatus.setVisibility(View.GONE);
@@ -188,7 +246,7 @@ public final class PersonActivity extends RolePage {
 
     private void observePerson() {
         if (!guardTarget()) return;
-        if (internal) { refreshInternal(false); return; }
+        if (internal) { observeDemoRuntime(false); refreshInternal(false); return; }
         observeAppIcons();
         if (currentCountdown != null && personId != null && personId.isLocal()
                 && com.subhub.app.commitment.CommitmentManager.isActive(this)) {
@@ -482,11 +540,12 @@ public final class PersonActivity extends RolePage {
         if (!person.id.isLocal()) {
             LinearLayout session = PersonUi.card(body);
             PersonUi.text(session, getString(R.string.role_session), true);
-            PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
-                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false).setTag("person_service_label");
+            TextView serviceLabel = PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
+                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false);
+            serviceLabel.setTag("person_service_label");
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
             if (internal) {
-                demoSessionActive = person.serviceActive;
+                demoServiceLabel = serviceLabel;
                 demoStartAction = PersonUi.action(session, R.string.role_start_session, this::beginDemoStart, true);
                 demoStartAction.setId(R.id.person_session_action);
                 demoStartAction.setTag("person_session:" + person.id.value());

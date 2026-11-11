@@ -193,6 +193,22 @@ public final class SQLiteRuntimeOwnerBackend implements RuntimeOwnerStore.Backen
     }
     @Override public void close() { synchronized (IO_LOCK) { closed = true; } }
 
+    static void requireNoOwnerEvidence(Application physical) throws ErrnoException {
+        SQLiteRuntimeOwnerBackend candidate = new SQLiteRuntimeOwnerBackend(physical);
+        requireAbsent(candidate.markerFile);
+        for (String suffix : new String[]{"", "-journal", "-wal", "-shm"})
+            requireAbsent(new File(candidate.databaseFile.getPath() + suffix));
+    }
+
+    private static void requireAbsent(File path) throws ErrnoException {
+        try { Os.lstat(path.getPath()); }
+        catch (ErrnoException failure) {
+            if (failure.errno == OsConstants.ENOENT) return;
+            throw failure;
+        }
+        throw new IllegalStateException("Physical runtime owner evidence exists");
+    }
+
     private void requireNoDatabaseEvidence() {
         for (String suffix : new String[]{"", "-journal", "-wal", "-shm"}) {
             if (new File(databaseFile.getPath() + suffix).exists())

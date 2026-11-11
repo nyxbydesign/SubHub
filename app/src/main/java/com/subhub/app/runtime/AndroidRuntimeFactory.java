@@ -573,12 +573,54 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     CompletableFuture<InternalStartAdmission> reserveInternal(AppRuntimeGateway.InternalStartSpec specification) {
         Objects.requireNonNull(specification);
         return submitDevice(() -> {
-            InternalSubRecord current = data.acknowledged();
-            if (!current.visible || !specification.target.equals(RuntimeTarget.internal(current.targetId))
-                    || !specification.generation.equals(current.generation)
-                    || specification.configurationRevision != current.configurationRevision)
-                throw new SecurityException("Demo Start is stale");
-            return reserveInternal(current, specification.controllerRevision);
+            return reserveInternal(requireVisibleDemo(specification), specification.controllerRevision);
+        }).thenCompose(answer -> answer);
+    }
+
+    private InternalSubRecord requireVisibleDemo(AppRuntimeGateway.InternalStartSpec specification) {
+        InternalSubRecord record = data.acknowledged();
+        if (!record.visible || !specification.target.equals(RuntimeTarget.internal(record.targetId))
+                || !specification.generation.equals(record.generation)
+                || specification.configurationRevision != record.configurationRevision
+                || ControllerPinManager.captureInternalStartWitness(physical).revision != specification.controllerRevision)
+            throw new SecurityException("Demo profile or controller changed");
+        return record;
+    }
+
+    CompletableFuture<AppRuntimeGateway.InternalStatus> internalStatus(AppRuntimeGateway.InternalStartSpec specification) {
+        return submitDevice(() -> observeInternal(specification));
+    }
+
+    private AppRuntimeGateway.InternalStatus observeInternal(AppRuntimeGateway.InternalStartSpec specification) {
+        requireVisibleDemo(specification);
+        ActiveRuntimeCoordinator.Observation observed = coordinator.observe();
+        if (visibility != null || !observed.startupReconciled || observed.quarantined || observed.persisted == null)
+            return new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.UNAVAILABLE, null);
+        RuntimeLease.Identity owner = observed.persisted.owner;
+        if (owner == null) return new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.IDLE, null);
+        if (!specification.target.equals(owner.target) || !specification.generation.equals(owner.profileGeneration))
+            return new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.OCCUPIED, null);
+        return switch (observed.effectivePhase()) {
+            case ACTIVE -> new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.ACTIVE, owner);
+            case STOPPING -> new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.STOPPING, null);
+            default -> new AppRuntimeGateway.InternalStatus(AppRuntimeGateway.InternalPhase.STARTING, null);
+        };
+    }
+
+    CompletableFuture<Boolean> endInternal(AppRuntimeGateway.InternalStartSpec specification,
+            RuntimeLease.Identity expected) {
+        return submitDevice(() -> {
+            AppRuntimeGateway.InternalStatus observed = observeInternal(specification);
+            Binding selected = current;
+            if (!expected.equals(observed.owner) || selected == null || selected.internal == null
+                    || !expected.equals(selected.lease.identity) || selected.internalEnd != null)
+                return CompletableFuture.completedFuture(false);
+            CompletableFuture<Boolean> completion = new CompletableFuture<>();
+            selected.internalEnd = completion;
+            selected.runtime.requestStop();
+            if (selected.runtime.lifecycleNeedsAttention())
+                completion.completeExceptionally(new IllegalStateException("Demo End needs reconciliation"));
+            return completion;
         }).thenCompose(answer -> answer);
     }
     /** Same serial broker lane as editor saves. Competing starts cannot replace a pending witness. */
@@ -1156,6 +1198,10 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     private void retireTerminalRouting() {
         requireWorker(); ActiveRuntimeCoordinator.Observation state=coordinator.observe();
         Binding pendingStop = current;
+        if (pendingStop != null && pendingStop.internalEnd != null
+                && (state.quarantined || pendingStop.runtime.lifecycleNeedsAttention()
+                    || pendingStop.runtime.cleanupNeedsAttention()))
+            pendingStop.internalEnd.completeExceptionally(new IllegalStateException("Demo End needs reconciliation"));
         if (pendingStop != null && pendingStop.device != null && pendingStop.device.explicitLocalEnd != null
                 && (state.quarantined || pendingStop.runtime.lifecycleNeedsAttention()
                     || pendingStop.runtime.cleanupNeedsAttention()))
@@ -1181,6 +1227,11 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             // Every launched projection has registry obligations. IDLE with an unresolved token
             // would contradict those receipts; keep it visible and require recovery, never erase it.
             if(!projection.isEmpty())recoveryRequired=true;
+            if (terminal != null && terminal.internalEnd != null) {
+                if (recoveryRequired || starts.needsRecovery())
+                    terminal.internalEnd.completeExceptionally(new IllegalStateException("Demo retirement needs reconciliation"));
+                else terminal.internalEnd.complete(true);
+            }
             if (terminal != null && terminal.device != null && terminal.device.explicitLocalEnd != null) {
                 if (recoveryRequired || starts.needsRecovery())
                     terminal.device.endFailed(new IllegalStateException("DEVICE retirement needs reconciliation"));
@@ -1226,6 +1277,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     private static final class Binding {
         final RuntimeLease lease;final RuntimeExecution<?> runtime;final InternalRuntimeOwner internal;DeviceAssembly device;
         InternalAccessibilityAssembly internalAccessibility;
+        CompletableFuture<Boolean> internalEnd;
         Binding(RuntimeLease lease,RuntimeExecution<?> runtime,InternalRuntimeOwner internal){this.lease=lease;this.runtime=runtime;this.internal=internal;}
     }
     private static final class Pending {

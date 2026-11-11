@@ -74,6 +74,14 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
             long controllerRevision) {
         return factory.endLocalDevice(expected, controllerRevision);
     }
+    @Override public CompletableFuture<AppRuntimeGateway.InternalStatus> internalStatus(
+            AppRuntimeGateway.InternalStartSpec specification) {
+        return factory.internalStatus(specification);
+    }
+    @Override public CompletableFuture<Boolean> endInternal(AppRuntimeGateway.InternalStartSpec specification,
+            RuntimeLease.Identity owner) {
+        return factory.endInternal(specification, owner);
+    }
     @Override public AppRuntimeGateway.DeviceMutationPermit admitManagedDeviceMutation(
             RuntimeLease.Identity expected, AppRuntimeGateway.Mutation mutation,
             AppRuntimeGateway.ManagedDevicePhase phase) {

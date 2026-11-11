@@ -23,7 +23,7 @@ public final class InternalVisibilityBarrierTest {
     }
     @Test public void missingRuntimeProofFailsWithoutChangingTheRecord() throws Exception {
         try (Fixture f = new Fixture()) {
-            Field field = InternalVisibilityBarrier.class.getDeclaredField("UNAVAILABLE"); field.setAccessible(true);
+            Field field = InternalVisibilityBarrier.class.getDeclaredField("BEFORE_RUNTIME"); field.setAccessible(true);
             InternalVisibilityBarrier.Provider missing = (InternalVisibilityBarrier.Provider) field.get(null);
             ExecutionException unavailable = assertThrows(ExecutionException.class, () -> missing.prepare(null,
                     new InternalVisibilityBarrier.Request(f.record, true, 1, 1234)).get());

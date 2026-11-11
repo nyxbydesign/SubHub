@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import com.subhub.app.appmode.RuntimeSessionIdentity;
 import com.subhub.app.commitment.PactDuration;
+import com.subhub.app.people.InternalVisibilityBarrier;
 import com.subhub.app.settings.CaptureMethod;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -97,6 +98,20 @@ public final class AppRuntimeGateway {
         CompletableFuture<RuntimeLease.Identity> start();
         boolean cancel();
     }
+    public enum InternalPhase { IDLE, OCCUPIED, STARTING, ACTIVE, STOPPING, UNAVAILABLE }
+
+    /** Readout for one visible Demo generation. Only an active owner can be selected for End. */
+    public static final class InternalStatus {
+        public final InternalPhase phase;
+        public final RuntimeLease.Identity owner;
+        InternalStatus(InternalPhase phase, RuntimeLease.Identity owner) {
+            this.phase = Objects.requireNonNull(phase);
+            if ((phase == InternalPhase.ACTIVE) != (owner != null)
+                    || owner != null && owner.target.kind != RuntimeTarget.Kind.INTERNAL)
+                throw new IllegalArgumentException("Invalid Demo runtime status");
+            this.owner = owner;
+        }
+    }
     public interface DeviceMutationPermit extends AutoCloseable {
         /** Holds exact counted DEVICE authority through the actual synchronous mutation return. */
         @Override void close();
@@ -115,6 +130,12 @@ public final class AppRuntimeGateway {
         }
         default CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,
                 long controllerRevision) { return CompletableFuture.completedFuture(false); }
+        default CompletableFuture<InternalStatus> internalStatus(InternalStartSpec specification) {
+            return CompletableFuture.completedFuture(new InternalStatus(InternalPhase.UNAVAILABLE, null));
+        }
+        default CompletableFuture<Boolean> endInternal(InternalStartSpec specification, RuntimeLease.Identity owner) {
+            return CompletableFuture.completedFuture(false);
+        }
         /**
          * expected is actual immutable component evidence, not authority or a caller-trusted string.
          * Verify current exact DEVICE lease + actual component identities. Hold counted authority
@@ -137,6 +158,8 @@ public final class AppRuntimeGateway {
     private static final RuntimeInstallationBarrier BOOTSTRAP = new RuntimeInstallationBarrier(PHYSICAL_MUTEX);
     private static Application bootstrapApplication;
     private static RuntimeInstallationBarrier.Installation preparedInstallation;
+    private static final java.util.concurrent.atomic.AtomicBoolean demoVisibilityPending =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private final Application application;
     private final Backend backend;
     private AppRuntimeGateway(Application application, Backend backend) {
@@ -184,6 +207,49 @@ public final class AppRuntimeGateway {
         bindPhysicalApplication(application);
         RuntimeInstallationBarrier.LegacyWork counted = BOOTSTRAP.tryLegacyWork();
         return counted == null ? null : new LegacyWork(counted);
+    }
+    /** Allows profile-only edits before the first owner journal has ever been provisioned. */
+    public static CompletableFuture<InternalVisibilityBarrier.Permit> prepareInitialDemoVisibility(Context physical) {
+        CompletableFuture<InternalVisibilityBarrier.Permit> response = new CompletableFuture<>();
+        if (!(physical instanceof Application) || android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+                || !demoVisibilityPending.compareAndSet(false, true)) {
+            response.completeExceptionally(new InternalVisibilityBarrier.UnavailableException());
+            return response;
+        }
+        LegacyWork ticket = null;
+        try {
+            ticket = beginLegacyWork(physical);
+            android.content.SharedPreferences registry = physical.getSharedPreferences(RuntimeJournalMigration.REGISTRY, 0);
+            String original = registry.getString(RuntimeJournalMigration.ORIGINAL_GENERATION, "");
+            if (!"ready".equals(registry.getString(RuntimeJournalMigration.PROFILE_STATE, ""))
+                    || !RuntimeJournalMigration.firstCreationReceipt(original).equals(
+                            registry.getString(RuntimeJournalMigration.RECEIPT, "")))
+                throw new InternalVisibilityBarrier.UnavailableException();
+            SQLiteRuntimeOwnerBackend.requireNoOwnerEvidence((Application) physical);
+            LegacyWork exact = ticket;
+            response.complete(new InternalVisibilityBarrier.Permit() {
+                @Override public void requireCurrent() {
+                    if (!demoVisibilityPending.get() || installed != null)
+                        throw new SecurityException("Initial Demo visibility no longer owns admission");
+                }
+                @Override public CompletableFuture<Void> complete(InternalVisibilityBarrier.Completion completion) {
+                    CompletableFuture<Void> result = new CompletableFuture<>();
+                    if (completion.outcome == InternalVisibilityBarrier.Outcome.UNCERTAIN) {
+                        result.completeExceptionally(new IllegalStateException("Demo visibility needs reconciliation"));
+                        return result;
+                    }
+                    exact.close();
+                    demoVisibilityPending.set(false);
+                    result.complete(null);
+                    return result;
+                }
+            });
+        } catch (RuntimeException | android.system.ErrnoException failure) {
+            if (ticket != null) ticket.close();
+            demoVisibilityPending.set(false);
+            response.completeExceptionally(new InternalVisibilityBarrier.UnavailableException());
+        }
+        return response;
     }
     public static final class LegacyWork implements AutoCloseable {
         private final RuntimeInstallationBarrier.LegacyWork counted;
@@ -319,6 +385,12 @@ public final class AppRuntimeGateway {
     }
     public CompletableFuture<InternalStart> internalStart(InternalStartSpec specification) {
         return Objects.requireNonNull(backend.internalStart(Objects.requireNonNull(specification)));
+    }
+    public CompletableFuture<InternalStatus> internalStatus(InternalStartSpec specification) {
+        return Objects.requireNonNull(backend.internalStatus(Objects.requireNonNull(specification)));
+    }
+    public CompletableFuture<Boolean> endInternal(InternalStartSpec specification, RuntimeLease.Identity owner) {
+        return Objects.requireNonNull(backend.endInternal(Objects.requireNonNull(specification), Objects.requireNonNull(owner)));
     }
     /** Completes true only when the exact local DEVICE owner has durably retired. */
     public CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,

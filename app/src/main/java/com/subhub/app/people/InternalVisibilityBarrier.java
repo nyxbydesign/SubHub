@@ -102,14 +102,12 @@ public final class InternalVisibilityBarrier {
     public static final class UnavailableException extends IllegalStateException {
         public UnavailableException() { super("Internal visibility awaits exact runtime owner reconciliation"); }
     }
-    private static final Provider UNAVAILABLE = (physical, request) -> {
-        CompletableFuture<Permit> refused = new CompletableFuture<>();
-        refused.completeExceptionally(new UnavailableException()); return refused;
-    };
-    // Inactive checkpoint: no production provider is installed until the runtime gateway is qualified.
-    private static volatile Provider provider = UNAVAILABLE;
+    // Before first provisioning, the bootstrap barrier can prove that no runtime can own the profile.
+    private static final Provider BEFORE_RUNTIME = (physical, request) ->
+            com.subhub.app.runtime.AppRuntimeGateway.prepareInitialDemoVisibility(physical);
+    private static volatile Provider provider = BEFORE_RUNTIME;
     public static synchronized void install(Provider qualifiedRuntimeProvider) {
-        if (provider != UNAVAILABLE) throw new IllegalStateException("Visibility provider already installed");
+        if (provider != BEFORE_RUNTIME) throw new IllegalStateException("Visibility provider already installed");
         provider = Objects.requireNonNull(qualifiedRuntimeProvider);
     }
     static CompletableFuture<Proof> prepare(Context physical, Request request) {
