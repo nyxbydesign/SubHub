@@ -144,6 +144,11 @@ public final class PopupStormManager {
 
     boolean ownsInternalArtwork(OwnedPopupArtwork artwork) { return ownedArtwork == artwork; }
 
+    /** Compatibility entry for bindings that activate before using explicit participation. */
+    void activateInternal() {
+        applyInternalParticipation(true);
+    }
+
     /** Called inside the exact runtime's admitted effect, never by a persisted owner identity. */
     void applyInternalParticipation(boolean eligible) {
         requireInternal();
