@@ -107,7 +107,7 @@ public final class RoleAchievementsAndroidTest {
         saved.edit().putStringSet("unlocked", new LinkedHashSet<>(Collections.singletonList("first_session")))
                 .putStringSet("pending_notifications", new LinkedHashSet<>(Collections.singletonList("first_session"))).commit();
         AchievementManager dom = AchievementManager.forWorkspace(context);
-        assertEquals(20, dom.all().size());
+        assertEquals(25, dom.all().size());
         List<AchievementManager.Achievement> awarded = dom.checkDomAchievements(facts());
         assertFalse(awarded.isEmpty());
         long timestamp = dom.getUnlockedAt("dom_subs_1");
@@ -119,7 +119,7 @@ public final class RoleAchievementsAndroidTest {
         assertTrue(dom.all().isEmpty());
         assertTrue(dom.takePendingNotifications().isEmpty());
         AchievementManager sub = AchievementManager.forWorkspace(context);
-        assertEquals(54, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
+        assertEquals(49, sub.all().size()); assertTrue(sub.isUnlocked("first_session"));
         assertFalse(sub.isUnlocked("dom_subs_1"));
         assertEquals("first_session", sub.takePendingNotifications().get(0).getId());
         ControllerPinManager.enterDomMode();
@@ -158,7 +158,8 @@ public final class RoleAchievementsAndroidTest {
     @Test public void movedBadgesAndHigherGoalsPreserveEarnedDatesWithoutReawarding() {
         SharedPreferences saved = context.getSharedPreferences("betablocker_achievements", 0);
         Set<String> earned = new LinkedHashSet<>(Arrays.asList("first_custom_phrase", "phrase_library",
-                "paypal_vault", "dom_time_1hr", "dom_tribute_10"));
+                "paypal_vault", "dom_time_1hr", "dom_tribute_10", "text_filter_enabled",
+                "text_filter_catalog", "color_picker", "border_artist", "style_explorer"));
         long date = 1_790_000_000_000L;
         SharedPreferences.Editor edit = saved.edit().putStringSet("unlocked", earned)
                 .putStringSet("pending_notifications", earned);

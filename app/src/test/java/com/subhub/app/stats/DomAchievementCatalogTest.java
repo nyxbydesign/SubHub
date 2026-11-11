@@ -9,7 +9,7 @@ import org.junit.Test;
 public final class DomAchievementCatalogTest {
     @Test public void domCatalogHasDistinctPositiveMilestonesAndDedicatedArtwork() {
         Set<String> ids = new HashSet<>(); Set<Integer> art = new HashSet<>();
-        assertEquals(20, DomAchievementCatalog.all().size());
+        assertEquals(25, DomAchievementCatalog.all().size());
         for (AchievementManager.Achievement value : DomAchievementCatalog.all()) {
             assertTrue(ids.add(value.getId())); assertTrue(art.add(value.getBadgeArtRes()));
             assertEquals(AchievementRole.DOM, value.getRole());
@@ -61,10 +61,43 @@ public final class DomAchievementCatalogTest {
     }
 
     @Test public void movedConfigurationBadgesKeepTheirPersistedIdsAndBelongOnlyToDom() {
-        for (String id : Arrays.asList("first_custom_phrase", "phrase_library", "paypal_vault")) {
+        for (String id : Arrays.asList("first_custom_phrase", "phrase_library", "paypal_vault",
+                "text_filter_enabled", "text_filter_catalog", "color_picker", "border_artist", "style_explorer")) {
             assertTrue(AchievementRole.DOM.owns(id)); assertFalse(AchievementRole.SUB.owns(id));
             assertTrue(DomAchievementCatalog.all().stream().anyMatch(value -> id.equals(value.getId())));
         }
+    }
+
+    @Test public void movedBadgesKeepRequirementsAndSharedPresentationGroups() {
+        assertEquals(1, AchievementManager.target("text_filter_enabled"));
+        assertEquals(3, AchievementManager.target("text_filter_catalog"));
+        assertEquals(1, AchievementManager.target("color_picker"));
+        assertEquals(4, AchievementManager.target("border_artist"));
+        assertEquals(8, AchievementManager.target("style_explorer"));
+        var groups = AchievementsPane.orderedGroups(DomAchievementCatalog.all());
+        assertEquals(Arrays.asList("dom_subs", "dom_sessions", "dom_time", "dom_phrases",
+                "dom_censor", "dom_appearance", "dom_wallet", "dom_hardcore"),
+                new java.util.ArrayList<>(groups.keySet()));
+        assertEquals(Arrays.asList("color_picker", "border_artist", "style_explorer"),
+                groups.get("dom_appearance").stream().map(AchievementManager.Achievement::getId)
+                        .collect(java.util.stream.Collectors.toList()));
+        assertEquals(Arrays.asList("paypal_vault", "dom_tribute_10", "dom_tribute_250",
+                "dom_tribute_1000", "dom_tribute_10000"),
+                groups.get("dom_wallet").stream().map(AchievementManager.Achievement::getId)
+                        .collect(java.util.stream.Collectors.toList()));
+        assertFalse(groups.containsKey("dom_tribute"));
+    }
+
+    @Test public void appearanceProgressRequiresEveryOriginalChoice() {
+        Set<String> styles = new HashSet<>(Arrays.asList("box", "blur", "pixelate", "custom",
+                "static", "glitch", "tape", "unknown"));
+        assertEquals(7, DomAchievementCatalog.appearanceCurrent("style_explorer", styles));
+        styles.add("error_popup");
+        assertEquals(8, DomAchievementCatalog.appearanceCurrent("style_explorer", styles));
+        Set<String> borders = new HashSet<>(Arrays.asList("classic", "gradient", "glow", "unknown"));
+        assertEquals(3, DomAchievementCatalog.appearanceCurrent("border_artist", borders));
+        borders.add("rainbow");
+        assertEquals(4, DomAchievementCatalog.appearanceCurrent("border_artist", borders));
     }
 
     private static DomStatsSnapshot.Sub sub(String id, long eur, long usd) {
