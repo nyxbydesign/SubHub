@@ -59,6 +59,7 @@ final class RemoteSessionNativeController {
             synchronized (SubFeaturePolicy.LOCK) {
                 synchronized (store) {
                     synchronized (RuntimeSessionIdentity.LOCK) {
+                        if (!com.subhub.app.runtime.AppRuntimeGateway.legacyMutationAllowed()) return recorded;
                         // An outer transaction would prevent preparation from becoming durable before the effect.
                         if (db.inTransaction()) throw new IllegalStateException("Native application requires its own transactions");
                         RemoteSessionClock.Sample now = RemoteSessionClock.local();

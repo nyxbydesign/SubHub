@@ -113,6 +113,15 @@ public final class CachedPeerReadModelAndroidTest {
         store.putMetadata(SUB,generation,"confirmed_APP_USAGE",Long.toString(now));
         saved=repository.load(selected);assertFalse(saved.sections.isEmpty());assertEquals(1,saved.allowances.size());
         assertEquals(-1,saved.allowances.get(0).usedMillis);assertEquals(7200,saved.protectedSeconds);
+        PersonSnapshot summary=repository.loadSummary(selected);
+        assertEquals(saved.id,summary.id);assertEquals(saved.profile,summary.profile);
+        assertEquals(saved.connection,summary.connection);assertEquals(saved.lastOnlineAt,summary.lastOnlineAt);
+        assertEquals(saved.protectedSeconds,summary.protectedSeconds);assertEquals(saved.activityEvents,summary.activityEvents);
+        assertEquals(saved.sync.stats,summary.sync.stats);assertEquals(saved.sync.runtime,summary.sync.runtime);
+        assertEquals(saved.serviceLabel,summary.serviceLabel);assertEquals(saved.serviceActive,summary.serviceActive);
+        assertEquals(PersonSnapshot.Freshness.UNKNOWN,summary.sync.contract);
+        assertTrue(summary.sections.isEmpty());assertTrue(summary.allowances.isEmpty());assertTrue(summary.capabilities.isEmpty());
+        assertFalse("Summary reads must not replace the full stored contract",repository.load(selected).sections.isEmpty());
 
         PersonSnapshot local=new PersonSnapshot(PersonId.LOCAL,"Local Sub","","","",PersonSnapshot.Connection.LOCAL,
                 PersonSnapshot.Freshness.CURRENT,0,EnumSet.noneOf(PersonSnapshot.Capability.class),Collections.emptyList(),

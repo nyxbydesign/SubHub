@@ -40,8 +40,13 @@ public final class SubliminalSettingsRepository {
     private final SharedPreferences preferences;
 
     public SubliminalSettingsRepository(Context context) {
-        preferences = context.getApplicationContext().getSharedPreferences(
-                SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        this(context.getApplicationContext().getSharedPreferences(
+                SettingsRepository.PREFERENCES_NAME, Context.MODE_PRIVATE));
+    }
+
+    /** Explicit data dependency for owner-isolated runtimes; never substitutes the window host. */
+    public SubliminalSettingsRepository(SharedPreferences preferences) {
+        this.preferences = java.util.Objects.requireNonNull(preferences);
     }
 
     public SubliminalSettings load() {

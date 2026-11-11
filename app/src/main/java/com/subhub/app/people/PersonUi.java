@@ -124,10 +124,6 @@ public final class PersonUi {
             else com.subhub.app.util.AppIcons.bind((ImageView) app.getChildAt(0), value.packageName, fallback);
             if (value.usedMillis < 0) continue;
             com.subhub.app.appmode.AllowanceProgress.add(card, value);
-            if (snapshot.id.isLocal() && !com.subhub.app.security.DeviceRolePreferences.isDomWorkspace(parent.getContext())
-                    && !value.packageName.isEmpty() && value.dailyMinutes > 0
-                    && value.usedMillis >= value.budgetMillis)
-                com.subhub.app.appmode.ExtraTimeEntry.request(card, snapshot.id, value.packageName);
         }
         com.subhub.app.appmode.ExtraTimeEntry.review(card, snapshot.id);
     }

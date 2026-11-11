@@ -73,7 +73,8 @@ public final class RemoteSessionExpiryAndroidTest {
             }
         };
         stats = RemoteSessionStatsFixture.create(context);
-        nativeSession = RemoteSessionNative.installFixture(context, () -> stats);
+        nativeSession = RemoteSessionNative.installLegacyFixture(context, () -> stats,
+                (android.app.Application) target.getApplicationContext());
         RemoteSessionClock.observe(context);
     }
     @After public void cleanup() throws Exception {
@@ -143,6 +144,12 @@ public final class RemoteSessionExpiryAndroidTest {
     }
 
     @Test public void pactReceiverRequiresCurrentDueGenerationAndLegacyNeverEndsAFuturePact() throws Exception {
+        Context unregistered = new ContextWrapper(target) {
+            @Override public Context getApplicationContext() { return this; }
+        };
+        assertThrows(SecurityException.class,
+                () -> com.subhub.app.runtime.AppRuntimeGateway.tryBeginLegacyWork(unregistered));
+        assertThrows(SecurityException.class, () -> com.subhub.app.runtime.AppRuntimeGateway.current(context));
         new AppModeManager(context).setArmed(true);
         String statistics = stats.activeSessionIdentity(), old = id(), current = id();
         pact(old, -1000); pact(current, 60000);

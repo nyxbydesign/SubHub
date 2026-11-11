@@ -20,7 +20,7 @@ public final class TasksOverviewActivity extends RolePage {
     private Roster displayedRoster;
     private final java.util.Map<PersonId, LinearLayout> cards = new java.util.LinkedHashMap<>();
     private final java.util.Map<PersonId, List<Object>> signatures = new java.util.HashMap<>();
-    private TaskStore.Observation taskObservation;
+    private TaskStore.Observation taskObservation, internalObservation;
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -55,7 +55,7 @@ public final class TasksOverviewActivity extends RolePage {
         long domRevision = ControllerPinManager.domWorkspaceRevision();
         data.load("tasks-overview", () -> {
             RelationshipPresentation.Access access = RelationshipPanel.readAccess(app);
-            List<PersonSnapshot> targets = RelationshipPanel.roster(app, people, access, locale);
+            InternalRoster.Rows targets = InternalRoster.append(app, RelationshipPanel.roster(app, people, access, locale), true);
             List<Summary> result = new ArrayList<>();
             for (PersonSnapshot person : targets) {
                 if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(app)
@@ -83,6 +83,8 @@ public final class TasksOverviewActivity extends RolePage {
             if (fresh.legacy) {
                 for (PersonSnapshot person : RelationshipPanel.roster(app, people, fresh, locale)) currentIds.add(person.id);
             } else currentIds.addAll(RelationshipPresentation.rosterIds(fresh.snapshot));
+            if (!InternalRoster.current(app, targets.generation)) throw new IllegalStateException("Internal Tasks target changed");
+            if (!targets.generation.isEmpty()) currentIds.add(DummySubPreview.ID);
             if (currentIds.size() != result.size()) throw new IllegalStateException("Tasks roster changed");
             for (int index = 0; index < result.size(); index++) {
                 Summary summary = result.get(index);
@@ -94,10 +96,13 @@ public final class TasksOverviewActivity extends RolePage {
                     || domRevision != ControllerPinManager.domWorkspaceRevision()
                     || !fresh.current(RelationshipUi::provider))
                 throw new IllegalStateException("Tasks context changed");
-            return new Roster(fresh, result, epoch, domRevision);
+            return new Roster(fresh, result, epoch, domRevision, targets.generation);
         }, loaded -> {
             if (!current(loaded)) return;
             displayedRoster = loaded;
+            if (internalObservation != null) { internalObservation.close(); internalObservation = null; }
+            if (!loaded.internalGeneration.isEmpty())
+                internalObservation = new TaskRepository(app, DummySubPreview.ID).observe(this::refresh);
             renderPage(() -> renderRoster(loaded));
         }, failure -> { if (allowed()) unavailable(); else body.removeAllViews(); });
     }
@@ -161,7 +166,8 @@ public final class TasksOverviewActivity extends RolePage {
         if (loaded.epoch != rosterEpoch) return false;
         if (!allowed()) { body.removeAllViews(); return false; }
         if (loaded.domRevision != ControllerPinManager.domWorkspaceRevision()
-                || !loaded.access.current(RelationshipUi::provider)) { unavailable(); return false; }
+                || !loaded.access.current(RelationshipUi::provider)
+                || !InternalRoster.current(this, loaded.internalGeneration)) { unavailable(); return false; }
         return true;
     }
 
@@ -179,16 +185,19 @@ public final class TasksOverviewActivity extends RolePage {
             if (fresh.provider != loaded.access.provider || fresh.legacy != loaded.access.legacy)
                 throw new IllegalStateException("Tasks provider changed");
             boolean eligible = false;
-            for (PersonSnapshot person : RelationshipPanel.roster(app, people, fresh, locale))
+            for (PersonSnapshot person : InternalRoster.append(app, RelationshipPanel.roster(app, people, fresh, locale), true))
                 if (person.id.equals(selected.person.id)) eligible = true;
             // LOCAL remains a valid direct Sub target, so this outgoing route must recheck its exact edge.
             if (!eligible || !sameEdge(selected.edge, edge(fresh, selected.person.id)))
                 throw new IllegalStateException("Tasks relationship changed");
             return fresh;
         }, fresh -> {
-            if (current(loaded) && fresh.current(RelationshipUi::provider))
-                startActivity(new Intent(this, TasksActivity.class)
+            if (current(loaded) && fresh.current(RelationshipUi::provider)) {
+                if (DummySubPreview.ID.equals(selected.person.id))
+                    DummySubPreview.openTasks(this, loaded.internalGeneration, loaded.domRevision);
+                else startActivity(new Intent(this, TasksActivity.class)
                         .putExtra(PersonRoutes.EXTRA_PERSON_ID, selected.person.id.value()));
+            }
         }, failure -> {
             if (loaded.epoch != rosterEpoch) return;
             if (allowed()) unavailable(); else body.removeAllViews();
@@ -216,14 +225,16 @@ public final class TasksOverviewActivity extends RolePage {
         final RelationshipPresentation.Access access;
         final List<Summary> summaries;
         final long epoch, domRevision;
-        Roster(RelationshipPresentation.Access access, List<Summary> summaries, long epoch, long domRevision) {
+        final String internalGeneration;
+        Roster(RelationshipPresentation.Access access, List<Summary> summaries, long epoch, long domRevision, String internalGeneration) {
             this.access = access; this.summaries = summaries;
-            this.epoch = epoch; this.domRevision = domRevision;
+            this.epoch = epoch; this.domRevision = domRevision; this.internalGeneration = internalGeneration;
         }
     }
 
     @Override protected void onPause() {
         if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
+        if (internalObservation != null) { internalObservation.close(); internalObservation = null; }
         clock.removeCallbacks(tick);
         ++rosterEpoch;
         rememberPagePosition();

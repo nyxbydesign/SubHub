@@ -17,6 +17,10 @@ public final class PersonRoutes {
     private PersonRoutes() {}
 
     public static void open(Context context, PersonId id) {
+        if (DummySubPreview.ID.equals(id)) {
+            if (!(context instanceof Activity)) throw new IllegalArgumentException("Internal profile requires an Activity");
+            DummySubPreview.open((Activity) context); return;
+        }
         context.startActivity(new Intent(context, PersonActivity.class).putExtra(EXTRA_PERSON_ID, id.value()));
     }
 

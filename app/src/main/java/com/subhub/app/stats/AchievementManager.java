@@ -5,14 +5,17 @@ import android.content.SharedPreferences;
 
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.penance.InternalPenanceRules;
 import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.security.HardcoreModeManager;
+import com.subhub.app.runtime.RuntimeConfiguration;
 import com.subhub.app.settings.SettingsRepository;
 
 import java.time.DayOfWeek;
@@ -38,6 +41,9 @@ public final class AchievementManager {
     private static final String KEY_UNLOCKED_AT_PREFIX = "unlocked_at.";
     private static final List<Achievement> ACHIEVEMENTS = achievements();
     private final Context context;
+    private final OwnerFacts ownerFacts;
+    private final Object unlockLock;
+    private final boolean ownerReadOnly;
     private final SharedPreferences preferences;
     private final Set<String> unlocked;
     private final AchievementRole role;
@@ -57,6 +63,7 @@ public final class AchievementManager {
 
     private AchievementManager(Context context, AchievementRole role, boolean workspaceBound) {
         this.context = context.getApplicationContext();
+        ownerFacts = null; unlockLock = UNLOCK_LOCK; ownerReadOnly = false;
         this.role = role;
         this.workspaceBound = workspaceBound;
         catalog = role == AchievementRole.DOM ? DomAchievementCatalog.all() : ACHIEVEMENTS;
@@ -65,8 +72,81 @@ public final class AchievementManager {
         unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
     }
 
+    /** Explicit owned facts. Unknown/unavailable values throw; never consult the physical device. */
+    public interface OwnerFacts {
+        boolean isAccessible();
+        long current(String achievementId);
+    }
+
+    /** Captured configuration facts for an exact INTERNAL session using visual projection. */
+    public static OwnerFacts forInternalProjection(RuntimeConfiguration image) {
+        return forInternalCensor(image, false);
+    }
+
+    public static OwnerFacts forInternalWindow(RuntimeConfiguration image) {
+        return forInternalCensor(image, true);
+    }
+
+    private static OwnerFacts forInternalCensor(RuntimeConfiguration image, boolean windowCapture) {
+        java.util.Objects.requireNonNull(image);
+        SharedPreferences settings = image.main;
+        Set<String> selected = settings.getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Collections.emptySet());
+        int included = AppModePolicy.sanitizePackages(settings.getBoolean(AppModeManager.KEY_ALL_APPS, false)
+                ? settings.getStringSet("app_include_all_packages_v1", selected) : selected).size();
+        boolean perApp = settings.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false);
+        boolean total = settings.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false);
+        InternalPenanceRules rules = new InternalPenanceRules(image.penance);
+        int enabledRules = 0;
+        for (PenanceInfraction rule : PenanceInfraction.values()) {
+            if (rule != PenanceInfraction.PAID_PAUSE && rules.isInfractionEnabled(rule)) enabledRules++;
+        }
+        final int ledgerRules = enabledRules;
+        TextSmutConfig text = SettingsRepository.forPreferences(settings).loadTextSmutConfig();
+        boolean explicitText = windowCapture && settings.contains(SettingsRepository.KEY_TEXT_SMUT_ENABLED)
+                && text.isEnabled();
+        int textCatalog = windowCapture && settings.contains(SettingsRepository.KEY_TEXT_SMUT_CATEGORIES)
+                && text.isEnabled() && text.getEnabledCategories().containsAll(TextSmutConfig.DEFAULT_CATEGORIES)
+                ? text.getEnabledCategories().size() : 0;
+        return new OwnerFacts() {
+            @Override public boolean isAccessible() { return true; }
+            @Override public long current(String id) {
+                return switch (id) {
+                    case "app_assignment_curator" -> included;
+                    case "limits_setter" -> perApp || total ? 1 : 0;
+                    case "limits_dual_guard" -> perApp && total ? 1 : 0;
+                    case "wallet_keeper" -> ledgerRules > 0 ? 1 : 0;
+                    case "tribute_rulesmith" -> ledgerRules;
+                    case "text_filter_enabled" -> explicitText ? 1 : 0;
+                    case "text_filter_catalog" -> textCatalog;
+                    case "app_mode_guardian", "pact_sealed", "pact_long_haul", "hardcore_guardian",
+                            "paypal_vault", "paid_pause",
+                            "wallet_paid_10", "wallet_paid_100", "wallet_paid_500", "wallet_paid_1000" -> 0;
+                    default -> throw new IllegalArgumentException("Unknown INTERNAL achievement fact");
+                };
+            }
+        };
+    }
+    static AchievementManager forOwner(SharedPreferences receipts, OwnerFacts facts) {
+        return new AchievementManager(receipts, facts, true);
+    }
+    static AchievementManager forOwnerReconciliation(SharedPreferences receipts, OwnerFacts facts) {
+        return new AchievementManager(receipts, facts, false);
+    }
+    private AchievementManager(SharedPreferences receipts, OwnerFacts facts, boolean readOnly) {
+        context = null; preferences = java.util.Objects.requireNonNull(receipts);
+        ownerFacts = java.util.Objects.requireNonNull(facts); unlockLock = new Object(); ownerReadOnly = readOnly;
+        role = AchievementRole.SUB; workspaceBound = false; catalog = ACHIEVEMENTS;
+        Set<String> stored = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
+        unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
+    }
+
+    private void requireWritableOwner() {
+        if (ownerReadOnly) throw new UnsupportedOperationException("Owned achievement views are immutable; reconcile through the owner store");
+    }
+
     public AchievementRole getRole() { return role; }
     public boolean isAccessible() {
+        if (ownerFacts != null) return ownerFacts.isAccessible();
         return workspaceBound ? role.accessible(context)
                 : com.subhub.app.security.DeviceRolePreferences.supportsSub(context);
     }
@@ -89,9 +169,9 @@ public final class AchievementManager {
     public Progress progress(Achievement value, StatsSnapshot stats) {
         if (!isAccessible() || !catalog.contains(value)) return new Progress(0, 0, false, false);
         if (role == AchievementRole.DOM) return new Progress(
-                domStats == null ? 0 : DomAchievementCatalog.current(value.id, domStats),
+                domCurrent(value.id, domStats),
                 DomAchievementCatalog.target(value.id), isUnlocked(value.id),
-                DomAchievementCatalog.known(value.id, domStats));
+                domKnown(value.id, domStats));
         long current = current(value.id, stats);
         long target = target(value.id);
         return new Progress(current, target, isUnlocked(value.id));
@@ -110,8 +190,21 @@ public final class AchievementManager {
     public List<Achievement> checkDomAchievements(DomStatsSnapshot stats) {
         if (role != AchievementRole.DOM || !isAccessible()) return Collections.emptyList();
         domStats = java.util.Objects.requireNonNull(stats);
-        return unlock(value -> DomAchievementCatalog.known(value.id, stats)
-                && DomAchievementCatalog.current(value.id, stats) >= DomAchievementCatalog.target(value.id));
+        return unlock(value -> domKnown(value.id, stats)
+                && domCurrent(value.id, stats) >= DomAchievementCatalog.target(value.id));
+    }
+
+    private static boolean domKnown(String id, DomStatsSnapshot stats) {
+        return AchievementRole.isDomConfiguration(id) || DomAchievementCatalog.known(id, stats);
+    }
+
+    private long domCurrent(String id, DomStatsSnapshot stats) {
+        switch (id) {
+            case "first_custom_phrase": case "phrase_library":
+                return new StatsRepository(context, false).retainedSnapshot().getCustomPhrases();
+            case "paypal_vault": return new PayPalCredentialStore(context).vaultState().isReady() ? 1 : 0;
+            default: return stats == null ? 0 : DomAchievementCatalog.current(id, stats);
+        }
     }
 
     public String progressCurrency() { return domStats == null ? historicalPaidCurrency : domStats.leadingPaidCurrency(); }
@@ -122,7 +215,8 @@ public final class AchievementManager {
     }
 
     private List<Achievement> unlock(java.util.function.Predicate<Achievement> qualifies) {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return Collections.emptyList();
             Set<String> current = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
             if (current != null) unlocked.addAll(current);
@@ -153,7 +247,8 @@ public final class AchievementManager {
     /** Historical eligibility updates presentation state only, never replaying product effects. */
     boolean reconcileHistory(java.util.Map<String, Long> dates, Set<String> sources, StatsSnapshot stats,
             DomStatsSnapshot aggregate) {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return false;
             String prefix = "history_v1." + role.name() + ".";
             long now = System.currentTimeMillis();
@@ -177,8 +272,8 @@ public final class AchievementManager {
                 boolean datedHistory = proof > 0 && (proof <= cutoff || proof < today);
                 boolean eligible;
                 if (role == AchievementRole.DOM)
-                    eligible = DomAchievementCatalog.known(value.id, aggregate)
-                            && DomAchievementCatalog.current(value.id, aggregate) >= DomAchievementCatalog.target(value.id);
+                    eligible = domKnown(value.id, aggregate)
+                            && domCurrent(value.id, aggregate) >= DomAchievementCatalog.target(value.id);
                 else if ("legend".equals(value.id)) {
                     eligible = true;
                     for (Achievement other : catalog)
@@ -213,7 +308,8 @@ public final class AchievementManager {
     }
 
     public List<Achievement> takePendingNotifications() {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return Collections.emptyList();
             Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
             Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
@@ -263,6 +359,11 @@ public final class AchievementManager {
     }
 
     private long current(String id, StatsSnapshot stats, boolean observedOnly) {
+        if (ownerFacts != null && ownerFeatureFact(id)) {
+            long value = ownerFacts.current(id);
+            if (value < 0) throw new IllegalStateException("Unknown owner achievement fact");
+            return value;
+        }
         switch (id) {
             case "first_block": case "blocks_10": case "blocks_100": case "blocks_1000": case "blocks_10000":
                 return stats.getTotalBlocks();
@@ -291,10 +392,9 @@ public final class AchievementManager {
                 return settings.perAppEnabled && settings.totalEnabled ? 1 : 0;
             }
             case "pact_sealed":
-                return (observedOnly ? CommitmentManager.observedActive(context) : CommitmentManager.isActive(context)) ? 1 : 0;
+                return CommitmentManager.observedStarted(context) ? 1 : 0;
             case "pact_long_haul":
-                return CommitmentManager.originalDurationMillis(context)
-                        >= 7L * 24L * 60L * 60L * 1000L ? 1 : 0;
+                return CommitmentManager.observedElapsedMillis(context) / 1000L;
             case "hardcore_guardian":
                 return new HardcoreModeManager(context).isEnabled() ? 1 : 0;
             case "text_filter_enabled": {
@@ -343,8 +443,20 @@ public final class AchievementManager {
         }
     }
 
+    private static boolean ownerFeatureFact(String id) {
+        switch (id) {
+            case "app_mode_guardian": case "app_assignment_curator": case "limits_setter":
+            case "limits_dual_guard": case "pact_sealed": case "pact_long_haul":
+            case "hardcore_guardian": case "text_filter_enabled": case "text_filter_catalog":
+            case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault": case "paid_pause":
+            case "wallet_paid_10": case "wallet_paid_100": case "wallet_paid_500": case "wallet_paid_1000":
+                return true;
+            default: return false;
+        }
+    }
+
     static long target(String id) {
-        if (id.startsWith("dom_")) return DomAchievementCatalog.target(id);
+        if (AchievementRole.DOM.owns(id)) return DomAchievementCatalog.target(id);
         switch (id) {
             case "first_block": case "first_session": case "first_custom_phrase":
             case "export_first": case "color_picker": return 1;
@@ -359,6 +471,7 @@ public final class AchievementManager {
             case "time_200hr": return 2592000;
             case "streak_7": return 7;
             case "streak_30": return 30;
+            case "pact_long_haul": return 7L * 24L * 60L * 60L;
             case "export_artist": case "ntr_50": return 50;
             case "peak_50": case "ntr_500": return 500;
             case "peak_500": return 5000;
@@ -367,7 +480,7 @@ public final class AchievementManager {
             case "ntr_100": return 100;
             case "ntr_200": return 200;
             case "app_mode_guardian": case "limits_setter": case "limits_dual_guard":
-            case "pact_sealed": case "pact_long_haul": case "hardcore_guardian":
+            case "pact_sealed": case "hardcore_guardian":
             case "text_filter_enabled": case "wallet_keeper":
             case "paypal_vault": case "paid_pause": return 1;
             case "app_assignment_curator": return 3;
@@ -439,8 +552,6 @@ public final class AchievementManager {
                 a("style_explorer", R.string.achievement_style_explorer, R.string.achievement_desc_style_explorer, "◒", "custom", R.drawable.achievement_badge_style_explorer, false),
                 a("border_artist", R.string.achievement_border_artist, R.string.achievement_desc_border_artist, "▣", "custom", R.drawable.achievement_badge_border_artist, false),
                 a("color_picker", R.string.achievement_color_picker, R.string.achievement_desc_color_picker, "◉", "custom", R.drawable.achievement_badge_color_picker, false),
-                a("first_custom_phrase", R.string.achievement_first_custom_phrase, R.string.achievement_desc_first_custom_phrase, "✎", "custom", R.drawable.achievement_badge_first_custom_phrase, false),
-                a("phrase_library", R.string.achievement_phrase_library, R.string.achievement_desc_phrase_library, "▤", "custom", R.drawable.achievement_badge_phrase_library, false),
                 a("export_first", R.string.achievement_export_first, R.string.achievement_desc_export_first, "⇩", "export", R.drawable.achievement_badge_export_first, false),
                 a("export_artist", R.string.achievement_export_artist, R.string.achievement_desc_export_artist, "⇩", "export", R.drawable.achievement_badge_export_artist, false),
                 a("subliminal_1", R.string.achievement_subliminal_1, R.string.achievement_desc_subliminal_1, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1, false),
@@ -449,7 +560,6 @@ public final class AchievementManager {
                 a("subliminal_10000", R.string.achievement_subliminal_10000, R.string.achievement_desc_subliminal_10000, "◉", "subliminal", R.drawable.achievement_badge_subliminal_10000, false),
                 a("wallet_keeper", R.string.achievement_wallet_keeper, R.string.achievement_desc_wallet_keeper, "¤", "wallet", R.drawable.achievement_badge_wallet_keeper, false),
                 a("tribute_rulesmith", R.string.achievement_tribute_rulesmith, R.string.achievement_desc_tribute_rulesmith, "¤", "wallet", R.drawable.achievement_badge_tribute_rulesmith, false),
-                a("paypal_vault", R.string.achievement_paypal_vault, R.string.achievement_desc_paypal_vault, "¤", "wallet", R.drawable.achievement_badge_paypal_vault, false),
                 a("paid_pause", R.string.achievement_paid_pause, R.string.achievement_desc_paid_pause, "Ⅱ", "wallet", R.drawable.achievement_badge_paid_pause, false),
                 a("wallet_paid_10", R.string.achievement_wallet_paid_10, R.string.achievement_desc_wallet_paid_10, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_10, false),
                 a("wallet_paid_100", R.string.achievement_wallet_paid_100, R.string.achievement_desc_wallet_paid_100, "◆", "wallet", R.drawable.achievement_badge_wallet_paid_100, false),
@@ -486,7 +596,7 @@ public final class AchievementManager {
             this.category = category; this.badgeArtRes = badgeArtRes; this.hidden = hidden;
         }
         public String getId() { return id; }
-        public AchievementRole getRole() { return id.startsWith("dom_") ? AchievementRole.DOM : AchievementRole.SUB; }
+        public AchievementRole getRole() { return AchievementRole.DOM.owns(id) ? AchievementRole.DOM : AchievementRole.SUB; }
         public int getName() { return name; }
         public int getDescription() { return description; }
         public String getIcon() { return icon; }

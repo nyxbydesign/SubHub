@@ -13,12 +13,15 @@ final class DomAchievementCatalog {
             a("dom_subs_3", R.string.dom_subs_3, R.string.dom_desc_subs_3, "dom_subs", R.drawable.achievement_badge_dom_subs_3),
             a("dom_subs_5", R.string.dom_subs_5, R.string.dom_desc_subs_5, "dom_subs", R.drawable.achievement_badge_dom_subs_5),
             a("dom_subs_10", R.string.dom_subs_10, R.string.dom_desc_subs_10, "dom_subs", R.drawable.achievement_badge_dom_subs_10),
+            a("dom_sessions_10", R.string.dom_sessions_10, R.string.dom_desc_sessions_10, "dom_sessions", R.drawable.achievement_badge_dom_sessions_10),
+            a("dom_sessions_100", R.string.dom_sessions_100, R.string.dom_desc_sessions_100, "dom_sessions", R.drawable.achievement_badge_dom_sessions_100),
             a("dom_time_1hr", R.string.dom_time_1hr, R.string.dom_desc_time_1hr, "dom_time", R.drawable.achievement_badge_dom_time_1hr),
             a("dom_time_24hr", R.string.dom_time_24hr, R.string.dom_desc_time_24hr, "dom_time", R.drawable.achievement_badge_dom_time_24hr),
             a("dom_time_7days", R.string.dom_time_7days, R.string.dom_desc_time_7days, "dom_time", R.drawable.achievement_badge_dom_time_7days),
             a("dom_time_30days", R.string.dom_time_30days, R.string.dom_desc_time_30days, "dom_time", R.drawable.achievement_badge_dom_time_30days),
-            a("dom_sessions_10", R.string.dom_sessions_10, R.string.dom_desc_sessions_10, "dom_sessions", R.drawable.achievement_badge_dom_sessions_10),
-            a("dom_sessions_100", R.string.dom_sessions_100, R.string.dom_desc_sessions_100, "dom_sessions", R.drawable.achievement_badge_dom_sessions_100),
+            a("first_custom_phrase", R.string.achievement_first_custom_phrase, R.string.achievement_desc_first_custom_phrase, "dom_phrases", R.drawable.achievement_badge_first_custom_phrase),
+            a("phrase_library", R.string.achievement_phrase_library, R.string.achievement_desc_phrase_library, "dom_phrases", R.drawable.achievement_badge_phrase_library),
+            a("paypal_vault", R.string.achievement_paypal_vault, R.string.achievement_desc_paypal_vault, "dom_wallet", R.drawable.achievement_badge_paypal_vault),
             a("dom_tribute_10", R.string.dom_tribute_10, R.string.dom_desc_tribute_10, "dom_tribute", R.drawable.achievement_badge_dom_tribute_10),
             a("dom_tribute_250", R.string.dom_tribute_250, R.string.dom_desc_tribute_250, "dom_tribute", R.drawable.achievement_badge_dom_tribute_250),
             a("dom_tribute_1000", R.string.dom_tribute_1000, R.string.dom_desc_tribute_1000, "dom_tribute", R.drawable.achievement_badge_dom_tribute_1000),
@@ -31,19 +34,20 @@ final class DomAchievementCatalog {
 
     static long target(String id) {
         switch (id) {
-            case "dom_subs_1": case "dom_hardcore_1": return 1;
+            case "dom_subs_1": case "dom_hardcore_1":
+            case "first_custom_phrase": case "paypal_vault": return 1;
             case "dom_subs_3": case "dom_hardcore_3": return 3;
             case "dom_subs_5": case "dom_hardcore_5": return 5;
-            case "dom_subs_10": case "dom_sessions_10": return 10;
+            case "dom_subs_10": case "dom_sessions_10": case "phrase_library": return 10;
             case "dom_sessions_100": return 100;
-            case "dom_time_1hr": return 3_600;
-            case "dom_time_24hr": return 86_400;
-            case "dom_time_7days": return 604_800;
-            case "dom_time_30days": return 2_592_000;
-            case "dom_tribute_10": return 1_000;
-            case "dom_tribute_250": return 25_000;
-            case "dom_tribute_1000": return 100_000;
-            case "dom_tribute_10000": return 1_000_000;
+            case "dom_time_1hr": return 36_000;
+            case "dom_time_24hr": return 864_000;
+            case "dom_time_7days": return 6_048_000;
+            case "dom_time_30days": return 25_920_000;
+            case "dom_tribute_10": return 10_000;
+            case "dom_tribute_250": return 250_000;
+            case "dom_tribute_1000": return 1_000_000;
+            case "dom_tribute_10000": return 10_000_000;
             default: return 0;
         }
     }

@@ -34,8 +34,9 @@ public final class ControllerAuthenticator {
                 if (step < 0) return failAttempt() ? Result.INVALID : Result.UNAVAILABLE;
                 String encrypted = encrypt(secret);
                 return ControllerPinManager.withLocalAuthority(() -> ControllerPinManager.isDomModeActive()
-                        && prefs.edit().putString("encrypted_secret", encrypted).putLong("last_step", step)
-                        .putInt("attempts", 0).remove("blocked_wall").remove("blocked_elapsed").commit())
+                        && ControllerPinManager.mutateRuntimeCredential(() ->
+                                prefs.edit().putString("encrypted_secret", encrypted).putLong("last_step", step)
+                                        .putInt("attempts", 0).remove("blocked_wall").remove("blocked_elapsed").commit()))
                         ? Result.SUCCESS : Result.UNAVAILABLE;
             } catch (GeneralSecurityException | IllegalArgumentException error) { return Result.UNAVAILABLE; }
         }
@@ -67,7 +68,7 @@ public final class ControllerAuthenticator {
             return ControllerPinManager.withLocalAuthority(() -> {
                 if (!ControllerPinManager.isDomModeActive()) return false;
                 if (!ControllerPinManager.allowUnkeyedAccess(context)) return false;
-                return prefs.edit().clear().commit();
+                return ControllerPinManager.mutateRuntimeCredential(() -> prefs.edit().clear().commit());
             });
         }
     }

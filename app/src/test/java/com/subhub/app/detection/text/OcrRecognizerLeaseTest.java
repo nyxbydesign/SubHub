@@ -32,4 +32,47 @@ public final class OcrRecognizerLeaseTest {
         assertEquals(0, closed.get());
         lease.close();lease.close();assertEquals(1, closed.get());
     }
+    @Test public void nativeCloseReturnNotInvocationEstablishesDrain() throws Exception {
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch finish = new java.util.concurrent.CountDownLatch(1);
+        OcrRecognizerLease lease = new OcrRecognizerLease(() -> {
+            entered.countDown();
+            try { finish.await(); }
+            catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+        });
+        assertFalse(lease.managedResourcesDrained());
+        Thread closer = new Thread(lease::close);
+        closer.start();
+        try {
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse(lease.managedResourcesDrained());
+            lease.close();
+            assertFalse(lease.managedResourcesDrained());
+        } finally { finish.countDown(); closer.join(5000); }
+        assertFalse(closer.isAlive());
+        assertTrue(lease.managedResourcesDrained());
+    }
+
+    @Test public void failedNativeCloseNeverReportsDrainOrRetries() {
+        AtomicInteger attempts = new AtomicInteger();
+        OcrRecognizerLease lease = new OcrRecognizerLease(() -> {
+            attempts.incrementAndGet(); throw new IllegalStateException("native close failed");
+        });
+        OcrRecognizerLease.Operation task = lease.begin();
+        lease.close();
+        assertFalse(lease.managedResourcesDrained());
+        assertThrows(IllegalStateException.class, task::close);
+        task.close(); lease.close();
+        assertFalse(lease.managedResourcesDrained());
+        assertEquals(1, attempts.get());
+    }
+
+    @Test public void completedTaskBeforeRetirementIsNotDrain() {
+        OcrRecognizerLease lease = new OcrRecognizerLease(() -> {});
+        OcrRecognizerLease.Operation task = lease.begin();
+        task.close();
+        assertFalse(lease.managedResourcesDrained());
+        lease.close();
+        assertTrue(lease.managedResourcesDrained());
+    }
 }

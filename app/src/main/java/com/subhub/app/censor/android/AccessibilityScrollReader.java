@@ -81,6 +81,23 @@ public final class AccessibilityScrollReader implements AutoCloseable {
     private final AtomicInteger copiedInputs = new AtomicInteger();
     private final Runnable rootAcquired;
     private final Predicate<Runnable> deliveryPost;
+    private final CensorEffectScope effects;
+    private final java.util.ArrayDeque<ReadRetry> readsWaiting = new java.util.ArrayDeque<>(); // Worker only.
+    private final java.util.ArrayDeque<DeliveryRetry> deliveriesWaiting = new java.util.ArrayDeque<>(); // Main only.
+    private final AtomicInteger retryPosts = new AtomicInteger();
+    private boolean readRetryPosted; // Worker only.
+    private boolean deliveryRetryPosted; // Main only.
+    private ScrollMotionLedger.Sample pendingGap; // Main only; no caller-owned event retained.
+    private static final class ReadRetry {
+        final Pending pending; final SerialOwnedLookup.Lease lease;
+        ReadRetry(Pending pending, SerialOwnedLookup.Lease lease) { this.pending = pending; this.lease = lease; }
+    }
+    private static final class DeliveryRetry {
+        final Pending pending; final SerialOwnedLookup.Lease lease; final ScrollMotionLedger.Sample sample; final boolean missing;
+        DeliveryRetry(Pending pending, SerialOwnedLookup.Lease lease, ScrollMotionLedger.Sample sample, boolean missing) {
+            this.pending = pending; this.lease = lease; this.sample = sample; this.missing = missing;
+        }
+    }
     private volatile boolean closed;
     private volatile int identityCount;
     private long deliveryIdentity;
@@ -99,7 +116,13 @@ public final class AccessibilityScrollReader implements AutoCloseable {
     /** Native control can hold the actual terminal post without replacing event/provider reads. */
     AccessibilityScrollReader(Predicate<ScrollMotionLedger.Scope> current, Observer observer, Runnable rootAcquired,
             Predicate<Runnable> deliveryPost) {
+        this(current, observer, rootAcquired, deliveryPost, CensorEffectScope.DEVICE);
+    }
+
+    AccessibilityScrollReader(Predicate<ScrollMotionLedger.Scope> current, Observer observer, Runnable rootAcquired,
+            Predicate<Runnable> deliveryPost, CensorEffectScope effects) {
         this.current = Objects.requireNonNull(current); this.observer = Objects.requireNonNull(observer);
+        this.effects = Objects.requireNonNull(effects);
         this.rootAcquired = Objects.requireNonNull(rootAcquired);
         this.deliveryPost = deliveryPost == null ? main::post : deliveryPost;
         worker = Executors.newSingleThreadExecutor(action -> new Thread(() -> {
@@ -112,10 +135,17 @@ public final class AccessibilityScrollReader implements AutoCloseable {
     /** Copies primitives/parcel on main; no source/root/parent Binder lookup occurs in this call. */
     @SuppressWarnings("deprecation")
     public void offer(AccessibilityEvent event, ScrollMotionLedger.Scope scope, String packageName) {
+        if (effects == CensorEffectScope.DEVICE) offerAdmitted(event, scope, packageName);
+        else if (!effects.run(() -> offerAdmitted(event, scope, packageName))) missingOffer(scope);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void offerAdmitted(AccessibilityEvent event, ScrollMotionLedger.Scope scope, String packageName) {
         onMain(); Objects.requireNonNull(event); Objects.requireNonNull(scope); Objects.requireNonNull(packageName);
         if (closed || !current.test(scope) || event.getEventType() != AccessibilityEvent.TYPE_VIEW_SCROLLED
                 || event.getWindowId() != scope.windowId || !packageName.contentEquals(event.getPackageName())) return;
         if (deliveryIdentity == Long.MAX_VALUE) { failedCleanup(); return; }
+        flushGapAdmitted();
         long receipt = SystemClock.uptimeMillis();
         long delivery = ++deliveryIdentity;
         if (copiedInputs.get() >= MAXIMUM_OUTSTANDING) {
@@ -162,20 +192,55 @@ public final class AccessibilityScrollReader implements AutoCloseable {
 
     @Override public void close() {
         onMain(); if (closed) return; closed = true;
-        queue.close();
-        try { worker.execute(this::clearIdentities); }
+        queue.close(); pendingGap = null;
+        while (!deliveriesWaiting.isEmpty()) deliveriesWaiting.removeFirst().lease.release();
+        try { worker.execute(() -> {
+            while (!readsWaiting.isEmpty()) readsWaiting.removeFirst().lease.release();
+            clearIdentities();
+        }); }
         catch (RejectedExecutionException failure) { failedCleanup(); }
         finally { worker.shutdown(); }
     }
 
     public boolean managedResourcesDrained() {
         return closed && copiedInputs.get() == 0 && queue.outstanding() == 0 && worker.isTerminated()
-                && identityCount == 0 && !cleanupFailed.get();
+                && identityCount == 0 && retryPosts.get() == 0 && !cleanupFailed.get();
     }
     public int outstanding() { return copiedInputs.get(); }
 
-    @SuppressWarnings("deprecation")
     private void read(Pending pending, SerialOwnedLookup.Lease lease) {
+        if (effects == CensorEffectScope.DEVICE) { readAdmitted(pending, lease); return; }
+        readsWaiting.addLast(new ReadRetry(pending, lease));
+        drainReads();
+    }
+
+    /** Retain the actual copied input, and FIFO ordering, when no native source was acquired. */
+    private void drainReads() {
+        while (!readsWaiting.isEmpty()) {
+            ReadRetry next = readsWaiting.peekFirst();
+            if (!eligible(next.pending, next.lease)) { readsWaiting.removeFirst().lease.release(); continue; }
+            try {
+                if (!effects.run(() -> readAdmitted(next.pending, next.lease))) {
+                    if (!readRetryPosted) {
+                        readRetryPosted = true;
+                        postRetry(() -> {
+                            if (closed) return; // The queued worker cleanup owns the retained inputs.
+                            try { worker.execute(() -> { readRetryPosted = false; drainReads(); }); }
+                            catch (RejectedExecutionException rejected) { if (!closed) failedCleanup(); }
+                        });
+                    }
+                    return;
+                }
+                readsWaiting.removeFirst(); // readAdmitted transferred/released this exact lease.
+            } catch (RuntimeException | Error failed) {
+                readsWaiting.removeFirst();
+                try { failedCleanup(); } finally { next.lease.release(); }
+            }
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void readAdmitted(Pending pending, SerialOwnedLookup.Lease lease) {
         long started = SystemClock.uptimeMillis();
         if (!eligible(pending, lease)) { lease.release(); return; }
         if (started - pending.receiptTime > MAXIMUM_QUEUE_MILLIS) {
@@ -226,18 +291,81 @@ public final class AccessibilityScrollReader implements AutoCloseable {
         postOwned(pending, lease, sample, false);
     }
 
-    /** Both ordinary observations and missing-input gaps retain the same bounded generation lease. */
+    /** Both observations and missing-input gaps retain the same bounded generation lease. */
     private void postOwned(Pending pending, SerialOwnedLookup.Lease lease, ScrollMotionLedger.Sample sample, boolean missing) {
         Runnable delivery = () -> {
-            try {
-                if (eligible(pending, lease)) {
-                    if (missing) observer.gap(sample);
-                    else observer.observed(sample);
-                }
-            } finally { lease.release(); }
+            if (effects == CensorEffectScope.DEVICE) {
+                try { deliverAdmitted(pending, lease, sample, missing); } finally { lease.release(); }
+            } else {
+                deliveriesWaiting.addLast(new DeliveryRetry(pending, lease, sample, missing));
+                drainDeliveries();
+            }
         };
         try { if (!deliveryPost.test(delivery)) { failedCleanup(); lease.release(); } }
-        catch (RuntimeException | Error failure) { failedCleanup(); lease.release(); }
+        catch (RuntimeException | Error failure) {
+            // Arbitrary test/host posters can enqueue before throwing. The actual delivery still
+            // owns the lease; do not dispose input/native resources before it returns.
+            failedCleanup();
+            if (effects == CensorEffectScope.DEVICE) lease.release();
+        }
+    }
+
+    /** A refused late delivery retries only publication, never the already completed native read. */
+    private void drainDeliveries() {
+        onMain();
+        while (!deliveriesWaiting.isEmpty() && !eligible(deliveriesWaiting.peekFirst().pending,
+                deliveriesWaiting.peekFirst().lease)) deliveriesWaiting.removeFirst().lease.release();
+        if (closed) { pendingGap = null; return; }
+        if (pendingGap == null && deliveriesWaiting.isEmpty()) return;
+        try {
+            if (!effects.run(() -> {
+                flushGapAdmitted();
+                while (!deliveriesWaiting.isEmpty()) {
+                    DeliveryRetry next = deliveriesWaiting.removeFirst();
+                    try { deliverAdmitted(next.pending, next.lease, next.sample, next.missing); }
+                    finally { next.lease.release(); }
+                }
+            }) && !deliveryRetryPosted) {
+                deliveryRetryPosted = true;
+                postRetry(() -> { deliveryRetryPosted = false; drainDeliveries(); });
+            }
+        } catch (RuntimeException | Error failure) { failedCleanup(); }
+    }
+
+    /** Never retain the caller's recyclable event when offer admission was refused. */
+    private void missingOffer(ScrollMotionLedger.Scope scope) {
+        onMain();
+        if (closed || !current.test(scope)) return;
+        if (deliveryIdentity == Long.MAX_VALUE) { failedCleanup(); return; }
+        queue.invalidate(); // Older queued/read/posted packets cannot cross this known missing input.
+        pendingGap = new ScrollMotionLedger.Sample(scope, ++deliveryIdentity, 0, 0, -1,
+                SystemClock.uptimeMillis(), -1, -1, ScrollMotionLedger.Coordinate.unknown(),
+                ScrollMotionLedger.Coordinate.unknown(), null);
+        drainDeliveries(); // Retains a wake even if no later foreground/scroll event arrives.
+    }
+    private void flushGapAdmitted() {
+        ScrollMotionLedger.Sample gap = pendingGap;
+        pendingGap = null;
+        if (gap != null && !closed && current.test(gap.scope)) observer.gap(gap);
+    }
+    private void postRetry(Runnable action) {
+        retryPosts.incrementAndGet();
+        Runnable callback = () -> {
+            try { action.run(); } finally { retryPosts.decrementAndGet(); }
+        };
+        try {
+            if (!main.postDelayed(callback, 16L)) { retryPosts.decrementAndGet(); failedCleanup(); }
+        } catch (RuntimeException | Error uncertain) {
+            // A possible accepted callback remains counted until its actual terminal return.
+            failedCleanup();
+        }
+    }
+
+    private void deliverAdmitted(Pending pending, SerialOwnedLookup.Lease lease, ScrollMotionLedger.Sample sample, boolean missing) {
+        if (eligible(pending, lease)) {
+            if (missing) observer.gap(sample);
+            else observer.observed(sample);
+        }
     }
 
     private boolean eligible(Pending pending, SerialOwnedLookup.Lease lease) {
@@ -265,7 +393,9 @@ public final class AccessibilityScrollReader implements AutoCloseable {
     }
     private void deliverMainGap(ScrollMotionLedger.Sample sample) {
         onMain();
-        if (!closed && current.test(sample.scope)) observer.gap(sample);
+        if (effects == CensorEffectScope.DEVICE) {
+            if (!closed && current.test(sample.scope)) observer.gap(sample);
+        } else effects.run(() -> { if (!closed && current.test(sample.scope)) observer.gap(sample); });
     }
 
     private void clearIdentities() {

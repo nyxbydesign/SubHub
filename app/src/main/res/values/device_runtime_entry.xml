@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="device_start_unavailable">The session could not start. Check protection readiness and try again.</string>
+    <string name="device_start_cancelled">Session start was cancelled.</string>
+    <string name="device_start_occupied">Another session is already running or starting.</string>
+    <string name="device_start_not_ready">Required Android permissions or protection settings are not ready.</string>
+    <string name="device_start_recovery_required">Session recovery is required before protection can start.</string>
+    <string name="device_start_route_capacity">Permission history is full. Open a new Home screen, then choose your session settings again.</string>
+    <string name="device_start_new_home">New Home</string>
+    <string name="device_start_new_home_unavailable">Could not confirm a new Home screen. Your session state has not been cleared.</string>
+</resources>

@@ -9,7 +9,7 @@ import org.junit.Test;
 public final class DomAchievementCatalogTest {
     @Test public void domCatalogHasDistinctPositiveMilestonesAndDedicatedArtwork() {
         Set<String> ids = new HashSet<>(); Set<Integer> art = new HashSet<>();
-        assertEquals(17, DomAchievementCatalog.all().size());
+        assertEquals(20, DomAchievementCatalog.all().size());
         for (AchievementManager.Achievement value : DomAchievementCatalog.all()) {
             assertTrue(ids.add(value.getId())); assertTrue(art.add(value.getBadgeArtRes()));
             assertEquals(AchievementRole.DOM, value.getRole());
@@ -32,9 +32,9 @@ public final class DomAchievementCatalogTest {
 
     @Test public void sameCurrencyPaymentsAcrossDistinctSubsCanReachTheMilestone() {
         DomStatsSnapshot snapshot = DomStatsSnapshot.aggregate(Arrays.asList(
-                sub("a", 500, 0), sub("b", 600, 0)), 1_000);
-        assertEquals(1_100, DomAchievementCatalog.current("dom_tribute_10", snapshot));
-        assertEquals(1_000, AchievementManager.target("dom_tribute_10"));
+                sub("a", 5_000, 0), sub("b", 6_000, 0)), 1_000);
+        assertEquals(11_000, DomAchievementCatalog.current("dom_tribute_10", snapshot));
+        assertEquals(10_000, AchievementManager.target("dom_tribute_10"));
     }
 
     @Test public void sessionTimeAndCountUseDifferentExistingFacts() {
@@ -43,6 +43,28 @@ public final class DomAchievementCatalogTest {
         assertEquals(7_200, DomAchievementCatalog.current("dom_time_1hr", snapshot));
         assertEquals(10, DomAchievementCatalog.current("dom_sessions_10", snapshot));
         assertEquals(2, DomAchievementCatalog.current("dom_subs_3", snapshot));
+    }
+
+    @Test public void combinedTimeAndPaidTributeGoalsIncreaseExactlyTenfold() {
+        assertEquals(36_000, AchievementManager.target("dom_time_1hr"));
+        assertEquals(864_000, AchievementManager.target("dom_time_24hr"));
+        assertEquals(6_048_000, AchievementManager.target("dom_time_7days"));
+        assertEquals(25_920_000, AchievementManager.target("dom_time_30days"));
+        assertEquals(10_000, AchievementManager.target("dom_tribute_10"));
+        assertEquals(250_000, AchievementManager.target("dom_tribute_250"));
+        assertEquals(1_000_000, AchievementManager.target("dom_tribute_1000"));
+        assertEquals(10_000_000, AchievementManager.target("dom_tribute_10000"));
+        assertEquals(10, AchievementManager.target("dom_sessions_10"));
+        assertEquals(100, AchievementManager.target("dom_sessions_100"));
+        assertEquals(3_600, AchievementManager.target("time_1hr"));
+        assertEquals(1_000, AchievementManager.target("wallet_paid_10"));
+    }
+
+    @Test public void movedConfigurationBadgesKeepTheirPersistedIdsAndBelongOnlyToDom() {
+        for (String id : Arrays.asList("first_custom_phrase", "phrase_library", "paypal_vault")) {
+            assertTrue(AchievementRole.DOM.owns(id)); assertFalse(AchievementRole.SUB.owns(id));
+            assertTrue(DomAchievementCatalog.all().stream().anyMatch(value -> id.equals(value.getId())));
+        }
     }
 
     private static DomStatsSnapshot.Sub sub(String id, long eur, long usd) {

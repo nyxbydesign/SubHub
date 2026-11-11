@@ -1,0 +1,320 @@
+package com.subhub.app.people;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import com.subhub.app.R;
+import com.subhub.app.security.ControllerPinManager;
+import com.subhub.app.internal.*;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.IdentityHashMap;
+import java.util.Map;
+
+/** One data-only internal backend. Provisioning evidence is independent of its owned directory. */
+public final class InternalSubData {
+    private static final String REGISTRY = "subhub_internal_registry", STATE = "provisioning";
+    private static final java.util.Set<Context> FAILED = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+    private static final Map<Context, InternalSubData> OPEN = new IdentityHashMap<>();
+    private static final Map<Context, java.util.concurrent.CompletableFuture<InternalSubData>> OPENING = new IdentityHashMap<>();
+    private final java.util.concurrent.ExecutorService writes = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-internal-writes"));
+    private volatile Thread ownerThread;
+    private volatile boolean ownerDataReady;
+    public void execute(Runnable mutation) { writes.execute(() -> { ownerThread = Thread.currentThread(); mutation.run(); }); }
+    public boolean isOwnerThread() { return Thread.currentThread() == ownerThread; }
+    public boolean ownerDataReady() { return ownerDataReady; }
+    public InternalOwnerDataBroker ownerData() {
+        if (!ownerDataReady) throw new IllegalStateException("Internal owner data is unavailable");
+        return InternalOwnerDataBroker.attached(this);
+    }
+    /** UI/page workers may await the sole owner worker; that worker and main must never join themselves. */
+    public <T> T await(java.util.concurrent.CompletableFuture<T> result) {
+        if (isOwnerThread() || android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Await internal data only from a separate page worker");
+        try { return result.get(); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException("Internal data wait interrupted", interrupted); }
+        catch (java.util.concurrent.ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            if (cause instanceof Error) throw (Error) cause;
+            throw new IllegalStateException("Internal data operation failed", cause);
+        }
+    }
+    void initializeOwnerData(Context physical, OwnerDataProvisioning.Decision decision) {
+        InternalOwnerDataBroker broker = InternalOwnerDataBroker.attach(physical, this, decision, record -> record.visible);
+        await(broker.initialize()); ownerDataReady = true;
+    }
+    public final InternalSubStore store;
+    public final InternalConfigurationStore configuration;
+    public final InternalStorageScope storage;
+    private volatile InternalSubRecord acknowledged;
+    private volatile Presentation presentation;
+    private static final java.util.concurrent.ExecutorService PRESENTATIONS = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-internal-presentation"));
+    private final java.util.concurrent.atomic.AtomicBoolean presentationPending = new java.util.concurrent.atomic.AtomicBoolean();
+    private static final class Presentation {
+        final PersonSnapshot value;
+        final InternalPresentationStamp stamp;
+        Presentation(InternalSubRecord record, PersonSnapshot value, long controller, long dataRevision,
+                com.subhub.app.stats.OwnerObservation observed) {
+            this.value=value;
+            stamp=new InternalPresentationStamp(record,dataRevision,controller,observed);
+        }
+    }
+    /** Invalidation hint only. It grants neither profile authority nor owner-data readiness. */
+    public long presentationRevisionHint() {
+        if (!ownerDataReady) return -1;
+        return ownerData().acknowledgedRevisionHint(acknowledged.generation);
+    }
+    public PersonSnapshot peekPresentation() {
+        Presentation cached=presentation; InternalSubRecord record=acknowledged;
+        return cached!=null&&cached.stamp.current(record,presentationRevisionHint(),ControllerPinManager.domWorkspaceRevision())?cached.value:null;
+    }
+    InternalPresentationStamp presentationStamp(PersonSnapshot value) {
+        Presentation cached=presentation;
+        return cached!=null&&cached.value==value&&peekPresentation()==value?cached.stamp:null;
+    }
+    public InternalRuntimePresentationSnapshot loadRuntimePresentation(Context physical, InternalSubRecord record) {
+        if (isOwnerThread() || android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Load internal observations from a separate page worker");
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        if (!DummySubPreview.current(physical,record.generation,controller)) throw new SecurityException("Internal presentation authority changed");
+        java.util.Set<String> packages=new java.util.LinkedHashSet<>();
+        Map<String,Object> apps=record.configuration().get("apps");
+        @SuppressWarnings("unchecked") java.util.Set<String> selected=(java.util.Set<String>)apps.get("app_included_packages_v1");
+        packages.addAll(selected);
+        if(Boolean.TRUE.equals(apps.get("app_include_all_v1"))) {
+            @SuppressWarnings("unchecked") java.util.Set<String> catalog=(java.util.Set<String>)apps.get("app_include_all_packages_v1");
+            packages.addAll(catalog);
+        }
+        InternalRuntimePresentationSnapshot observed=await(ownerData().readProjection(record.generation,
+                com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis()), packages));
+        if(!DummySubPreview.current(physical,record.generation,controller)||!observed.record.equals(record)
+                ||!InternalPresentationCalendar.current(observed.observed,com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
+            throw new SecurityException("Internal presentation changed during observation");
+        return observed;
+    }
+    public PersonSnapshot loadPresentation(Context physical, InternalSubRecord record) {
+        if (isOwnerThread() || android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Build internal presentation on a separate page worker");
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        if(!DummySubPreview.current(physical,record.generation,controller))throw new SecurityException("Internal presentation authority changed");
+        // Preserve the page's stale-result contract without mixing old profile data with newer statistics.
+        // This result is deliberately never installed in the current presentation cache.
+        if (!record.equals(acknowledged)) return InternalPersonPresentation.snapshot(physical,record);
+        long revision=presentationRevisionHint(); Presentation cached=presentation;
+        if(cached!=null&&cached.stamp.current(record,revision,controller))return cached.value;
+        InternalRuntimePresentationSnapshot observed=revision<0?null:loadRuntimePresentation(physical,record);
+        com.subhub.app.stats.OwnerObservation calendar=observed==null
+                ?com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis()):observed.observed;
+        PersonSnapshot value=InternalPersonPresentation.snapshot(physical,record,observed);
+        long observedRevision=observed==null?-1:observed.revision();
+        boolean current=DummySubPreview.current(physical,record.generation,controller);
+        synchronized(this){if(current&&acknowledged.revision==record.revision&&acknowledged.generation.equals(record.generation)
+                &&presentationRevisionHint()==observedRevision
+                &&InternalPresentationCalendar.current(calendar,com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
+                    presentation=new Presentation(record,value,controller,observedRevision,calendar);}
+        return value;
+    }
+    public void requestPresentation(Context physical) {
+        if(peekPresentation()!=null||!presentationPending.compareAndSet(false,true))return;
+        Context app=physical.getApplicationContext();
+        PRESENTATIONS.execute(()->{try{loadPresentation(app,acknowledged);}
+            catch(RuntimeException unavailable){/* Keep presentation unknown; page-owned loads report the failure. */}
+            finally{presentationPending.set(false);}});
+    }
+    /** Presentation cache only. Mutations and runtime admission independently reread/CAS storage. */
+    public InternalSubRecord acknowledged() { return acknowledged; }
+    private InternalSubData(FileInternalSubBackend backend) {
+        store = InternalConfigurationStore.open(backend);
+        configuration = new InternalConfigurationStore(store);
+        storage = backend.scope();
+        acknowledged = store.read();
+        store.addListener((previous, current) -> {
+            synchronized (this) {
+                if (current.revision > acknowledged.revision) acknowledged = current;
+            }
+        });
+    }
+    public static boolean provisioned(Context source) {
+        Context app = physical(source);
+        synchronized (InternalSubData.class) { if (FAILED.contains(app)) return false; }
+        return "ready".equals(app.getSharedPreferences(REGISTRY, 0).getString(STATE, ""));
+    }
+    public static InternalSubData peek(Context source) {
+        Context app = physical(source);
+        synchronized (InternalSubData.class) { return FAILED.contains(app) ? null : OPEN.get(app); }
+    }
+    public static InternalSubData get(Context source) {
+        Context app = physical(source);
+        InternalSubData cached = peek(app); if (cached != null) return cached;
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Load internal data on the page worker first");
+        if (!provisioned(app)) throw new IllegalStateException("Internal Sub is not provisioned");
+        java.util.concurrent.CompletableFuture<InternalSubData> pending;
+        boolean opener;
+        synchronized (InternalSubData.class) {
+            if (FAILED.contains(app)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+            cached = OPEN.get(app); if (cached != null) return cached;
+            pending = OPENING.get(app); opener = pending == null;
+            if (opener) { pending = new java.util.concurrent.CompletableFuture<>(); OPENING.put(app, pending); }
+        }
+        if (opener) {
+            try {
+                InternalSubData opened = new InternalSubData(FileInternalSubBackend.openExisting(parent(app, false)));
+                // This is the chosen singleton, not a speculative candidate. Ordinary reads never provision.
+                try { opened.initializeOwnerData(app, OwnerDataProvisioning.Decision.OPEN_EXISTING); }
+                catch (RuntimeException unavailable) {
+                    // Retain readable profile data, but the attached failed broker stays unavailable.
+                    // A missing runtime namespace is not evidence authorizing profile-only migration.
+                    opened.ownerDataReady = false;
+                    InternalOwnerDataBroker.attached(opened).closeAfterDrain().exceptionally(ignored -> null);
+                }
+                synchronized (InternalSubData.class) {
+                    if (FAILED.contains(app)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+                    OPEN.put(app, opened); OPENING.remove(app);
+                }
+                com.subhub.app.tasks.InternalTaskRuntime.ownerReady(app, opened);
+                pending.complete(opened);
+            } catch (Throwable unavailable) {
+                synchronized (InternalSubData.class) { FAILED.add(app); OPENING.remove(app); }
+                pending.completeExceptionally(unavailable);
+            }
+        }
+        try { return pending.get(); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException("Internal data open interrupted", interrupted); }
+        catch (java.util.concurrent.ExecutionException unavailable) { throw new IllegalStateException("Internal Sub data unavailable", unavailable.getCause()); }
+    }
+    /** Page workers distinguish absent data from a failed established open. */
+    public static boolean loadIfProvisioned(Context source) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Read internal data on the page worker");
+        Context app = physical(source);
+        String state = app.getSharedPreferences(REGISTRY, 0).getString(STATE, "");
+        if (state.isEmpty()) {
+            Boolean legacy = legacyVisibility(app);
+            if (legacy == null) return false;
+            if (!DummySubPreview.authorized(app)) return false;
+            provision(app); return true;
+        }
+        if (!"ready".equals(state)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+        InternalSubData value = get(app);
+        try {
+            InternalSubRecord durable = value.configuration.read();
+            synchronized (value) {
+                // A concurrent CAS listener may already have published a newer ACK while this read completed.
+                if (durable.revision >= value.acknowledged.revision) value.acknowledged = durable;
+            }
+        } catch (RuntimeException unavailable) {
+            synchronized (InternalSubData.class) { FAILED.add(app); }
+            throw unavailable;
+        }
+        return true;
+    }
+    /** First provision is explicit toggle or a recognized, one-time legacy visibility migration. */
+    static InternalSubData provision(Context source) {
+        return provision(source, InternalSubData::syncTrustedDirectory);
+    }
+    @FunctionalInterface interface DirectorySync { void sync(File trustedParent) throws java.io.IOException; }
+    /** Per-call seam lets an owned fixture reject directory acknowledgement without global hooks. */
+    static InternalSubData provision(Context source, DirectorySync directorySync) {
+        Context app = physical(source);
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Provision internal data on a worker");
+        long controller = com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+        if (!DummySubPreview.authorized(app)) throw new SecurityException("Dom workspace unavailable");
+        SharedPreferences registry = app.getSharedPreferences(REGISTRY, 0);
+        String state = registry.getString(STATE, "");
+        if ("ready".equals(state)) return get(app);
+        if (!state.isEmpty()) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+        com.subhub.app.runtime.RuntimeJournalMigration.requirePristineRegistries(registry.getAll(),
+                app.getSharedPreferences("subhub_internal_owner_data_registry", 0).getAll());
+        Boolean legacy = legacyVisibility(app);
+        // Admission orders this data-only migration before any later controller revocation.
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            if (!DummySubPreview.authorized(app) || controller != com.subhub.app.security.ControllerPinManager.domWorkspaceRevision())
+                throw new SecurityException("Dom workspace changed");
+        }
+        synchronized (InternalSubData.class) {
+            if (FAILED.contains(app)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
+            // A caller may have observed empty metadata before another first-create finished.
+            // Revalidate at the in-process claim boundary; never overwrite its READY/receipt.
+            com.subhub.app.runtime.RuntimeJournalMigration.requirePristineRegistries(registry.getAll(),
+                    app.getSharedPreferences("subhub_internal_owner_data_registry", 0).getAll());
+            // Claim once before any disk work. No global monitor spans fsync or callbacks.
+            FAILED.add(app);
+        }
+        // Commit can update memory before failing. Either outcome deliberately prevents blind reseeding.
+        if (!registry.edit().putString(STATE, "started").commit())
+            throw new IllegalStateException("Internal Sub provisioning was not acknowledged");
+        InternalSubData value = null;
+        try {
+            value = new InternalSubData(FileInternalSubBackend.createNew(parent(app, true, directorySync),
+                    InternalProfileAdapter.fromProfileData(new ProfileData(app.getString(R.string.dummy_sub_title),
+                            app.getString(R.string.dummy_sub_description), "")), InternalConfigurationStore.defaults()));
+            // Preserve the birth generation before legacy visibility rotates the current route.
+            String originalGeneration = value.store.read().generation;
+            // The private owner data must acknowledge initialization before profile READY publication.
+            value.initializeOwnerData(app, OwnerDataProvisioning.Decision.FIRST_INTERNAL_CREATE);
+            if (Boolean.TRUE.equals(legacy)) value.store.setVisible(value.store.read(), true);
+            // Carry only the old visible/hidden choice. No old editor, physical profile, or session authority is imported.
+            // Exact historical read-only visibility migration (or explicit first toggle) is the
+            // only producer. This receipt and profile READY share one acknowledged commit. Never
+            // add a missing receipt in get/load/open: newer partial/corrupt data needs recovery.
+            String ownerCreation = com.subhub.app.runtime.RuntimeJournalMigration.firstCreationReceipt(
+                    originalGeneration);
+            if (!registry.edit().putString(STATE, "ready")
+                    .putString(com.subhub.app.runtime.RuntimeJournalMigration.RECEIPT, ownerCreation)
+                    .putString(com.subhub.app.runtime.RuntimeJournalMigration.ORIGINAL_GENERATION, originalGeneration).commit()) {
+                throw new IllegalStateException("Internal Sub provisioning was not acknowledged");
+            }
+            synchronized (InternalSubData.class) { OPEN.put(app, value); FAILED.remove(app); }
+            com.subhub.app.tasks.InternalTaskRuntime.ownerReady(app, value);
+            return value;
+        } catch (java.io.IOException | RuntimeException unavailable) {
+            if (value != null) value.disposeUnpublished();
+            throw new IllegalStateException("Internal Sub provisioning failed", unavailable);
+        }
+    }
+    private void disposeUnpublished() {
+        java.util.concurrent.CompletableFuture<Void> closing;
+        try { closing = InternalOwnerDataBroker.attached(this).closeAfterDrain(); }
+        catch (RuntimeException noBroker) { writes.shutdown(); return; }
+        closing.whenComplete((ignored, failure) -> writes.shutdown());
+        if (!Thread.currentThread().isInterrupted()) {
+            try { await(closing); } catch (RuntimeException closedUnavailable) { /* Original provision failure remains authoritative. */ }
+        }
+    }
+    private static Boolean legacyVisibility(Context app) {
+        Map<String, ?> old = app.getSharedPreferences(DummySubPreview.PREFERENCES_NAME, 0).getAll();
+        if (old.isEmpty()) return null;
+        if (old.size() != 1 || !(old.get("enabled") instanceof Boolean))
+            throw new IllegalStateException("Legacy internal Sub visibility needs recovery");
+        return (Boolean) old.get("enabled");
+    }
+    private static Context physical(Context source) {
+        Context app = source.getApplicationContext();
+        if (app instanceof InternalSubContext) throw new SecurityException("Physical application context required");
+        return app;
+    }
+    private static File parent(Context app, boolean create) throws java.io.IOException {
+        return parent(app, create, InternalSubData::syncTrustedDirectory);
+    }
+    private static File parent(Context app, boolean create, DirectorySync directorySync) throws java.io.IOException {
+        // Only the framework-provided boundary may resolve platform aliases. Never canonicalize
+        // the independently owned internal_subs entry or allow it to become a symlink.
+        File trusted = app.getNoBackupFilesDir().getCanonicalFile();
+        File parent = new File(trusted, "internal_subs");
+        if (create && !Files.exists(parent.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) Files.createDirectory(parent.toPath());
+        if (Files.isSymbolicLink(parent.toPath()) || !Files.isDirectory(parent.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            throw new java.io.IOException("Internal Sub parent unavailable");
+        // Seal the new directory entry before profile creation or registry READY acknowledgement.
+        // Also sync a preexisting entry: its presence alone is not a durable-create receipt.
+        if (create) directorySync.sync(trusted);
+        return parent;
+    }
+    private static void syncTrustedDirectory(File directory) throws java.io.IOException {
+        try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(directory.toPath(),
+                java.nio.file.StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            channel.force(true);
+        }
+    }
+}

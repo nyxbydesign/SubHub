@@ -33,6 +33,8 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
     private ActivityRepository previousActivity;
     private FormalRelationshipProvider formal;
     private RemoteActivityRepository activity;
+    private boolean allowAcknowledgement;
+    private final java.util.List<String> acknowledged = new java.util.ArrayList<>();
 
     @Before public void prepareScope() throws Exception {
         Context original = context;
@@ -50,7 +52,7 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
                 new RemoteActivityRepository.Notifications() {
                     public boolean enabled(Context c) { return false; }
                     public boolean show(Context c, ActivityEntry e) { fail("Unexpected notification"); return false; }
-                    public void cancel(Context c, ActivityEntry e) { fail("Unexpected acknowledgement"); }
+                    public void cancel(Context c, ActivityEntry e) { assertTrue("Unexpected acknowledgement", allowAcknowledgement); acknowledged.add(e.key); }
                     public void cancelPeer(Context c, PersonId p) { fail("Unexpected revocation notification"); }
                 });
         java.lang.reflect.Field worker = RemoteActivityRepository.class.getDeclaredField("worker");
@@ -149,6 +151,26 @@ public final class DomSubjectScopeActivityAndroidTest extends LinkingFixture {
         store.revoke(SUB, invite.id);
         assertTrue(activity.load(null, 20).entries.isEmpty());
         assertEquals(0, activity.unreadCount());
+        assertEquals(1, activity.load("local:MAX", 20).entries.size());
+    }
+
+    @Test public void markAllUsesTheVerifiedContinuityGateWithoutNestingItInsideSql() throws Exception {
+        PairingInvite invite = PairingInvite.create(DOM, "Synthetic Dom", System.currentTimeMillis());
+        store.saveInvite(invite); store.bindInvite(invite.id, SUB, invite.tokenHash(), System.currentTimeMillis());
+        store.approveInvite(invite.id, SUB, "Synthetic Sub", System.currentTimeMillis()); store.activate(SUB, invite.id);
+        RemoteStore.Peer peer = store.peer(SUB, invite.id);
+        ActivityEvent event = new ActivityEvent("gate_bulk", ActivityEvent.Kind.APP_OPENED,
+                System.currentTimeMillis(), "com.android.settings", 0, "", "", 0);
+        String key = RemoteActivityStore.entryKey(peer, event.id);
+        db().execSQL("INSERT INTO activity_receipts(entry_key,peer,generation,event_id,body,received) VALUES(?,?,?,?,?,?)",
+                new Object[]{key, SUB, invite.id, event.id, RemoteActivityWire.encode(event, "UTC", "").toString(), event.observedAt});
+        assertNotNull("Exercise a registered continuity witness, not an unbound fake", LinkingWitness.attachedWithoutIo(store));
+        assertEquals(1, activity.unreadCount());
+        allowAcknowledgement = true;
+        activity.markAllRead();
+        assertEquals(0, activity.unreadCount());
+        assertEquals(java.util.List.of(key), acknowledged);
+        assertFalse("Repository leaves no transaction open", db().inTransaction());
         assertEquals(1, activity.load("local:MAX", 20).entries.size());
     }
 

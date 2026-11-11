@@ -119,7 +119,7 @@ public final class PopupStormActivity extends AppCompatActivity {
             androidx.core.view.ViewCompat.setStateDescription(binding.buttonAdvancedDetails,
                     getString(expanded ? R.string.section_expanded : R.string.section_collapsed));
         });
-        if (!FeatureEditorSession.preview(this))
+        if (!FeatureEditorSession.remote(this))
             editMode = ControllerEditMode.bind(
                     this, PrimaryHeader.editLockButton(binding.getRoot()), editing -> applyEditState());
         if (FeatureEditorSession.remote(this)) {
@@ -171,6 +171,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestOverlayOrPreview() {
+        if (FeatureEditorSession.remote(this)) return;
         if (!FeatureEditorSession.canEdit(this, "popup")) return;
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.popup_overlay_permission, Toast.LENGTH_LONG).show();
@@ -210,7 +211,7 @@ public final class PopupStormActivity extends AppCompatActivity {
 
     private void applyPreset(int step) {
         if (!FeatureEditorSession.canEdit(this, "popup")) return;
-        IntensityPresets.values()[step].apply(this);
+        IntensityPresets.values()[step].apply(FeatureEditorSession.context(this));
         renderPreset();
         rebuildSettings();
         if (!FeatureEditorSession.remote(this)) PopupStormManager.get().reloadSettings(this);
@@ -295,6 +296,20 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void setEffectEnabled(boolean enabled) {
+        if (FeatureEditorSession.internal(this) && enabled && !preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
+            if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
+            renderEnabled();
+            com.subhub.app.util.ThemedDialogs.builder(this)
+                    .setTitle(R.string.popup_photosensitivity_title).setMessage(R.string.popup_photosensitivity_body)
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> renderEnabled())
+                    .setPositiveButton(R.string.popup_acknowledge, (dialog, which) -> {
+                        if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
+                        preferences.edit().putBoolean(PopupStormSettings.K_ACK, true)
+                                .putBoolean(PopupStormSettings.K_ENABLED, true).apply();
+                        renderEnabled();
+                    }).show();
+            return;
+        }
         if (FeatureEditorSession.remote(this)) {
             if (FeatureEditorSession.canEdit(this, "popup")) preferences.edit().putBoolean(PopupStormSettings.K_ENABLED, enabled).apply();
             renderEnabled(); return;
@@ -321,6 +336,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void requestEnableOverlay() {
+        if (FeatureEditorSession.remote(this)) return;
         if (!FeatureEditorSession.canEdit(this, "popup")) { renderEnabled(); return; }
         if (!Settings.canDrawOverlays(this)) {
             renderEnabled();
@@ -331,6 +347,7 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     private void completeEnable() {
+        if (FeatureEditorSession.remote(this)) return;
         if (!FeatureEditorSession.canEdit(this, "popup") || !Settings.canDrawOverlays(this)
                 || !preferences.getBoolean(PopupStormSettings.K_ACK, false)) {
             renderEnabled();
@@ -634,8 +651,9 @@ public final class PopupStormActivity extends AppCompatActivity {
     }
 
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
+        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

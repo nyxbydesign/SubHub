@@ -5,6 +5,7 @@ import java.util.Objects;
 /** Stable selection identity, independent of a display name or transport address. */
 public final class PersonId {
     public static final PersonId LOCAL = new PersonId("local");
+    public static final PersonId INTERNAL = new PersonId("dummy_sub_preview");
     private final String value;
 
     public PersonId(String value) {

@@ -79,8 +79,26 @@ public final class ExtraTimeRequestAndroidTest {
     @Test public void submissionChargesOnceAndApprovalAppliesOnlyItsTemporaryAppCredit() throws Exception {
         try (RemoteExtraTimeUiFixture fixture = RemoteExtraTimeUiFixture.setupSub(context)) {
             ExtraTimeRequests sub = fixture.subRequests();
-            ExtraTimeRequests.Request request = sub.submit(fixture.firstPackage,100,"EUR");
+            ExtraTimeRequests.Snapshot offered = sub.snapshot(System.currentTimeMillis());
+            assertFalse(offered.scope.isEmpty());
+            assertThrows(IllegalArgumentException.class,()->sub.submit(fixture.firstPackage,100,"EUR",null));
+            assertThrows(IllegalArgumentException.class,()->sub.submit(fixture.firstPackage,100,"EUR",""));
+            fixture.setSubAppTimeSupport(false);
+            ExtraTimeRequests.Snapshot unsupported = sub.snapshot(System.currentTimeMillis());
+            assertFalse(unsupported.supported); assertFalse(unsupported.canRequest);
+            assertEquals(offered.scope,unsupported.scope);
+            assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR"));
+            assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR",offered.scope));
+            assertTrue(new ExtraTimeStore(context).load(offered.scope).isEmpty());
+            assertTrue(new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
+            fixture.setSubAppTimeSupport(true);
+            assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR",offered.scope+"_stale"));
+            assertTrue(new ExtraTimeStore(context).load(offered.scope).isEmpty());
+            assertTrue(new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().isEmpty());
+            ExtraTimeRequests.Request request = sub.submit(fixture.firstPackage,100,"EUR",offered.scope);
             assertEquals(request.id,sub.submit(fixture.firstPackage,100,"EUR").id);
+            assertEquals(request.id,sub.submit(fixture.firstPackage,100,"EUR",offered.scope).id);
+            assertThrows(SecurityException.class,()->sub.submit(fixture.firstPackage,100,"EUR",offered.scope+"_stale"));
             assertEquals(1,new PenanceManager(context).snapshot(System.currentTimeMillis()).getEvents().size());
             assertEquals(AppTimerManager.LimitStatus.PER_APP,new AppTimerManager(context).limitStatus(
                     fixture.firstPackage,java.util.Set.of(fixture.firstPackage),System.currentTimeMillis()));

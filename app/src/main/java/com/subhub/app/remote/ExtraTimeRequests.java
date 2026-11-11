@@ -60,12 +60,16 @@ public final class ExtraTimeRequests {
     public static final class Snapshot {
         public final boolean dom, supported, canRequest;
         public final String unavailableReason, domName, personName, currency;
+        /** Opaque local UI fence for the current peer and relationship generation. */
+        public final String scope;
         public final int tributeCents, pendingCount;
         public final List<App> apps;
         public final List<Request> requests;
         private Snapshot(boolean dom, boolean supported, boolean canRequest, String reason, String domName,
-                String personName, int tributeCents, String currency, List<App> apps, List<Request> requests) {
+                String personName, int tributeCents, String currency, List<App> apps, List<Request> requests,
+                String scope) {
             this.dom = dom; this.supported = supported; this.canRequest = canRequest;
+            this.scope = scope;
             unavailableReason = reason; this.domName = domName; this.personName = personName;
             this.tributeCents = tributeCents; this.currency = currency;
             this.apps = Collections.unmodifiableList(apps); this.requests = Collections.unmodifiableList(requests);
@@ -153,18 +157,31 @@ public final class ExtraTimeRequests {
                         : !eligible ? "App limits must be active to request time" : "";
                 return new Snapshot(dom, supported, !dom && eligible, reason,
                         !dom && peer != null ? peer.name : "", dom && peer != null ? peer.name : "",
-                        quote, tribute.getCurrency(), apps, requests);
+                        quote, tribute.getCurrency(), apps, requests, peer == null ? "" : scope(peer));
             } } } }
         });
         if (changed[0]) feature.changed();
         return result;
     }
     public Request submit(String packageName, int expectedTributeCents, String expectedCurrency) throws Exception {
+        return submitCurrent(packageName, expectedTributeCents, expectedCurrency, null);
+    }
+    /** Bind retained UI work to the relationship for which its quote was displayed. */
+    public Request submit(String packageName, int expectedTributeCents, String expectedCurrency,
+            String expectedScope) throws Exception {
+        if (expectedScope == null || expectedScope.isEmpty())
+            throw new IllegalArgumentException("Refresh the app-time request before trying again");
+        return submitCurrent(packageName, expectedTributeCents, expectedCurrency, expectedScope);
+    }
+    private Request submitCurrent(String packageName, int expectedTributeCents, String expectedCurrency,
+            String expectedScope) throws Exception {
         Request result = authority.authorityAccess(() -> {
             synchronized (SubFeaturePolicy.LOCK) { synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) { synchronized (authority) { synchronized (ExtraTimeStore.LOCK) {
                 RemoteStore.Peer peer = target();
                 if (!person.isLocal() || peer == null || !supported(authority, peer) || !locallyEnabled(context, peer))
                     throw new SecurityException("App-time requests are not available");
+                if (expectedScope != null && !expectedScope.equals(scope(peer)))
+                    throw new SecurityException("The relationship changed. Refresh the request and try again.");
                 long now = System.currentTimeMillis(); AppModeManager mode = new AppModeManager(context);
                 if (!mode.isEffectivelyArmed(now) || !new com.subhub.app.settings.FeatureModuleManager(context).isLimitsEnabled())
                     throw new IllegalStateException("App limits are not active");

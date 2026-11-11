@@ -33,6 +33,7 @@ import java.util.Set;
 /** A request never edits the configured daily allowance or grants time before a Dom decides. */
 public final class ExtraTimeActivity extends PreferencePage {
     public static final String EXTRA_PACKAGE = "subhub.extra_time.package";
+    public static final String EXTRA_OVERVIEW_LIMITS = "subhub.extra_time.overview_limits";
     private PersonId person;
     private AsyncUiScope data;
     private LinearLayout content;
@@ -54,6 +55,15 @@ public final class ExtraTimeActivity extends PreferencePage {
     };
 
     public static Intent intent(Context context, PersonId person, String packageName) {
+        if (person.isLocal()) {
+            Intent overview = new Intent(context, com.subhub.app.MainActivity.class)
+                    .setAction(Intent.ACTION_MAIN)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
+                    .putExtra(EXTRA_OVERVIEW_LIMITS, true);
+            if (packageName != null && !packageName.isEmpty()) overview.putExtra(EXTRA_PACKAGE, packageName);
+            return overview;
+        }
         Intent intent = new Intent(context, ExtraTimeActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.value());
         if (packageName != null && !packageName.isEmpty()) intent.putExtra(EXTRA_PACKAGE, packageName);
@@ -70,6 +80,11 @@ public final class ExtraTimeActivity extends PreferencePage {
         super.onCreate(state);
         try { person = PersonRoutes.requireId(getIntent()); }
         catch (RuntimeException invalid) { finish(); return; }
+        if (person.isLocal()) {
+            startActivity(intent(this, person, getIntent().getStringExtra(EXTRA_PACKAGE)));
+            finish();
+            return;
+        }
         if (state != null) {
             Bundle drafts = state.getBundle("extra_time_minutes");
             if (drafts != null) minuteDrafts.putAll(drafts);
@@ -81,7 +96,7 @@ public final class ExtraTimeActivity extends PreferencePage {
         content.setDefaultFocusHighlightEnabled(false);
         page.addView(content, new LinearLayout.LayoutParams(-1, -2));
         data = AsyncUiScope.forPage(this);
-        PersonUi.text(content, getString(R.string.role_loading), false);
+        PersonUi.text(content, getString(R.string.role_data_unknown), false);
     }
 
     @Override protected void onResume() {
@@ -143,6 +158,7 @@ public final class ExtraTimeActivity extends PreferencePage {
     }
 
     private void render(ExtraTimeRequests.Snapshot value) {
+        if (!value.dom) { finish(); return; }
         snapshot = value;
         String signature = signature(value) + pendingActions;
         if (signature.equals(rendered)) return;
@@ -155,8 +171,8 @@ public final class ExtraTimeActivity extends PreferencePage {
         int scrollY = scroll.position();
         content.removeAllViews();
         LinearLayout intro = ExtraTimeViews.card(content, "extra_time_intro");
-        PersonUi.text(intro, getString(value.dom ? R.string.extra_time_dom_intro : R.string.extra_time_sub_intro), false);
-        if (value.dom && value.personName != null && !value.personName.isEmpty())
+        PersonUi.text(intro, getString(R.string.extra_time_dom_intro), false);
+        if (value.personName != null && !value.personName.isEmpty())
             ExtraTimeViews.status(intro, getString(R.string.extra_time_for_person, value.personName), true);
         PersonUi.text(intro, getString(R.string.extra_time_today_only), false);
         if (value.unavailableReason != null && !value.unavailableReason.isEmpty()) {
@@ -164,7 +180,7 @@ public final class ExtraTimeActivity extends PreferencePage {
         } else if (!value.supported) {
             PersonUi.text(intro, getString(R.string.extra_time_update_devices), false);
         }
-        if (value.dom) renderDom(value); else renderSub(value);
+        renderDom(value);
         if (focusTag != null) {
             EditText field = content.findViewWithTag(focusTag);
             if (field != null && field.isEnabled()) {
@@ -177,51 +193,6 @@ public final class ExtraTimeActivity extends PreferencePage {
             content.requestFocus();
         }
         scroll.restorePosition(scrollY);
-    }
-
-    private void renderSub(ExtraTimeRequests.Snapshot value) {
-        if (value.apps.isEmpty()) {
-            PersonUi.text(ExtraTimeViews.card(content, "extra_time_empty"), getString(R.string.extra_time_sub_empty), false);
-            return;
-        }
-        String selected = getIntent().getStringExtra(EXTRA_PACKAGE);
-        boolean selectedExists = false;
-        for (ExtraTimeRequests.App app : value.apps) if (app.packageName.equals(selected)) selectedExists = true;
-        for (ExtraTimeRequests.App app : value.apps) {
-            if (selectedExists && !selected.equals(app.packageName)) continue;
-            LinearLayout card = ExtraTimeViews.card(content, "extra_time_app:" + app.packageName);
-            ExtraTimeViews.app(card, app.packageName, app.label, true, null);
-            String state = app.exhausted ? getString(app.combinedLimitReached
-                    ? R.string.extra_time_total_reached : R.string.extra_time_reached)
-                    : app.dailyMinutes > 0 || app.remainingMillis > 0 ? getString(R.string.extra_time_remaining,
-                            (Math.max(0L, app.remainingMillis) + 59_999L) / 60_000L) : "";
-            ExtraTimeViews.usage(card, app.usedMillis, app.dailyMinutes, app.bonusMinutes, state, app.exhausted, app.budgetMillis);
-            // Keep every receipt with its own outcome, rather than replacing it on the next request.
-            for (ExtraTimeRequests.Request request : value.requests) if (app.packageName.equals(request.packageName))
-                receipt(ExtraTimeViews.receipt(card, request.id), request);
-            if (app.pending == null && app.exhausted) {
-                boolean knownTribute = value.tributeCents >= 0;
-                if (value.tributeCents > 0) PersonUi.text(card, getString(R.string.extra_time_request_tribute,
-                        money(value.tributeCents, value.currency)), false);
-                else if (value.tributeCents == 0) PersonUi.text(card, getString(R.string.extra_time_no_tribute), false);
-                String key = "submit:" + app.packageName;
-                boolean sending = pendingActions.contains(key);
-                boolean available = value.supported && value.canRequest && knownTribute;
-                TextView requestButton = PersonUi.action(card, sending
-                        ? R.string.extra_time_saving : available ? R.string.extra_time_request
-                        : R.string.extra_time_request_unavailable,
-                        () -> submit(app.packageName, value.tributeCents, value.currency), true);
-                requestButton.setTag("extra_time_submit:" + app.packageName);
-                requestButton.setEnabled(available && !sending);
-                requestButton.setAlpha(requestButton.isEnabled() ? 1f : 0.5f);
-                if (!available && !sending) {
-                    TextView reason = PersonUi.text(card, value.unavailableReason == null
-                            || value.unavailableReason.isEmpty() ? getString(R.string.extra_time_unavailable)
-                            : value.unavailableReason, false);
-                    reason.setTag("extra_time_unavailable_reason:" + app.packageName);
-                }
-            }
-        }
     }
 
     private void renderDom(ExtraTimeRequests.Snapshot value) {
@@ -286,23 +257,6 @@ public final class ExtraTimeActivity extends PreferencePage {
         ExtraTimeViews.status(card, status, request.status == ExtraTimeRequests.Status.APPROVED);
         if (request.tributeCents > 0) PersonUi.text(card, getString(R.string.extra_time_tribute_receipt,
                 money(request.tributeCents, request.currency)), false);
-        if (!snapshot.dom && request.status == ExtraTimeRequests.Status.PENDING)
-            PersonUi.text(card, getString(R.string.extra_time_awaiting), false);
-    }
-
-    private void submit(String packageName, int expectedTributeCents, String expectedCurrency) {
-        String key = "submit:" + packageName;
-        if (snapshot == null || !snapshot.supported || !snapshot.canRequest
-                || snapshot.tributeCents < 0 || !pendingActions.add(key)) return;
-        Context application = getApplicationContext();
-        PersonId target = person;
-        data.cancel("extra-time-snapshot");
-        render(snapshot);
-        data.loadSerial(key, () -> {
-            ExtraTimeRequests repository = new ExtraTimeRequests(application, target);
-            repository.submit(packageName, expectedTributeCents, expectedCurrency);
-            return repository.snapshot(System.currentTimeMillis());
-        }, result -> completed(key, result), error -> actionFailed(key, error));
     }
 
     private void approve(ExtraTimeRequests.Request request, EditText input) {

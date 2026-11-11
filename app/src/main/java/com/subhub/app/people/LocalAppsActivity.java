@@ -92,8 +92,9 @@ public final class LocalAppsActivity extends RolePage {
     }
 
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
+        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

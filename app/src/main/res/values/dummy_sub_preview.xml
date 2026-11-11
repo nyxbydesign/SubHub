@@ -3,10 +3,10 @@
     <string name="dummy_sub_title">Dummy Sub</string>
     <string name="dummy_sub_added">Dummy Sub added</string>
     <string name="dummy_sub_removed">Dummy Sub removed</string>
-    <string name="dummy_sub_view_only">View-only settings preview</string>
-    <string name="dummy_sub_description">No real profile or session. These are read-only example settings, not anyone’s settings. Nothing here can be saved, started or charged.</string>
+    <string name="dummy_sub_view_only">Internal local Sub</string>
+    <string name="dummy_sub_description">An independent local Sub for trying your setup on this device. Its profile and settings are kept separately.</string>
     <string name="dummy_sub_remove_help">To remove Dummy Sub, hold Back for 5 seconds on the Add a Sub connection page.</string>
-    <string name="dummy_sub_defaults">Read-only example settings</string>
+    <string name="dummy_sub_defaults">Internal settings</string>
     <string name="dummy_sub_modules">Modules</string>
     <string name="dummy_sub_censor">Censor</string>
     <string name="dummy_sub_limits">Limits</string>
@@ -30,4 +30,16 @@
     <string name="dummy_sub_duration_length_value">Not set · no session exists</string>
     <string name="dummy_sub_duration_status">Session state</string>
     <string name="dummy_sub_duration_status_value">Preview only. Starting, stopping and extending sessions are unavailable.</string>
+    <string name="internal_sub_device">Internal local Sub</string>
+    <string name="internal_sub_settings">Saved internal settings</string>
+    <string name="internal_sub_saved">Saved locally</string>
+    <string name="internal_sub_save_failed">Could not save. Reload the current settings before trying again.</string>
+    <string name="internal_sub_edit_profile">Edit internal profile</string>
+    <string name="internal_sub_session_unavailable">Local session control is unavailable.</string>
+    <string name="internal_tasks_sub_view">Internal Sub view · completion stays on this device</string>
+    <string name="internal_tasks_author_view">Internal author view · no remote delivery or charges</string>
+    <string name="internal_tasks_switch_author">Review as internal author</string>
+    <string name="internal_tasks_switch_sub">Try as internal Sub</string>
+    <string name="internal_sub_owner_data_unavailable">Stored profile is readable, but local data is unavailable. Changes, Tasks and sessions remain unavailable.</string>
+    <string name="internal_sub_visibility_unavailable">Internal Sub visibility is temporarily unavailable in this development checkpoint. Session reconciliation is not connected yet.</string>
 </resources>

@@ -50,7 +50,8 @@ public class RemoteSessionNativeAndroidTest {
             }
         };
         stats = RemoteSessionStatsFixture.create(context);
-        nativeSession = RemoteSessionNative.installFixture(context, () -> stats);
+        nativeSession = RemoteSessionNative.installLegacyFixture(context, () -> stats,
+                (android.app.Application) target.getApplicationContext());
         wasDom = ControllerPinManager.isDomModeActive(); ControllerPinManager.enterDomMode();
         RemoteSessionClock.observe(context);
     }
@@ -127,7 +128,8 @@ public class RemoteSessionNativeAndroidTest {
         RemoteSessionNative.PreparedStart prepared = prepare(false);
         assertTrue(apply(prepared)); refuseStats.set(true); endLocally();
         nativeSession.close(); stats = RemoteSessionStatsFixture.create(context);
-        nativeSession = RemoteSessionNative.installFixture(context, () -> stats);
+        nativeSession = RemoteSessionNative.installLegacyFixture(context, () -> stats,
+                (android.app.Application) target.getApplicationContext());
         refuseStats.set(false); assertTrue(RemoteSessionNative.reconcile(context));
         assertFalse(new AppModeManager(context).isArmed()); assertFalse(apply(prepared));
         assertEquals(1, count()); assertEquals(1, stats.getSessionHistory().size());

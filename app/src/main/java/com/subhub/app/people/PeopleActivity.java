@@ -13,11 +13,12 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private LinearLayout body;
     private android.widget.ScrollView rosterScroll;
     private com.subhub.app.util.AsyncUiScope data;
-    private boolean resumed;
+    private boolean resumed, refreshQueued;
     private int rosterPosition;
     private boolean restoreRosterPosition = true;
     private LinearLayout roster;
-    private LinearLayout dummyPreview;
+    private String displayedInternalGeneration = "";
+    private long displayedControllerRevision = -1;
     private TextView favoriteGuidance;
     private LinearLayout activityCard;
     private com.subhub.app.relationships.RelationshipPanel relationships;
@@ -33,6 +34,12 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
                 hideProtectedContent();
                 com.subhub.app.security.ControllerEditMode.enterSubMode(PeopleActivity.this);
                 return;
+            }
+            if (displayedControllerRevision != ControllerPinManager.domWorkspaceRevision()
+                    || !InternalRoster.current(PeopleActivity.this, displayedInternalGeneration)) {
+                renderedPeople.clear();
+                if (roster != null) roster.removeAllViews();
+                refresh();
             }
             authority.postDelayed(this, 500);
         }
@@ -60,42 +67,58 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     protected void refresh() {
         if (!com.subhub.app.security.DeviceRolePreferences.supportsDom(this)) { finish(); return; }
         ensureContent();
-        refreshDummyPreview();
         refreshActivityPreview();
         if (snapshotUnavailable) { snapshotUnavailable = false; relationships.refresh(); }
+        if (data.isPending("people")) { refreshQueued = true; return; }
         PersonRepository repository = People.repository(getApplicationContext());
         android.content.Context application = getApplicationContext();
         java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
+        long requestedController = ControllerPinManager.domWorkspaceRevision();
         data.load("people", () -> {
-            if (!ControllerPinManager.isDomWorkspaceUnlocked()
+            if (requestedController != ControllerPinManager.domWorkspaceRevision() || !ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application))
                 throw new IllegalStateException("People context changed");
             com.subhub.app.relationships.RelationshipPresentation.Access access;
             try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
             catch (Exception unavailable) { return new Roster(null, java.util.Collections.emptyList()); }
-            return new Roster(access, com.subhub.app.relationships.RelationshipPanel.roster(
-                    application, repository, access, locale));
+            InternalRoster.Rows values = InternalRoster.append(application,
+                    com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale), true);
+            return new Roster(access, values, values.generation, requestedController);
         }, loaded -> {
-            if (!mayManagePeople() || !resumed) return;
-            if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
-                renderedPeople.clear(); roster.removeAllViews();
-                favoriteGuidance.setVisibility(android.view.View.GONE);
-                snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
-            }
-            renderPeople(loaded);
-            if (restoreRosterPosition) {
-                restoreRosterPosition = false;
-                if (rosterPosition > 0) {
-                    int restored = rosterPosition;
-                    rosterScroll.post(() -> {
-                        if (resumed && rosterPosition == restored) rosterScroll.scrollTo(0, restored);
-                    });
+            try {
+                if (!mayManagePeople() || !resumed) return;
+                if (requestedController != ControllerPinManager.domWorkspaceRevision()) { refreshQueued = true; return; }
+                if (loaded.access == null || !loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider)) {
+                    renderedPeople.clear(); roster.removeAllViews();
+                    favoriteGuidance.setVisibility(android.view.View.GONE);
+                    snapshotUnavailable = true; relationships.snapshotUnavailable(); return;
                 }
-            }
+                if (!InternalRoster.current(this, loaded.internalGeneration)) { refreshQueued = true; return; }
+                displayedInternalGeneration = loaded.internalGeneration;
+                displayedControllerRevision = loaded.controllerRevision;
+                renderPeople(loaded);
+                if (restoreRosterPosition) {
+                    restoreRosterPosition = false;
+                    if (rosterPosition > 0) {
+                        int restored = rosterPosition;
+                        rosterScroll.post(() -> {
+                            if (resumed && rosterPosition == restored) rosterScroll.scrollTo(0, restored);
+                        });
+                    }
+                }
+            } finally { finishRefresh(); }
         }, failure -> {
-            if (!resumed || !mayManagePeople()) return;
-            showRosterUnavailable();
+            try {
+                if (!resumed || !mayManagePeople()) return;
+                showRosterUnavailable();
+            } finally { finishRefresh(); }
         });
+    }
+
+    private void finishRefresh() {
+        if (!refreshQueued) return;
+        refreshQueued = false;
+        if (resumed && mayManagePeople()) refresh();
     }
 
     private void ensureContent() {
@@ -114,20 +137,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         favoriteGuidance = PersonUi.text(body, getString(R.string.home_favorite_gesture), false);
         roster = PersonUi.column(this);
         body.addView(roster, new LinearLayout.LayoutParams(-1, -2));
-        PersonUi.text(roster, getString(R.string.role_loading), false);
-    }
-
-    /** Separate presentation row: never participates in roster, favorites or presence. */
-    private void refreshDummyPreview() {
-        if (dummyPreview != null) { body.removeView(dummyPreview); dummyPreview = null; }
-        if (!DummySubPreview.isEnabled(this)) return;
-        dummyPreview = ProfileViews.person(body, DummySubPreview.snapshot(this), () -> {
-            if (mayManagePeople()) DummySubPreview.open(this);
-        });
-        dummyPreview.setTag("dummy_sub_card");
-        // Reuse the normal card while keeping the preview outside the real roster.
-        body.removeView(dummyPreview);
-        body.addView(dummyPreview, body.indexOfChild(roster) + 1);
+        PersonUi.text(roster, getString(R.string.role_data_unknown), false);
     }
 
     private void refreshActivityPreview() {
@@ -193,18 +203,19 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
                 roster.addView(card, index);
             }
             card.setOnClickListener(view -> {
-                if (mayManagePeople() && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider))
+                if (mayManagePeople() && loaded.controllerRevision == ControllerPinManager.domWorkspaceRevision()
+                        && InternalRoster.current(this, loaded.internalGeneration) && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider))
                     PersonRoutes.open(this, person.id);
             });
             if (!FavoriteSubStore.eligible(person)) continue;
             String action = getString(favorite ? R.string.home_favorite_remove : R.string.home_favorite_set);
-            card.setOnLongClickListener(view -> { changeFavorite(person); return true; });
+            card.setOnLongClickListener(view -> { changeFavorite(person, loaded.internalGeneration, loaded.controllerRevision); return true; });
             androidx.appcompat.widget.TooltipCompat.setTooltipText(card, action);
             androidx.core.view.ViewCompat.setStateDescription(card,
                     favorite ? getString(R.string.home_favorite_marked) : null);
             androidx.core.view.ViewCompat.replaceAccessibilityAction(card,
                     androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
-                    action, (view, args) -> { changeFavorite(person); return true; });
+                    action, (view, args) -> { changeFavorite(person, loaded.internalGeneration, loaded.controllerRevision); return true; });
         }
     }
 
@@ -213,12 +224,19 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
         RenderedPerson(LinearLayout view, List<Object> signature) { this.view = view; this.signature = signature; }
     }
 
-    private void changeFavorite(PersonSnapshot person) {
+    private void changeFavorite(PersonSnapshot person, String generation, long controller) {
         if (!mayManagePeople() || data.isPending("favorite-change")) return;
         PersonRepository repository = People.repository(getApplicationContext());
         FavoriteSubStore store = favorites;
         android.content.Context application = getApplicationContext();
-        data.load("favorite-change", () -> {
+        data.loadSerial("favorite-change", () -> {
+            if (!InternalRoster.current(application, generation) || controller != ControllerPinManager.domWorkspaceRevision()) return false;
+            if (DummySubPreview.ID.equals(person.id)) {
+                if (!DummySubPreview.current(application, generation, controller)) return false;
+                PersonSnapshot current = repository.load(person.id);
+                InternalEditorAuthority.admit(application, InternalSubData.get(application).acknowledged(), generation, controller);
+                return store.toggle(current);
+            }
             if (!ControllerPinManager.isDomWorkspaceUnlocked()
                     || !com.subhub.app.security.DeviceRolePreferences.supportsDom(application)) return false;
             com.subhub.app.relationships.RelationshipPresentation.Access access =
@@ -287,7 +305,7 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
 
     @Override protected void onPause() {
         rosterPosition = rosterScroll.getScrollY();
-        resumed = false;
+        resumed = false; refreshQueued = false;
         stopPresenceObservation();
         authority.removeCallbacks(checkAuthority);
         data.cancel("people");
@@ -314,8 +332,11 @@ public class PeopleActivity extends androidx.appcompat.app.AppCompatActivity imp
     private static final class Roster {
         final com.subhub.app.relationships.RelationshipPresentation.Access access;
         final List<PersonSnapshot> people;
-        Roster(com.subhub.app.relationships.RelationshipPresentation.Access access, List<PersonSnapshot> people) {
-            this.access = access; this.people = people;
+        final String internalGeneration;
+        final long controllerRevision;
+        Roster(com.subhub.app.relationships.RelationshipPresentation.Access access, List<PersonSnapshot> people) { this(access, people, "", -1); }
+        Roster(com.subhub.app.relationships.RelationshipPresentation.Access access, List<PersonSnapshot> people, String internalGeneration, long controllerRevision) {
+            this.access = access; this.people = people; this.internalGeneration = internalGeneration; this.controllerRevision = controllerRevision;
         }
     }
 }

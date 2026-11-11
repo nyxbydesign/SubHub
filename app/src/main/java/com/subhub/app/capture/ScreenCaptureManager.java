@@ -31,6 +31,10 @@ public final class ScreenCaptureManager implements AutoCloseable {
     private final ArrayDeque<Bitmap> framePool = new ArrayDeque<>();
     private boolean closed;
     private boolean paused;
+    private volatile boolean submittedFramesSealed;
+    private boolean terminalCloseAttempted;
+    private RuntimeException terminalCloseFailure;
+    private volatile boolean terminalResourcesDrained;
 
     public ScreenCaptureManager(
             MediaProjection projection,
@@ -66,6 +70,7 @@ public final class ScreenCaptureManager implements AutoCloseable {
     public void start() { start(false); }
 
     public synchronized void start(boolean initiallyPaused) {
+        if (submittedFramesSealed) throw new IllegalStateException("Managed capture owner is sealed");
         if (virtualDisplay != null) return;
         if (closed) throw new IllegalStateException("Capture display is closed");
         closed = false;
@@ -76,7 +81,7 @@ public final class ScreenCaptureManager implements AutoCloseable {
 
     /** Retain the single projection/display grant while removing its active output surface. */
     public synchronized void pauseSurface(boolean value) {
-        if (closed || virtualDisplay == null || paused == value) return;
+        if (submittedFramesSealed || closed || virtualDisplay == null || paused == value) return;
         paused = value;
         if (value) {
             try { virtualDisplay.surface(null); }
@@ -100,7 +105,7 @@ public final class ScreenCaptureManager implements AutoCloseable {
     }
 
     public synchronized Bitmap acquireLatestFrame() {
-        if (imageReader == null || paused || closed) return null;
+        if (submittedFramesSealed || imageReader == null || paused || closed) return null;
         try (Image image = imageReader.acquireLatestImage()) {
             if (image == null) return null;
             Image.Plane plane = image.getPlanes()[0];
@@ -133,7 +138,7 @@ public final class ScreenCaptureManager implements AutoCloseable {
 
     /** Returns a processed frame to the bounded capture pool instead of allocating next tick. */
     public synchronized void releaseFrame(Bitmap frame) {
-        if (frame == null || frame.isRecycled()) return;
+        if (submittedFramesSealed || frame == null || frame.isRecycled()) return;
         if (closed || framePool.size() >= 3
                 || frame.getWidth() != captureWidth || frame.getHeight() != captureHeight) {
             frame.recycle();
@@ -151,8 +156,19 @@ public final class ScreenCaptureManager implements AutoCloseable {
     public int getCaptureWidth() { return captureWidth; }
     public int getCaptureHeight() { return captureHeight; }
 
+    /**
+     * Irreversible managed terminal fence; nonblocking even while an admitted capture is copying.
+     * Future acquisitions/reissues are denied. Already admitted work still needs its actual return.
+     * Pool-resident frames may have been submitted to a hardware View, so terminal retirement only
+     * drops their references. This is not native/GPU drain and never permits successor pool reuse.
+     */
+    public void sealSubmittedFrames() { submittedFramesSealed = true; }
+    /** Requires successful managed display/reader close, not just seal or garbage collection. */
+    public boolean managedResourcesDrained() { return terminalResourcesDrained; }
+
     @Override
     public synchronized void close() {
+        if (submittedFramesSealed) { closeManaged(); return; }
         closed = true;
         if (virtualDisplay != null) virtualDisplay.release();
         virtualDisplay = null;
@@ -168,4 +184,30 @@ public final class ScreenCaptureManager implements AutoCloseable {
             }
         }
     }
+    private void closeManaged() {
+        if (terminalCloseAttempted) {
+            if (terminalCloseFailure != null) throw terminalCloseFailure;
+            return;
+        }
+        terminalCloseAttempted = true; closed = true;
+        RuntimeException failure = null;
+        try { if (virtualDisplay != null) virtualDisplay.release(); virtualDisplay = null; }
+        catch (RuntimeException | Error uncertain) { failure = rememberFailure(failure, uncertain); }
+        try { if (imageReader != null) imageReader.close(); imageReader = null; }
+        catch (RuntimeException | Error uncertain) { failure = rememberFailure(failure, uncertain); }
+        // Crop scratch was never submitted to a View; actual CPU borrows must have returned first.
+        try { if (paddedBitmap != null) paddedBitmap.recycle(); paddedBitmap = null; }
+        catch (RuntimeException | Error uncertain) { failure = rememberFailure(failure, uncertain); }
+        try { cropCanvas.setBitmap(null); }
+        catch (RuntimeException | Error uncertain) { failure = rememberFailure(failure, uncertain); }
+        framePool.clear(); // Reference-only for every potentially submitted terminal-owner frame.
+        terminalCloseFailure = failure;
+        if (failure != null) throw failure;
+        terminalResourcesDrained = true;
+    }
+    private static RuntimeException rememberFailure(RuntimeException previous, Throwable cause) {
+        if (previous == null) return new IllegalStateException("Managed projection source cleanup uncertain", cause);
+        previous.addSuppressed(cause); return previous;
+    }
+
 }

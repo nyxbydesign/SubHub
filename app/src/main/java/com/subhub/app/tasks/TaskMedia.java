@@ -12,12 +12,15 @@ import java.util.*;
 public final class TaskMedia {
     private TaskMedia() { }
     public static TaskAttachment importMedia(Context context, Uri uri, RemoteAssets assets) throws Exception {
+        return importMedia(context, uri, assets, context.getCacheDir());
+    }
+    static TaskAttachment importMedia(Context context, Uri uri, RemoteAssets assets, File temporaryDirectory) throws Exception {
         if (uri == null || !"content".equals(uri.getScheme())) throw new IOException("Choose media from the document picker");
         String mime = context.getContentResolver().getType(uri);
         if ("audio/x-wav".equals(mime)) mime = "audio/wav";
         // Validate the declared type before opening an arbitrary provider stream.
         new TaskAttachment("0000000000000000000000000000000000000000000000000000000000000000", mime, 1);
-        File temp = com.subhub.app.storage.DisposableCache.temporary(context.getCacheDir(), "task-import-");
+        File temp = com.subhub.app.storage.DisposableCache.temporary(temporaryDirectory, "task-import-");
         try {
             long length = 0;
             try (InputStream input = context.getContentResolver().openInputStream(uri);

@@ -62,7 +62,9 @@ public final class RemoteDurationControls implements DefaultLifecycleObserver {
 
     private void load(LinearLayout controls) {
         if(autosave!=null){autosave.close();autosave=null;}
-        controls.removeAllViews();PersonUi.text(controls, activity.getString(R.string.role_loading), false);
+        if (configuration == null) {
+            controls.removeAllViews(); PersonUi.text(controls, activity.getString(R.string.remote_duration), true);
+        } else enabled(controls, false);
         RemoteFeature backend = feature;RemoteStore.Peer selected = peer;android.content.Context app=application;
         long revision=ControllerPinManager.domWorkspaceRevision();
         work.load(request, () -> backend.store.authorityObservation(()->{
@@ -85,7 +87,7 @@ public final class RemoteDurationControls implements DefaultLifecycleObserver {
     private void render(LinearLayout controls) throws Exception {
         rendering=true;
         try {
-            controls.removeAllViews();JSONObject service = configuration.getJSONObject("service");
+            controls.setEnabled(true); controls.removeAllViews();JSONObject service = configuration.getJSONObject("service");
             boolean restored=draft.state.get("choice")!=null;
             if (!restored) {
                 int selected = 0;for (int i=0;i<OPTIONS.length;i++)if (OPTIONS[i] == service.getLong("duration"))selected=i;
@@ -151,5 +153,13 @@ public final class RemoteDurationControls implements DefaultLifecycleObserver {
         editor.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){draft.state.set(key,s.toString());changed();}public void afterTextChanged(Editable value){}});return editor;
     }
     private void clearDraft(){for(String key:new String[]{"fingerprint","base","choice","minimum","maximum","hidden"})draft.state.remove(key);}
+    private static void enabled(View view, boolean value) {
+        view.setEnabled(value);
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) enabled(group.getChildAt(index), value);
+        }
+    }
+
     private void unavailable(LinearLayout controls){controls.removeAllViews();PersonUi.text(controls,activity.getString(R.string.remote_unknown),false);PersonUi.action(controls,R.string.role_retry,()->load(controls),false);}
 }

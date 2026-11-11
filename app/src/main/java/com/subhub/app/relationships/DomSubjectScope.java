@@ -27,7 +27,7 @@ public final class DomSubjectScope {
         workspaceRevision = ControllerPinManager.domWorkspaceRevision();
         Map<PersonId, RelationshipUi.Edge> values = new LinkedHashMap<>();
         if (!access.legacy) for (RelationshipUi.Edge edge : access.snapshot.eligibleSubs) {
-            if (edge.personId.isLocal() != (edge.delivery == RelationshipUi.Delivery.LOCAL)
+            if (PersonId.INTERNAL.equals(edge.personId) || edge.personId.isLocal() != (edge.delivery == RelationshipUi.Delivery.LOCAL)
                     || values.put(edge.personId, edge) != null)
                 throw new IllegalStateException("Ambiguous Dom subject");
         }
@@ -55,7 +55,8 @@ public final class DomSubjectScope {
 
     /** Compatibility retains remote identities, but local existence never proves a local link. */
     public boolean includes(PersonId person) {
-        return access.legacy ? !person.isLocal() : edges.containsKey(person);
+        return !PersonId.INTERNAL.equals(person)
+                && (access.legacy ? !person.isLocal() : edges.containsKey(person));
     }
 
     public RelationshipUi.Edge localEdge() { return edges.get(PersonId.LOCAL); }

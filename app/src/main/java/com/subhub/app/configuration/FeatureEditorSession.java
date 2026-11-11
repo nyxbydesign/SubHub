@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleEventObserver;
 import com.subhub.app.R;
+import com.subhub.app.internal.*;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.people.*;
 import com.subhub.app.remote.*;
@@ -23,19 +24,30 @@ import java.io.*;
 import java.util.*;
 import java.util.function.BooleanSupplier;
 
-/** One native feature editor, backed by live local settings or an identity-bound remote draft. */
+/** Native feature editors use physical settings, peer drafts, or an explicit independent internal backend. */
 public final class FeatureEditorSession {
     private static final String TOKEN="feature_editor_token", DOCUMENT="feature_editor_document", BASE="feature_editor_base";
     private static final Map<AppCompatActivity,FeatureEditorSession> PAGES=Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<String,FeatureEditorSession> DRAFTS=new HashMap<>();
     private final RemoteFeature feature;
-    private final boolean preview;
-    private final java.lang.ref.WeakReference<AppCompatActivity> previewHost;
-    private boolean previewSeeded;
+    public enum Backend { REMOTE, INTERNAL }
+    public final Backend backend;
+    private final boolean internal;
+    private final Context physical;
+    private InternalSubData internalData;
+    private InternalConfigurationStore.EditorDraft internalDraft;
+    private InternalEditorArtwork internalArtwork;
+    private InternalEditorSaveDrain internalSaves;
+    private String internalGeneration;
+    private long controllerRevision;
+    private final java.util.concurrent.atomic.AtomicLong internalEditEpoch = new java.util.concurrent.atomic.AtomicLong();
+    private static final String INTERNAL_EDIT_EPOCH = "internal_editor_edit_epoch";
+    private static final Map<Context,FeatureEditorSession> CONTEXTS=Collections.synchronizedMap(new WeakHashMap<>());
+
     public final RemoteStore.Peer peer;
     private final PersonId person;
     private final String token;
-    private final DraftContext context;
+    private final ContextWrapper context;
     private final Map<String,DraftPreferences> stores=new LinkedHashMap<>();
     private final Set<String> disabledArtwork=new HashSet<>();
     private JSONObject document,editBase;
@@ -47,21 +59,33 @@ public final class FeatureEditorSession {
 
 
     private FeatureEditorSession(AppCompatActivity activity,Bundle saved) throws Exception {
-        Context app=activity.getApplicationContext();
-        preview=DummySubPreview.isRequested(activity.getIntent());
-        previewHost=new java.lang.ref.WeakReference<>(activity);
-        if(preview){
-            if(!DummySubPreview.isAllowed(activity))throw new SecurityException("Preview unavailable");
-            feature=null;peer=null;person=DummySubPreview.ID;token=UUID.randomUUID().toString();
-            context=new DraftContext(app,this,token);
-            document=DummyPreviewConfiguration.create();editBase=new JSONObject(document.toString());
+        Context app=activity.getApplicationContext(); physical=app;
+        internal=DummySubPreview.isRequested(activity.getIntent());
+        backend=internal?Backend.INTERNAL:Backend.REMOTE;
+        if(internal){
+            if(!DummySubPreview.isAllowed(activity))throw new SecurityException("Internal Sub unavailable");
+            feature=null;peer=null;person=DummySubPreview.ID;
+            token=UUID.randomUUID().toString();
+            internalData=InternalSubData.get(app);
+            InternalSubRecord record=internalData.acknowledged();
+            internalGeneration=record.generation;controllerRevision=ControllerPinManager.domWorkspaceRevision();
+            internalDraft=internalData.configuration.edit(record);
+            internalSaves=InternalEditorAutosave.createDrain(app,internalData,internalDraft,internalGeneration,controllerRevision,main::post);
+            context=new InternalSubContext(app,internalData.storage,internalDraft);
+            CONTEXTS.put(context,this);
+            internalArtwork=new InternalEditorArtwork(app,internalData.storage,internalDraft,this::requireAuthority);
+            for(String name:List.of(SettingsRepository.PREFERENCES_NAME,
+                    ConfigurationSchema.preferenceStore(ConfigurationSchema.WALLET),
+                    InternalConfigurationStore.DURATION_PREFERENCES,InternalConfigurationStore.PRESET_PREFERENCES))
+                context.getSharedPreferences(name,0).registerOnSharedPreferenceChangeListener((store,key)->draftChanged(name,key));
+            return;
         }else{
         feature=RemoteFeature.get(app);
         person=PersonRoutes.requireId(activity.getIntent());
         peer=new RemotePersonRepository(app,feature).peer(person);
-        token=saved!=null?saved.getString(TOKEN,UUID.randomUUID().toString()):activity.getIntent().getStringExtra(TOKEN);
-        String id=token==null?UUID.randomUUID().toString():token;
-        context=new DraftContext(app,this,id);
+        String requestedToken=saved!=null?saved.getString(TOKEN):activity.getIntent().getStringExtra(TOKEN);
+        token=requestedToken==null?UUID.randomUUID().toString():requestedToken;
+        context=new DraftContext(app,this,token);
         requireAuthority();
         String raw=saved==null?activity.getIntent().getStringExtra(DOCUMENT):saved.getString(DOCUMENT);
         document=raw==null?feature.contracts.editing(peer):RemoteConfiguration.active(new JSONObject(raw));
@@ -99,19 +123,20 @@ public final class FeatureEditorSession {
         SharedPreferences.Editor duration=context.getSharedPreferences(RemoteConfiguration.DURATION_PREFS,0).edit();
         for(String key:new String[]{"duration","minimum","maximum"})duration.putLong(key,service.getLong(key));
         duration.putBoolean("hidden",service.getBoolean("hidden")).commit();
-        if(preview){previewSeeded=true;for(DraftPreferences preferences:stores.values())preferences.freeze();}
     }
     public static boolean attach(AppCompatActivity activity,String section,Bundle saved) {
         if(!DummySubPreview.isRequested(activity.getIntent())&&PersonRoutes.isLocalTarget(activity.getIntent()))return true;
         try{
             String token=saved==null?activity.getIntent().getStringExtra(TOKEN):saved.getString(TOKEN);
-            FeatureEditorSession session=DummySubPreview.isRequested(activity.getIntent())||token==null?null:DRAFTS.get(token);
+            FeatureEditorSession session=token==null?null:DRAFTS.get(token);
+            if(DummySubPreview.isRequested(activity.getIntent())&&saved!=null&&token!=null&&session==null)
+                throw new SecurityException("An unacknowledged internal draft cannot be restored after process loss");
             if(session!=null&&session.invalidated)session=null;
             if(session==null)session=new FeatureEditorSession(activity,saved);
             if(!session.person.equals(PersonRoutes.requireId(activity.getIntent())))throw new SecurityException("Editor target changed");
             session.requireAuthority();session.pages++;PAGES.put(activity,session);
-            if(session.preview){session.attachPreviewLifecycle(activity);return true;}
-            DRAFTS.put(session.context.token,session);
+            if(session.internal){DRAFTS.put(session.token,session);session.attachInternalLifecycle(activity);return true;}
+            DRAFTS.put(session.token,session);
             FeatureEditorSession attached=session;
             activity.getLifecycle().addObserver((LifecycleEventObserver)(owner,event)->{
                 if(event==Lifecycle.Event.ON_RESUME){
@@ -135,54 +160,63 @@ public final class FeatureEditorSession {
                     if(binding!=null){binding.autosave.close();attached.remember(binding);}
                     PAGES.remove(activity);attached.pages--;
                     if(attached.pages==0&&(attached.invalidated||!activity.isChangingConfigurations())) {
-                        DRAFTS.remove(attached.context.token);attached.context.closeCache();
+                        DRAFTS.remove(attached.token);attached.closeCache();
                     }
                 }
             });
             return true;
         }catch(Exception unavailable){Toast.makeText(activity,R.string.remote_reload,Toast.LENGTH_LONG).show();activity.finish();return false;}
     }
-    private void attachPreviewLifecycle(AppCompatActivity activity){
+    private void attachInternalLifecycle(AppCompatActivity activity){
         Runnable check=new Runnable(){public void run(){
-            if(!DummySubPreview.isAllowed(activity)){
+            if(!internalAllowed(activity)){
                 activity.findViewById(android.R.id.content).setVisibility(View.INVISIBLE);activity.finish();return;
             }
             if(activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED))main.postDelayed(this,250);
         }};
         activity.getLifecycle().addObserver((LifecycleEventObserver)(owner,event)->{
             if(event==Lifecycle.Event.ON_RESUME){
-                if(!DummySubPreview.isAllowed(activity)){activity.finish();return;}
+                if(!internalAllowed(activity)){activity.finish();return;}
+                if(!internalDraft.hasUnflushedChanges() && internalDraft.acknowledgedBase().revision != internalData.acknowledged().revision){
+                    invalidated=true;DRAFTS.remove(token);restart(activity);return;
+                }
+                EditorBinding binding=bindings.get(activity);if(binding!=null)binding.active=true;
                 View root=activity.findViewById(android.R.id.content);root.setVisibility(View.VISIBLE);
-                root.post(()->{if(DummySubPreview.isAllowed(activity)){decorate(activity);readOnlyWidgets(root);}});
-                main.post(check);
+                root.post(()->{if(internalAllowed(activity))decorate(activity);});main.post(check);
             }else if(event==Lifecycle.Event.ON_PAUSE){
-                main.removeCallbacks(check);activity.findViewById(android.R.id.content).setVisibility(View.INVISIBLE);
+                main.removeCallbacks(check);EditorBinding binding=bindings.get(activity);
+                if(binding!=null){binding.flush();binding.active=false;}
+                activity.findViewById(android.R.id.content).setVisibility(View.INVISIBLE);
             }else if(event==Lifecycle.Event.ON_DESTROY){
-                main.removeCallbacks(check);PAGES.remove(activity);context.closeCache();
+                main.removeCallbacks(check);EditorBinding binding=bindings.remove(activity);if(binding!=null)binding.close();
+                PAGES.remove(activity);pages--;
+                if(pages==0&&!activity.isChangingConfigurations()){DRAFTS.remove(token);CONTEXTS.remove(context);}
             }
         });
     }
-    private static void readOnlyWidgets(View view){
-        view.setSaveEnabled(false);
-        if(view instanceof EditText||view instanceof CompoundButton||view instanceof Spinner||view instanceof SeekBar||view instanceof com.google.android.material.slider.Slider||view instanceof com.google.android.material.slider.RangeSlider){
-            view.setEnabled(false);view.setFocusable(false);view.setClickable(false);
-        }
-        if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)readOnlyWidgets(((ViewGroup)view).getChildAt(i));
+    private boolean internalAllowed(AppCompatActivity activity){
+        return !invalidated&&DummySubPreview.isAllowed(activity)
+                &&DummySubPreview.current(physical,internalGeneration,controllerRevision);
     }
+    private void closeCache(){if(context instanceof DraftContext)((DraftContext)context).closeCache();}
     public static FeatureEditorSession scope(Context context) {
         if(context instanceof DraftContext)return ((DraftContext)context).owner;
-        return context instanceof AppCompatActivity?PAGES.get(context):null;
+        FeatureEditorSession scoped=context instanceof AppCompatActivity?PAGES.get(context):CONTEXTS.get(context);
+        if(scoped!=null)return scoped;
+        Context app=context.getApplicationContext();
+        return app instanceof DraftContext?((DraftContext)app).owner:CONTEXTS.get(app);
     }
     public static String targetName(Context context) {
         FeatureEditorSession scope=scope(context);
         if(scope==null)return ProfileNames.get(context,false);
-        if(scope.preview)return context.getString(R.string.dummy_sub_title);
+        if(scope.internal)return scope.internalData.acknowledged().profile.name;
         RemoteStore.Peer current=scope.feature.store.peer(scope.peer.identity,scope.peer.generation);
         return current==null?scope.peer.name:current.name;
     }
-    public static boolean preview(Context context){FeatureEditorSession scope=scope(context);return scope!=null&&scope.preview;}
+    /** Legacy read-only preview is replaced by the explicit INTERNAL editor backend. */
+    public static boolean preview(Context context){return false;}
+    public static boolean internal(Context context){FeatureEditorSession scope=scope(context);return scope!=null&&scope.internal;}
     public static boolean canView(AppCompatActivity activity,String section){
-        if(DummySubPreview.isRequested(activity.getIntent())||preview(activity))return preview(activity)&&DummySubPreview.isAllowed(activity);
         return canEdit(activity,section);
     }
     public static boolean remote(Context context){return scope(context)!=null;}
@@ -192,7 +226,8 @@ public final class FeatureEditorSession {
     public static Context context(Context source){FeatureEditorSession scope=scope(source);return scope==null?source:scope.context;}
     public static boolean canEdit(AppCompatActivity activity,String section){
         FeatureEditorSession scope=scope(activity);
-        if(DummySubPreview.isRequested(activity.getIntent())||scope!=null&&scope.preview)return false;
+        if(DummySubPreview.isRequested(activity.getIntent())||scope!=null&&scope.internal)
+            return scope!=null&&scope.internal&&scope.internalData.ownerDataReady()&&scope.internalAllowed(activity);
         if(scope!=null){
             try{scope.requireAuthority();return !scope.invalidated&&scope.person.equals(PersonRoutes.requireId(activity.getIntent()))
                     &&RemoteFeaturePolicy.remoteAllowed(scope.feature.store,scope.peer,section);}catch(RuntimeException denied){return false;}
@@ -201,7 +236,7 @@ public final class FeatureEditorSession {
                 &&(!SubFeaturePolicy.FEATURES.contains(section)||SubFeaturePolicy.allowed(activity,section));
     }
     private void requireAuthority(){
-        if(preview){AppCompatActivity host=previewHost.get();if(host==null||!DummySubPreview.isAllowed(host))throw new SecurityException("Preview unavailable");return;}
+        if(internal){if(invalidated||!DummySubPreview.current(physical,internalGeneration,controllerRevision))throw new SecurityException("Internal Sub unavailable");return;}
         if(invalidated)throw new SecurityException("Editor was reloaded");
         RemoteStore.Peer current=feature.store.peer(peer.identity,peer.generation);
         if(!feature.recoveryReady()||!DeviceRolePreferences.supportsDom(context.getBaseContext())
@@ -210,20 +245,35 @@ public final class FeatureEditorSession {
             throw new SecurityException("Remote editor is unavailable");
     }
     public static void saveState(AppCompatActivity activity,Bundle state){
-        FeatureEditorSession scope=scope(activity);if(scope==null||scope.preview||scope.invalidated)return;
+        FeatureEditorSession scope=scope(activity);if(scope==null||scope.invalidated)return;
+        if(scope.internal){
+            EditorBinding binding=scope.bindings.get(activity);if(binding!=null)binding.flush();
+            state.putString(TOKEN,scope.token);state.putLong(INTERNAL_EDIT_EPOCH,scope.internalEditEpoch.get());return;
+        }
         EditorBinding binding=scope.bindings.get(activity);if(binding!=null){binding.autosave.flush();scope.remember(binding);}
-        try{state.putString(BASE,scope.editBase.toString());state.putString(TOKEN,scope.context.token);state.putString(DOCUMENT,scope.snapshot().toString());
+        try{state.putString(BASE,scope.editBase.toString());state.putString(TOKEN,scope.token);state.putString(DOCUMENT,scope.snapshot().toString());
             state.putLong("feature_desired",scope.desired);state.putLong("feature_applied",scope.applied);
             state.putString("feature_artwork_all",scope.document.getJSONObject("contract").getJSONArray("assets").toString());
             state.putStringArrayList("feature_artwork_disabled",new ArrayList<>(scope.disabledArtwork));
         }catch(Exception invalid){throw new IllegalStateException("Could not retain remote draft",invalid);}
     }
+    /** Raw fields may survive rotation only while the same retained draft and exact authority remain current. */
+    public static boolean restoreInternalWidgets(AppCompatActivity activity,Bundle saved){
+        FeatureEditorSession scope=scope(activity);
+        return scope!=null&&scope.internal&&saved!=null&&scope.internalAllowed(activity)
+                &&scope.token.equals(saved.getString(TOKEN))
+                &&saved.getLong(INTERNAL_EDIT_EPOCH,-1)==scope.internalEditEpoch.get()
+                &&scope.internalDraft.acknowledgedBase().revision==scope.internalData.acknowledged().revision;
+    }
     public static Intent child(AppCompatActivity activity,Class<?> destination){
         FeatureEditorSession scope=scope(activity);
-        if(scope!=null&&scope.preview)return DummySubPreview.childIntent(activity,destination);
+        if(scope!=null&&scope.internal){
+            EditorBinding binding=scope.bindings.get(activity);if(binding!=null)binding.flush();
+            return DummySubPreview.childIntent(activity,destination).putExtra(TOKEN,scope.token);
+        }
         Intent intent=new Intent(activity,destination);
         intent.putExtra(PersonRoutes.EXTRA_PERSON_ID,scope==null?PersonId.LOCAL.value():scope.person.value());
-        if(scope!=null)try{EditorBinding binding=scope.bindings.get(activity);if(binding!=null){binding.autosave.flush();scope.remember(binding);}intent.putExtra(TOKEN,scope.context.token).putExtra(BASE,scope.editBase.toString()).putExtra(DOCUMENT,scope.snapshot().toString())
+        if(scope!=null)try{EditorBinding binding=scope.bindings.get(activity);if(binding!=null){binding.autosave.flush();scope.remember(binding);}intent.putExtra(TOKEN,scope.token).putExtra(BASE,scope.editBase.toString()).putExtra(DOCUMENT,scope.snapshot().toString())
                 .putExtra("feature_desired",scope.desired).putExtra("feature_applied",scope.applied);}catch(Exception invalid){throw new IllegalStateException(invalid);}
         return intent;
     }
@@ -232,19 +282,27 @@ public final class FeatureEditorSession {
             TextView label=PrimaryHeader.subtitle(root);if(label!=null&&label.getVisibility()==View.VISIBLE)label.setText(ProfileNames.get(activity,false));return;
         }
         decorate(activity);
-        if(scope.preview){scope.requireAuthority();readOnlyWidgets(root);return;}
+
         LinearLayout body=body(root);
         if(body==null)throw new IllegalStateException("Feature editor has no content");
         try {
-            EditorBinding old=scope.bindings.remove(activity);if(old!=null){old.autosave.close();scope.remember(old);}
+            EditorBinding old=scope.bindings.remove(activity);if(old!=null){old.close();scope.remember(old);}
             EditorBinding binding=new EditorBinding();scope.bindings.put(activity,binding);
+            if(scope.internal){
+                binding.internalAutosave=new InternalEditorAutosave(activity,body,scope.internalData,scope.internalDraft,
+                        scope.internalGeneration,scope.controllerRevision,scope.internalSaves,()->{
+                    if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
+                    scope.flushing=true;try{return flush.getAsBoolean();}finally{scope.flushing=false;}
+                },()->{scope.invalidated=true;DRAFTS.remove(scope.token);restart(activity);});
+                scope.watchText(root,binding);binding.active=activity.getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);return;
+            }
             binding.autosave=new RemoteConfigurationAutosave(activity,body,scope.feature,scope.peer,scope.editBase,()->{
                 if(!canEdit(activity,section))throw new SecurityException("Editor unavailable");
                 scope.flushing=true;
                 try{if(!flush.getAsBoolean())throw new IllegalArgumentException("Check the edited fields");return scope.snapshot();}
                 finally{scope.flushing=false;}
             },()->{
-                scope.invalidated=true;DRAFTS.remove(scope.context.token);
+                scope.invalidated=true;DRAFTS.remove(scope.token);
                 restart(activity);
             });
             scope.watchText(root,binding);
@@ -253,17 +311,42 @@ public final class FeatureEditorSession {
     }
     private static final class EditorBinding {
         RemoteConfigurationAutosave autosave;
+        InternalEditorAutosave internalAutosave;
         boolean active;
+        void changed(){if(internalAutosave!=null)internalAutosave.changed();else if(autosave!=null)autosave.changed();}
+        void flush(){if(internalAutosave!=null)internalAutosave.flush();else if(autosave!=null)autosave.flush();}
+        void close(){if(internalAutosave!=null)internalAutosave.close();else if(autosave!=null)autosave.close();}
+    }
+
+    /** Stage the current duration widgets and wait for their exact broker acknowledgement. */
+    public static java.util.concurrent.CompletableFuture<InternalSubRecord> acknowledgeInternalDuration(AppCompatActivity activity) {
+        FeatureEditorSession scope = scope(activity);
+        EditorBinding binding = scope == null ? null : scope.bindings.get(activity);
+        if (scope == null || !scope.internal || binding == null || binding.internalAutosave == null
+                || !canEdit(activity, "duration"))
+            throw new SecurityException("Internal duration editor unavailable");
+        Context physical = activity.getApplicationContext();
+        return binding.internalAutosave.acknowledge().thenApply(ignored -> {
+            InternalSubRecord saved = scope.internalDraft.acknowledgedBase();
+            if (!DummySubPreview.current(physical, scope.internalGeneration, scope.controllerRevision)
+                    || scope.internalDraft.hasUnflushedChanges() || !saved.equals(scope.internalData.acknowledged()))
+                throw new SecurityException("Internal duration acknowledgement changed");
+            return saved;
+        });
     }
     private void remember(EditorBinding binding){
+        if(binding.autosave==null)return;
         try{editBase=binding.autosave.base();}catch(Exception ignored){/* Keep the prior acknowledged base. */}
     }
     private void draftChanged(String store,String key){
-        if(preview)return;
-        if(!configurationKey(store,key))return;
-        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){main.post(()->draftChanged(store,key));return;}
+        if(!internal&&!configurationKey(store,key))return;
+        if(internal)internalEditEpoch.incrementAndGet();
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){main.post(this::markDraftChanged);return;}
+        markDraftChanged();
+    }
+    private void markDraftChanged(){
         if(flushing||invalidated)return;
-        for(EditorBinding binding:bindings.values())if(binding.active&&binding.autosave!=null){userDirty=true;binding.autosave.changed();}
+        for(EditorBinding binding:bindings.values())if(binding.active){userDirty=true;binding.changed();}
     }
     static boolean configurationKey(String store,String key){
         if(RemoteConfiguration.DURATION_PREFS.equals(store))return Arrays.asList("duration","minimum","maximum","hidden").contains(key);
@@ -277,7 +360,7 @@ public final class FeatureEditorSession {
     private void watchText(View root,EditorBinding binding){
         if(root instanceof EditText)((EditText)root).addTextChangedListener(new android.text.TextWatcher(){
             public void beforeTextChanged(CharSequence value,int start,int count,int after){}
-            public void onTextChanged(CharSequence value,int start,int before,int count){if(binding.active&&!flushing&&!invalidated){userDirty=true;binding.autosave.changed();}}
+            public void onTextChanged(CharSequence value,int start,int before,int count){if(binding.active&&!flushing&&!invalidated){userDirty=true;binding.changed();}}
             public void afterTextChanged(android.text.Editable value){}
         });
         if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++)watchText(((ViewGroup)root).getChildAt(i),binding);
@@ -290,12 +373,12 @@ public final class FeatureEditorSession {
         FeatureEditorSession scope=scope(activity);if(scope==null)return;
         View root=activity.findViewById(android.R.id.content);
         TextView subtitle=PrimaryHeader.subtitle(root);
-        RemoteStore.Peer current=scope.preview?null:scope.feature.store.peer(scope.peer.identity,scope.peer.generation);
-        if(scope.preview){if(subtitle!=null){subtitle.setText(activity.getString(R.string.dummy_sub_title)+" · "+activity.getString(R.string.dummy_sub_view_only));subtitle.setVisibility(View.VISIBLE);}}
+        RemoteStore.Peer current=scope.internal?null:scope.feature.store.peer(scope.peer.identity,scope.peer.generation);
+        if(scope.internal){if(subtitle!=null){subtitle.setText(scope.internalData.acknowledged().profile.name+" · "+activity.getString(R.string.internal_sub_device));subtitle.setVisibility(View.VISIBLE);}}
         else if(subtitle!=null){subtitle.setText((current==null?scope.peer.name:current.name)+" · "+ProfileViews.targetDiscriminator(activity,scope.person,""));subtitle.setVisibility(View.VISIBLE);}
         View nav=root.findViewById(R.id.bottom_navigation);if(nav!=null)nav.setVisibility(View.GONE);
-        View edit=PrimaryHeader.editLockButton(root);if(edit!=null)edit.setVisibility(View.GONE);
-        View back=PrimaryHeader.backButton(root);if(back!=null){back.setVisibility(View.VISIBLE);if(!(scope.preview&&activity instanceof PersonActivity))back.setOnClickListener(v->activity.finish());}
+        View edit=PrimaryHeader.editLockButton(root);if(edit!=null){edit.setOnClickListener(null);edit.setVisibility(View.GONE);}
+        View back=PrimaryHeader.backButton(root);if(back!=null){back.setVisibility(View.VISIBLE);if(!(scope.internal&&activity instanceof PersonActivity))back.setOnClickListener(v->activity.finish());}
     }
     private static LinearLayout body(View root){
         if(root instanceof ScrollView){View child=((ScrollView)root).getChildAt(0);if(child instanceof LinearLayout)return (LinearLayout)child;}
@@ -305,7 +388,7 @@ public final class FeatureEditorSession {
         return null;
     }
     public synchronized JSONObject snapshot() throws Exception {
-        if(preview){requireAuthority();return DummyPreviewConfiguration.create();}
+        if(internal)throw new UnsupportedOperationException("Internal editors publish acknowledged typed configuration, never a remote contract");
         JSONObject result=new JSONObject(document.toString()),sections=result.getJSONObject("contract").getJSONObject("sections");
         for(String section:ConfigurationSchema.SECTIONS)sections.put(section,ConfigurationSchema.captureSection(context,section));
         SharedPreferences main=context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0);
@@ -325,24 +408,32 @@ public final class FeatureEditorSession {
     }
     public Map<String,String> catalog(){
         Map<String,String> result=new TreeMap<>();
-        if(preview){result.put("preview.reader","Reader (sample)");result.put("preview.music","Music (sample)");return result;}
+        if(internal){
+            requireAuthority();
+            android.content.Intent launcher=new android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            android.content.pm.PackageManager packages=physical.getPackageManager();
+            for(android.content.pm.ResolveInfo info:packages.queryIntentActivities(launcher,android.content.pm.PackageManager.MATCH_ALL))
+                if(info.activityInfo!=null&&!physical.getPackageName().equals(info.activityInfo.packageName))
+                    result.put(info.activityInfo.packageName,info.loadLabel(packages).toString());
+            return result;
+        }
         for(RemoteProtocol.Change change:feature.store.mirror(peer.identity,peer.generation,RemoteProtocol.Stream.APP_CATALOG))if(!change.deleted)
             try{JSONObject app=new JSONObject(change.body);result.put(change.key,app.optString("label",change.key));}catch(JSONException malformed){throw new IllegalStateException("Invalid app catalog",malformed);}
         return result;
     }
     public String appLabel(String name){return catalog().getOrDefault(name,name);}
-    public PersonSnapshot person(){if(preview){requireAuthority();return DummySubPreview.snapshot(context.getBaseContext());}try{return new RemotePersonRepository(context.getBaseContext(),feature).load(person);}catch(Exception unavailable){return null;}}
+    public PersonSnapshot person(){if(internal){requireAuthority();PersonSnapshot value=internalData.peekPresentation();if(value==null)internalData.requestPresentation(physical);return value;}try{return new RemotePersonRepository(context.getBaseContext(),feature).load(person);}catch(Exception unavailable){return null;}}
     public synchronized List<String> artwork(String group){
-        List<String> result=new ArrayList<>();JSONArray refs=document.optJSONObject("contract").optJSONArray("assets");
+        if(internal)return internalArtwork.list(group);List<String> result=new ArrayList<>();JSONArray refs=document.optJSONObject("contract").optJSONArray("assets");
         for(int index=0;index<refs.length();index++){String path=refs.optJSONObject(index).optString("path");if(path.startsWith("assets/"+group+"/"))result.add(path);}
         return result;
     }
-    public synchronized boolean artworkEnabled(String path){return !disabledArtwork.contains(path);}
-    public synchronized void enableArtwork(String path,boolean enabled){if(preview)return;if(enabled)disabledArtwork.remove(path);else disabledArtwork.add(path);artworkChanged();}
-    public synchronized void deleteArtwork(String path){if(preview)return;JSONArray refs=document.optJSONObject("contract").optJSONArray("assets");for(int index=refs.length()-1;index>=0;index--)if(path.equals(refs.optJSONObject(index).optString("path")))refs.remove(index);disabledArtwork.remove(path);artworkChanged();}
+    public synchronized boolean artworkEnabled(String path){return internal?internalArtwork.enabled(path):!disabledArtwork.contains(path);}
+    public synchronized void enableArtwork(String path,boolean enabled){if(internal){internalArtwork.enable(path,enabled);return;}if(enabled)disabledArtwork.remove(path);else disabledArtwork.add(path);artworkChanged();}
+    public synchronized void deleteArtwork(String path){if(internal){internalArtwork.delete(path);return;}JSONArray refs=document.optJSONObject("contract").optJSONArray("assets");for(int index=refs.length()-1;index>=0;index--)if(path.equals(refs.optJSONObject(index).optString("path")))refs.remove(index);disabledArtwork.remove(path);artworkChanged();}
     private void artworkChanged(){context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME,0).edit().putLong(com.subhub.app.capture.CustomImageManager.REVISION_KEY,System.nanoTime()).apply();}
     public Bitmap thumbnail(String path,int maximum){
-        if(preview)return null;
+        if(internal)return internalArtwork.thumbnail(path,maximum);
         try{JSONObject ref=null; synchronized(this){for(Object item:artworkRefs()){JSONObject candidate=(JSONObject)item;if(path.equals(candidate.optString("path"))){ref=candidate;break;}}}
             if(ref==null)return null;RemoteAssets assets=feature.contracts.assets(peer);String hash=ref.getString("hash");if(!assets.isComplete(hash))return null;
             BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;try(InputStream input=assets.open(hash)){BitmapFactory.decodeStream(input,null,bounds);}
@@ -352,7 +443,7 @@ public final class FeatureEditorSession {
     }
     private synchronized List<Object> artworkRefs(){List<Object> refs=new ArrayList<>();JSONArray array=document.optJSONObject("contract").optJSONArray("assets");for(int index=0;index<array.length();index++)refs.add(array.optJSONObject(index));return refs;}
     public int addArtwork(String group,List<Uri> uris){
-        if(preview)return 0;
+        if(internal)return internalArtwork.add(group,uris);
         int count=0;for(Uri uri:uris){File temporary=null;try{
             requireAuthority();if(!RemoteFeaturePolicy.remoteAllowed(feature.store,peer,group))break;
             temporary=com.subhub.app.storage.DisposableCache.temporary(context.getCacheDir(),"artwork-");
@@ -379,7 +470,7 @@ public final class FeatureEditorSession {
         private com.subhub.app.storage.DisposableCache.EditorLease cache;private boolean closed;
         DraftContext(Context source,FeatureEditorSession owner,String token){super(source);this.owner=owner;this.token=token;}
         @Override public Context getApplicationContext(){return this;}
-        @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(owner.stores){return owner.stores.computeIfAbsent(name,unused->{DraftPreferences prefs=new DraftPreferences();if(owner.preview&&owner.previewSeeded)prefs.freeze();prefs.registerOnSharedPreferenceChangeListener((store,key)->owner.draftChanged(name,key));return prefs;});}}
+        @Override public SharedPreferences getSharedPreferences(String name,int mode){synchronized(owner.stores){return owner.stores.computeIfAbsent(name,unused->{DraftPreferences prefs=new DraftPreferences();prefs.registerOnSharedPreferenceChangeListener((store,key)->owner.draftChanged(name,key));return prefs;});}}
         private synchronized File directory(String name) {
             if(closed)throw new IllegalStateException("Editor is closed");
             try {
@@ -394,9 +485,9 @@ public final class FeatureEditorSession {
             closed=true;
             if(cache!=null)try{cache.close();}catch(IOException deferred){android.util.Log.w("StorageCache","Editor cleanup deferred");}
         }
-        private void forbidPreviewAccess(){if(owner.preview)throw new SecurityException("Preview has no device data access");}
+        private void forbidPreviewAccess(){if(owner.internal)throw new SecurityException("Preview has no device data access");}
         @Override public android.content.ContentResolver getContentResolver(){forbidPreviewAccess();return super.getContentResolver();}
-        @Override public File getDir(String name,int mode){if(owner.preview){if(name==null||!name.matches("[A-Za-z0-9_-]+"))throw new SecurityException("Invalid preview directory");return directory(name);}return super.getDir(name,mode);}
+        @Override public File getDir(String name,int mode){if(owner.internal){if(name==null||!name.matches("[A-Za-z0-9_-]+"))throw new SecurityException("Invalid preview directory");return directory(name);}return super.getDir(name,mode);}
         @Override public File getFileStreamPath(String name){forbidPreviewAccess();return super.getFileStreamPath(name);}
         @Override public boolean deleteFile(String name){forbidPreviewAccess();return super.deleteFile(name);}
         @Override public boolean deleteDatabase(String name){forbidPreviewAccess();return super.deleteDatabase(name);}

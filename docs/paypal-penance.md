@@ -131,8 +131,10 @@ Verified completion acknowledges the ledger, paid total and optional activity re
 ## Extra-time requests
 
 Both paired apps must support app-time requests. When a selected app reaches an active
-individual or combined limit, the Sub can open **App time requests** from Home or the
-limit notification and submit a request. The assigned Dom reviews it from that Sub's
+individual or combined limit, the Sub can expand **App time** with **Show all** on
+Overview and request time beside that app. The limit notification opens this expanded
+section too. A saved request remains pending while waiting for the Dom; saving on the
+Sub's device does not confirm delivery. The assigned Dom reviews it from that Sub's
 profile and approves a positive number of minutes or declines. Limits remain in place
 while the request is pending or declined.
 
@@ -144,7 +146,7 @@ approved time, the Sub may deliberately submit another request.
 
 In **Tribute > Rules > Apps & requests**, the **Extra-time requests** rule controls
 tribute on submission. It is off by default, with a configurable initial price of 1.00
-in the selected wallet currency. The request page shows the current bounded amount
+in the selected wallet currency. The expanded app row shows the current bounded amount
 before submission. Existing daily and weekly caps, correction window, currency and
 Wallet participation apply. Approval and decline never trigger another tribute;
 a retry or reconnect of the same request does not create a second debit. An assessed

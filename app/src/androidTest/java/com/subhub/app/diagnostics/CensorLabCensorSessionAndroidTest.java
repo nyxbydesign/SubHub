@@ -130,8 +130,8 @@ public final class CensorLabCensorSessionAndroidTest {
     }
 
     @Test public void lateLabFrameDoesNotReachNormalLedgerAfterRecordingStops() throws Exception {
-        ScreenshotAccessibilityService detachedService = new ScreenshotAccessibilityService();
-        Method record = ScreenshotAccessibilityService.class.getDeclaredMethod(
+        Object detachedService = com.subhub.app.service.AccessibilityPipelineFixture.detached(new ScreenshotAccessibilityService());
+        Method record = com.subhub.app.service.AccessibilityPipelineFixture.type().getDeclaredMethod(
                 "recordSupplementedTrackState", java.util.List.class, int.class, int.class, boolean.class);
         record.setAccessible(true);
         try (CensorLabCensorSession.Lease ignored = CensorLabCensorSession.acquire()) {

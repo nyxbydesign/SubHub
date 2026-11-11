@@ -95,7 +95,7 @@ public final class RetainedStatisticsTest {
     @Test public void historicStreakWeekendAndHolidayNeedRecordedDays() {
         RetainedStatistics history = empty(); java.util.Set<String> dates = new LinkedHashSet<>();
         for (int day = 0; day < 30; day++) dates.add(LocalDate.of(2026, 8, 1).plusDays(day).toString());
-        history.activeDates(dates);
+        history.activeDates(dates); history.legacyActivityDates(dates);
         history.mergeRecorded(Map.of("2025-12-25", Map.of("censors", 1L)));
         Map<String, Long> awards = history.awards(false);
         assertTrue(awards.get("streak_30") > 0); assertTrue(awards.get("weekend_warrior") > 0);
@@ -115,13 +115,201 @@ public final class RetainedStatisticsTest {
 
     @Test public void thresholdsUseChronologicalSourceDatesAndSaturate() {
         Map<String, Map<String, Long>> days = new LinkedHashMap<>();
-        days.put("2026-08-03", Map.of("service_ms", 3_600_000L));
-        days.put("2026-08-01", Map.of("service_ms", 1_800_000L));
-        days.put("2026-08-02", Map.of("service_ms", 1_800_000L));
+        days.put("2026-08-03", Map.of("service_ms", 36_000_000L));
+        days.put("2026-08-01", Map.of("service_ms", 18_000_000L));
+        days.put("2026-08-02", Map.of("service_ms", 18_000_000L));
         RetainedStatistics history = new RetainedStatistics(UTC, NOW, days);
         assertEquals(time("2026-08-03T00:00:00Z") - 1, (long) history.awards(true).get("dom_time_1hr"));
         history.event("large", "a", "2026-08-01", "photos", Long.MAX_VALUE);
         history.event("large", "b", "2026-08-01", "photos", 1);
         assertEquals(Long.MAX_VALUE, history.total("photos"));
     }
+    @Test public void composedStreakUsesItsCapturedCalendarAcrossTheExpiryBoundary() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo"), losAngeles = ZoneId.of("America/Los_Angeles");
+        for (String instant : new String[]{"2026-11-10T01:00:00Z", "2026-11-11T14:59:59Z",
+                "2026-11-11T15:00:00Z", "2026-11-12T01:00:00Z"}) {
+            long now = time(instant);
+            LocalDate today = Instant.ofEpochMilli(now).atZone(tokyo).toLocalDate();
+            RetainedStatistics history = new RetainedStatistics(losAngeles, now, Collections.emptyMap());
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                    .identified("12345678-1234-1234-1234-123456789abc", tokyo.getId()));
+            int expected = today.isBefore(LocalDate.parse("2026-11-12")) ? 8 : 0;
+            StatsSnapshot original = streakSnapshot(expected, today);
+            StatsSnapshot composed = original.withRetained(history);
+            assertEquals(instant, expected, composed.getCurrentStreak());
+            assertEquals(instant, expected, composed.withRetained(history).getCurrentStreak());
+            assertFalse("Travel cannot create an extra session day", history.activityDates().contains("2026-11-02"));
+            assertEquals(Long.valueOf(1), history.days().get("2026-11-03").get("sessions"));
+            if (instant.equals("2026-11-12T01:00:00Z")) {
+                // Reproject timestamped sessions instead of reinterpreting their civil-date labels.
+                assertEquals(0, history.currentStreak(Instant.ofEpochMilli(now).atZone(losAngeles).toLocalDate(), losAngeles.getId(), 0, ""));
+                assertEquals(0, composed.getCurrentStreak());
+            }
+        }
+    }
+
+    @Test public void retainedStreakRecoveryPreservesLiveProgressAndLegacyFallback() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                time("2026-11-12T01:00:00Z"), Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(time("2026-11-03T00:00:00Z"),
+                (time("2026-11-10T01:00:00Z") - time("2026-11-03T00:00:00Z")) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        assertEquals(9, streakSnapshot(9, LocalDate.parse("2026-11-11")).withRetained(history).getCurrentStreak());
+        assertEquals(8, streakSnapshot(0, LocalDate.parse("2026-11-11")).withRetained(history).getCurrentStreak());
+        assertEquals(0, streakSnapshot(0, null).withRetained(history).getCurrentStreak());
+    }
+
+    @Test public void eastwardCensorAndUnzonedDailyDatesCannotReviveAnExpiredStreak() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T13:00:00Z");
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo"), auckland = ZoneId.of("Pacific/Auckland");
+        String deviceActivityDay = Instant.ofEpochMilli(end - 1000).atZone(auckland).toLocalDate().toString();
+        assertEquals("2026-11-11", deviceActivityDay);
+        for (String observed : new String[]{"2026-11-10T13:00:00Z", "2026-11-11T14:59:59Z",
+                "2026-11-11T15:00:00Z", "2026-11-12T01:00:00Z"}) {
+            long now = time(observed);
+            LocalDate today = Instant.ofEpochMilli(now).atZone(tokyo).toLocalDate();
+            RetainedStatistics history = new RetainedStatistics(auckland, now,
+                    Collections.singletonMap(deviceActivityDay, Map.of("service_ms", 1000L)));
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 1)
+                    .identified("12345678-1234-1234-1234-123456789abc", tokyo.getId()));
+            history.activeDates(Collections.singleton(deviceActivityDay));
+            int expected = today.isBefore(LocalDate.parse("2026-11-12")) ? 8 : 0;
+            StatsSnapshot composed = streakSnapshot(expected, today).withRetained(history);
+            assertEquals(observed, expected, composed.getCurrentStreak());
+            assertEquals(observed, expected, composed.withRetained(history).getCurrentStreak());
+            assertTrue("Keep historical activity evidence", composed.getActiveDates().contains(deviceActivityDay));
+            assertTrue("Historical streak awards remain eligible", history.awards(false).get("streak_7") > 0);
+        }
+    }
+
+    @Test public void dateOnlyEvidenceRetainsHistoricalAwardsWithoutInventingCurrentContinuity() {
+        Map<String, Map<String, Long>> days = new LinkedHashMap<>();
+        java.util.Set<String> activity = new LinkedHashSet<>();
+        for (int i = 0; i < 30; i++) {
+            String date = LocalDate.parse("2026-10-13").plusDays(i).toString();
+            days.put(date, Map.of("service_ms", 1000L)); activity.add(date);
+        }
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"),
+                time("2026-11-11T15:00:00Z"), days);
+        history.activeDates(activity);
+        assertEquals(0, streakSnapshot(0, LocalDate.parse("2026-11-12")).withRetained(history).getCurrentStreak());
+        assertTrue(history.awards(false).get("streak_30") > 0);
+        assertEquals(activity, history.activityDates());
+    }
+
+    @Test public void timestampedHistoryJoinsAnOngoingKnownStreakWithoutDateOnlyEvidence() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"),
+                time("2026-11-11T01:00:00Z"), Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(time("2026-11-03T00:00:00Z"),
+                (time("2026-11-10T13:00:00Z") - time("2026-11-03T00:00:00Z")) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        assertEquals(9, history.currentStreak(LocalDate.parse("2026-11-11"), "Asia/Tokyo", 1, "2026-11-11"));
+        assertEquals(8, history.currentStreak(LocalDate.parse("2026-11-11"), "Asia/Tokyo", 0, ""));
+        assertEquals(Integer.MAX_VALUE, history.currentStreak(LocalDate.parse("2026-11-11"),
+                "Asia/Tokyo", Integer.MAX_VALUE, "2026-11-11"));
+    }
+
+    @Test public void recoveredProgressNeverBecomesNewEvidenceOnRepeatedComposition() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-11T01:00:00Z");
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"), end, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        StatsSnapshot recovered = streakSnapshot(1, LocalDate.parse("2026-11-11"));
+        for (int i = 0; i < 5; i++) {
+            recovered = recovered.withRetained(history);
+            assertEquals(9, recovered.getCurrentStreak());
+        }
+    }
+
+    @Test public void changedZoneRestartCompositionCannotBridgeTheActualSessionGap() {
+        long start = time("2026-11-03T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long restart = time("2026-11-11T16:00:00Z");
+        SessionStreak first = SessionStreak.through(1, "2026-11-03", "Asia/Tokyo", start, end, "Asia/Tokyo");
+        SessionStreak next = SessionStreak.through(first.days, first.lastDay, "Asia/Tokyo",
+                restart, restart, "America/Los_Angeles");
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                restart, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        StatsSnapshot current = streakSnapshot(next.days, LocalDate.parse("2026-11-11"),
+                next.lastDay, "America/Los_Angeles");
+        for (int i = 0; i < 5; i++) {
+            current = current.withRetained(history);
+            assertEquals(1, current.getCurrentStreak());
+        }
+        assertTrue("Old streak remains historically eligible", history.awards(false).get("streak_7") > 0);
+    }
+
+    @Test public void mixedSessionCalendarsCannotManufactureAHistoricalSevenDayAward() {
+        long start = time("2026-11-05T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long restart = time("2026-11-11T16:00:00Z"), closed = restart + 60_000;
+        for (String displayZone : new String[]{"Asia/Tokyo", "America/Los_Angeles", "Pacific/Auckland"}) {
+            RetainedStatistics history = new RetainedStatistics(ZoneId.of(displayZone), closed, Collections.emptyMap());
+            history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                    .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+            history.session(new StatsRepository.SessionEntry(restart, 60, 0)
+                    .identified("22345678-1234-1234-1234-123456789abc", "America/Los_Angeles"));
+            assertEquals(7, history.activityDates().size()); // Display labels are not streak proof.
+            for (int i = 0; i < 3; i++) {
+                assertFalse(displayZone, history.awards(false).containsKey("streak_7"));
+                assertFalse(history.awards(false).containsKey("streak_30"));
+            }
+            // Persisting the daily presentation must not turn it into independent legacy evidence.
+            Map<String, Map<String, Long>> copied = history.days();
+            history.mergeRecorded(copied);
+            history.legacyServiceDates(Collections.emptySet());
+            assertFalse(history.awards(false).containsKey("streak_7"));
+        }
+    }
+
+    @Test public void timestampedHistoryEarnsAStreakOnlyWithinOneCoherentCalendar() {
+        long start = time("2026-11-05T00:00:00Z"), end = time("2026-11-10T01:00:00Z");
+        long next = time("2026-11-11T01:00:00Z"); // Nov 11 Tokyo, Nov 10 LA: no missed day.
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("Pacific/Auckland"), next, Collections.emptyMap());
+        history.session(new StatsRepository.SessionEntry(start, (end - start) / 1000, 0)
+                .identified("12345678-1234-1234-1234-123456789abc", "Asia/Tokyo"));
+        history.session(new StatsRepository.SessionEntry(next, 0, 0)
+                .identified("22345678-1234-1234-1234-123456789abc", "America/Los_Angeles"));
+        assertTrue(history.awards(false).get("streak_7") > 0);
+        assertFalse(history.awards(false).containsKey("streak_30"));
+    }
+
+    @Test public void legacyHistoryStandsOnItsOwnWithoutBorrowingTimestampedDays() {
+        Map<String, Map<String, Long>> days = new LinkedHashMap<>();
+        for (int i = 0; i < 6; i++) days.put(LocalDate.parse("2026-08-01").plusDays(i).toString(), Map.of("service_ms", 1000L));
+        RetainedStatistics history = new RetainedStatistics(UTC, NOW, days);
+        history.session(new StatsRepository.SessionEntry(time("2026-08-07T12:00:00Z"), 60, 0));
+        assertFalse("Unknown calendars cannot supply a missing day", history.awards(false).containsKey("streak_7"));
+        for (int i = 6; i < 30; i++) days.put(LocalDate.parse("2026-08-01").plusDays(i).toString(), Map.of("service_ms", 1000L));
+        history.mergeRecorded(days);
+        assertTrue("A genuine date-only legacy run is still eligible", history.awards(false).get("streak_30") > 0);
+    }
+
+    @Test public void prunedSessionLedgerPreservesCoherentHistoryWithoutCombiningTravelLabels() {
+        RetainedStatistics history = new RetainedStatistics(ZoneId.of("America/Los_Angeles"),
+                time("2026-11-12T01:00:00Z"), Collections.emptyMap());
+        java.util.Set<String> tokyo = new LinkedHashSet<>();
+        for (int i = 0; i < 6; i++) tokyo.add(LocalDate.parse("2026-11-05").plusDays(i).toString());
+        history.calendarDates("Asia/Tokyo", tokyo);
+        history.calendarDates("America/Los_Angeles", Collections.singleton("2026-11-11"));
+        assertFalse(history.awards(false).containsKey("streak_7"));
+        history.calendarDates("invalid", Collections.singleton("2026-11-11"));
+        history.calendarDates("Asia/Tokyo", Collections.singleton("bad-date"));
+        assertFalse(history.awards(false).containsKey("streak_7"));
+        history.calendarDates("Asia/Tokyo", Collections.singleton("2026-11-11"));
+        assertTrue("A valid stored calendar remains eligible after session-history pruning", history.awards(false).get("streak_7") > 0);
+    }
+
+    private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today) {
+        return streakSnapshot(currentStreak, today, "2026-11-10", "Asia/Tokyo");
+    }
+
+    private StatsSnapshot streakSnapshot(int currentStreak, LocalDate today, String lastDay, String zone) {
+        return new StatsSnapshot(0, 0, 0, currentStreak, lastDay, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, false, Collections.emptySet(),
+                Collections.emptySet(), Collections.emptySet(), 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, today, zone, currentStreak);
+    }
+
 }

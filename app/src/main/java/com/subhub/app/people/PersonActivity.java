@@ -2,12 +2,19 @@ package com.subhub.app.people;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
 import com.subhub.app.activity.ActivityPreview;
+import com.subhub.app.appmode.DeviceStartResultRegistry;
+import com.subhub.app.appmode.DeviceStartViewModel;
 import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.configuration.FeatureEditorSession;
+import com.subhub.app.runtime.AppRuntimeGateway;
+import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.util.SubHubNavigation;
@@ -15,7 +22,9 @@ import com.subhub.app.util.SubHubNavigation;
 /** A selected person's contract, statistics and connection are always identity-bound. */
 public final class PersonActivity extends RolePage {
     private PersonId personId;
-    private boolean preview;
+    private boolean internal;
+    private long renderedInternalRevision = -1;
+    private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
@@ -28,11 +37,49 @@ public final class PersonActivity extends RolePage {
     private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
     private com.subhub.app.security.KeyholderProvider appIconAuthority;
     private TextView currentCountdown;
+    private DeviceStartViewModel demoStart;
+    private DeviceStartResultRegistry demoResults;
+    private TextView demoStartAction, demoStartStatus, demoServiceLabel;
+    private boolean demoUiResumed, demoStatusPending, demoEndPending;
+    private long nextDemoObservation;
+    private AppRuntimeGateway.InternalStatus demoRuntime;
+    private final DeviceStartViewModel.Ui demoUi = new DeviceStartViewModel.Ui() {
+        @Override public boolean available() {
+            return demoUiResumed && !isFinishing() && !isDestroyed() && demoAuthorized();
+        }
+        @Override public boolean granted(RuntimeStartAttempt.Permission permission) {
+            return demoPermissionGranted(permission);
+        }
+        @Override public Runnable prepare(DeviceStartViewModel.PromptRoute route) {
+            DeviceStartResultRegistry.Prepared prepared = demoResults.prepare(route);
+            Intent intent = switch (route.permission) {
+                case NOTIFICATIONS -> null;
+                case ACCESSIBILITY -> new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                case OVERLAY -> new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.fromParts("package", getPackageName(), null));
+                case PROJECTION -> java.util.Objects.requireNonNull(
+                        getSystemService(android.media.projection.MediaProjectionManager.class)).createScreenCaptureIntent();
+            };
+            return () -> prepared.launch(intent);
+        }
+        @Override public void changed() { updateDemoStartAction(); }
+        @Override public void completed(AppRuntimeGateway.StartState state) {
+            if (state == AppRuntimeGateway.StartState.ACTIVE) {
+                demoRuntime = null;
+                observeDemoRuntime(true);
+                updateDemoStartAction();
+                refreshInternal(true);
+            } else if (demoStartStatus != null) {
+                demoStartStatus.setText(R.string.internal_sub_session_unavailable);
+                demoStartStatus.setVisibility(View.VISIBLE);
+            }
+        }
+    };
     private final Runnable observe = new Runnable() {
         @Override public void run() {
             if (!observing) return;
             observePerson();
-            if (observing) clock.postDelayed(this, preview ? 250 : 2000);
+            if (observing) clock.postDelayed(this, internal ? 250 : 2000);
         }
     };
 
@@ -41,10 +88,13 @@ public final class PersonActivity extends RolePage {
         if (!guardTarget()) return;
         observing = true;
         observeAppIcons();
-        clock.postDelayed(observe, preview ? 250 : 2000);
+        clock.postDelayed(observe, internal ? 250 : 2000);
     }
 
     @Override protected void onPause() {
+        demoUiResumed = false;
+        if (demoStart != null) demoStart.detach(demoUi);
+        updateDemoStartAction();
         observing = false;
         stopAppIcons();
         clock.removeCallbacks(observe);
@@ -52,10 +102,140 @@ public final class PersonActivity extends RolePage {
         super.onPause();
     }
 
-    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+    @Override protected void onPostResume() {
+        super.onPostResume();
+        if (demoStart == null || !guardTarget()) return;
+        demoUiResumed = true;
+        demoStart.attach(demoUi);
+        observeDemoRuntime(true);
+        updateDemoStartAction();
+    }
+
+    @Override protected void onDestroy() {
+        if (demoStart != null) demoStart.detach(demoUi);
+        if (demoResults != null) demoResults.close();
+        stopAppIcons();
+        super.onDestroy();
+    }
+
+    private boolean demoAuthorized() {
+        if (!internal || !DummySubPreview.ID.equals(personId) || !DummySubPreview.isAllowed(this)) return false;
+        InternalSubData data = InternalSubData.peek(this);
+        return data != null && data.ownerDataReady();
+    }
+
+    private AppRuntimeGateway demoGateway() {
+        return demoAuthorized() ? AppRuntimeGateway.current(this) : null;
+    }
+
+    private boolean demoPermissionGranted(RuntimeStartAttempt.Permission permission) {
+        switch (permission) {
+            case NOTIFICATIONS:
+                return android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
+                        || androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            case OVERLAY: return android.provider.Settings.canDrawOverlays(this);
+            case PROJECTION: return false;
+            case ACCESSIBILITY:
+                var manager = getSystemService(android.view.accessibility.AccessibilityManager.class);
+                if (manager == null) return false;
+                for (var service : manager.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                    var resolved = service.getResolveInfo();
+                    if (resolved != null && resolved.serviceInfo != null
+                            && getPackageName().equals(resolved.serviceInfo.packageName)
+                            && com.subhub.app.service.ScreenshotAccessibilityService.class.getName().equals(resolved.serviceInfo.name)) return true;
+                }
+                return false;
+            default: throw new IllegalArgumentException("Unknown Start permission");
+        }
+    }
+
+    private void updateDemoStartAction() {
+        if (demoStartAction == null) return;
+        boolean active = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE;
+        boolean idle = demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.IDLE;
+        boolean canOpen = idle || demoRuntime == null && demoGateway() == null;
+        demoStartAction.setText(active ? R.string.role_end_session : R.string.role_start_session);
+        demoStartAction.setEnabled(demoStart != null && demoUi.available() && !demoEndPending && !demoStart.busy()
+                && (active || canOpen && FeatureEditorSession.canEdit(this, "duration")));
+        if (demoServiceLabel != null)
+            demoServiceLabel.setText(active ? R.string.status_active : canOpen ? R.string.status_inactive : R.string.role_unknown_data);
+    }
+
+    private AppRuntimeGateway.InternalStartSpec demoSpecification() {
+        var record = InternalSubData.get(this).acknowledged();
+        return new AppRuntimeGateway.InternalStartSpec(record.targetId, record.generation,
+                record.configurationRevision, ControllerPinManager.domWorkspaceRevision());
+    }
+
+    private boolean stillObservingDemo(AppRuntimeGateway gateway, AppRuntimeGateway.InternalStartSpec expected) {
+        return demoGateway() == gateway && sameDemoProfile(expected);
+    }
+
+    private boolean sameDemoProfile(AppRuntimeGateway.InternalStartSpec expected) {
+        if (!demoUi.available()) return false;
+        var actual = demoSpecification();
+        return expected.target.equals(actual.target) && expected.generation.equals(actual.generation)
+                && expected.configurationRevision == actual.configurationRevision
+                && expected.controllerRevision == actual.controllerRevision;
+    }
+
+    private void observeDemoRuntime(boolean immediate) {
+        if (!demoUi.available() || demoStatusPending) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!immediate && now < nextDemoObservation) return;
+        nextDemoObservation = now + 1000;
+        AppRuntimeGateway gateway = demoGateway();
+        if (gateway == null) {
+            demoRuntime = null;
+            updateDemoStartAction();
+            return;
+        }
+        var expected = demoSpecification();
+        demoStatusPending = true;
+        gateway.internalStatus(expected).whenComplete((observed, failure) -> runOnUiThread(() -> {
+            demoStatusPending = false;
+            if (!stillObservingDemo(gateway, expected)) return;
+            demoRuntime = failure == null ? observed : null;
+            updateDemoStartAction();
+        }));
+    }
+
+    private void beginDemoStart() {
+        if (!demoUi.available() || !guardTarget() || demoStart.busy() || demoEndPending) return;
+        AppRuntimeGateway gateway = demoGateway();
+        if (gateway != null && demoRuntime != null && demoRuntime.phase == AppRuntimeGateway.InternalPhase.ACTIVE) {
+            var expected = demoSpecification();
+            var owner = demoRuntime.owner;
+            demoEndPending = true;
+            updateDemoStartAction();
+            gateway.endInternal(expected, owner).whenComplete((ended, failure) -> runOnUiThread(() -> {
+                demoEndPending = false;
+                if (!sameDemoProfile(expected)) return;
+                if ((failure != null || !Boolean.TRUE.equals(ended)) && demoStartStatus != null) {
+                    demoStartStatus.setText(R.string.internal_sub_session_unavailable);
+                    demoStartStatus.setVisibility(View.VISIBLE);
+                }
+                demoRuntime = null;
+                observeDemoRuntime(true);
+                updateDemoStartAction();
+            }));
+            return;
+        }
+        if (gateway != null && (demoRuntime == null || demoRuntime.phase != AppRuntimeGateway.InternalPhase.IDLE)) return;
+        android.content.Context physical = getApplicationContext();
+        long controllerRevision = ControllerPinManager.domWorkspaceRevision();
+        if (demoStartStatus != null) demoStartStatus.setVisibility(View.GONE);
+        demoStart.beginInternal(physical, () -> FeatureEditorSession.acknowledgeInternalDuration(this).thenApply(saved -> {
+            if (!DummySubPreview.current(physical, saved.generation, controllerRevision))
+                throw new SecurityException("Demo Start authority changed");
+            return new AppRuntimeGateway.InternalStartSpec(saved.targetId, saved.generation,
+                    saved.configurationRevision, controllerRevision);
+        }));
+    }
 
     private void observeAppIcons() {
-        if (preview || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
+        if (internal || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         if (appIconObserver != null && provider == appIconProvider && authority == appIconAuthority) return;
@@ -78,7 +258,8 @@ public final class PersonActivity extends RolePage {
     }
 
     private void observePerson() {
-        if (!guardTarget() || preview) return;
+        if (!guardTarget()) return;
+        if (internal) { observeDemoRuntime(false); refreshInternal(false); return; }
         observeAppIcons();
         if (currentCountdown != null && personId != null && personId.isLocal()
                 && com.subhub.app.commitment.CommitmentManager.isActive(this)) {
@@ -106,13 +287,14 @@ public final class PersonActivity extends RolePage {
     }
 
     private boolean guardTarget() {
-        if (preview ? !DummySubPreview.isAllowed(this) || !DummySubPreview.ID.equals(personId)
+        if (internal ? !DummySubPreview.isAllowed(this) || !DummySubPreview.ID.equals(personId)
                 : DummySubPreview.isRequested(getIntent()) || !mayRead(this, personId)) {
             observing = false;
             stopAppIcons();
             clock.removeCallbacks(observe);
             if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
             currentCountdown = null;
+            if (demoStart != null) demoStart.cancel();
             if (body != null) body.removeAllViews();
             finish();
             return false;
@@ -130,9 +312,14 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        preview = DummySubPreview.isRequested(getIntent());
-        if (preview && (!DummySubPreview.isAllowed(this)
-                || !FeatureEditorSession.attach(this, "duration", null))) { finish(); return; }
+        internal = DummySubPreview.isRequested(getIntent());
+        if (internal) {
+            demoStart = new ViewModelProvider(this).get(DeviceStartViewModel.class);
+            demoResults = new DeviceStartResultRegistry(getActivityResultRegistry(), this::demoPermissionGranted);
+            demoResults.restore(state == null ? null : state.getBundle("demo_start_result_routes"), demoStart.pendingRoute());
+        }
+        if (internal && (!DummySubPreview.isAllowed(this)
+                || !FeatureEditorSession.attach(this, "duration", state))) { demoStart.cancel(); finish(); return; }
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
         section = state == null ? getIntent().getStringExtra("person_section")
@@ -152,20 +339,33 @@ public final class PersonActivity extends RolePage {
     }
 
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview controls always come from the frozen example, never saved widget input.
-        if (!preview) super.onRestoreInstanceState(state);
+        // Raw internal fields are restored only for the same current retained draft.
+        if (!internal || FeatureEditorSession.restoreInternalWidgets(this, state)) super.onRestoreInstanceState(state);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
+        if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
         state.putString("person_section", section);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
     }
 
+    @SuppressWarnings("deprecation")
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        try { super.onActivityResult(requestCode, resultCode, result); }
+        finally { if (demoResults != null) demoResults.onFrameworkResultReturned(); }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] results) {
+        try { super.onRequestPermissionsResult(requestCode, permissions, results); }
+        finally { if (demoResults != null) demoResults.onFrameworkResultReturned(); }
+    }
+
     @Override protected void refresh() {
         if (!guardTarget()) return;
-        if (preview) { render(DummySubPreview.snapshot(this)); return; }
+        if (internal) { refreshInternal(true); return; }
         refreshLocalDuration();
         observeAppIcons();
         data.cancel("person-observe");
@@ -188,6 +388,37 @@ public final class PersonActivity extends RolePage {
                 && authority == People.keyholder()) { renderedSection = null; unavailable(); } });
     }
 
+    private void refreshInternal(boolean force) {
+        if (!guardTarget()) return;
+        InternalSubData backend=InternalSubData.get(this);
+        com.subhub.app.internal.InternalSubRecord record=backend.acknowledged();
+        long ownerRevision=backend.presentationRevisionHint();
+        if(!force&&renderedInternalStamp!=null&&renderedInternalStamp.current(record,ownerRevision,ControllerPinManager.domWorkspaceRevision())){refreshLocalDuration();return;}
+        PersonSnapshot cached=backend.peekPresentation();
+        if(cached!=null){
+            InternalPresentationStamp stamp=backend.presentationStamp(cached);
+            if(stamp!=null){renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(cached);return;}
+        }
+        if(data.isPending("person"))return;
+        if(renderedInternalRevision<0)loading();
+        android.content.Context app=getApplicationContext();
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        data.load("person",()->{
+            if(!DummySubPreview.current(app,record.generation,controller))throw new SecurityException("Internal profile changed");
+            InternalSubData.loadIfProvisioned(app);
+            return backend.loadPresentation(app,record);
+        },person->{
+            if(!guardTarget()||!DummySubPreview.current(app,record.generation,controller))return;
+            if(backend.acknowledged().revision!=record.revision||backend.peekPresentation()!=person){refreshInternal(true);return;}
+            InternalPresentationStamp stamp=backend.presentationStamp(person);
+            if(stamp==null){refreshInternal(true);return;}
+            renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(person);
+        },failure->{
+            if(guardTarget()&&DummySubPreview.current(app,record.generation,controller)
+                    &&backend.acknowledged().revision==record.revision){renderedInternalRevision=-1;renderedInternalStamp=null;renderedSection=null;unavailable();}
+        });
+    }
+
     private void render(PersonSnapshot person) {
         if (!guardTarget() || !personId.equals(person.id)) return;
         if ("stats".equals(section)) {
@@ -203,12 +434,23 @@ public final class PersonActivity extends RolePage {
             }
             if ("profile".equals(section)) {
                 title(R.string.role_profile);
-                reconcile("identity", java.util.Arrays.asList(person.profile), parent -> ProfileViews.identity(parent, person, !preview));
+                reconcile("identity", java.util.Arrays.asList(person.profile), parent -> {
+                    ProfileViews.identity(parent, person, !internal);
+                    if (internal) {
+                        boolean writable = InternalSubData.get(this).ownerDataReady();
+                        TextView edit = PersonUi.action(parent, R.string.internal_sub_edit_profile, () -> {
+                            if (guardTarget() && InternalSubData.get(this).ownerDataReady())
+                                startActivity(DummySubPreview.childIntent(this, ProfileEditorActivity.class));
+                        }, false);
+                        edit.setTag("internal_profile_edit"); edit.setEnabled(writable);
+                        if (!writable) PersonUi.text(parent, getString(R.string.internal_sub_owner_data_unavailable), false);
+                    }
+                });
                 ProfileViews.updateIdentityConnection(panels.get("identity"), person);
                 java.util.List<Object> session = new java.util.ArrayList<>(java.util.Arrays.asList(
                         person.id, person.serviceActive, person.sessionIdentity, person.sync.runtime,
-                        person.capabilities, person.sync.desiredRevision, person.sync.appliedRevision,
-                        preview ? null : People.connectionUi(), preview ? null : People.keyholder(),
+                        person.capabilities, internal ? null : person.sync.desiredRevision, internal ? null : person.sync.appliedRevision,
+                        internal ? null : People.connectionUi(), internal ? null : People.keyholder(),
                         com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()));
                 if (person.id.isLocal()) session.add(com.subhub.app.commitment.CommitmentManager.isActive(this));
                 reconcile("session", session, parent -> session(parent, person));
@@ -220,15 +462,16 @@ public final class PersonActivity extends RolePage {
                     LinearLayout destinations = PersonUi.card(parent);
                     destinations.setTag("person_destinations");
                     destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
-                    PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", preview ? null : () -> {
-                        if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
+                    PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", () -> {
+                        if (guardTarget()) startActivity(internal ? DummySubPreview.childIntent(this, com.subhub.app.tasks.TasksActivity.class)
+                                : new Intent(this, com.subhub.app.tasks.TasksActivity.class)
                                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
                 });
-                if (!preview) reconcile("activity", java.util.List.of(person.id), parent ->
+                if (!internal) reconcile("activity", java.util.List.of(person.id), parent ->
                         ActivityPreview.add(parent, person.id, 3, data, "person-recent-activity"));
             } else if ("connection".equals(section)) {
                 title(R.string.role_connection);
@@ -237,7 +480,7 @@ public final class PersonActivity extends RolePage {
                                 System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))
                         : getString(R.string.role_never_synced);
                 reconcile("connection", java.util.Arrays.asList(person.name, person.device,
-                        PersonUi.connection(this, person), observed, person.capabilities, preview ? null : People.connectionUi()), parent -> {
+                        PersonUi.connection(this, person), observed, person.capabilities, internal ? null : People.connectionUi()), parent -> {
                     PersonUi.text(parent, person.name, true);
                     PersonUi.text(parent, ProfileViews.targetDiscriminator(this, person), false)
                             .setTag("person_target:" + person.id.value());
@@ -246,12 +489,12 @@ public final class PersonActivity extends RolePage {
             } else {
                 title(R.string.role_contract);
                 java.util.List<Object> contract = PersonPresentation.contract(person);
-                java.util.Collections.addAll(contract, preview ? null : People.connectionUi(), preview ? null : People.keyholder(),
-                        preview ? null : com.subhub.app.relationships.RelationshipUi.provider(),
+                java.util.Collections.addAll(contract, internal ? null : People.connectionUi(), internal ? null : People.keyholder(),
+                        internal ? null : com.subhub.app.relationships.RelationshipUi.provider(),
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
-                    ProfileViews.allowedFeatures(parent, person);
+                    if (!internal) ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
@@ -265,8 +508,8 @@ public final class PersonActivity extends RolePage {
     }
 
     private void refreshLocalDuration() {
-        if (personId == null || !personId.isLocal() || body == null) return;
-        ServiceDurationView duration = body.findViewWithTag("person_duration:local");
+        if (personId == null || (!personId.isLocal() && !internal) || body == null) return;
+        ServiceDurationView duration = body.findViewWithTag("person_duration:" + personId.value());
         if (duration != null) duration.reloadIfChanged();
     }
 
@@ -310,26 +553,31 @@ public final class PersonActivity extends RolePage {
         if (!person.id.isLocal()) {
             LinearLayout session = PersonUi.card(body);
             PersonUi.text(session, getString(R.string.role_session), true);
-            PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
-                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false).setTag("person_service_label");
+            TextView serviceLabel = PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
+                    ? getString(R.string.role_unknown_data) : person.serviceLabel, false);
+            serviceLabel.setTag("person_service_label");
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
-            if (preview) {
-                TextView start = PersonUi.action(session, R.string.role_start_session, () -> {}, true);
-                start.setEnabled(false);
-                start.setId(R.id.person_session_action);
-                start.setTag("person_session:" + person.id.value());
+            if (internal) {
+                demoServiceLabel = serviceLabel;
+                demoStartAction = PersonUi.action(session, R.string.role_start_session, this::beginDemoStart, true);
+                demoStartAction.setId(R.id.person_session_action);
+                demoStartAction.setTag("person_session:" + person.id.value());
                 PersonUi.text(session, getString(R.string.role_service_duration), true);
                 ServiceDurationView duration = new ServiceDurationView(this, null,
-                        FeatureEditorSession.context(this), () -> false);
+                        FeatureEditorSession.context(this), () -> guardTarget() && FeatureEditorSession.canEdit(this, "duration"));
                 duration.setId(R.id.person_duration_control);
                 duration.setTag("person_duration:" + person.id.value());
                 duration.setHeadingVisible(false);
-                duration.setEditable(false);
+                duration.setEditable(FeatureEditorSession.canEdit(this, "duration"));
                 duration.setSaveEnabled(false);
                 session.addView(duration, new LinearLayout.LayoutParams(-1, -2));
+                FeatureEditorSession.bind(this, findViewById(android.R.id.content), "duration", duration::validateSelection);
+                demoStartStatus = PersonUi.text(session, getString(R.string.internal_sub_session_unavailable), false);
+                demoStartStatus.setVisibility(demoAuthorized() ? View.GONE : View.VISIBLE);
+                updateDemoStartAction();
                 PersonUi.row(session, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
                         getString(R.string.dummy_sub_defaults), () -> {
-                            if (guardTarget()) DummySubPreview.openSection(this, "duration");
+                            if (guardTarget()) startActivity(FeatureEditorSession.child(this, ServiceDurationActivity.class));
                         }).setTag("person_duration");
                 return;
             }
@@ -362,8 +610,14 @@ public final class PersonActivity extends RolePage {
                     active ? R.string.role_end_session : R.string.role_start_session,
                     () -> {
                         if (!guardTarget()) return;
-                        if (active) { LocalSessionControls.end(this, person.id); refresh(); }
-                        else PersonRoutes.openLocalSession(this, person.id);
+                        if (active) {
+                            long controller = ControllerPinManager.domWorkspaceRevision();
+                            LocalSessionControls.endAsync(this, person.id).whenComplete((ended, failure) -> runOnUiThread(() -> {
+                                if (failure == null && Boolean.TRUE.equals(ended) && !isFinishing() && !isDestroyed()
+                                        && PersonId.LOCAL.equals(personId) && controller == ControllerPinManager.domWorkspaceRevision()
+                                        && guardTarget()) refresh();
+                            }));
+                        } else PersonRoutes.openLocalSession(this, person.id);
                     }, !active);
             manageSession.setId(R.id.person_session_action);
             manageSession.setTag("person_session:local");
@@ -386,7 +640,8 @@ public final class PersonActivity extends RolePage {
         }
 
         boolean editable = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
-                && (person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
+                && (internal ? FeatureEditorSession.canEdit(this, "apps")
+                        : person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
                         : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
@@ -396,10 +651,10 @@ public final class PersonActivity extends RolePage {
         freshness(scope, person.sync.contract);
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable && !preview) appsTitle.setTag("person_apps");
+        if (!editable && !internal) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !preview);
-        if (preview) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !internal);
+        if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
                 getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
@@ -424,7 +679,7 @@ public final class PersonActivity extends RolePage {
             PersonSnapshot.Section value, boolean editable) {
         int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
                 : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
-        boolean allowed = preview || (person.id.isLocal()
+        boolean allowed = internal || (person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
@@ -432,7 +687,7 @@ public final class PersonActivity extends RolePage {
         LinearLayout row = PersonUi.row(parent, icon, value.title,
                 atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
                         : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                (preview || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
+                (internal || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
         if (atmosphere && known) {
@@ -448,7 +703,7 @@ public final class PersonActivity extends RolePage {
 
     private void editSection(PersonSnapshot person, String section) {
         if (!guardTarget() || !personId.equals(person.id)) return;
-        if (preview) { DummySubPreview.openSection(this, section); return; }
+        if (internal) { startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section))); return; }
         if (person.id.isLocal()) {
             PersonRoutes.editSection(this, person.id, section);
             return;
@@ -461,7 +716,8 @@ public final class PersonActivity extends RolePage {
 
     private void openStats(PersonSnapshot person) {
         if (!guardTarget() || !personId.equals(person.id) || !person.can(PersonSnapshot.Capability.VIEW_STATS)) return;
-        if (person.id.isLocal()) startActivity(new Intent(this, StatsActivity.class)
+        if (internal) startActivity(DummySubPreview.childIntent(this, StatsActivity.class));
+        else if (person.id.isLocal()) startActivity(new Intent(this, StatsActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
         else {
             ConnectionUi ui = People.connectionUi();
@@ -473,7 +729,8 @@ public final class PersonActivity extends RolePage {
         LinearLayout card = PersonUi.card(body);
         PersonUi.text(card, PersonUi.connection(this, person), true);
         PersonUi.row(card, R.drawable.ic_nav_people, getString(R.string.role_device), person.device, null);
-        if (!person.id.isLocal()) {
+        if (internal) PersonUi.text(card, getString(R.string.dummy_sub_remove_help), false);
+        if (!internal && !person.id.isLocal()) {
             PersonUi.text(card, person.lastSyncedAt > 0 ? getString(R.string.role_last_synced,
                     android.text.format.DateUtils.getRelativeTimeSpanString(person.lastSyncedAt,
                             System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))

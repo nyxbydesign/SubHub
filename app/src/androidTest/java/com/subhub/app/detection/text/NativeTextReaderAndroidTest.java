@@ -57,7 +57,12 @@ public final class NativeTextReaderAndroidTest {
         heldProviderAdverse(Adverse.MISSING_GLYPHS);
     }
 
-    private enum Adverse { MUTATION, CANCEL_TRAVERSAL, LATE_SCOPE, NEW_GLYPH_SUPPORT, GLYPH_MUTATION, MISSING_GLYPHS }
+    @Test @SdkSuppress(minSdkVersion = 33)
+    public void deniedOwnerConfirmationReleasesRetainedNodesWithoutFurtherPlatformReads() throws Exception {
+        heldProviderAdverse(Adverse.OWNER_GATE);
+    }
+
+    private enum Adverse { MUTATION, CANCEL_TRAVERSAL, LATE_SCOPE, NEW_GLYPH_SUPPORT, GLYPH_MUTATION, MISSING_GLYPHS, OWNER_GATE }
 
     private void heldProviderAdverse(boolean cancelTraversal) throws Exception {
         heldProviderAdverse(cancelTraversal ? Adverse.CANCEL_TRAVERSAL : Adverse.MUTATION);
@@ -66,6 +71,7 @@ public final class NativeTextReaderAndroidTest {
     private void heldProviderAdverse(Adverse adverse) throws Exception {
         boolean cancelTraversal = adverse == Adverse.CANCEL_TRAVERSAL;
         boolean lateScope = adverse == Adverse.LATE_SCOPE;
+        boolean ownerDenied = adverse == Adverse.OWNER_GATE;
         android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String savedServices = android.provider.Settings.Secure.getString(context.getContentResolver(), "enabled_accessibility_services");
         String savedEnabled = android.provider.Settings.Secure.getString(context.getContentResolver(), "accessibility_enabled");
@@ -99,6 +105,15 @@ public final class NativeTextReaderAndroidTest {
                 }
             });
             reader = new NativeTextReader(new NativeTextReader.Provider() {
+                @Override public boolean readEffect(Runnable operation) {
+                    if (ownerDenied && confirming.get()) {
+                        held.countDown();
+                        try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("Owned read refusal not released"); }
+                        catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                        return false;
+                    }
+                    operation.run(); return true;
+                }
                 @Override public NativeTextReader.Tree open(CensorEngine.NativeTextInput input) throws Exception {
                     long until = SystemClock.uptimeMillis() + 5000;
                     while (SystemClock.uptimeMillis() < until) {
@@ -141,7 +156,7 @@ public final class NativeTextReaderAndroidTest {
                 @Override public void costStarted(com.subhub.app.censor.engine.NativeReadCost.Start value) { completion.costStarted(value); }
                 @Override public void cost(com.subhub.app.censor.engine.NativeReadCost value) {
                     terminals.incrementAndGet();
-                    assertEquals(cancelTraversal ? com.subhub.app.censor.engine.NativeReadCost.Terminal.CANCELLED
+                    assertEquals(cancelTraversal || ownerDenied ? com.subhub.app.censor.engine.NativeReadCost.Terminal.CANCELLED
                             : lateScope ? com.subhub.app.censor.engine.NativeReadCost.Terminal.SUCCESS
                             : com.subhub.app.censor.engine.NativeReadCost.Terminal.FAILURE, value.terminal);
                     completion.cost(value);
@@ -175,7 +190,7 @@ public final class NativeTextReaderAndroidTest {
                 scenario.onActivity(value -> value.first.swapDuringGeometry = true);
             } else if (adverse == Adverse.MISSING_GLYPHS) {
                 scenario.onActivity(value -> value.first.omitMatchedLastLine = true);
-            } else {
+            } else if (!ownerDenied) {
                 scenario.onActivity(value -> value.first.setContentDescription("ordinary safe caption"));
                 engine.requestNativeTextAt(SystemClock.uptimeMillis(), CensorEngine.NativeTextChange.TREE_DIRTY);
                 assertTrue("Soft mutation must not cancel the operation being tested", engine.nativeTextInFlight());
@@ -191,8 +206,10 @@ public final class NativeTextReaderAndroidTest {
                         - result.candidates.get(0).validatedAtMillis > 1000);
             } else assertNull(attempted.get());
             assertEquals("No expired or mutated frame may be admitted", 0, admitted.get());
-            assertEquals(cancelTraversal || lateScope ? 0 : 1, failures.get());
-            assertEquals(cancelTraversal ? 1 : 0, cancellations.get()); assertEquals(1, terminals.get()); assertEquals(1, drained.get());
+            assertEquals(cancelTraversal || ownerDenied || lateScope ? 0 : 1, failures.get());
+            assertEquals(cancelTraversal || ownerDenied ? 1 : 0, cancellations.get());
+            if (ownerDenied) assertEquals("Denied confirmation entered no further provider boundary", 0, finalChecks.get());
+            assertEquals(1, terminals.get()); assertEquals(1, drained.get());
         } catch (Exception | Error failure) {
             primaryFailure = failure; throw failure;
         } finally {

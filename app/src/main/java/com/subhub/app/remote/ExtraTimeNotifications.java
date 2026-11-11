@@ -10,12 +10,12 @@ import android.content.pm.PackageManager;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import com.subhub.app.R;
+import com.subhub.app.appmode.ExtraTimeActivity;
 import com.subhub.app.notifications.NotificationPreferences;
 import com.subhub.app.notifications.OptionalNotificationDispatch;
 import com.subhub.app.people.PersonId;
-import com.subhub.app.people.PersonRoutes;
 
-/** Optional notices supplement the always-available Home and profile request pages. */
+/** Optional notices open the same Overview or Dom review route as the app. */
 public final class ExtraTimeNotifications {
     private ExtraTimeNotifications() { }
     public static void reached(Context context, String packageName) {
@@ -47,8 +47,7 @@ public final class ExtraTimeNotifications {
             manager.createNotificationChannel(new NotificationChannel("app_time_requests",
                     context.getString(R.string.extra_time_notification_channel), NotificationManager.IMPORTANCE_DEFAULT));
             if (manager.getNotificationChannel("app_time_requests").getImportance() == NotificationManager.IMPORTANCE_NONE) return;
-            Intent intent = new Intent().setClassName(context,"com.subhub.app.appmode.ExtraTimeActivity")
-                    .putExtra(PersonRoutes.EXTRA_PERSON_ID,person.value()).putExtra("subhub.extra_time.package",packageName)
+            Intent intent = ExtraTimeActivity.intent(context, person, packageName)
                     .setData(android.net.Uri.parse("subhub://app-time/" + person.value() + "/" + identity));
             PendingIntent action = PendingIntent.getActivity(context,0,intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

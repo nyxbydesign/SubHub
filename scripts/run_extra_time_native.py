@@ -3,7 +3,9 @@
 This producer is separate from canonical unit/lint CI and never signs or publishes a
 release. Each selected method runs once; a failure retains its log and the remaining
 inventory. An explicitly invoked hosted run may select only a named subset.
-The retained producer and inventories do not install a feature-specific workflow.
+The retained producer requires an already provisioned host and never installs SDK
+packages, accepts licenses, or changes host permissions. The general Android CI
+workflow may opt into a fixed native suite; no feature-specific workflow is installed.
 """
 
 import argparse
@@ -58,9 +60,6 @@ SAFE_ASSERTION_OPERATIONS = frozenset((
     "fail", "assertTrue", "assertFalse", "assertEquals", "assertNotEquals",
     "assertNull", "assertNotNull", "assertSame", "assertNotSame", "assertArrayEquals", "assertThat",
 ))
-# Ubuntu 24.04's client-library package supplies the missing emulator SONAME.
-# Never infer arbitrary apt package names from loader output.
-EMULATOR_RUNTIME_PACKAGES = {"libpulse.so.0": "libpulse0"}
 NATIVE = {
     "com.subhub.app.remote.ExtraTimeRequestAndroidTest": [
         "retainedCapabilityCannotBypassConsentWorkspaceOrRevocation",
@@ -296,11 +295,16 @@ DEVICE_PASS_NATIVE = {
     "com.subhub.app.journal.JournalUiAndroidTest": [
         "profileAndOverviewPreviewsShowOnlyTitleAndUseCreationTimeFallback",
         "previewStopsPollingWhileHiddenAndRefreshesOnReturnAndReattachment",
+        "queuedRefreshCannotKeepPrivateRowsOrPlaybackAfterControllerLock",
     ],
     "com.subhub.app.tasks.TasksAndroidTest": [
         "completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
         "domOverviewExcludesCompletedAndRefreshesOriginalCounters",
         "domTasksOverviewOpensTheSelectedProfileAndReturnsFromItsList",
+    ],
+    "com.subhub.app.appmode.LimitsUiAndroidTest": [
+        "storedRowsSaveOnBlurAndPauseWhileCatalogIsPendingOrFailed",
+        "scopeChurnRestoresSavedRowsDespiteEarlierMetadataSuccessOrFailure",
     ],
     "com.subhub.app.appmode.AllowanceProgressAndroidTest": [
         "nativeRoundedMetersKeepExactValuesAndAccessibility",
@@ -337,6 +341,12 @@ DEVICE_PASS_NATIVE = {
 }
 DEVICE_PASS_SOURCE_ONLY = {
     **BATTERY_SOURCE_ONLY,
+    "com.subhub.app.appmode.LimitsUiAndroidTest": [
+        "recordedUsageAndDistinctAllowancesHaveReadableGeometry",
+        "invalidDraftSurvivesTicksAndRecreationThenPersistsWhenValid",
+        "scopeRefreshRetainsFocusedDraftAndInactiveAllowance",
+        "delayedSaveRechecksDomAccess",
+    ],
     "com.subhub.app.journal.JournalUiAndroidTest": [
         "textDraftIsBoundedPrivateSavedAndRecreatedWithoutOpeningKeyboard",
         "pickerCopiesFiveDocumentsAndRejectsDeclaredAndActualOversize",
@@ -417,18 +427,129 @@ DEVICE_PASS_SOURCE_ONLY = {
     ],
 }
 DUMMY_PREVIEW_NATIVE = {
+    "com.subhub.app.service.AccessibilityServiceConnectionTest": [
+        "selectedAttachmentReceivesExactPooledEventSynchronously",
+        "rejectionRemainsNeutralWithoutAttachmentCreation",
+        "disconnectBeforeSelectionNeverAttachesAndWaitsActualClose",
+        "disconnectFencesEventsButIsNotCleanupAuthorityOrDrain",
+        "runtimeStopWithoutOsDisconnectDrivesExactHostCleanup",
+        "stopWithinEventDoesNotCloseUntilEventActuallyReturns",
+        "falseNativeReceiptCannotReleaseConnection",
+        "attachFailureRetainsExactPartiallyCreatedAttachment",
+        "mainDispatchThrowAfterEnqueueNeverClaimsDrain",
+        "duplicateSelectionCannotReattachOrReplaceOwner",
+        "closeReceiptDuringAttachCannotRetireItsDelivery",
+        "ingressFailureDoesNotFallBackOrReleasePendingSelection",
+        "startupEventIsCopiedAndDeliveredAfterActivationNotDropped",
+        "busyEventRetainsCopyUntilExactNormalGateReopens",
+        "stoppedDeferredEventsAreRecycledWithoutLaterDelivery",
+        "overflowStopsRatherThanSilentlyLosingEventOrdering",
+        "deferredConsumerCanDisconnectWithoutRecyclingItsLiveEvent",
+    ],
+    "com.subhub.app.capture.ScreenCaptureTerminalPoolAndroidTest": [
+        "sealedPoolAbandonsPriorAndLateFramesWithoutRecyclingOrReissue",
+        "sealIsNonblockingWhileCaptureMonitorIsHeld",
+        "failedDisplayCloseStillClosesReaderButNeverAcknowledgesOrRetries",
+    ],
+    'com.subhub.app.runtime.DeviceConfigurationAndroidTest': [
+        'ordinaryProjectionDoesNotAcquireUnrequestedAccessibilityRequirement',
+        'enabledAccessibilityModulesRequireTheirActualService',
+        'appModeUsesAccessibilityWithoutProjectionOverlayOrNotificationPrompts',
+        'sourceChangeCannotSilentlyReplaceRequestedCapture',
+        'observationEpochDoesNotPretendToChangeLiveSettings',
+    ],
+    'com.subhub.app.overlay.LegacyRendererRetirementAndroidTest': [
+        'terminalRemovalIsPostedAndSubmittedBitmapReferencesAreAbandoned',
+        'nativeWindowReceiptCannotReplaceHeldArtworkWorkerReturn',
+        'terminalCustomArtworkIsNotRecycledAfterActualDrawBorrowReturn',
+    ],
+    'com.subhub.app.internal.InternalSessionClockBrokerAndroidTest': [
+        'startupClockAndPausePersistThenOneCleanupAcknowledgesBothLanes',
+        'clockMutationsRefuseWrongPhaseAndEscapedCallsWithoutWriting',
+        'previousClosedClockDoesNotBlockStopBeforeNewClockStartup',
+        'simultaneousSessionBindRefusesAndHiddenReadCannotRestoreClock',
+        'onlyExactAcknowledgedConfigurationCanGrantAndLiveRulesNeverRedrawDuration',
+    ],
+    'com.subhub.app.service.ScreenCaptureOwnerTransportAndroidTest': [
+        'ownerTransportContainsOnlyCanonicalOpaqueToken',
+        'invalidOwnerTransportNeverBecomesLegacyStart',
+        'laterCallerIntentMutationCannotAlterAnotherTransport',
+        'ownerAttachLeavesInitializedDeviceShellUnchanged',
+        'rejectedOwnerAttachKeepsShellOutOfLegacyStart',
+    ],
+    "com.subhub.app.overlay.ManagedDeviceRendererAndroidTest": [
+        "initialDeviceAppearanceAndArtworkUseExplicitInputs",
+        "queuedDeviceArtworkSurvivesStopUntilActualWorkerReturn",
+        "disconnectedDeviceArtworkCannotDecodeOrRender",
+        "supersededDeviceDecodeCannotReplacePublishedArtwork"
+    ],
+    "com.subhub.app.overlay.LegacyRenderDependenciesAndroidTest": [
+        "initialCustomArtworkAndFirstFrameNeedNoLaterConfigurationEdit",
+        "initialReverseTextBorderAndMotionSettingsExistBeforeActive",
+        "disconnectAfterQueueBeforeWorkerPreventsDecodeAndCompletion"
+    ],
+    "com.subhub.app.runtime.DeviceStartResultRegistryAndroidTest": [
+        "oldRawResultCannotConsumeNewPromptAfterRegistryRestore",
+        "pendingResultSurvivesUnregisterAndReregistersSameExactRoute",
+        "registrySaveRestoreKeepsPendingRequestCodeWithoutRelaunch",
+        "launchThrowAndLateRawResultDrainInCurrentRegistryWithoutRelaunch",
+        "notificationLaunchThrowAlsoDrainsOnlyItsActualLateResult",
+        "registryKeysAloneCannotReconstructAnAttemptAfterProcessLoss",
+        "retiredRoutesReleaseCapabilitiesAndCapacityFailsBeforeOsLaunch",
+    ],
     "com.subhub.app.people.DummySubPreviewAndroidTest": [
         "directConnectionFiveSecondHoldAddsAndRemovesWithoutOpeningPreview",
         "cancelledAndUnscopedBackGesturesNeverToggle",
         "rosterPreviewBrowsesEverySectionWithoutRealStateMutation",
         "previewRecreationAndRoleLossStayGuarded",
-        "censorEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
-        "limitsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
-        "walletEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
-        "atmosphereEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
-        "appsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
-        "durationEditorRecreatesWithoutAutosaveAndRejectsForgedTargets",
+        "censorEditorRecreatesAndRejectsForgedTargets",
+        "limitsEditorRecreatesAndRejectsForgedTargets",
+        "walletEditorRecreatesAndRejectsForgedTargets",
+        "atmosphereEditorRecreatesAndRejectsForgedTargets",
+        "appsEditorRecreatesAndRejectsForgedTargets",
+        "durationEditorRecreatesAndRejectsForgedTargets",
         "profileAuthorityRejectsForgeryAndLiveEditorRevocation",
+        "internalDurationNativeTapPersistsAcrossReopenAndHide",
+        "internalProfileSaveCancelAndRecreationAreIndependent",
+        "internalTasksSubmitAndReviewWithoutChangingPhysicalRoleOrLedger",
+        "internalFavoriteAndTasksOverviewRetainIdentityAcrossRecreation",
+        "internalPresentationBuildsOffMainAndRejectsStaleRevisionAndController",
+        "queuedInternalEditorSaveCannotPersistAfterControllerRevocation",
+        "rapidInternalDurationEditAndBackDrainTheLatestStagedValueAfterAck",
+        "heldAckRotationSharesOneDrainAndAcceptsLaterEdits",
+        "failedEndpointCloseStillRestoresInternalGlobalsAndDisposesOwnedHandles",
+        "failedFirstRegistryRestoreStillRestoresOtherRegistriesAndOwnedHandles",
+        "ownerDataAckRefreshesInternalPresentationWithoutProfileMutation",
+        "signedInternalStatisticsRouteUsesOnlyInternalSourceAcrossRecreation",
+        "internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration"
+    ],
+    "com.subhub.app.people.InternalSubRegistryAndroidTest": [
+        "enabledLegacyMigratesVisibilityAndFirstToggleRemovesIt",
+        "hiddenLegacyMigratesHiddenAndExplicitToggleAddsIt",
+        "establishedMissingRootCannotBeReseededByLegacyOrToggle",
+        "partialOrUnrecognizedEvidenceNeverCreatesDefaults",
+        "parentDirectorySyncFailureNeverAcknowledgesReadyOrReseeds",
+        "ownerDataInitializationFailureLeavesProfileStartedAndUnavailable",
+        "concurrentReadyOpenPublishesOnlyOneInitializedBroker",
+        "readyProfileWithoutOwnerEvidenceStaysReadableAndNeverProvisionsRuntimeData",
+        "unavailableVisibilityProofLeavesEstablishedRecordUnchanged",
+        "delayedVisibilityProofCannotHideAfterControllerRevocation",
+        "firstCreateReceiptKeepsBirthAcrossVisibleMigrationAndReopen",
+        "orphanPhysicalReceiptCannotBeOverwrittenByLegacyMigration",
+        "orphanOwnerDataRegistryCannotCreateReplacementProfile"
+    ],
+    "com.subhub.app.tasks.InternalTaskStoreAndroidTest": [
+        "firstProvisionAcknowledgesOnceAndReopenRetainsTaskJournal",
+        "interruptedOrUnacknowledgedCreationPreservesOwnedBytes",
+        "missingEstablishedDatabaseNeverRecreatesAnEmptyHistory",
+        "corruptEstablishedDatabaseHasNoDeletingRecoveryHandler",
+        "missingEstablishedProjectionPreservesJournalAndRejectsNewCreate",
+        "legacyIndexUpgradePreservesEveryRowAndReopenDoesNotWrite",
+        "partialLegacyIndexUpgradeIsIdempotent",
+        "missingCurrentIndexRefusesQueryAndReopenWithoutFallback",
+        "mismatchedLegacyIndexIsRejectedWithoutRewritingHistory",
+        "refusedUpgradeAdmissionDoesNotInstallIndexes",
+        "indexedPlansCoverEmptySparseAndLargePendingLanes"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
@@ -436,23 +557,204 @@ DUMMY_PREVIEW_NATIVE = {
         "sharedWhispersEnableIsQueuedWithoutChangingTheDomModule",
         "sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime",
         "sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials",
-        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets",
+        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets"
     ],
     "com.subhub.app.people.PersonRefreshAndroidTest": [
         "telemetryAndDeferredRefreshKeepTheProfileDraftAndDeliveryTimeScroll",
         "changedIdentityRecreationAndBackRetainPositionButRoleRevocationClosesPage",
-        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft",
+        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft"
     ],
     "com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest": [
         "constructorFailureRestoresRealAdaptersAndDeletesOwnedStore",
-        "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore",
+        "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore"
     ],
+    "com.subhub.app.notifications.InternalNotificationAdmissionAndroidTest": [
+        "hideCancelsAcceptedInvisiblePostsWithoutTouchingRealNotices",
+        "preferenceDisableCancelsBothBucketsBeforePostsBecomeVisible",
+        "internalCapEvictsOnlyItsOwnOldestAndDoesNotConsumeRealCapacity",
+        "staleGenerationCannotPostAndRetiringOldOwnerCannotCancelNewOwner",
+        "internalOwnerCountIsBoundedWithoutEvictingAnyOtherOwner"
+    ],
+    "com.subhub.app.internal.OwnerAccountingAndroidTest": [
+        "countersLedgerAndUsageStayInExactOwnerAndNeverTouchDeviceLane",
+        "writesRequireAdmissionAndTheOwnersAtomicTransaction",
+        "genericOwnerAdmissionCanEditAndAssessTasksButCannotStartRuntime",
+        "genericOwnerAdmissionCannotSpendAnActiveRuntimeStamp",
+        "noSessionCannotWriteRuntimeUsageOrAssessments",
+        "staleAndForeignStampsFailAcrossSameClockRestartAndCleanupNeedsAdmission",
+        "pendingInitializationPublishesNoStampOrCountersUntilDurableAck",
+        "serializedSnapshotWaitsForFinishAckAndRejectsUnadmittedConcurrentRead",
+        "rejectedInitializationNeverMintsStampOrDurableSession",
+        "persistedActiveSessionNeverRecreatesAuthorityOnReopen",
+        "interruptedSessionRecoveryUsesOnlyExactDurableCheckpointAndAllowsFreshStart",
+        "interruptedSessionWithoutLaterObservationRecoversZeroDowntime",
+        "failureBetweenLedgerStagingAndStatisticsRollsBackBoth",
+        "rejectedWholeRecordAckCannotPublishOnlyLedgerOrOnlyStatistics",
+        "liveRulesBatchRemainderDwellAndPerCurrencyCapsUseActualAssessments",
+        "idleTaskAssessmentHasOneReceiptAndNeverInventsRuntimeOrPayment",
+        "disabledTaskOccurrenceIsAcknowledgedWithoutRetroactiveAssessment",
+        "actualUsageRollsOverWithoutDuplicatingCumulativeCheckpoints",
+        "achievementReconciliationIsOwnerLocalAndPreservesEarnedDate",
+        "unavailableAchievementFactPropagatesAndRollsBackStagedReceipts",
+        "retainedSessionsOutliveBoundedRecentHistoryAndSurviveReopen",
+        "retainedDurationKeepsOriginalCivilCalendarAcrossDstAndRepeatedCheckpoints",
+        "capturedEventCalendarNeverDoublesExactOwnerDailyAccounting",
+        "olderFinishCannotEraseAcknowledgedDurationOrRevokeValidLane",
+        "assessmentsArchiveWithoutLifetimeCutoffAndOldTaskReceiptsRemainIdempotent",
+        "reusableAchievementViewIsImmutableAcrossFailedAndBlockedAcknowledgements",
+        "immutableAchievementViewsNeverInventSuccessAfterDefiniteOrUncertainFailure",
+        "sameDateZoneRotationPreservesEachEpochAndTheWholeDayAllowance",
+        "existingSingleEpochUsageUpgradesWithoutResetOrReattribution",
+        "genericTaskCapacityRejectionPreservesExactActiveStampAndCleanStop",
+        "cleanRuntimeAndEditorRollbackRestoresDedupMemoryWithoutInventingNewStamp",
+        "genericPersistenceFailureExplicitlySignalsActiveRuntimeAndCannotClaimCleanDrain",
+        "postAckPublicationFailureNeverRestoresAStaleMemorySnapshot",
+        "legacyIdsUseExactOwnerDedupAndCapturedCalendarWithoutDeviceWrites",
+        "legacyIdsRollbackExactDedupAndReturnOnlyAfterOuterAck",
+        "legacyIdsUnacknowledgedWriteCannotReturnCountOrBorrowStamp",
+        "censoredTapUsesPinnedRulesCurrencyAndEventDateWithNoDeviceEffects",
+        "censoredTapLedgerAndStatsRollbackTogetherAndUncertainAckFences"
+    ],
+    "com.subhub.app.stats.OwnerStatsRepositoryAndroidTest": [
+        "ownedCountersAndTokensNeverEnterTheDeviceOrAnotherLane",
+        "persistentRowsCannotRecreateRuntimeAuthorityAndDeviceLifecycleIsRejected",
+        "deniedWriteCannotConsumeTrackIdsOrChangeObservedCounters",
+        "editorCountersRemainOwnedWhenNoSessionRuns"
+    ],
+    "com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest": [
+        "recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot"
+    ],
+    "com.subhub.app.service.RuntimeCaptureHostAndroidTest": [
+        "connectionIsExactAndNeverRestoredByGeneration",
+        "deviceRequestCannotCarryInternalExecution",
+        "requestRejectsDifferentCaptureHostKind",
+        "selectedRequestClaimsOnlyItsExactLiveConnectionOnce",
+        "delayedSelectionCannotClaimDisconnectedShell",
+        "preparationIsSingleUseEvenWhenFactoryThrows",
+        "preparationCannotReturnAnotherRequestsAttachment",
+        "projectionSelectionRequiresExactGrant",
+        "projectionGrantRequiresApprovedResultAndProjectionMode",
+        "permissionCannotBeConsumedBeforeRoutingClaimOrByForeignRequest",
+        "lateDisconnectSealsUnusedProjectionResult",
+        "permissionPayloadIsCapturedInsteadOfMutableIntentAlias",
+        "connectionRetainsExactSelectionUntilVerifiedDrain",
+        "disconnectDoesNotPretendOccupiedAttachmentDrained",
+        "deviceRequestRequiresItsOwnEffectsCapability"
+    ],
+    "com.subhub.app.internal.InternalOwnerDataBrokerAndroidTest": [
+        "explicitHiddenProvisionAndOneBrokerPreserveSingleAcknowledgedNoticeRecord",
+        "hiddenGenerationCannotScheduleButRetiredExactNoticeRemainsForCancellation",
+        "retiredCleanupRefusesCurrentNoticeAndEscapedTaskAccessHasNoAuthority",
+        "staleQueuedGenerationCannotBorrowReaddedTaskAuthority",
+        "retainedSessionFacadeCannotEscapeIntoTaskCleanupOrBorrowAnotherStart",
+        "cleanTaskCapacityRejectionPreservesExactLiveStampAndStillDrains",
+        "genericUncertainPersistenceFencesProviderAndExactBoundRuntimeImmediately",
+        "immutableProjectionAndRevisionHintWaitForOuterAck",
+        "legacyTrackerAndTapFacadesRequireExactNormalOwnerAndDrainAfterStop"
+    ],
+    "com.subhub.app.internal.InternalStorageAndroidTest": [
+        "acknowledgedConfigurationAndProfileSurviveReopen",
+        "canonicalApplicationContextPreservesScopeAndNeverReadsPhysicalPreferences",
+        "ownerJournalAndPlatformEffectsCannotUseEditorContext",
+        "hidingAndReenablingPreserveFilesTasksAndHistory",
+        "missingOrCorruptEstablishedEvidenceNeverBecomesDefaults",
+        "trustedParentAliasAndConcurrentOwnedDirectoryCreationRemainIsolated"
+    ],
+    "com.subhub.app.runtime.RuntimeOwnerDatabaseAndroidTest": [
+        "ordinaryOpenNeverProvisionsAnAbsentJournal",
+        "ownerEvidenceSurvivesCloseAndReopenWithoutCreatingAuthority",
+        "independentHandlesCannotReplaceAnAdmittedOwnerWithStaleEvidence",
+        "missingExistingRowNeverReinitializesIdle",
+        "corruptBodyAndMismatchedRevisionStayFailClosed",
+        "closedHandleCannotReadOrWrite",
+        "stoppedOwnerReleasesOnlyAfterItsAcknowledgedIdleCommit",
+        "closedReopenedMissingDatabaseCannotManufactureIdle",
+        "actualCorruptDatabaseIsPreservedRatherThanDeletedAndRecreated",
+        "missingOrCorruptMarkerDoesNotReinitializeExistingDatabase",
+        "interruptedProvisioningCannotBeRetriedAsFresh",
+        "validDatabaseWithPendingMarkerCannotPublishIdle",
+        "journalIdentitySchemaAndVersionMustRemainBound",
+        "explicitProvisioningCannotResetExistingOwner",
+        "simultaneousProvisionersHaveOnlyOneWinner",
+        "scopedApplicationContextCannotCreateAnotherPhysicalJournal",
+        "platformLocaleMigrationPreservesExactOwnerEvidence",
+        "platformMetadataNameDoesNotHideMalformedOrExtraSchema",
+        "directoryAcknowledgementChecksTheOpenedDescriptor"
+    ],
+    "com.subhub.app.popup.OwnedPopupArtworkAndroidTest": [
+        "emptyAndFullyDisabledManifestUseOnlyTheNormalBundledGuardian",
+        "missingOrCorruptEnabledBlobFailsWithoutGuardianFallback",
+        "enabledOwnedImageDecodesAndReleasesOnlyItsOwnBitmap",
+        "canceledDecodeCannotPublishEvenTheBuiltinFallback"
+    ],
+    "com.subhub.app.subliminal.WhisperOverlayControllerAndroidTest": [
+        "partialAddWithActualViewParentCannotEscapeTeardown",
+        "silentDetachFailureWithActualParentDoesNotProduceDrainReceipt",
+        "oneForegroundEventDuringBusyGateEventuallyAttaches",
+        "busyUpdateIsNotAcknowledgedAndAppliesLatestTextSizeOnRetry",
+        "noLongerEligibleWhileBusyCannotBeReopenedByRetainedRequest"
+    ],
+    "com.subhub.app.tasks.InternalTaskNotificationPolicyAndroidTest": [
+        "domOnlyDeviceCanPrepareInternalSubNoticesWithoutChangingPhysicalPolicy",
+        "internalAudiencesKeepIndependentSavedOptOutsAndRejectUnrelatedEvents",
+        "deniedOsPermissionStopsBothPreparationAndPostBeforeServiceAccess",
+        "revokedGenerationCannotReadChoicesOrEnterPlatformDispatch"
+    ],
+    "com.subhub.app.tasks.InternalTaskEffectsAndroidTest": [
+        "protectionIndependentSweepAssessesOnceInOwnedLedgerWithoutPhysicalReads",
+        "hiddenDeadlineIsSkippedOnReaddAndOldGenerationCannotRun",
+        "boundedEffectPagesWrapAndExcludeOtherScopesAcrossInsertDeleteAndRowidReuse",
+        "retainedTaskAdmissionCannotReadEffectPagesAfterCommandReturns",
+        "unavailableReviewBacklogCannotStarveNativeFailureLedgerReceipt"
+    ]
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
-        method for method in (SUBHUB_PASS_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
-                              + SUBHUB_PASS_SOURCE_ONLY["com.subhub.app.remote.RemoteEditorAndroidTest"])
-        if method not in DUMMY_PREVIEW_NATIVE["com.subhub.app.remote.RemoteEditorAndroidTest"]
+        "nativeSpinnerChoiceAutomaticallyQueuesRemoteDuration",
+        "editorOpeningAndRecreationNeverQueueUnchangedConfiguration",
+        "rapidInputCoalescesAndClosingFlushesTheLastValidEdit",
+        "newerEditsRemainVisibleAndDurableWhileFirstCommandIsPending",
+        "automaticSaveRetainsTheFocusedEditorAndCursor",
+        "draftAndInvalidRawBudgetSurviveRecreation",
+        "atmosphereRouteOpensSubliminalAndRoleLossClosesEditor",
+        "dailyStatisticsRenderSourceUnitsAndUnknownDataHonestly",
+        "focusedSectionsExposeOnlyTheirOwnDirectProfileActions",
+        "removingCensorArtworkPreservesPopupArtworkAndPendingPickerGroup",
+        "fixedDurationIgnoresHiddenRandomInputsAndDraftHasNoDestructiveRetry",
+        "failedInitialLoadOffersRetryAndStatisticsRetainSelectedPageAndExpire",
+        "pairedScreensFitCurrentDisplayAndFontConfiguration",
+        "sharedStatisticsPageUsesMirroredHistoryWithoutReadingLocalTotals",
+        "peerNameChangesKeepRelationshipAndPersonIdentitiesStable",
+    ],
+    "com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest": [
+        "retainedRevocationsCannotConsumeForegroundIncomingOrCurrentPeerCapacity",
+        "cancellationRetainsRunningAdmissionAndRejectedQueuedWorkReleasesOwnership",
+        "backgroundResponderRetainsWindowAndRespectsFutureDueTimes",
+        "completedOutgoingDeliveryStillLeavesTheBackgroundResponderAvailable",
+        "stoppedBackgroundWindowReleasesOwnershipWithoutWaitingForDeadline",
+        "failedBackgroundPeerRetriesOnlyAfterItsBackoff",
+        "preexistingBusyOwnerCanSatisfyWindowWithAnExactCompletedSync",
+        "preexistingBusyOwnerDoesNotHideMutationOrMissingCompletion",
+        "dirtyMutationWhileBusyRemainsDueWhenTheOldExchangeExits",
+        "completionCannotClobberMutationAndFailuresBackOffToABoundedDelay",
+        "connectedServiceLeaseIsSeparateFromPairingAndOldCloseCannotRetireANewOwner",
+        "connectedServiceRefusesPendingOnlyPeersWithoutBorrowingPairingAuthority",
+        "connectedServiceStartsFromVisibleLifecycleButNotBackgroundNetworkWork",
+        "stableReconnectClearsOfflineBackoffAndCoalescesExistingBackgroundWork",
+        "stableReconnectCannotBypassBackgroundOptOutOrRetiredRuntime",
+        "connectedServiceBackpressureKeepsOneFutureDueWakeInsteadOfSpinning",
+        "backgroundOptOutRetiresOnlyBackgroundOwnersAndForegroundSyncContinues",
+        "queuedServiceStartAndLeaseAcquisitionCannotOutrunPersistedOptOut",
+        "optOutDrainsOwnedBackgroundWindowWithoutClosingForegroundEndpoint",
+        "quietBackgroundCadenceKeepsNewDataFastWithoutResettingOfflineBackoff",
+        "dirtyBackgroundFailureBacksOffButNetworkResetKeepsRetryDue",
+        "backgroundHidingPreservesBackoffAndForegroundResetsIt",
+        "foregroundPollingStopsWhileHiddenAndRestartsOnce",
+        "pairingPollsStopAtLastLeaseAndRestartForReplacement",
+        "deviceDataWakeIsContextScopedAndOptOutCancelsItsEffect",
+        "deviceDataRequiresAnActiveSubAndPreservesOfflineBackoff",
+        "sourceObserversDoNotCrossContextsAndRetiredObserversCannotWake",
+        "selectedAppActivityPersistsOnceAndQueuesTheExistingSourceWake",
     ],
 }
 LARGE_FONT = "com.subhub.app.appmode.ExtraTimeUiAndroidTest#largeFontNarrowReviewKeepsControlsAndReceiptsReadable"
@@ -469,7 +771,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 54, "dummy-preview": 22}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 57, "dummy-preview": 226}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"
@@ -497,15 +799,16 @@ def missing_screenshots(expected, exported):
 
 UI_WITNESSES = {
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#requestApproveAndDeclineRetainAllowanceAndInputDrafts": [
-        "extra-time-sub-request", "extra-time-sub-pending", "extra-time-dom-review",
-        "extra-time-sub-approved", "extra-time-sub-declined", "extra-time-sub-repeated-request"],
+        "extra-time-overview-collapsed", "extra-time-overview-update-needed", "extra-time-overview-pending",
+        "extra-time-dom-review", "extra-time-overview-approved", "extra-time-overview-declined",
+        "extra-time-overview-repeated-request"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#remoteRequestIconArrivesWithoutPollingAndRevocationClearsIt": [
         "extra-time-dom-remote-icon"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unavailableRequestExplainsItsStateAndRecoversBeforeOneTapSubmission": [
-        "extra-time-sub-unavailable"],
+        "extra-time-overview-unavailable"],
     "com.subhub.app.appmode.ExtraTimeUiAndroidTest#unsupportedPeerExplainsCapabilityAndRecoversAfterNegotiation": [
-        "extra-time-sub-support-unconfirmed"],
-    LARGE_FONT: ["extra-time-sub-large-font", "extra-time-sub-shared-only-large-font", "extra-time-dom-large-font"],
+        "extra-time-overview-support-unconfirmed"],
+    LARGE_FONT: ["extra-time-overview-large-font", "extra-time-overview-shared-only-large-font", "extra-time-dom-large-font"],
     "com.subhub.app.penance.TributeSettingsRestoreAndroidTest#rulesAndSpendingLimitsRemainDistinctAfterNativeNavigationAndRecreation": [
         "tribute-rules-grouping", "tribute-spending-limits"],
 }
@@ -588,11 +891,90 @@ def missing_loader_libraries(output):
     return set(re.findall(r"^\s*([A-Za-z0-9_+.-]+)\s+=>\s+not found\s*$", output, re.MULTILINE))
 
 
-def runtime_packages(missing):
-    unknown = missing - EMULATOR_RUNTIME_PACKAGES.keys()
-    if unknown:
-        raise RuntimeError("Unreviewed emulator host dependencies: " + ", ".join(sorted(unknown)))
-    return sorted({EMULATOR_RUNTIME_PACKAGES[name] for name in missing})
+def installed_sdk_properties(path):
+    """Read bounded installed metadata only; never refresh a remote SDK catalog."""
+    with path.open("rb") as stream:
+        raw = stream.read(64 * 1024 + 1)
+    if len(raw) > 64 * 1024:
+        raise ValueError("Installed SDK metadata exceeds its bound")
+    values = {}
+    for line in raw.decode("utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if "=" not in line:
+            raise ValueError("Installed SDK metadata is malformed")
+        key, value = (part.strip() for part in line.split("=", 1))
+        if not key or key in values:
+            raise ValueError("Installed SDK metadata has an ambiguous key")
+        values[key] = value
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*(?:[ -][A-Za-z0-9. -]+)?", values.get("Pkg.Revision", "")):
+        raise ValueError("Installed SDK package revision is unavailable")
+    return values
+
+
+def installed_command_tools(sdk):
+    candidates = sorted((sdk / "cmdline-tools").glob("*/bin/sdkmanager"),
+                        key=lambda path: (path.parent.parent.name == "latest", path.parent.parent.name), reverse=True)
+    for path in candidates:
+        if path.is_file() and os.access(path, os.X_OK):
+            return path.parent
+    raise RuntimeError("Installed Android command-line tools are unavailable")
+
+
+def preprovisioned_host_report(sdk=None):
+    """Nonmutating capability inventory: no child processes, network, ADB or writes.
+
+    This does not qualify the emulator loader, KVM operation, guest or tests. Those
+    runtime checks happen only in an explicitly selected native producer run.
+    """
+    missing = []
+    host = {"platform": sys.platform, "environment": os.environ.get("RUNNER_ENVIRONMENT", ""),
+            "architecture": os.environ.get("RUNNER_ARCH", ""),
+            "githubActions": os.environ.get("GITHUB_ACTIONS") == "true"}
+    if host != {"platform": "linux", "environment": "github-hosted", "architecture": "X64", "githubActions": True}:
+        missing.append("github-hosted-linux-x64")
+    kvm = Path("/dev/kvm")
+    access = {"characterDevice": kvm.is_char_device(), "readable": os.access(kvm, os.R_OK),
+              "writable": os.access(kvm, os.W_OK)}
+    if not all(access.values()):
+        missing.append("existing-readable-writable-kvm")
+    raw = sdk or os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    report = {"schema": 1, "host": host, "kvm": access, "packages": {}, "missing": missing,
+              "preprovisionedOnly": True, "runtimeVerified": False}
+    if not raw or not Path(raw).is_dir():
+        missing.append("installed-android-sdk")
+        return report
+    sdk = Path(raw).resolve()
+    files = ["platform-tools/adb", "emulator/emulator", "emulator/qemu/linux-x86_64/qemu-system-x86_64",
+             f"build-tools/{BUILD_TOOLS_VERSION}/aapt", f"build-tools/{BUILD_TOOLS_VERSION}/apksigner"]
+    metadata = {"platform-tools/source.properties": {}, "emulator/source.properties": {},
+                f"build-tools/{BUILD_TOOLS_VERSION}/source.properties": {"Pkg.Revision": BUILD_TOOLS_VERSION},
+                "platforms/android-35/source.properties": {"AndroidVersion.ApiLevel": str(API)},
+                "system-images/android-35/google_apis/x86_64/source.properties": {
+                    "AndroidVersion.ApiLevel": str(API), "SystemImage.Abi": "x86_64", "SystemImage.TagId": "google_apis"}}
+    try:
+        command_bin = installed_command_tools(sdk)
+        files += [(command_bin / name).relative_to(sdk).as_posix() for name in ("sdkmanager", "avdmanager")]
+        metadata[(command_bin.parent / "source.properties").relative_to(sdk).as_posix()] = {}
+    except RuntimeError:
+        missing.append("installed-command-line-tools")
+    for relative in files:
+        path = sdk / relative
+        if not path.is_file() or not os.access(path, os.X_OK):
+            missing.append("executable:" + relative)
+    for relative in ("platforms/android-35/android.jar", "system-images/android-35/google_apis/x86_64/system.img",
+                     "system-images/android-35/google_apis/x86_64/userdata.img"):
+        if not (sdk / relative).is_file() or not os.access(sdk / relative, os.R_OK):
+            missing.append("readable:" + relative)
+    for relative, expected in metadata.items():
+        try:
+            values = installed_sdk_properties(sdk / relative)
+            if any(values.get(key) != value for key, value in expected.items()):
+                raise ValueError("Installed package identity differs")
+            report["packages"][relative] = values["Pkg.Revision"]
+        except (OSError, ValueError, UnicodeError):
+            missing.append("metadata:" + relative)
+    return report
 
 
 def suite_selectors(suite):
@@ -924,8 +1306,10 @@ def instrumentation_failure_summary(text, selector, exit_code, inventory):
 
 class Producer:
     def __init__(self, suite="extra-time"):
-        if sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true":
-            raise ValueError("Native production requires an ephemeral GitHub Linux runner")
+        if (sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true"
+                or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
+                or os.environ.get("RUNNER_ARCH") != "X64"):
+            raise ValueError("Native production requires an ephemeral GitHub-hosted Linux x64 runner")
         self.suite = suite
         self.selected, self.selection_source = selected_methods(suite)
         self.run_id = os.environ["GITHUB_RUN_ID"]
@@ -1053,28 +1437,21 @@ class Producer:
         self.save()
 
     def discover(self, name):
-        candidates = list((self.sdk / "cmdline-tools").glob(f"*/bin/{name}"))
-        candidates.sort(key=lambda value: (value.parent.parent.name == "latest", value.parent.parent.name), reverse=True)
-        for path in candidates:
-            if path.is_file() and os.access(path, os.X_OK):
-                return path
-        raise RuntimeError(f"Installed Android command-line tool unavailable: {name}")
+        path = installed_command_tools(self.sdk) / name
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise RuntimeError(f"Installed Android command-line tool unavailable: {name}")
+        return path
 
     def prepare_sdk(self):
         self.resource_guard(first_boot=True)
-        if not Path("/dev/kvm").is_char_device():
-            raise RuntimeError("The ephemeral runner has no KVM device")
-        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
-            self.command(["sudo", "setfacl", "-m", f"u:{os.getuid()}:rw", "/dev/kvm"], label="owned-runner-kvm-access")
-        if not os.access("/dev/kvm", os.R_OK | os.W_OK):
-            raise RuntimeError("KVM device access unavailable; software-emulation fallback is not permitted")
-        sdkmanager = self.discover("sdkmanager")
-        self.record["sdkmanager"] = str(sdkmanager)
-        self.command([sdkmanager, "--version"], label="sdkmanager-version")
-        self.command([sdkmanager, "--licenses"], timeout=120, label="sdk-licenses", input_bytes=b"y\n" * 100)
-        self.command([sdkmanager, "--install", "platform-tools", "emulator", "platforms;android-35",
-                      f"build-tools;{BUILD_TOOLS_VERSION}", SYSTEM_IMAGE], timeout=900, label="sdk-install")
-        self.command([sdkmanager, "--list_installed"], timeout=60, label="sdk-installed")
+        report = preprovisioned_host_report(self.sdk)
+        self.record["hostPreflight"] = report
+        self.save()
+        if report["missing"]:
+            raise RuntimeError("Preprovisioned native host is incomplete: " + ", ".join(report["missing"]))
+        # Inspect installed packages only. No SDK catalog refresh, license acceptance,
+        # package installation, permission repair, or software-emulation fallback.
+        self.record["sdkmanager"] = str(self.discover("sdkmanager"))
         self.avdmanager = self.discover("avdmanager")
         self.tools = self.sdk / "build-tools" / BUILD_TOOLS_VERSION
         if not all((self.tools / tool).is_file() and os.access(self.tools / tool, os.X_OK) for tool in ("aapt", "apksigner")):
@@ -1135,18 +1512,10 @@ class Producer:
             return missing
 
         missing = probe("before")
-        packages = runtime_packages(missing)  # Unknown dependencies fail before any apt mutation.
-        self.record["emulatorRuntime"]["packagesRequested"] = packages
+        self.record["emulatorRuntime"]["packagesRequested"] = []
         self.save()
-        if packages:
-            self.command(["sudo", "apt-get", "update"], timeout=180, label="emulator-runtime-package-index")
-            self.command(["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes",
-                          "--no-install-recommends", *packages], timeout=300, label="emulator-runtime-package-install")
-            versions, _ = self.command(["dpkg-query", "--show", "--showformat=${Package} ${Version}\\n", *packages],
-                                       label="emulator-runtime-package-versions")
-            self.record["emulatorRuntime"]["installedPackageVersions"] = versions.strip()
-            if probe("after"):
-                raise RuntimeError("Installed emulator host dependencies remain unresolved; no install retry")
+        if missing:
+            raise RuntimeError("Preprovisioned emulator host dependencies are unavailable: " + ", ".join(sorted(missing)))
         self.save()
 
     def build(self):
@@ -1155,7 +1524,7 @@ class Producer:
         self.command(["bash", "./gradlew", "--no-daemon", "--no-parallel", "--max-workers=2",
                       "-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m",
                       "-PimmediateQualityExperiment=false", "-PreplacementLabCandidate=false",
-                      "assembleDebug", "assembleDebugAndroidTest"], timeout=1500, label="paired-build")
+                      "-Pandroid.builder.sdkDownload=false", "assembleDebug", "assembleDebugAndroidTest"], timeout=1500, label="paired-build")
         config = ROOT / "app/build/generated/source/buildConfig/debug/com/subhub/app/BuildConfig.java"
         text = config.read_text(encoding="utf-8")
         for field in ("IMMEDIATE_QUALITY_EXPERIMENT", "REPLACEMENT_LAB_CANDIDATE"):
@@ -1519,10 +1888,18 @@ class Producer:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-inventory", action="store_true", help="Parse the fixed tracked selectors without a build or emulator")
+    inspection = parser.add_mutually_exclusive_group()
+    inspection.add_argument("--check-inventory", action="store_true", help="Parse the fixed tracked selectors without a build or emulator")
+    inspection.add_argument("--check-host", action="store_true", help="Read host/SDK capabilities without child processes, writes or setup")
     parser.add_argument("--suite", choices=tuple(SUITES), default=os.environ.get("EXTRA_TIME_SUITE", "extra-time"),
                         help="Fixed native suite (default: extra-time, or EXTRA_TIME_SUITE)")
     args = parser.parse_args()
+    if args.check_host:
+        report = preprovisioned_host_report()
+        print(json.dumps(report, indent=2))
+        if report["missing"]:
+            raise SystemExit(1)
+        return
     if args.check_inventory:
         selected, selection_source = selected_methods(args.suite)
         print(json.dumps({"suite": args.suite, "selectors": selected, "selectionSource": selection_source,

@@ -1,5 +1,6 @@
 package com.subhub.app.commitment;
 
+import com.subhub.app.runtime.AppRuntimeGateway;
 import android.content.Context;
 import android.content.SharedPreferences;
 
@@ -20,6 +21,8 @@ public final class CommitmentManager {
     private static final String KEY_SALT = "commitment_code_salt";
     private static final String KEY_HASH = "commitment_code_hash";
     private static final String KEY_DURATION = "commitment_duration";
+    private static final String KEY_STARTED_ONCE = "commitment_started_once";
+    private static final String KEY_LONGEST_ELAPSED = "commitment_longest_elapsed_ms";
 
     private CommitmentManager() {}
 
@@ -34,7 +37,8 @@ public final class CommitmentManager {
                     .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                     .remove("commitment_ends_elapsed").remove("commitment_boot");
         } else {
-            edit.putString("commitment_session_identity", prepared.pactIdentity)
+            edit.putBoolean(KEY_STARTED_ONCE, true)
+                    .putString("commitment_session_identity", prepared.pactIdentity)
                     .putLong(KEY_STARTED_AT, prepared.statistics.startedAt).putLong(KEY_ENDS_AT, prepared.endsAt)
                     .putLong(KEY_DURATION, prepared.selectedDuration).putBoolean("commitment_hide_countdown", prepared.request.service.hidden)
                     .putLong("commitment_range_min", prepared.request.service.minimum)
@@ -44,8 +48,14 @@ public final class CommitmentManager {
     }
 
     /** A native Stop clears the pact in the same main-preference commit as its application marker. */
-    public static void appendNativeStop(SharedPreferences.Editor edit) {
+    public static void appendNativeStop(Context context, SharedPreferences.Editor edit) {
         if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)) throw new IllegalStateException("Runtime transaction required");
+        SharedPreferences values = preferences(context);
+        if (hasRecordedLock(values)) {
+            // Preserve earned progress in the same acknowledged transaction as the lock's removal.
+            edit.putBoolean(KEY_STARTED_ONCE, true).putLong(KEY_LONGEST_ELAPSED,
+                    Math.max(values.getLong(KEY_LONGEST_ELAPSED, 0L), elapsedMillis(values, RemoteSessionClock.local())));
+        }
         edit.remove("commitment_session_identity").remove(KEY_STARTED_AT).remove(KEY_ENDS_AT).remove(KEY_DURATION)
                 .remove("commitment_hide_countdown").remove("commitment_range_min").remove("commitment_range_max")
                 .remove("commitment_ends_elapsed").remove("commitment_boot").remove(KEY_SALT).remove(KEY_HASH);
@@ -60,12 +70,14 @@ public final class CommitmentManager {
     /** Selects once; neither UI recreation nor reboot draws another duration. */
     public static boolean start(Context context, long minimum, long maximum, boolean hideCountdown) {
         synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!AppRuntimeGateway.legacyMutationAllowed()) return false;
             if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context) || isActive(context)) return false;
             long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
             RemoteSessionClock.Sample now = RemoteSessionClock.local();
             String identity = java.util.UUID.randomUUID().toString();
             String retired = preferences(context).getString("commitment_session_identity", "");
             boolean saved = preferences(context).edit()
+                    .putBoolean(KEY_STARTED_ONCE, true)
                     .putLong(KEY_STARTED_AT, now.wall).putString("commitment_session_identity", identity)
                     .putLong(KEY_ENDS_AT, now.wall + duration).putLong(KEY_DURATION, duration)
                     .putBoolean("commitment_hide_countdown", hideCountdown)
@@ -78,6 +90,91 @@ public final class CommitmentManager {
             reinforceProtection(context);
             return true;
         }
+    }
+
+    /** Exact managed pact, retained before its first write; old start/expiry behavior is unchanged. */
+    public static ManagedPact prepareManaged(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner,
+            long minimum, long maximum, boolean hidden) {
+        if (owner == null || owner.target.kind != com.subhub.app.runtime.RuntimeTarget.Kind.DEVICE)
+            throw new SecurityException("Managed pact requires DEVICE evidence");
+        PactDuration.validate(minimum, maximum);
+        return new ManagedPact(context.getApplicationContext(), owner, minimum, maximum, hidden);
+    }
+    public static final class ManagedPact {
+        private final Context context;
+        private final com.subhub.app.runtime.RuntimeLease.Identity fullOwner;
+        private final String owner, identity = java.util.UUID.randomUUID().toString();
+        private final long minimum, maximum;
+        private final boolean hidden;
+        private SessionExpiryAlarms.ManagedAlarm alarm;
+        private boolean attempted, acknowledged, finished;
+        private ManagedPact(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner, long minimum, long maximum, boolean hidden) {
+            this.context = context; this.fullOwner = owner; this.owner = owner.session; this.minimum = minimum; this.maximum = maximum; this.hidden = hidden;
+        }
+        /** Chooses once on the admitted owner worker; never queues legacy reinforcement. */
+        public synchronized void start() {
+            requireManagedWorker(context);
+            if (attempted || finished) throw new IllegalStateException("Managed pact already attempted");
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.ARM, com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.STARTUP)) {
+                java.util.Objects.requireNonNull(permit);
+                long trigger;
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    SharedPreferences values = preferences(context);
+                    if (!owner.equals(values.getString(AppModeManager.KEY_MANAGED_DEVICE_SESSION, ""))
+                            || !values.getBoolean(AppModeManager.KEY_ARMED, false)
+                            || !values.getString("commitment_session_identity", "").isEmpty()
+                            || values.getLong(KEY_ENDS_AT, 0) != 0)
+                        throw new SecurityException("Physical pact ownership changed before start");
+                    long duration = PactDuration.choose(minimum, maximum, new java.security.SecureRandom());
+                    RemoteSessionClock.Sample now = RemoteSessionClock.local();
+                    if (now.wall <= 0 || now.elapsed < 0) throw new IllegalStateException("Pact clock unavailable");
+                    long endsAt = Math.addExact(now.wall, duration); trigger = Math.addExact(now.elapsed, duration);
+                    alarm = SessionExpiryAlarms.prepareManaged(context, fullOwner, SessionExpiryAlarms.Kind.PACT, identity, trigger);
+                    attempted = true;
+                    if (!values.edit().putBoolean(KEY_STARTED_ONCE, true)
+                            .putLong(KEY_STARTED_AT, now.wall).putString("commitment_session_identity", identity)
+                            .putLong(KEY_ENDS_AT, endsAt).putLong(KEY_DURATION, duration)
+                            .putBoolean("commitment_hide_countdown", hidden)
+                            .putLong("commitment_range_min", minimum).putLong("commitment_range_max", maximum)
+                            .putLong("commitment_ends_elapsed", trigger).putInt("commitment_boot", now.boot)
+                            .remove(KEY_SALT).remove(KEY_HASH).commit())
+                        throw new IllegalStateException("Physical pact start was not acknowledged");
+                    RuntimeSessionIdentity.changed();
+                }
+                // Binder never runs while holding Runtime. Actual return, not posting, is the receipt.
+                alarm.install(); acknowledged = true;
+            }
+        }
+        public synchronized void finish() {
+            requireManagedWorker(context);
+            if (finished) return;
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, fullOwner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.DISARM, com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.CLEANUP)) {
+                java.util.Objects.requireNonNull(permit);
+                if (!attempted) { finished = true; return; }
+                if (alarm != null) alarm.cancel();
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    SharedPreferences values = preferences(context);
+                    if (!owner.equals(values.getString(AppModeManager.KEY_MANAGED_DEVICE_SESSION, ""))
+                            || !identity.equals(values.getString("commitment_session_identity", "")))
+                        throw new SecurityException("Physical pact changed before managed cleanup");
+                    SharedPreferences.Editor edit = values.edit(); appendNativeStop(context, edit);
+                    if (!edit.commit()) throw new IllegalStateException("Physical pact end was not acknowledged");
+                    RuntimeSessionIdentity.changed(); acknowledged = false; finished = true;
+                }
+            }
+        }
+        public synchronized boolean startAcknowledged() { return acknowledged && !finished; }
+        public synchronized boolean finishAcknowledged() { return finished; }
+    }
+    private static void requireManagedWorker(Context context) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Managed pact requires the owner worker");
+        if (com.subhub.app.runtime.AppRuntimeGateway.current(context) == null)
+            throw new SecurityException("Managed pact requires installed physical ownership");
     }
 
     /** Compatibility for older callers; keeper codes are no longer part of a pact. */
@@ -139,27 +236,61 @@ public final class CommitmentManager {
 
     /** Re-arms the persistent capture path when Android has already granted it. */
     public static void reinforceProtection(Context context) {
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local());
-            if (!current.pact || current.paused) return;
-            new AppModeManager(context).setArmed(true);
-            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null, false, true);
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                RuntimeSessionIdentity.Observed current = RuntimeSessionIdentity.observe(context, RemoteSessionClock.local());
+                if (!current.pact || current.paused) return;
+                new AppModeManager(context).setArmed(true);
+                SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), null, false, true);
+            }
         }
     }
 
     /** A sealed pact always re-arms; otherwise App Mode retains its stored state. */
     public static void applyBootPolicy(Context context) {
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            if (!isActive(context)) return;
-            String identity = preferences(context).getString("commitment_session_identity", "");
-            if (!SessionExpiryAlarms.validIdentity(identity)) {
-                identity = java.util.UUID.randomUUID().toString();
-                if (!preferences(context).edit().putString("commitment_session_identity", identity).commit()) return;
-                RuntimeSessionIdentity.changed();
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (!isActive(context)) return;
+                String identity = preferences(context).getString("commitment_session_identity", "");
+                if (!SessionExpiryAlarms.validIdentity(identity)) {
+                    identity = java.util.UUID.randomUUID().toString();
+                    if (!preferences(context).edit().putString("commitment_session_identity", identity).commit()) return;
+                    RuntimeSessionIdentity.changed();
+                }
+                scheduleExpiry(context, "");
+                reinforceProtection(context);
             }
-            scheduleExpiry(context, "");
-            reinforceProtection(context);
         }
+    }
+
+    /** A completed lock remains evidence after its runtime fields have been cleared. */
+    public static boolean observedStarted(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            return values.getBoolean(KEY_STARTED_ONCE, false) || hasRecordedLock(values);
+        }
+    }
+
+    /** Longest elapsed timed lock, including the current lock, without expiry side effects. */
+    public static long observedElapsedMillis(Context context) {
+        synchronized (RuntimeSessionIdentity.LOCK) {
+            SharedPreferences values = preferences(context);
+            return Math.max(Math.max(0L, values.getLong(KEY_LONGEST_ELAPSED, 0L)),
+                    elapsedMillis(values, RemoteSessionClock.local()));
+        }
+    }
+
+    private static boolean hasRecordedLock(SharedPreferences values) {
+        return values.getLong(KEY_STARTED_AT, 0L) > 0 && values.getLong(KEY_ENDS_AT, 0L) > 0
+                && values.getLong(KEY_DURATION, 0L) > 0;
+    }
+
+    private static long elapsedMillis(SharedPreferences values, RemoteSessionClock.Sample clock) {
+        if (!hasRecordedLock(values)) return 0L;
+        long duration = values.getLong(KEY_DURATION, 0L);
+        return Math.max(0L, duration - Math.max(0L, remaining(values, clock)));
     }
 
     public static long originalDurationMillis(Context context) {
@@ -183,35 +314,38 @@ public final class CommitmentManager {
     }
 
     private static boolean expireLocked(Context context, String expectedIdentity, boolean dueOnly) {
-        SharedPreferences values = preferences(context);
-        String identity = values.getString("commitment_session_identity", "");
-        if (expectedIdentity != null && !expectedIdentity.equals(identity)) return false;
-        if (dueOnly && (values.getLong(KEY_ENDS_AT, 0L) == 0L
-                || remaining(values, RemoteSessionClock.local()) > 0L)) return false;
-        ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
-        String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
-                .getString("active_session_identity", "");
-        SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
-        // Only the due-alarm path creates a local expiry event; manual End has its own receipt.
-        long notificationSequence = values.getLong("notification_pact_expiry_sequence", 0);
-        boolean notifyExpiry = dueOnly && SessionExpiryAlarms.validIdentity(identity)
-                && notificationSequence < Long.MAX_VALUE;
-        if (notifyExpiry) {
-            edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
-            com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return false;
+            SharedPreferences values = preferences(context);
+            String identity = values.getString("commitment_session_identity", "");
+            if (expectedIdentity != null && !expectedIdentity.equals(identity)) return false;
+            if (dueOnly && (values.getLong(KEY_ENDS_AT, 0L) == 0L
+                    || remaining(values, RemoteSessionClock.local()) > 0L)) return false;
+            ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+            String statistics = context.getSharedPreferences(com.subhub.app.stats.StatsRepository.PREFS_NAME, 0)
+                    .getString("active_session_identity", "");
+            SharedPreferences.Editor edit = values.edit().putBoolean(AppModeManager.KEY_ARMED, false);
+            // Only the due-alarm path creates a local expiry event; manual End has its own receipt.
+            long notificationSequence = values.getLong("notification_pact_expiry_sequence", 0);
+            boolean notifyExpiry = dueOnly && SessionExpiryAlarms.validIdentity(identity)
+                    && notificationSequence < Long.MAX_VALUE;
+            if (notifyExpiry) {
+                edit.putLong("notification_pact_expiry_sequence", ++notificationSequence);
+                com.subhub.app.notifications.LocalPactExpiryNotifications.append(edit, identity, statistics, notificationSequence);
+            }
+            appendNativeStop(context, edit);
+            com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+            boolean saved = edit.commit();
+            RuntimeSessionIdentity.changed();
+            if (!saved) return false;
+            com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+            if (SessionExpiryAlarms.validIdentity(statistics))
+                com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
+            SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
+            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
+            if (notifyExpiry) com.subhub.app.notifications.PeerNotifications.pactExpired(context, capture, notificationSequence);
+            return true;
         }
-        appendNativeStop(edit);
-        com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
-        boolean saved = edit.commit();
-        RuntimeSessionIdentity.changed();
-        if (!saved) return false;
-        com.subhub.app.remote.RemoteSessionNative.reconcile(context);
-        if (SessionExpiryAlarms.validIdentity(statistics))
-            com.subhub.app.remote.RemoteSessionNative.statistics(context).endSessionForIdentity(statistics);
-        SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PACT, identity, "", 0L);
-        SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
-        if (notifyExpiry) com.subhub.app.notifications.PeerNotifications.pactExpired(context, capture, notificationSequence);
-        return true;
     }
 
     private static SharedPreferences preferences(Context context) {

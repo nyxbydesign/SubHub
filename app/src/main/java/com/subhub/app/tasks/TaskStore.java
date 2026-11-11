@@ -12,11 +12,29 @@ import java.util.*;
 public final class TaskStore extends SQLiteOpenHelper {
     public static final int PAGE_SIZE = 24;
     private static final Object LOCK = new Object();
+    private final Object lock;
+    private final InternalTaskDatabase internalDatabase;
     private final java.util.concurrent.CopyOnWriteArrayList<Runnable> observers =
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.atomic.AtomicBoolean notification = new java.util.concurrent.atomic.AtomicBoolean();
-    public TaskStore(Context context) { super(context, "subhub_tasks.db", null, 1); }
+    public TaskStore(Context context) { super(context, "subhub_tasks.db", null, 1); lock = LOCK; internalDatabase = null; }
+
+    TaskStore(Context physical, com.subhub.app.internal.InternalStorageScope internal,
+            android.content.SharedPreferences evidence, Runnable initialAdmission) throws java.io.IOException {
+        super(physical, null, null, 1);
+        lock = new Object();
+        internalDatabase = InternalTaskDatabase.open(internal, evidence, initialAdmission, this::onCreate);
+    }
+    @Override public SQLiteDatabase getWritableDatabase() {
+        return internalDatabase == null ? super.getWritableDatabase() : internalDatabase.database();
+    }
+    @Override public SQLiteDatabase getReadableDatabase() {
+        return internalDatabase == null ? super.getReadableDatabase() : internalDatabase.database();
+    }
+    @Override public synchronized void close() {
+        if (internalDatabase == null) super.close(); else internalDatabase.close();
+    }
 
     interface Observation extends AutoCloseable { @Override void close(); }
 
@@ -44,15 +62,28 @@ public final class TaskStore extends SQLiteOpenHelper {
         throw new IllegalStateException("Unsupported Tasks database version");
     }
     public TaskEngine load(String scope) throws JSONException {
-        synchronized (LOCK) { return load(getReadableDatabase(), scope); }
+        synchronized (lock) { return load(getReadableDatabase(), scope); }
     }
     private TaskEngine load(SQLiteDatabase db, String scope) throws JSONException {
         try (Cursor c = db.rawQuery("SELECT body FROM projections WHERE scope=?", new String[]{scope})) {
-            return c.moveToFirst() ? TaskEngine.parse(new JSONObject(c.getString(0))) : new TaskEngine();
+            if (c.moveToFirst()) return TaskEngine.parse(new JSONObject(c.getString(0)));
+        }
+        if (internalDatabase != null) requireUnusedInternalScope(db, scope);
+        return new TaskEngine();
+    }
+    private static void requireUnusedInternalScope(SQLiteDatabase db, String scope) {
+        // A missing owned projection is only an empty initial state when no durable history
+        // or cursor progress exists. Never rebuild it from a later CREATE and lose prior tasks.
+        try (Cursor rows = db.rawQuery("SELECT 1 FROM journal WHERE scope=? "
+                + "UNION ALL SELECT 1 FROM receipts WHERE scope=? "
+                + "UNION ALL SELECT 1 FROM effects WHERE scope=? "
+                + "UNION ALL SELECT 1 FROM cursors WHERE scope=? AND (received<>0 OR acked<>0 OR offered<>0) LIMIT 1",
+                new String[]{scope, scope, scope, scope})) {
+            if (rows.moveToFirst()) throw new SQLiteDatabaseCorruptException("Internal Tasks projection is missing");
         }
     }
     public boolean append(String scope, TaskAction action, boolean actorDom, boolean notifyDom) throws JSONException {
-        synchronized (LOCK) {
+        synchronized (lock) {
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
             boolean committed = false;
             try {
@@ -75,7 +106,7 @@ public final class TaskStore extends SQLiteOpenHelper {
     /** Strict sequence and retry-content checks apply before acknowledging a peer page. */
     public long receive(String scope, JSONArray rows, boolean actorDom, boolean notifyDom) throws JSONException {
         if (rows.length() > PAGE_SIZE) throw new JSONException("Too many task actions");
-        synchronized (LOCK) {
+        synchronized (lock) {
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
             boolean committed = false;
             try {
@@ -144,7 +175,7 @@ public final class TaskStore extends SQLiteOpenHelper {
     }
     /** A started occurrence has one durable local effect, independent of refreshes and repeated sweeps. */
     public void started(String scope, TaskEngine.Occurrence row, long now) throws JSONException {
-        synchronized (LOCK) {
+        synchronized (lock) {
             if (row.status != TaskEngine.Status.ACTIVE || now >= row.task.end(row.date).toEpochMilli()) return;
             TaskAction marker = new TaskAction("start_" + UUID.nameUUIDFromBytes(row.id.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                     row.task.id, TaskAction.Kind.TIMEOUT, row.date, now, "", "", Collections.emptyList(), null);
@@ -152,7 +183,7 @@ public final class TaskStore extends SQLiteOpenHelper {
         }
     }
     public JSONArray outgoing(String scope, long remoteThrough) throws JSONException {
-        synchronized (LOCK) {
+        synchronized (lock) {
             SQLiteDatabase db = getWritableDatabase();
             long max = 0;
             try (Cursor c = db.rawQuery("SELECT MAX(seq) FROM journal WHERE scope=?", new String[]{scope})) {
@@ -179,7 +210,7 @@ public final class TaskStore extends SQLiteOpenHelper {
             return rows;
         }
     }
-    public long received(String scope) { synchronized (LOCK) { return cursor(getReadableDatabase(), scope, "received"); } }
+    public long received(String scope) { synchronized (lock) { return cursor(getReadableDatabase(), scope, "received"); } }
     private static long cursor(SQLiteDatabase db, String scope, String field) {
         try (Cursor c = db.rawQuery("SELECT " + field + " FROM cursors WHERE scope=?", new String[]{scope})) {
             return c.moveToFirst() ? c.getLong(0) : 0;
@@ -195,8 +226,39 @@ public final class TaskStore extends SQLiteOpenHelper {
     }
     public List<Effect> pending(String scope) throws JSONException { return pending(scope, false); }
     public List<Effect> pendingNotices(String scope) throws JSONException { return pending(scope, true); }
+    /** Internal-only bounded pagination. The callback is borrowed from the current admitted command,
+     * never stored. A rowid is only a cursor, never an authority or effect-completion receipt. */
+    List<InternalTaskEffectDrain.Pending<Effect>> pendingEffects(String scope, boolean failures,
+            long afterRowId, int limit, Runnable currentAdmission) throws JSONException {
+        if(internalDatabase==null||!"internal_sub".equals(scope))throw new SecurityException("Not the internal task scope");
+        if(afterRowId<0||limit<=0||limit>InternalTaskEffectDrain.MAX_PER_PASS)
+            throw new IllegalArgumentException("Invalid internal effect page");
+        Objects.requireNonNull(currentAdmission).run();
+        List<InternalTaskEffectDrain.Pending<Effect>> result=new ArrayList<>();
+        effectPage(scope,failures,afterRowId,false,limit,result);
+        currentAdmission.run(); // No authorization callback is invoked while holding SQL/store locks.
+        if(result.size()<limit&&afterRowId>0) {
+            effectPage(scope,failures,afterRowId,true,limit-result.size(),result);
+            currentAdmission.run();
+        }
+        return Collections.unmodifiableList(result);
+    }
+    private void effectPage(String scope,boolean failures,long after,boolean wrap,int limit,
+            List<InternalTaskEffectDrain.Pending<Effect>> result) throws JSONException {
+        synchronized(lock) {
+            // Never fall back to scanning completed history if an owned index is unavailable.
+            String sql="SELECT rowid,id,kind,body FROM effects INDEXED BY "
+                    +(failures?InternalTaskDatabase.FAILURE_INDEX:InternalTaskDatabase.NOTICE_INDEX)
+                    +" WHERE scope=? AND done=0 AND kind "
+                    +(failures?"=":"<>")+" 'failure' AND rowid "+(wrap?"<=":">")+" ? ORDER BY rowid LIMIT ?";
+            try(Cursor rows=getReadableDatabase().rawQuery(sql,new String[]{scope,Long.toString(after),Integer.toString(limit)})) {
+                while(rows.moveToNext())result.add(new InternalTaskEffectDrain.Pending<>(rows.getLong(0),
+                        new Effect(rows.getString(1),rows.getString(2),TaskAction.parse(new JSONObject(rows.getString(3))))));
+            }
+        }
+    }
     private List<Effect> pending(String scope, boolean notices) throws JSONException {
-        synchronized (LOCK) {
+        synchronized (lock) {
             List<Effect> result = new ArrayList<>();
             try (Cursor c = getReadableDatabase().rawQuery("SELECT id,kind,body FROM effects WHERE scope=? AND done=0 AND kind " + (notices ? "LIKE" : "NOT LIKE") + " 'sub_%' ORDER BY rowid", new String[]{scope})) {
                 while (c.moveToNext()) result.add(new Effect(c.getString(0), c.getString(1), TaskAction.parse(new JSONObject(c.getString(2)))));
@@ -205,7 +267,7 @@ public final class TaskStore extends SQLiteOpenHelper {
         }
     }
     public void done(String scope, Effect effect) {
-        synchronized (LOCK) {
+        synchronized (lock) {
             getWritableDatabase().execSQL("UPDATE effects SET done=1 WHERE scope=? AND id=? AND kind=?",
                     new Object[]{scope, effect.id, effect.kind});
         }

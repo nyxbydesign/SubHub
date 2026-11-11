@@ -10,6 +10,8 @@ import com.subhub.app.detection.BBox;
 import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
 import com.subhub.app.detection.DetectorConfig;
+import com.subhub.app.detection.OwnerDetectorProviderCache;
+import com.subhub.app.runtime.RuntimeLease;
 import com.subhub.app.service.InferenceBitmapPreparer;
 
 import java.util.ArrayList;
@@ -89,6 +91,22 @@ public final class VisualDetectorWorker implements CensorEngine.Worker<PixelFram
         if (lane != SceneEngine.Lane.FAST && lane != SceneEngine.Lane.QUALITY) throw new IllegalArgumentException("visual lane");
         DetectorConfig selected = lane == SceneEngine.Lane.FAST ? VisualInferencePolicy.fast(config) : VisualInferencePolicy.quality(config);
         DetectionEngine detector = new DetectionEngine(context, selected, lane == SceneEngine.Lane.FAST);
+        return initializeDetector(lane, config, partition, fallbackProvider, detector);
+    }
+
+    /** Internal models keep OS/assets access but use only this exact owner's nonpersistent cache. */
+    public static VisualDetectorWorker initializeOwned(Context context, SceneEngine.Lane lane,
+            DetectorConfig config, long partition, String fallbackProvider,
+            OwnerDetectorProviderCache providerCache, RuntimeLease.Identity owner) throws Exception {
+        if (lane != SceneEngine.Lane.FAST && lane != SceneEngine.Lane.QUALITY) throw new IllegalArgumentException("visual lane");
+        DetectorConfig selected = lane == SceneEngine.Lane.FAST ? VisualInferencePolicy.fast(config) : VisualInferencePolicy.quality(config);
+        DetectionEngine detector = new DetectionEngine(context, selected, lane == SceneEngine.Lane.FAST,
+                Objects.requireNonNull(providerCache, "providerCache").forOwner(owner));
+        return initializeDetector(lane, config, partition, fallbackProvider, detector);
+    }
+
+    private static VisualDetectorWorker initializeDetector(SceneEngine.Lane lane, DetectorConfig config,
+            long partition, String fallbackProvider, DetectionEngine detector) throws Exception {
         detector.requireStrictResourceCleanup();
         try {
             if (lane == SceneEngine.Lane.QUALITY) detector.initializeWithoutBenchmark(fallbackProvider);

@@ -40,11 +40,10 @@ public final class AchievementGroupOrderTest {
         assertEquals("first_session", displayed.get(0).getId());
         assertEquals(List.of("color_picker", "border_artist", "style_explorer"),
                 ids(groups.get("appearance")));
-        assertEquals(List.of("first_custom_phrase", "phrase_library"),
-                ids(groups.get("phrases")));
+        assertFalse(groups.containsKey("phrases"));
+        assertFalse(groups.containsKey("dom_phrases"));
         assertFalse(groups.containsKey("packs"));
-        assertTrue(categories.indexOf("appearance") < categories.indexOf("phrases"));
-        assertTrue(categories.indexOf("phrases") < categories.indexOf("export"));
+        assertTrue(categories.indexOf("appearance") < categories.indexOf("export"));
         assertTrue(categories.indexOf("wallet_setup") < categories.indexOf("wallet_payments"));
         for (AchievementManager.Achievement achievement : catalog) {
             assertTrue(groups.get(AchievementsActivity.displayCategory(achievement))
@@ -55,6 +54,15 @@ public final class AchievementGroupOrderTest {
         }
     }
 
+    @Test public void domGroupsPutSessionsBeforeTimeAndPhrasesBeforeWalletAndTributes() {
+        Map<String, List<AchievementManager.Achievement>> groups =
+                AchievementsActivity.orderedGroups(DomAchievementCatalog.all());
+        assertEquals(List.of("dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_wallet",
+                "dom_tribute", "dom_hardcore"), new ArrayList<>(groups.keySet()));
+        assertEquals(List.of("first_custom_phrase", "phrase_library"), ids(groups.get("dom_phrases")));
+        assertEquals(List.of("paypal_vault"), ids(groups.get("dom_wallet")));
+    }
+
     @Test public void progressionUsesRequirementsRatherThanCatalogAppendOrder() {
         Context context = ApplicationProvider.getApplicationContext();
         List<AchievementManager.Achievement> reversed = new ArrayList<>(
@@ -63,7 +71,7 @@ public final class AchievementGroupOrderTest {
         Map<String, List<AchievementManager.Achievement>> groups =
                 AchievementsActivity.orderedGroups(reversed);
         for (String category : List.of("sessions", "time", "streaks", "app_mode", "blocks",
-                "peaks", "censor", "appearance", "phrases", "export", "subliminal",
+                "peaks", "censor", "appearance", "export", "subliminal",
                 "wallet_payments")) {
             long previous = 0;
             for (AchievementManager.Achievement achievement : groups.get(category)) {

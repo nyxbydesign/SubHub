@@ -116,12 +116,10 @@
 
             <ProgressBar
                 android:id="@+id/export_progress"
-                style="@android:style/Widget.ProgressBar.Horizontal"
+                style="@style/Widget.SubHub.ProgressMeter"
                 android:layout_width="match_parent"
-                android:layout_height="6dp"
-                android:layout_marginTop="@dimen/ui_gap_group"
-                android:progressBackgroundTint="@color/background"
-                android:progressTint="@color/accent" />
+                android:layout_height="@dimen/progress_meter_height"
+                android:layout_marginTop="@dimen/ui_gap_group" />
 
             <TextView
                 android:id="@+id/export_location"

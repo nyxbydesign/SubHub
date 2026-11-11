@@ -46,7 +46,7 @@ public final class DiagnosticsRepository {
         running = true;
         ready = false;
         provider = "Initializing";
-        model = "Loading";
+        model = "—";
         resolution = Math.max(0, inferenceResolution);
         startedAt = SystemClock.elapsedRealtime();
         frames = 0;

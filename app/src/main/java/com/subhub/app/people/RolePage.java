@@ -75,6 +75,7 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
         }
         if (body == null) return;
         if (domOnly && !ControllerPinManager.isDomWorkspaceUnlocked()) {
+            if (DummySubPreview.isRequested(getIntent())) { finish(); return; }
             ControllerEditMode.enterSubMode(this);
             return;
         }
@@ -82,6 +83,7 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
         TextView role = PrimaryHeader.editLockButton(findViewById(android.R.id.content));
         ControllerEditMode.renderButton(this, role);
         role.setOnClickListener(v -> {
+            if (DummySubPreview.isRequested(getIntent())) return;
             if (ControllerPinManager.isDomWorkspaceUnlocked()) ControllerEditMode.enterSubMode(this);
             else ControllerPinGate.unlockDomWorkspace(this, () -> {
                 startActivity(new Intent(this, MainActivity.class)
@@ -113,7 +115,7 @@ public abstract class RolePage extends AppCompatActivity implements SubHubNaviga
     protected final void loading() {
         // A background refresh must not collapse a populated page while its read is pending.
         if (body.getChildCount() != 0) return;
-        PersonUi.text(body, getString(R.string.role_loading), false);
+        PersonUi.text(body, getString(R.string.role_data_unknown), false);
     }
 
     protected final void unavailable() {

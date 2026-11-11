@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.net.Uri;
 import com.subhub.app.commitment.CommitmentExpiryReceiver;
 import com.subhub.app.penance.PaidPauseExpiryReceiver;
+import com.subhub.app.runtime.AppRuntimeGateway;
 import java.util.EnumMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,8 +37,9 @@ public final class SessionExpiryAlarms {
         final Context context;
         final String identity;
         final long trigger;
-        Command(Context context, String identity, long trigger) {
-            this.context = context; this.identity = identity; this.trigger = trigger;
+        final AppRuntimeGateway.LegacyWork delivery;
+        Command(Context context, String identity, long trigger, AppRuntimeGateway.LegacyWork delivery) {
+            this.context = context; this.identity = identity; this.trigger = trigger; this.delivery = delivery;
         }
     }
     private static final class Slot {
@@ -84,6 +86,86 @@ public final class SessionExpiryAlarms {
         }
         for (java.util.concurrent.CompletableFuture<Void> waiter : completed) waiter.complete(null);
     }
+    /**
+     * Exact managed timer handle, retained before invoking Android. Unlike the legacy coalesced
+     * queue, these worker-only calls report actual return/failure and never swallow Binder errors.
+     * Cancellation cannot recall an already delivered receiver: that receiver still revalidates
+     * its stored session identity and admitted physical owner before any transition.
+     */
+    public static final class ManagedAlarm {
+        private final Context context;
+        private final com.subhub.app.runtime.RuntimeLease.Identity owner;
+        private final Kind kind;
+        private final String identity;
+        private final long trigger;
+        private AlarmManager manager;
+        private PendingIntent pending;
+        private boolean attempted, installed, cancelled;
+        private ManagedAlarm(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner, Kind kind, String identity, long trigger) {
+            this.owner = java.util.Objects.requireNonNull(owner);
+            if (owner.target.kind != com.subhub.app.runtime.RuntimeTarget.Kind.DEVICE) throw new SecurityException("DEVICE timer required");
+            this.context = context.getApplicationContext(); this.kind = kind;
+            this.identity = identity; this.trigger = trigger;
+        }
+        public synchronized void install() {
+            requireManagedWorker(context);
+            if (attempted || cancelled) throw new IllegalStateException("Managed timer already attempted");
+            // The installed gateway verifies the exact caller's admitted DEVICE continuation.
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, owner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.ARM,
+                            com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.STARTUP)) {
+                java.util.Objects.requireNonNull(permit);
+                synchronized (RuntimeSessionIdentity.LOCK) {
+                    if (!identity.equals(storedIdentity(context, kind)))
+                        throw new SecurityException("Managed timer does not own the persisted session");
+                }
+                attempted = true; // An exception afterward may have accepted native work.
+                manager = context.getSystemService(AlarmManager.class);
+                if (manager == null) throw new IllegalStateException("Alarm service unavailable");
+                pending = PendingIntent.getBroadcast(context, kind.request,
+                        intent(context, kind, identity), PendingIntent.FLAG_IMMUTABLE);
+                if (pending == null) throw new IllegalStateException("Timer token unavailable");
+                manager.setAndAllowWhileIdle(kind.clock, trigger, pending);
+                installed = true;
+            }
+        }
+        /** Returns only after exact native cancellation; failure leaves the handle unreleased. */
+        public synchronized void cancel() {
+            requireManagedWorker(context);
+            if (cancelled) return;
+            try (com.subhub.app.runtime.AppRuntimeGateway.DeviceMutationPermit permit =
+                    com.subhub.app.runtime.AppRuntimeGateway.admitManagedDeviceMutation(context, owner,
+                            com.subhub.app.runtime.AppRuntimeGateway.Mutation.DISARM,
+                            com.subhub.app.runtime.AppRuntimeGateway.ManagedDevicePhase.CLEANUP)) {
+                java.util.Objects.requireNonNull(permit);
+                if (attempted) {
+                    AlarmManager exact = manager != null ? manager : context.getSystemService(AlarmManager.class);
+                    if (exact == null) throw new IllegalStateException("Alarm service unavailable");
+                    // A throwing token creation may still have created the exact PendingIntent.
+                    PendingIntent token = pending != null ? pending : PendingIntent.getBroadcast(context,
+                            kind.request, intent(context, kind, identity),
+                            PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+                    if (token != null) { exact.cancel(token); token.cancel(); }
+                }
+                installed = false; cancelled = true; pending = null; manager = null;
+            }
+        }
+        public synchronized boolean installationAcknowledged() { return installed && !cancelled; }
+        public synchronized boolean cancellationAcknowledged() { return cancelled; }
+    }
+    public static ManagedAlarm prepareManaged(Context context, com.subhub.app.runtime.RuntimeLease.Identity owner, Kind kind, String identity, long trigger) {
+        java.util.Objects.requireNonNull(context); java.util.Objects.requireNonNull(kind);
+        if (!validIdentity(identity) || trigger <= 0) throw new IllegalArgumentException("Invalid managed timer");
+        return new ManagedAlarm(context, owner, kind, identity, trigger);
+    }
+    private static void requireManagedWorker(Context context) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Managed timer work must run off main");
+        if (com.subhub.app.runtime.AppRuntimeGateway.current(context) == null)
+            throw new SecurityException("Managed timer requires the installed physical owner");
+    }
+
     public static boolean validIdentity(String identity) {
         return identity != null && identity.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
     }
@@ -108,13 +190,17 @@ public final class SessionExpiryAlarms {
         if (!identity.isEmpty() && !validIdentity(identity)) throw new IllegalArgumentException("Invalid timer identity");
         // A delayed cleanup request is not authority to replace a newer committed timer intent.
         if (!identity.equals(storedIdentity(context, kind))) return;
+        AppRuntimeGateway.LegacyWork delivery = AppRuntimeGateway.beginLegacyWork(context);
         synchronized (LOCK) {
             Slot slot = SLOTS.get(kind);
             if (slot == null) { slot = new Slot(); SLOTS.put(kind, slot); }
             // Only the first retired generation can already exist in Android before this pending batch.
             // Later coalesced generations have never been scheduled; an in-flight one is tracked below.
-            if (slot.next == null) slot.retired = validIdentity(retired) ? retired : "";
-            slot.next = new Command(context, identity, trigger);
+            Command replaced = slot.next;
+            if (replaced == null) slot.retired = validIdentity(retired) ? retired : "";
+            slot.next = new Command(context, identity, trigger, delivery);
+            // The worker claims under this same lock, so the replaced command never reached Android.
+            if (replaced != null) replaced.delivery.close();
             if (!slot.running) {
                 slot.running = true;
                 Slot work = slot;
@@ -157,6 +243,10 @@ public final class SessionExpiryAlarms {
                 }
             } catch (RuntimeException failure) {
                 android.util.Log.w("SessionExpiry", "Timer delivery unavailable", failure);
+            } finally {
+                // Only the queue delivery returned. A persisted or native alarm is a separate
+                // occupancy fact, and a delivered broadcast must acquire its own admission.
+                command.delivery.close();
             }
         }
     }

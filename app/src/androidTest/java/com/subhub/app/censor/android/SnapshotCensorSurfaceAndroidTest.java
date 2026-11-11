@@ -102,6 +102,42 @@ public class SnapshotCensorSurfaceAndroidTest {
                 Collections.singletonList("BLOCKED"), reverse, 100, "rectangle", "SubHub", "Access blocked.");
     }
 
+    @Test public void busyOwnerGateNeverTouchesHolderAndRetainsLatestDrawDemand() throws Exception {
+        AtomicBoolean allowed = new AtomicBoolean(); AtomicInteger attempts = new AtomicInteger();
+        CensorEffectScope effects = effect -> {
+            attempts.incrementAndGet(); if (!allowed.get()) return false; effect.run(); return true;
+        };
+        try (Fixture f = new Fixture((policy, revision, obsolete) -> Collections.emptyList(), null, null, null, false, effects)) {
+            main(() -> { f.configure(CensorAppearance.Type.BOX, false, 0); f.surface.requestObservedFrame(); });
+            await(() -> attempts.get() > 0);
+            assertEquals(0, f.surface.lockCount()); assertEquals(0, f.surface.postAttempts());
+            allowed.set(true); f.image(CensorAppearance.Type.BOX, false);
+            assertTrue(f.surface.lockCount() > 0); assertTrue(f.surface.postCount() > 0);
+        }
+    }
+
+    @Test public void ownerEffectRemainsHeldThroughActualHardwareCanvasPost() throws Exception {
+        ThreadLocal<Boolean> inside = ThreadLocal.withInitial(() -> false);
+        AtomicInteger locked = new AtomicInteger(), returned = new AtomicInteger();
+        CensorEffectScope effects = effect -> {
+            assertFalse(inside.get()); inside.set(true);
+            try { effect.run(); return true; } finally { inside.remove(); }
+        };
+        SnapshotCensorSurface.Endpoint endpoint = new SnapshotCensorSurface.Endpoint() {
+            @Override public Canvas lock(SurfaceHolder holder) {
+                assertTrue(inside.get()); Canvas canvas = holder.lockHardwareCanvas();
+                if (canvas != null) locked.incrementAndGet(); return canvas;
+            }
+            @Override public void post(SurfaceHolder holder, Canvas canvas) {
+                assertTrue(inside.get()); holder.unlockCanvasAndPost(canvas); returned.incrementAndGet();
+            }
+        };
+        try (Fixture f = new Fixture((policy, revision, obsolete) -> Collections.emptyList(), endpoint, null, null, false, effects)) {
+            f.image(CensorAppearance.Type.BOX, false); f.quiet();
+            assertTrue(returned.get() > 0); assertEquals(locked.get(), returned.get());
+        }
+    }
+
     @Test @SdkSuppress(minSdkVersion = 33)
     public void preferredVsyncTimeMovesActualSurfaceMaskWithoutChangingSourceOrReceiptClock() throws Exception {
         CountDownLatch posted = new CountDownLatch(1), release = new CountDownLatch(1);
@@ -1355,6 +1391,11 @@ public class SnapshotCensorSurfaceAndroidTest {
         }
         Fixture(SnapshotCensorView.ArtworkLoader loader, SnapshotCensorSurface.Endpoint endpoint,
                 LatestResourceCoordinator.Delivery delivery, ExecutorService renderExecutor, boolean collect) throws Exception {
+            this(loader, endpoint, delivery, renderExecutor, collect, CensorEffectScope.DEVICE);
+        }
+        Fixture(SnapshotCensorView.ArtworkLoader loader, SnapshotCensorSurface.Endpoint endpoint,
+                LatestResourceCoordinator.Delivery delivery, ExecutorService renderExecutor, boolean collect,
+                CensorEffectScope effects) throws Exception {
             collectSubmissions = collect;
             InstrumentationRegistry.getInstrumentation().getUiAutomation();
             scenario = ActivityScenario.launch(SnapshotSurfaceFixtureActivity.class);
@@ -1419,7 +1460,7 @@ public class SnapshotCensorSurfaceAndroidTest {
                         Runnable hook = workerPostHook.getAndSet(null); if (hook != null) hook.run();
                     }
                 } : endpoint;
-                surface = new SnapshotCensorSurface(value, owner, loader, taps, observer, actual, delivery, renderExecutor);
+                surface = new SnapshotCensorSurface(value, owner, loader, taps, observer, actual, delivery, renderExecutor, effects);
                 value.install(surface);
             }); await(() -> surface.getWidth() == 320 && surface.isAttachedToWindow());
             CountDownLatch firstWindowFrame = new CountDownLatch(1);

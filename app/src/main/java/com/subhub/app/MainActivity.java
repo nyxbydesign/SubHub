@@ -23,6 +23,10 @@ import androidx.core.content.ContextCompat;
 
 import com.google.android.material.snackbar.Snackbar;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.DeviceStartViewModel;
+import com.subhub.app.appmode.DeviceStartResultRegistry;
+import com.subhub.app.runtime.AppRuntimeGateway;
+import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.appmode.ResumeNotificationManager;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.commitment.CommitmentActivity;
@@ -73,6 +77,62 @@ public final class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> accessibilityPermission;
     private ActivityResultLauncher<Intent> deviceAdminPermission;
     private ActivityResultLauncher<String> notificationPermission;
+    private DeviceStartResultRegistry deviceStartResults;
+    private DeviceStartViewModel deviceStart;
+    private boolean startUiResumed;
+    private final DeviceStartViewModel.Ui deviceStartUi = new DeviceStartViewModel.Ui() {
+        @Override public boolean available() {
+            return startUiResumed && binding != null && !isFinishing() && !isDestroyed()
+                    && DeviceRolePreferences.supportsSub(MainActivity.this);
+        }
+        @Override public boolean granted(RuntimeStartAttempt.Permission permission) {
+            switch (permission) {
+                case NOTIFICATIONS:
+                    return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                            || ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS)
+                            == PackageManager.PERMISSION_GRANTED;
+                case ACCESSIBILITY: return new AppModeManager(MainActivity.this).isAccessibilityEnabled();
+                case OVERLAY: return Settings.canDrawOverlays(MainActivity.this);
+                case PROJECTION: return false; // Only the exact one-use result can approve this prompt.
+                default: throw new IllegalArgumentException("Unknown start permission");
+            }
+        }
+        @Override public Runnable prepare(DeviceStartViewModel.PromptRoute route) {
+            DeviceStartResultRegistry.Prepared prepared = deviceStartResults.prepare(route);
+            final Intent intent;
+            switch (route.permission) {
+                case NOTIFICATIONS: intent = null; break;
+                case ACCESSIBILITY:
+                    showStatus(R.string.capture_method_enable_accessibility);
+                    intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS); break;
+                case OVERLAY:
+                    intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName())); break;
+                case PROJECTION: intent = projectionManager.createScreenCaptureIntent(); break;
+                default: throw new IllegalArgumentException("Unknown start permission");
+            }
+            return () -> prepared.launch(intent);
+        }
+        @Override public void changed() { updateProtectionButton(ScreenCaptureService.isRunning()); }
+        @Override public void completed(AppRuntimeGateway.StartState state) {
+            if (state != AppRuntimeGateway.StartState.ACTIVE && canOpenFreshStartHome()) {
+                showStartRouteCapacity(); return;
+            }
+            if (state == AppRuntimeGateway.StartState.ACTIVE) {
+                renderCommitmentState();
+                updateProtectionButton(true);
+                if (localSessionPage && ControllerPinManager.isDomModeActive()) finish();
+            } else {
+                switch (state) {
+                    case CANCELLED: showStatus(R.string.device_start_cancelled); break;
+                    case OCCUPIED: showStatus(R.string.device_start_occupied); break;
+                    case NOT_READY: showStatus(R.string.device_start_not_ready); break;
+                    case RECOVERY_REQUIRED: showStatus(R.string.device_start_recovery_required); break;
+                    default: showStatus(R.string.device_start_unavailable);
+                }
+            }
+        }
+    };
     private boolean startFlowAwaitingOverlay;
     private boolean startFlowAwaitingNotification;
     private boolean localSessionPage;
@@ -83,6 +143,7 @@ public final class MainActivity extends AppCompatActivity {
             new java.util.ArrayList<>();
     private boolean achievementsDirty = true, uiActive, notifyProgressOnResume;
     private long achievementSeconds = Long.MIN_VALUE;
+    private long achievementReadEpoch, lastAchievementRead;
     private String achievementDay = "";
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener
             achievementChanged = (preferences, key) -> achievementsDirty = true;
@@ -125,10 +186,20 @@ public final class MainActivity extends AppCompatActivity {
         projectionManager =
                 (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
+        deviceStart = new androidx.lifecycle.ViewModelProvider(this).get(DeviceStartViewModel.class);
+        // Each start prompt has its own retained key and callback, separate from readiness.
+        deviceStartResults = new DeviceStartResultRegistry(getActivityResultRegistry(), deviceStartUi::granted);
+        deviceStartResults.restore(savedInstanceState == null ? null
+                : savedInstanceState.getBundle("device_start_result_routes"), deviceStart.pendingRoute());
+
         projectionPermission =
                 registerForActivityResult(
                         new ActivityResultContracts.StartActivityForResult(),
                         result -> {
+                            if (AppRuntimeGateway.current(this) != null) {
+                                showStatus(R.string.device_start_unavailable);
+                                return;
+                            }
                             if (!DeviceRolePreferences.supportsSub(this)) return;
                             if (result.getResultCode() == Activity.RESULT_OK
                                     && result.getData() != null) {
@@ -262,6 +333,17 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         if (!binding.commitmentStartPanel.validateSelection()) return;
+        if (deviceStart != null && deviceStart.busy()) return;
+        AppRuntimeGateway gateway = AppRuntimeGateway.current(this);
+        if (gateway != null) {
+            if (canOpenFreshStartHome()) { showStartRouteCapacity(); return; }
+            com.subhub.app.commitment.ServiceDurationView.Selection selected = binding.commitmentStartPanel.selection();
+            CaptureMethod capture = !featureModules.isCensorEnabled() ? CaptureMethod.APP_MODE
+                    : new SettingsRepository(this).loadCaptureMethod();
+            deviceStart.begin(gateway, new AppRuntimeGateway.DeviceStartSpec(
+                    capture, selected.minimum, selected.maximum, selected.hidden));
+            return; // Pending, failure and rejection never fall through to the pre-install path.
+        }
         if (!featureModules.isCensorEnabled()
                 || new SettingsRepository(this).loadCaptureMethod() == CaptureMethod.APP_MODE) {
             if (!appMode.isAccessibilityEnabled()) {
@@ -287,6 +369,10 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void continueStartFlow() {
+        if (AppRuntimeGateway.current(this) != null) {
+            showStatus(R.string.device_start_unavailable);
+            return;
+        }
         if (!DeviceRolePreferences.supportsSub(this)) return;
         if (!Settings.canDrawOverlays(this)) {
             showStatus(R.string.overlay_permission_needed);
@@ -301,6 +387,10 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void requestProjection() {
+        if (AppRuntimeGateway.current(this) != null) {
+            showStatus(R.string.device_start_unavailable);
+            return;
+        }
         if (!DeviceRolePreferences.supportsSub(this)) return;
         if (MediaProjectionLeaseRegistry.owner() != null) {
             new AppModeManager(this).setArmed(false);
@@ -315,7 +405,39 @@ public final class MainActivity extends AppCompatActivity {
         Snackbar.make(binding.getRoot(), message, Snackbar.LENGTH_LONG).show();
     }
 
+    private boolean canOpenFreshStartHome() {
+        return deviceStartUi.available() && deviceStart != null && !deviceStart.busy()
+                && deviceStart.pendingRoute() == null && deviceStartResults != null
+                && deviceStartResults.needsFreshHome();
+    }
+
+    private void showStartRouteCapacity() {
+        Snackbar.make(binding.getRoot(), R.string.device_start_route_capacity, Snackbar.LENGTH_INDEFINITE)
+                .setAction(R.string.device_start_new_home, view -> openFreshStartHome()).show();
+    }
+
+    private void openFreshStartHome() {
+        // Recheck at the actual click. Never abandon a pending/uncertain prompt or owner.
+        if (!canOpenFreshStartHome()) return;
+        // MainActivity has standard launch mode. No reuse flags, saved registry, grant, route or
+        // owner is transferred: Android gives this new instance a distinct Activity result target.
+        // recreate() would restore the full tombstone history and cannot relieve this cap.
+        Intent fresh = new Intent(this, MainActivity.class).setAction(Intent.ACTION_MAIN)
+                .putExtra(EXTRA_LOCAL_SESSION, localSessionPage)
+                .putExtra(EXTRA_SUPPRESS_PERMISSION_READINESS, true);
+        try {
+            startActivity(fresh);
+            finish(); // Only after the replacement launch was accepted; never clear runtime state.
+        } catch (RuntimeException unavailable) {
+            showStatus(R.string.device_start_new_home_unavailable);
+        }
+    }
+
     private void startSelectedPact() {
+        if (AppRuntimeGateway.current(this) != null) {
+            showStatus(R.string.device_start_unavailable);
+            return;
+        }
         if (!DeviceRolePreferences.supportsSub(this)) return;
         if (CommitmentManager.isActive(this)) return;
         com.subhub.app.commitment.ServiceDurationView.Selection selection =
@@ -407,7 +529,7 @@ public final class MainActivity extends AppCompatActivity {
                         || new PaidPauseManager(this).isActive()
                         || new AppModeManager(this).isArmed()
                         || ScreenshotAccessibilityService.isRecognitionActive();
-        binding.buttonProtection.setEnabled(true);
+        binding.buttonProtection.setEnabled(deviceStart == null || !deviceStart.busy());
         binding.buttonProtection.setVisibility(sessionActive ? View.GONE : View.VISIBLE);
         binding.buttonProtection.setText(R.string.role_start_session);
     }
@@ -415,6 +537,11 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        startUiResumed = true;
+        if (deviceStart != null) {
+            if (!DeviceRolePreferences.supportsSub(this)) deviceStart.cancel();
+            deviceStart.attach(deviceStartUi);
+        }
         if (binding != null) {
             if (!DeviceRolePreferences.supportsSub(this)) {
                 localSessionPage = false;
@@ -433,7 +560,7 @@ public final class MainActivity extends AppCompatActivity {
             achievementsDirty = true;
             notifyProgressOnResume = true;
             observeAchievementInputs();
-            renderAchievementsPreview(new StatsRepository(this).load());
+            renderAchievementsPreview();
             renderEditState();
             renderSubDashboard();
             renderPermissionReadiness();
@@ -679,7 +806,10 @@ public final class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onPause() {
+        startUiResumed = false;
+        if (deviceStart != null) deviceStart.detach(deviceStartUi);
         uiActive = false;
+        ++achievementReadEpoch;
         for (android.content.SharedPreferences source : achievementSources)
             source.unregisterOnSharedPreferenceChangeListener(achievementChanged);
         achievementSources.clear();
@@ -726,8 +856,7 @@ public final class MainActivity extends AppCompatActivity {
             binding.runtimeStatus.setText(R.string.runtime_idle);
         }
 
-        StatsSnapshot stats = new StatsRepository(this).load();
-        renderAchievementsPreview(stats);
+        renderAchievementsPreview();
         renderCommitmentState();
         renderSubDashboard();
         if (roleHome != null) roleHome.refresh(false);
@@ -749,30 +878,56 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void renderAchievementsPreview(StatsSnapshot stats) {
+    private void renderAchievementsPreview() {
         if (binding == null || !uiActive || uiData.isPending("achievements")) return;
-        String today = java.time.LocalDate.now().toString();
-        if (!achievementsDirty
-                && achievementSeconds == stats.getTotalProtectedSeconds()
-                && achievementDay.equals(today)) return;
-        achievementsDirty = false;
-        achievementSeconds = stats.getTotalProtectedSeconds();
-        achievementDay = today;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!achievementsDirty && now - lastAchievementRead < 5_000L) return;
         android.content.Context app = getApplicationContext();
-        uiData.load(
-                "achievements",
-                () -> com.subhub.app.stats.HomeAchievementPreview.load(app, stats),
-                preview -> {
-                    if (binding == null || !uiActive) {
-                        achievementsDirty = true;
-                        return;
-                    }
-                    if (notifyProgressOnResume) {
-                        notifyProgressOnResume = false;
-                        showProgressUnlocks(preview.achievements, stats);
-                    }
-                },
-                failure -> achievementsDirty = true);
+        com.subhub.app.stats.AchievementRole role = com.subhub.app.stats.AchievementRole.current(app);
+        if (!role.accessible(app)) return;
+        DeviceRolePreferences.Mode mode = DeviceRolePreferences.get(app);
+        long revision = ControllerPinManager.domWorkspaceRevision(), epoch = achievementReadEpoch;
+        com.subhub.app.security.KeyholderProvider authority = com.subhub.app.people.People.keyholder();
+        com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
+        java.util.function.BooleanSupplier current = () -> role.accessible(app)
+                && mode == DeviceRolePreferences.get(app) && revision == ControllerPinManager.domWorkspaceRevision()
+                && authority == com.subhub.app.people.People.keyholder()
+                && provider == com.subhub.app.relationships.RelationshipUi.provider();
+        boolean dirty = achievementsDirty;
+        long previousSeconds = achievementSeconds;
+        String previousDay = achievementDay;
+        achievementsDirty = false; lastAchievementRead = now;
+        uiData.load("achievements", () -> {
+            if (!current.getAsBoolean()) throw new SecurityException("Home achievement context changed");
+            // The one-second UI timer must not acquire the statistics/store locks or copy counters.
+            StatsSnapshot stats = new StatsRepository(app).load();
+            String today = java.time.LocalDate.now().toString();
+            com.subhub.app.stats.HomeAchievementPreview preview = !dirty
+                    && previousSeconds == stats.getTotalProtectedSeconds() && previousDay.equals(today)
+                    ? null : com.subhub.app.stats.HomeAchievementPreview.load(app, stats);
+            if (!current.getAsBoolean()) throw new SecurityException("Home achievement context changed");
+            return new AchievementRead(stats, preview, today);
+        }, result -> {
+            // A pause invalidates this read even when the page resumes in the same workspace.
+            if (binding == null || !uiActive || epoch != achievementReadEpoch || !current.getAsBoolean()) {
+                achievementsDirty = true;
+                return;
+            }
+            achievementSeconds = result.stats.getTotalProtectedSeconds(); achievementDay = result.day;
+            if (result.preview != null && notifyProgressOnResume) {
+                notifyProgressOnResume = false;
+                showProgressUnlocks(result.preview.achievements, result.stats);
+            }
+        }, failure -> achievementsDirty = true);
+    }
+
+    private static final class AchievementRead {
+        final StatsSnapshot stats;
+        final com.subhub.app.stats.HomeAchievementPreview preview;
+        final String day;
+        AchievementRead(StatsSnapshot stats, com.subhub.app.stats.HomeAchievementPreview preview, String day) {
+            this.stats = stats; this.preview = preview; this.day = day;
+        }
     }
 
     private void showProgressUnlocks(AchievementManager achievements, StatsSnapshot stats) {
@@ -820,11 +975,30 @@ public final class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onSaveInstanceState(Bundle state) {
+        if (deviceStartResults != null)
+            state.putBundle("device_start_result_routes", deviceStartResults.saveMetadata());
         super.onSaveInstanceState(state);
     }
 
     @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        try { super.onActivityResult(requestCode, resultCode, data); }
+        finally { if (deviceStartResults != null) deviceStartResults.onFrameworkResultReturned(); }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        try { super.onRequestPermissionsResult(requestCode, permissions, grantResults); }
+        finally { if (deviceStartResults != null) deviceStartResults.onFrameworkResultReturned(); }
+    }
+
+    @Override
     protected void onDestroy() {
+        startUiResumed = false;
+        if (deviceStart != null) deviceStart.detach(deviceStartUi);
+        if (deviceStartResults != null) deviceStartResults.close();
         if (uiData != null) uiData.close();
         uiTimer.removeCallbacksAndMessages(null);
         roleHome = null;

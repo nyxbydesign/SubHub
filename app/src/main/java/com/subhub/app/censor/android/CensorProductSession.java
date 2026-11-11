@@ -1,12 +1,10 @@
 package com.subhub.app.censor.android;
 
 import android.accessibilityservice.AccessibilityService;
-import android.content.SharedPreferences;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
 import androidx.annotation.RequiresApi;
-import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.capture.CustomImageManager;
 import com.subhub.app.censor.engine.LatestReconciliation;
@@ -16,16 +14,13 @@ import com.subhub.app.censor.engine.ProtectionScope;
 import com.subhub.app.censor.engine.SceneEngine;
 import com.subhub.app.detection.DetectorConfig;
 import com.subhub.app.detection.text.TextSmutConfig;
-import com.subhub.app.diagnostics.CensorLabCensorSession;
 import com.subhub.app.penance.CensorTapTracker;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.penance.PenanceInfraction;
-import com.subhub.app.penance.PenanceChargeNotifier;
 import com.subhub.app.penance.ViewportDwellEpisode;
-import com.subhub.app.popup.PopupStormManager;
 import com.subhub.app.popup.ScopedDetectionHints;
 import com.subhub.app.stats.StatsRepository;
-import com.subhub.app.stats.AchievementManager;
+import com.subhub.app.stats.OwnerObservation;
 import com.subhub.app.settings.*;
 import java.util.List;
 import java.util.ArrayList;
@@ -81,26 +76,22 @@ public final class CensorProductSession implements AutoCloseable {
     private final CensorScreenState screen;
     private boolean screenSuspended;
     private long observedScreenGeneration;
-    private final SharedPreferences preferences;
-    private final AppModeManager mode;
+    private final CensorProductData data;
     private final CensorTapTracker taps;
     private final Observer observer;
     private final Runnable selectionObserved;
     private final AccessibilityCensorController controller;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService lookup = Executors.newSingleThreadExecutor(action -> new Thread(action, "Censor-product-window"));
-    private final LatestReconciliation<Desired> reconciliation;
-    private final ExecutorService accountingWorker = Executors.newSingleThreadExecutor(
-            action -> new Thread(action, "Censor-product-accounting"));
+    private final LatestReconciliation<CensorReconciliation.Selection<Desired>> reconciliation;
+    private final DeferredCensorDemand deferredDemand;
+    private final CensorProductData.AccountingWorker accountingWorker;
     private final BoundedLatestWork<AccountingInput> accounting;
     private final BoundedLatestWork<DwellInput> dwellAccounting;
     private final ViewportDwellEpisode dwellEpisode = new ViewportDwellEpisode();
     private ScopedDetectionHints<RectF>.Binding popupHints;
-    private final BoundedLatestWork<CensorEngine.EvidenceReceipt> evidenceAdmission;
-    private StatsRepository stats; // Constructed/restored only on the serial lookup worker.
-    private PenanceManager penance; // Migration/construction also stays on the lookup worker.
-    private final Function<Context, StatsRepository> statistics;
-    private final Function<Context, PenanceManager> ledgers;
+    private final BoundedLatestWork<CapturedEvidence> evidenceAdmission;
+    private CensorProductData.Ledger penance; // Migration/construction stays in the explicit lookup adapter.
     private volatile String preferredPackage = "";
     private volatile String inputMethodPackage = "";
     private volatile Desired selected;
@@ -134,14 +125,25 @@ public final class CensorProductSession implements AutoCloseable {
     CensorProductSession(AccessibilityService service, SceneEngine.Policy policy, CensorTapTracker taps, Observer observer,
             AccessibilityCensorHost.WorkerFactory models, Runnable selectionObserved, Function<Context, StatsRepository> statistics,
             Function<Context, PenanceManager> ledgers, Runnable nativeReadSelected) {
+        this(service, policy, taps, observer, models, selectionObserved,
+                () -> new DeviceCensorProductData(service, statistics, ledgers), nativeReadSelected,
+                CensorEffectScope.DEVICE, null);
+    }
+    /** Package-owned integration boundary; public constructors remain the physical-device path. */
+    CensorProductSession(AccessibilityService service, SceneEngine.Policy policy, CensorTapTracker taps, Observer observer,
+            AccessibilityCensorHost.WorkerFactory models, Runnable selectionObserved,
+            java.util.function.Supplier<CensorProductData> dataFactory, Runnable nativeReadSelected,
+            CensorEffectScope effects, SnapshotRenderSession.ArtworkLoader artwork) {
         onMain(); this.service = Objects.requireNonNull(service); this.taps = Objects.requireNonNull(taps);
         screen = new CensorScreenState(service);
         observedScreenGeneration = screen.generation();
         this.selectionObserved = Objects.requireNonNull(selectionObserved);
-        this.statistics = Objects.requireNonNull(statistics);
-        this.ledgers = Objects.requireNonNull(ledgers);
-        this.observer = Objects.requireNonNull(observer); mode = new AppModeManager(service);
-        preferences = new SettingsRepository(service).preferences();
+        data = Objects.requireNonNull(Objects.requireNonNull(dataFactory).get());
+        Objects.requireNonNull(effects);
+        if ((data instanceof DeviceCensorProductData) != (effects == CensorEffectScope.DEVICE))
+            throw new IllegalArgumentException("Censor data and effect ownership disagree");
+        accountingWorker = Objects.requireNonNull(data.accountingWorker());
+        this.observer = Objects.requireNonNull(observer);
         accounting = new BoundedLatestWork<>(accountingWorker, this::recordEvidence,
                 failure -> quarantineAccounting(null, AccountingPhase.DISPATCH, AccountingStatus.UNCERTAIN, 0, 0));
         dwellAccounting = new BoundedLatestWork<>(accountingWorker, this::recordDwell,
@@ -177,7 +179,10 @@ public final class CensorProductSession implements AutoCloseable {
                     @Override public void nativeReadCost(com.subhub.app.censor.engine.NativeReadCost value) { observer.nativeReadCost(value); }
                     @Override public void nativeReadCostStarted(com.subhub.app.censor.engine.NativeReadCost.Start value) { observer.nativeReadCostStarted(value); }
                     @Override public void evidenceAccepted(CensorEngine.EvidenceReceipt receipt) {
-                        evidenceAdmission.offer(receipt);
+                        // Receipt time is engine uptime, not a calendar timestamp. Capture wall
+                        // time/zone at actual admission, before either the main or writer queue.
+                        evidenceAdmission.offer(new CapturedEvidence(receipt,
+                                OwnerObservation.capture(System.currentTimeMillis()), data.accountingFacts()));
                         observer.evidenceAccepted(receipt);
                     }
                     @Override public void painted(com.subhub.app.censor.engine.CensorEngine.PaintReceipt receipt) { observer.painted(receipt); }
@@ -192,9 +197,67 @@ public final class CensorProductSession implements AutoCloseable {
                     }
                     @Override public void drained() { observer.drained(); }
                     @Override public void executorsTerminated(boolean disposed) { observer.executorsTerminated(disposed); }
-                }, models, () -> { }, nativeReadSelected, screen);
-        reconciliation = new LatestReconciliation<>(lookup, main::post, this::read, this::commit, this::fail);
+                }, models, () -> { }, nativeReadSelected, (input, boundary) -> { }, screen, effects, artwork);
+        reconciliation = new LatestReconciliation<>(lookup, main::post,
+                () -> CensorReconciliation.read(this::read),
+                selected -> CensorReconciliation.commit(selected, this::commit, this::deferReconciliation), this::fail);
+        deferredDemand = new DeferredCensorDemand(new DeferredCensorDemand.Scheduler() {
+            @Override public boolean post(Runnable command, long delay) { return main.postDelayed(command, delay); }
+            @Override public void remove(Runnable command) { main.removeCallbacks(command); }
+        }, this::request, () -> fail(new IllegalStateException("Deferred Censor main demand rejected")));
     }
+    enum AdoptionKind { UNCHANGED, APPEARANCE, STRUCTURAL }
+    /** Synchronous configuration adoption only, not model readiness or physical presentation. */
+    static final class Adoption {
+        final com.subhub.app.runtime.RuntimeConfiguration configuration;
+        final AdoptionKind kind;
+        Adoption(com.subhub.app.runtime.RuntimeConfiguration configuration, AdoptionKind kind) {
+            this.configuration = configuration; this.kind = kind;
+        }
+    }
+
+    /**
+     * Called only inside this owner's main-thread module-adoption effect. Installs immutable data
+     * and withdraws incompatible authority before returning; no lookup, model wait or capture here.
+     * Accounting facts switch later, only in the core's serial acknowledged callback.
+     */
+    Adoption adoptOwnedConfiguration(OwnedCensorProductData boundData, OwnedCensorArtwork artwork,
+            com.subhub.app.runtime.RuntimeConfiguration configuration) {
+        onMain();
+        if (closed || failed || data != boundData) throw new SecurityException("Different or closed Censor product");
+        Objects.requireNonNull(artwork); Objects.requireNonNull(configuration);
+        ProductCensorSettings before = new ProductCensorSettings(data.preferences());
+        ProductCensorSettings after = new ProductCensorSettings(configuration.main);
+        SettingsRepository oldSettings = SettingsRepository.forPreferences(before);
+        SettingsRepository newSettings = SettingsRepository.forPreferences(after);
+        DetectorConfig detector = newSettings.loadDetectorConfig();
+        TextSmutConfig text = newSettings.loadTextSmutConfig();
+        boolean structural = !before.sameParticipation(after)
+                || !CensorConfigurationKey.inference(oldSettings.loadDetectorConfig(), oldSettings.loadTextSmutConfig())
+                        .equals(CensorConfigurationKey.inference(detector, text));
+        CensorAppearance appearance = newSettings.loadAppearance();
+        SnapshotPaintPolicy paint = SnapshotPaintPolicy.from(newSettings.loadDetectionPreset());
+        long revision = configuration.artworkRevision;
+        boolean appearanceChanged = !CensorConfigurationKey.appearance(oldSettings.loadAppearance(),
+                SnapshotPaintPolicy.from(oldSettings.loadDetectionPreset()), before.getLong(CustomImageManager.REVISION_KEY, 0))
+                .equals(CensorConfigurationKey.appearance(appearance, paint, revision));
+        // Even irrelevant edits invalidate a held old selection: it cannot replace the exact newly
+        // adopted Desired after the barrier. Existing source/resource authority is retained below.
+        reconciliation.invalidate(); deferredDemand.cancel();
+        boundData.applyRendering(configuration); artwork.update(configuration);
+        if (structural) {
+            stop();
+            return new Adoption(configuration, AdoptionKind.STRUCTURAL);
+        }
+        Desired previous = selected;
+        if (appearanceChanged) controller.appearanceChanged(appearance, paint, revision);
+        if (previous != null && active) {
+            selected = new Desired(after, previous.lab, previous.session, previous.window, detector, text,
+                    appearance, paint, revision, previous.eligible, previous.screenGeneration);
+        }
+        return new Adoption(configuration, appearanceChanged ? AdoptionKind.APPEARANCE : AdoptionKind.UNCHANGED);
+    }
+
     public void request() {
         onMain(); if (closed || failed) return;
         screen.refresh(null);
@@ -268,8 +331,13 @@ public final class CensorProductSession implements AutoCloseable {
     }
     public void demandCapture() { onMain(); if (active && !closed) controller.requestCapture(); }
     public void powerPolicyChanged() { onMain(); if (!closed) controller.powerPolicyChanged(); }
+    private void deferReconciliation() {
+        stop();
+        if (!closed && !failed) deferredDemand.defer();
+    }
     public void stop() {
         onMain(); if (closed) return;
+        deferredDemand.cancel();
         reconciliation.invalidate();
         evidenceAdmission.invalidate();
         accounting.invalidate();
@@ -285,34 +353,33 @@ public final class CensorProductSession implements AutoCloseable {
     @Override public void close() {
         onMain(); if (closed) return;
         closed = true; active = false; selected = null; protection = null;
-        reconciliation.close(); lookup.shutdown();
+        deferredDemand.close(); reconciliation.close(); lookup.shutdown();
         evidenceAdmission.close();
-        accounting.close(); accountingWorker.shutdown();
+        accounting.close(); accountingWorker.close();
         dwellAccounting.close(); dwellEpisode.reset(); releasePopupHints();
         try { controller.close(); } finally { observer.activeChanged(false); }
     }
     public boolean managedResourcesDrained() {
-        return closed && reconciliation.drained() && lookup.isTerminated() && evidenceAdmission.drained() && accounting.drained()
+        return closed && deferredDemand.drained() && reconciliation.drained() && lookup.isTerminated() && evidenceAdmission.drained() && accounting.drained()
                 && dwellAccounting.drained()
-                && accountingWorker.isTerminated() && controller.managedResourcesDrained();
+                && accountingWorker.terminated() && controller.managedResourcesDrained();
     }
     AccessibilityCensorController controller() { return controller; }
     AccessibilityService service() { return service; }
 
     private Desired read() {
         long screenGeneration = screen.generation();
-        if (stats == null) stats = Objects.requireNonNull(statistics.apply(service));
-        if (penance == null) penance = Objects.requireNonNull(ledgers.apply(service));
-        StatsRepository.SessionStamp session = stats.sessionStamp();
-        ProductCensorSettings snapshot = new ProductCensorSettings(preferences);
-        CensorLabCensorSession.Stamp lab = CensorLabCensorSession.stamp();
-        String ime = mode.inputMethodPackage();
+        if (penance == null) penance = Objects.requireNonNull(data.dwellLedger());
+        StatsRepository.SessionStamp session = data.sessionStamp();
+        ProductCensorSettings snapshot = new ProductCensorSettings(data.preferences());
+        CensorProductData.Participation lab = data.participation();
+        String ime = data.inputMethodPackage();
         inputMethodPackage = ime;
         AccessibilityWindowReader.Window window = screen.isCurrent(screenGeneration)
                 ? controller.observeForeground(ime, preferredPackage) : null;
         SettingsRepository settings = SettingsRepository.forPreferences(snapshot);
         DetectorConfig detector = settings.loadDetectorConfig(); TextSmutConfig text = settings.loadTextSmutConfig();
-        boolean enabled = lab.active || (snapshot.getBoolean(AppModeManager.KEY_ARMED, false)
+        boolean enabled = lab.lab() || (data.armed(snapshot)
                 && snapshot.getBoolean(FeatureModuleManager.KEY_CENSOR_ENABLED, true)
                 && settings.loadCaptureMethod() == CaptureMethod.APP_MODE);
         boolean eligible = screen.isCurrent(screenGeneration) && window != null && AppModePolicy.shouldRecognize(enabled, snapshot.included(),
@@ -328,37 +395,42 @@ public final class CensorProductSession implements AutoCloseable {
         onMain(); if (closed || failed) return;
         if (!screen.isCurrent(value.screenGeneration)) { request(); return; }
         long generation = reconciliation.generation();
-        if (!value.lab.isCurrent() || value.session != StatsRepository.currentSessionStamp()
-                || !value.settings.same(new ProductCensorSettings(preferences))) { request(); return; }
+        if (!value.lab.current() || value.session != data.observedSessionStamp()
+                || !value.settings.same(new ProductCensorSettings(data.preferences()))) { request(); return; }
         observer.foreground(value.window);
         if (!screen.isCurrent(value.screenGeneration)) { request(); return; }
         if (!reconciliation.isCurrent(generation) || closed || failed) return;
-        if (!value.lab.isCurrent() || value.session != StatsRepository.currentSessionStamp()
-                || !value.settings.same(new ProductCensorSettings(preferences))) { request(); return; }
+        if (!value.lab.current() || value.session != data.observedSessionStamp()
+                || !value.settings.same(new ProductCensorSettings(data.preferences()))) { request(); return; }
         if (!value.eligible) { preferredPackage = ""; controller.idleSettingsChanged(value.detector); stop(); return; }
         if (value.inference.equals(unavailableInference)) { stop(); return; }
         unavailableInference = null;
         preferredPackage = value.window.packageName;
-        ProtectionScope desiredProtection = value.lab.active ? ProtectionScope.lab(taps.scope()) : ProtectionScope.normal(taps.scope());
+        ProtectionScope desiredProtection = value.lab.lab() ? ProtectionScope.lab(taps.scope()) : ProtectionScope.normal(taps.scope());
         if (active && selected != null && selected.screenGeneration == value.screenGeneration && selected.window.same(value.window) && selected.lab == value.lab
                 && selected.session == value.session && selected.settings.sameParticipation(value.settings)
                 && selected.inference.equals(value.inference) && desiredProtection.equals(protection)) {
             if (!selected.appearanceKey.equals(value.appearanceKey)) {
                 controller.appearanceChanged(value.appearance, value.paint, value.artworkRevision);
             }
-            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) selected = value;
+            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) {
+                selected = value; deferredDemand.succeeded();
+            }
             return;
         }
         dwellAccounting.invalidate(); dwellEpisode.reset();
         selected = value; protection = desiredProtection; active = true;
-        if (popupHints == null) popupHints = PopupStormManager.get().bindDetectionHints(this::readPopupHints);
+        if (popupHints == null) popupHints = data.bindPopupHints(this::readPopupHints);
         try {
             int threads = value.detector.getInferenceThreads();
             controller.start(new AccessibilityCensorController.Configuration(++scopeToken, value.window, value.detector,
                     threads >= 3 && value.detector.getInferenceResolution() > 320, value.text,
                     threads >= 3, threads >= 4, desiredProtection, value.appearance, value.paint, value.artworkRevision));
-            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) observer.activeChanged(true);
-        } catch (RuntimeException | Error error) { fail(error); }
+            if (reconciliation.isCurrent(generation) && !closed && !failed && active && screen.isCurrent(value.screenGeneration)) {
+                deferredDemand.succeeded(); observer.activeChanged(true);
+            }
+        } catch (CensorEffectScope.Unavailable refused) { throw refused; }
+        catch (RuntimeException | Error error) { fail(error); }
     }
     private void fail(Throwable failure) {
         onMain(); if (closed || failed) return;
@@ -368,21 +440,31 @@ public final class CensorProductSession implements AutoCloseable {
     private static final class AccountingInput {
         final Desired desired;
         final CensorEngine.EvidenceReceipt receipt;
-        AccountingInput(Desired desired, CensorEngine.EvidenceReceipt receipt) {
-            this.desired = desired; this.receipt = receipt;
+        final OwnerObservation observed;
+        final CensorProductData.AccountingFacts facts;
+        AccountingInput(Desired desired, CensorEngine.EvidenceReceipt receipt, CapturedEvidence captured) {
+            this.desired = desired; this.receipt = receipt; observed = captured.observed; facts = captured.facts;
         }
     }
-    private void acceptEvidence(CensorEngine.EvidenceReceipt receipt) {
+    private static final class CapturedEvidence {
+        final CensorEngine.EvidenceReceipt receipt; final OwnerObservation observed;
+        final CensorProductData.AccountingFacts facts;
+        CapturedEvidence(CensorEngine.EvidenceReceipt receipt, OwnerObservation observed, CensorProductData.AccountingFacts facts) {
+            this.receipt = receipt; this.observed = observed; this.facts = Objects.requireNonNull(facts);
+        }
+    }
+    private void acceptEvidence(CapturedEvidence captured) {
+        CensorEngine.EvidenceReceipt receipt = captured.receipt;
         onMain(); Desired value = selected;
         if (value == null) return;
-        AccountingInput input = new AccountingInput(value, receipt);
+        AccountingInput input = new AccountingInput(value, receipt, captured);
         if (accountingCurrent(input)) {
             accounting.offer(input); // Preserve new-detection ledger ordering before dwell.
             AccessibilityCensorController.WindowCoverage coverage = controller.viewportCoverage();
             if (accountingCurrent(input) && controller.observationCurrent(coverage, receipt)) {
                 ViewportDwellEpisode.Ticket ticket = dwellEpisode.observe(controller.dwellPresent(coverage, receipt),
-                        receipt.acceptedAtMillis, penance.getDwellSeconds() * 1000L);
-                if (ticket != null) dwellAccounting.offer(new DwellInput(value, receipt, coverage, ticket));
+                        receipt.acceptedAtMillis, captured.facts.dwellLedger().dwellSeconds() * 1000L);
+                if (ticket != null) dwellAccounting.offer(new DwellInput(value, receipt, coverage, ticket, captured));
             }
         }
     }
@@ -396,11 +478,11 @@ public final class CensorProductSession implements AutoCloseable {
     }
     private boolean participationCurrent(Desired origin) {
         Desired current = selected;
-        if (closed || failed || !active || !screen.isCurrent(origin.screenGeneration) || current == null || origin.lab.active
-                || !origin.lab.isCurrent() || current.lab != origin.lab
+        if (closed || failed || !active || !screen.isCurrent(origin.screenGeneration) || current == null || origin.lab.lab()
+                || !origin.lab.current() || current.lab != origin.lab
                 || !current.window.same(origin.window) || !current.inference.equals(origin.inference)
                 || !origin.settings.sameParticipation(current.settings)) return false;
-        ProductCensorSettings live = new ProductCensorSettings(preferences);
+        ProductCensorSettings live = new ProductCensorSettings(data.preferences());
         SettingsRepository settings = SettingsRepository.forPreferences(live);
         return origin.settings.sameParticipation(live)
                 && origin.inference.equals(CensorConfigurationKey.inference(settings.loadDetectorConfig(), settings.loadTextSmutConfig()));
@@ -425,9 +507,12 @@ public final class CensorProductSession implements AutoCloseable {
         final CensorEngine.EvidenceReceipt observation;
         final AccessibilityCensorController.WindowCoverage coverage;
         final ViewportDwellEpisode.Ticket ticket;
+        final OwnerObservation observed;
+        final CensorProductData.AccountingFacts facts;
         DwellInput(Desired desired, CensorEngine.EvidenceReceipt observation,
-                AccessibilityCensorController.WindowCoverage coverage, ViewportDwellEpisode.Ticket ticket) {
+                AccessibilityCensorController.WindowCoverage coverage, ViewportDwellEpisode.Ticket ticket, CapturedEvidence captured) {
             this.desired = desired; this.observation = observation; this.coverage = coverage; this.ticket = ticket;
+            observed = captured.observed; facts = captured.facts;
         }
     }
     private boolean dwellCurrent(DwellInput input) {
@@ -437,22 +522,24 @@ public final class CensorProductSession implements AutoCloseable {
     private void recordDwell(DwellInput input) {
         int charged = 0;
         try {
-            boolean admitted = CensorLabCensorSession.withCurrentNormal(input.desired.lab,
+            boolean admitted = input.desired.lab.admitNormal(
                     () -> dwellEpisode.claim(input.ticket, () -> dwellCurrent(input)), false);
             if (!admitted) {
                 dwellEpisode.release(input.ticket); reportDwell(input, AccountingStatus.REJECTED, 0); return;
             }
             long now = System.currentTimeMillis();
-            PenanceManager.SourceDetectionResult ledger = penance.recordSourceDwellResult(now, input.desired.session);
+            CensorProductData.Ledger penance = input.facts.dwellLedger();
+            CensorProductData.Assessment ledger = penance.dwell(now, input.desired.session, input.observed);
             charged = ledger.chargedCents;
-            reportDwell(input, ledger.status == PenanceManager.SourceDetectionStatus.ACKNOWLEDGED
+            reportDwell(input, ledger.acknowledged
                     ? AccountingStatus.COMMITTED : AccountingStatus.REJECTED, charged);
-            if (charged > 0) PenanceChargeNotifier.show(service, penance, PenanceInfraction.CENSORED_DWELL, charged, now,
+            if (charged > 0) penance.notifyCharge(PenanceInfraction.CENSORED_DWELL, charged, now, input.observed,
                     () -> !accountingQuarantined && productCurrent(input.desired) && controller.evidenceCurrent(input.observation));
         } catch (RuntimeException | Error uncertain) { quarantineDwell(input, AccountingStatus.UNCERTAIN, charged); }
     }
     private void quarantineDwell(DwellInput input, AccountingStatus status, int charged) {
         accountingQuarantined = true; accounting.close(); dwellAccounting.close(); dwellEpisode.reset();
+        data.accountingFailed();
         reportDwell(input, status, charged);
     }
     private void reportDwell(DwellInput input, AccountingStatus status, int charged) {
@@ -461,16 +548,16 @@ public final class CensorProductSession implements AutoCloseable {
     }
     /** Short admission only: no disk, UI, observer or platform operation inside the Lab guard. */
     private boolean admitAccounting(AccountingInput input) {
-        return CensorLabCensorSession.withCurrentNormal(input.desired.lab, () -> accountingCurrent(input), false);
+        return input.desired.lab.admitNormal(() -> accountingCurrent(input), false);
     }
     private void recordEvidence(AccountingInput input) {
         AccountingPhase phase = AccountingPhase.COUNT; int count = 0, charged = 0;
         try {
             if (!accountingCurrent(input)) { reportAccounting(input, phase, AccountingStatus.REJECTED, 0, 0); return; }
-            StatsRepository.EvidenceRecord record = stats.recordEvidence(input.desired.session,
-                    () -> CensorLabCensorSession.withCurrentNormal(input.desired.lab,
+            StatsRepository.EvidenceRecord record = data.recordEvidence(input.desired.session,
+                    () -> input.desired.lab.admitNormal(
                             () -> accountingCurrent(input) ? controller.claimEvidence(input.receipt, input.desired.session) : null, null),
-                    input.desired.detector.getEnabledCategories());
+                    input.desired.detector.getEnabledCategories(), input.observed);
             if (record.status == StatsRepository.EvidenceStatus.UNACKNOWLEDGED) {
                 quarantineAccounting(input, phase, AccountingStatus.UNACKNOWLEDGED, 0, 0); return;
             }
@@ -482,21 +569,21 @@ public final class CensorProductSession implements AutoCloseable {
             reportAccounting(input, phase, AccountingStatus.COMMITTED, count, 0);
             phase = AccountingPhase.LEDGER;
             if (!admitAccounting(input)) { reportAccounting(input, phase, AccountingStatus.REJECTED, count, 0); return; }
-            PenanceManager penance = new PenanceManager(service);
+            CensorProductData.Ledger penance = input.facts.detectionLedger();
             long now = System.currentTimeMillis();
-            PenanceManager.SourceDetectionResult ledger = penance.recordSourceDetectionResult(count, now, input.desired.session);
+            CensorProductData.Assessment ledger = penance.detection(count, now, input.desired.session, input.observed);
             charged = ledger.chargedCents;
             // Zero cents can commit batch progress; never replay it.
-            reportAccounting(input, phase, ledger.status == PenanceManager.SourceDetectionStatus.ACKNOWLEDGED
+            reportAccounting(input, phase, ledger.acknowledged
                     ? AccountingStatus.COMMITTED : AccountingStatus.REJECTED, count, charged);
             phase = AccountingPhase.ACHIEVEMENTS;
             if (!admitAccounting(input)) { reportAccounting(input, phase, AccountingStatus.REJECTED, count, charged); return; }
-            new AchievementManager(service).checkAchievements(record.snapshot);
+            input.facts.checkAchievements(record.snapshot, input.observed);
             // Existing achievement persistence uses apply(), not an acknowledged disk transaction.
             reportAccounting(input, phase, AccountingStatus.APPLIED, count, charged);
             phase = AccountingPhase.NOTIFICATION;
             if (charged > 0 && admitAccounting(input)) {
-                PenanceChargeNotifier.show(service, penance, PenanceInfraction.NEW_DETECTION, charged, now,
+                penance.notifyCharge(PenanceInfraction.NEW_DETECTION, charged, now, input.observed,
                         () -> accountingCurrent(input));
             }
         } catch (RuntimeException | Error uncertain) {
@@ -507,6 +594,7 @@ public final class CensorProductSession implements AutoCloseable {
     private void quarantineAccounting(AccountingInput input, AccountingPhase phase, AccountingStatus status,
             int count, int charged) {
         accountingQuarantined = true; accounting.close(); dwellAccounting.close(); dwellEpisode.reset();
+        data.accountingFailed();
         reportAccounting(input, phase, status, count, charged);
     }
     private void reportAccounting(AccountingInput input, AccountingPhase phase, AccountingStatus status,
@@ -517,14 +605,14 @@ public final class CensorProductSession implements AutoCloseable {
     }
     private static final class Desired {
         final ProductCensorSettings settings;
-        final CensorLabCensorSession.Stamp lab;
+        final CensorProductData.Participation lab;
         final StatsRepository.SessionStamp session;
         final AccessibilityWindowReader.Window window;
         final DetectorConfig detector; final TextSmutConfig text;
         final CensorAppearance appearance; final SnapshotPaintPolicy paint;
         final List<Object> inference, appearanceKey;
         final long artworkRevision, screenGeneration; final boolean eligible;
-        Desired(ProductCensorSettings settings, CensorLabCensorSession.Stamp lab, StatsRepository.SessionStamp session,
+        Desired(ProductCensorSettings settings, CensorProductData.Participation lab, StatsRepository.SessionStamp session,
                 AccessibilityWindowReader.Window window,
                 DetectorConfig detector, TextSmutConfig text, CensorAppearance appearance, SnapshotPaintPolicy paint,
                 long revision, boolean eligible, long screenGeneration) {

@@ -48,7 +48,6 @@ public final class RemoteSessionNativeControllerAndroidTest {
     private RemoteStore store, independent;
     private RemoteSessionNative nativeSession;
     private StatsRepository stats;
-    private Field running;
     private BindingFixture binding;
     private RemoteSessionNativeController controller;
     private final AtomicBoolean refuseStats = new AtomicBoolean();
@@ -80,7 +79,7 @@ public final class RemoteSessionNativeControllerAndroidTest {
                 });
             }
         };
-        binding = new BindingFixture(); running = binding.field; binding.install();
+        binding = new BindingFixture(); binding.install();
         store = new RemoteStore(context, database); independent = new RemoteStore(context, database);
         boolean initialize = store.peer(DOM, GEN) == null;
         if (initialize) store.getWritableDatabase().execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,'Synthetic','SUB','ACTIVE')", new Object[]{DOM, GEN});
@@ -148,20 +147,10 @@ public final class RemoteSessionNativeControllerAndroidTest {
         if (stats != null) stats.sessionStamp();
     }
     private static final class BindingFixture implements AutoCloseable {
-        final Field field;
-        final boolean original;
-        boolean owned;
-        BindingFixture() throws Exception {
-            field = ScreenshotAccessibilityService.class.getDeclaredField("running"); field.setAccessible(true);
-            original = field.getBoolean(null);
-        }
-        void install() throws Exception {
-            assertFalse("A pre-existing Accessibility binding is not owned by this fixture", original);
-            field.setBoolean(null, true); owned = true;
-        }
-        @Override public void close() throws Exception {
-            if (owned) { field.setBoolean(null, original); owned = false; }
-        }
+        final com.subhub.app.service.AccessibilityPipelineFixture.StatusBinding status;
+        BindingFixture() throws Exception { status = new com.subhub.app.service.AccessibilityPipelineFixture.StatusBinding(); }
+        void install() throws Exception { status.install(); }
+        @Override public void close() throws Exception { status.close(); }
     }
     private SharedPreferences main() { return context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0); }
     private Request start(boolean random) throws Exception {
@@ -255,7 +244,7 @@ public final class RemoteSessionNativeControllerAndroidTest {
         Request request = Request.stop(UUID.randomUUID().toString(), DOM, SUB, GEN, 1, 7, now.wall, now.wall + 120000,
                 RuntimeSessionIdentity.observe(context, now).identity);
         store.rememberSessionControl(DOM, GEN, INCOMING, request, now);
-        main().edit().putBoolean(HardcoreModeManager.KEY_REQUESTED, false).commit(); running.setBoolean(null, false);
+        main().edit().putBoolean(HardcoreModeManager.KEY_REQUESTED, false).commit(); binding.status.setRunning(false);
         assertEquals(State.APPLIED, advance(request).result.state); assertFalse(main().getBoolean(AppModeManager.KEY_ARMED, true));
         assertEquals("", stats.activeSessionIdentity()); assertEquals(1, stats.getSessionHistory().size());
         new AppModeManager(context).setArmed(true); String replacement = stats.activeSessionIdentity();
@@ -289,19 +278,19 @@ public final class RemoteSessionNativeControllerAndroidTest {
     }
 
     @Test public void refusedBindingFixtureDoesNotClearTheBindingItDidNotOwn() throws Exception {
-        assertTrue(running.getBoolean(null));
+        assertTrue(ScreenshotAccessibilityService.isRunning());
         try (BindingFixture refused = new BindingFixture()) {
             assertThrows(AssertionError.class, refused::install);
         }
-        assertTrue(running.getBoolean(null));
+        assertTrue(ScreenshotAccessibilityService.isRunning());
     }
     @Test public void ownedBindingRestoresOriginalFlagDespiteAnIntentionalCleanupFailure() throws Exception {
-        assertTrue(running.getBoolean(null));
+        assertTrue(ScreenshotAccessibilityService.isRunning());
         assertThrows(IllegalStateException.class, () -> {
             try (BindingFixture ignored = binding) { throw new IllegalStateException("Synthetic cleanup failure"); }
         });
-        assertFalse(running.getBoolean(null));
-        binding.close(); assertFalse(running.getBoolean(null));
+        assertFalse(ScreenshotAccessibilityService.isRunning());
+        binding.close(); assertFalse(ScreenshotAccessibilityService.isRunning());
     }
 
     private Request stopLocalSession() throws Exception {

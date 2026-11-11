@@ -1,0 +1,130 @@
+"""Source guards for service routing and the temporary Demo installation."""
+from pathlib import Path
+import re
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVICE = ROOT / 'app/src/main/java/com/subhub/app/service'
+
+
+def body(source, signature):
+    start = source.index('{', source.index(signature))
+    depth = 1
+    end = start + 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[start + 1:end - 1]
+
+
+class RuntimeCaptureHostInventoryTest(unittest.TestCase):
+    def setUp(self):
+        self.projection = (SERVICE / 'ScreenCaptureService.java').read_text(encoding='utf-8')
+        self.accessibility = (SERVICE / 'ScreenshotAccessibilityService.java').read_text(encoding='utf-8')
+        self.pipeline = (SERVICE / 'AccessibilityLegacyPipeline.java').read_text(encoding='utf-8')
+        self.host = (SERVICE / 'RuntimeCaptureHost.java').read_text(encoding='utf-8')
+
+    def test_android_routing_fixtures_are_not_mockable_android_unit_tests(self):
+        unit = (ROOT / 'app/src/test/java/com/subhub/app/service/RuntimeCaptureHostTest.java').read_text(encoding='utf-8')
+        native = (ROOT / 'app/src/androidTest/java/com/subhub/app/service/RuntimeCaptureHostAndroidTest.java').read_text(encoding='utf-8')
+        self.assertNotIn('import android.', unit)
+        self.assertEqual(['projectionRetainsEverySupportedLegacyApi',
+                          'displayAndModernWindowGuardsAreNotInterchangeable',
+                          'modulesOnlyHostDoesNotClaimScreenshotSupportOnAnyApi'],
+                         re.findall(r'@Test public void (\w+)\(', unit))
+        self.assertEqual(15, len(re.findall(r'@Test public void (\w+)\(', native)))
+        self.assertIn('@RunWith(AndroidJUnit4.class)', native)
+        self.assertIn('permissionPayloadIsCapturedInsteadOfMutableIntentAlias', native)
+        self.assertIn('assertEquals("approved", grant.consume(request, request.connection).getAction())', native)
+
+    def test_service_field_initializers_do_not_acquire_shared_taps(self):
+        for source in (self.projection, self.pipeline):
+            self.assertNotRegex(source, r'private\s+(?:final\s+)?CensorTapTracker\s+tapTracker\s*=')
+            self.assertEqual(source.count('CensorTapTracker.shared()'), 1)
+            self.assertIn('CensorTapTracker.shared()', body(source, 'void initializeDeviceRuntime()'))
+        for banned in ('CensorTapTracker.shared()', 'new SettingsRepository(', 'new StatsRepository('):
+            self.assertNotIn(banned, self.accessibility)
+
+    def test_projection_creation_is_os_only(self):
+        creation = body(self.projection, 'public void onCreate()')
+        self.assertNotIn('initializeDeviceRuntime', creation)
+        for banned in ('SettingsRepository', 'StatsRepository', 'PenanceManager', 'Executors.', 'CensorTapTracker'):
+            self.assertNotIn(banned, creation)
+
+    def test_projection_actions_route_before_initialization(self):
+        start = body(self.projection, 'public int onStartCommand(')
+        initialization = start.index('return startLegacyProjection(')
+        for boundary in ('intent == null', 'ACTION_STOP_OWNED', 'ACTION_STOP.equals', '!ACTION_START.equals'):
+            self.assertLess(start.index(boundary), initialization)
+        stop = start[start.index('if (ACTION_STOP.equals'):start.index('if (!ACTION_START.equals')]
+        self.assertIn('if (!deviceInitialized)', stop)
+        self.assertNotIn('initializeDeviceRuntime()', stop)
+        self.assertLess(start.index('AppRuntimeGateway.tryBeginLegacyWork('), initialization)
+        self.assertIn('initializeDeviceRuntime()', body(self.projection, 'private int startLegacyProjection('))
+
+    def test_projection_owner_transport_cannot_replace_or_fall_back_to_device(self):
+        attach = body(self.projection, 'private void receiveManagedOwner(')
+        self.assertLess(attach.index('if (destroyed || deviceInitialized) return;'), attach.index('stopSelfResult('))
+        self.assertLess(attach.index('managedOwnerRoute = true;'), attach.index('AppRuntimeGateway.services('))
+        start = body(self.projection, 'public int onStartCommand(')
+        owner_only = body(start, 'if (managedOwnerRoute)')
+        self.assertIn('if (runtimeConnection == null) stopSelfResult(startId);', owner_only)
+        self.assertIn('return START_NOT_STICKY;', owner_only)
+        self.assertLess(start.index('if (managedOwnerRoute)'), start.index('return startLegacyProjection('))
+
+    def test_projection_failed_preparation_retains_cleanup_for_returned_resources(self):
+        source = (SERVICE / 'InternalLegacyProjectionCapture.java').read_text(encoding='utf-8')
+        prepare = body(source, 'public InternalLegacyProjectionCapture(')
+        self.assertLess(prepare.index('source ='), prepare.index('component.installShutdown('))
+        self.assertLess(prepare.index('frames ='), prepare.index('component.installShutdown('))
+        cleanup = body(source, 'private void closeFromRuntime(')
+        self.assertIn('if (source != null) cleanup(source::close);', cleanup)
+        self.assertIn('if (frames != null) cleanup(frames::close);', cleanup)
+        self.assertIn('cleanup(data::close);', cleanup)
+
+    def test_unselected_shell_cleanup_returns_before_device_cleanup(self):
+        cleanup = body(self.projection, 'public void onDestroy()')
+        neutral = body(cleanup, 'if (!deviceInitialized)')
+        self.assertIn('super.onDestroy()', neutral)
+        self.assertIn('return;', neutral)
+        shell = body(self.accessibility, 'public void onDestroy()')
+        self.assertIn('if (p != null) p.destroyLegacy()', shell)
+        self.assertIn('finally { super.onDestroy(); }', shell)
+        self.assertNotIn('initializeDeviceRuntime', shell)
+        pipeline_cleanup = body(self.pipeline, 'void destroyLegacy()')
+        pipeline_neutral = body(pipeline_cleanup, 'if (!deviceInitialized)')
+        self.assertIn('return;', pipeline_neutral)
+        for banned in ('stats', 'tapTracker', 'PopupStormManager', 'ForegroundAppState', 'AppModeManager'):
+            self.assertNotIn(banned, neutral)
+            self.assertNotIn(banned, pipeline_neutral)
+
+    def test_accessibility_api_guard_and_neutral_event_fence(self):
+        connect = body(self.accessibility, 'private void connectLegacy()')
+        self.assertLess(connect.index('Build.VERSION_CODES.R'), connect.index('initializeDeviceRuntime()'))
+        self.assertNotIn('MainThreadSampler', connect)
+        events = body(self.accessibility, 'public void onAccessibilityEvent(')
+        self.assertLess(events.index('if (managedShell)'), events.index('p.onLegacyAccessibilityEvent(event)'))
+        legacy = body(self.pipeline, 'void onLegacyAccessibilityEvent(')
+        self.assertLess(legacy.index('if (!deviceInitialized || legacyParked) return'), legacy.index('refreshCensorScreen'))
+
+    def test_only_the_temporary_demo_factory_installs_a_gateway(self):
+        for path in (ROOT / 'app/src/main/java').rglob('*.java'):
+            source = path.read_text(encoding='utf-8')
+            if path.name == 'AndroidRuntimeFactory.java':
+                install = body(source, 'private void installTemporaryDemo(')
+                self.assertEqual(1, source.count('AppRuntimeGateway.install('))
+                self.assertEqual(1, source.count('new AndroidDeviceBackend('))
+                self.assertIn('AppRuntimeGateway.install(physical, backend, installation)', install)
+            else:
+                self.assertNotIn('AppRuntimeGateway.install(', source, path.name)
+                self.assertNotIn('new AndroidDeviceBackend(', source, path.name)
+        self.assertIn('prepareDeviceAttachment(', self.projection)
+        self.assertIn('prepareDeviceAttachment(', self.accessibility)
+        self.assertNotRegex(self.host, r'static\s+(?:volatile\s+)?Gateway\s+')
+        self.assertNotIn('getSharedPreferences(', self.host)
+        self.assertNotIn('CensorTapTracker.shared()', self.host)
+        self.assertNotIn('getMediaProjection(', self.host)
+
+
+if __name__ == '__main__':
+    unittest.main()

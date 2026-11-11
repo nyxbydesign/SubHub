@@ -1,5 +1,6 @@
 package com.subhub.app.penance;
 
+import com.subhub.app.runtime.AppRuntimeGateway;
 import android.content.Context;
 import android.content.SharedPreferences;
 
@@ -15,7 +16,7 @@ import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.settings.FeatureModuleManager;
 
 /** Configures and enforces a payment-unlocked, automatically expiring protection pause. */
-public final class PaidPauseManager {
+public final class PaidPauseManager implements PaidPauseRuleSettings {
     public static final int DEFAULT_PRICE_CENTS = 500;
     public static final int DEFAULT_DURATION_MINUTES = 15;
     public static final int MIN_PRICE_CENTS = 50;
@@ -35,6 +36,8 @@ public final class PaidPauseManager {
 
     public PaidPauseManager(Context context) {
         this.context = context.getApplicationContext();
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(this.context))
+            throw new SecurityException("Internal rule editors cannot construct a paid-pause runtime");
         preferences = this.context.getSharedPreferences(
                 PenanceManager.PREFS_NAME, Context.MODE_PRIVATE);
     }
@@ -105,6 +108,7 @@ public final class PaidPauseManager {
     /** Called only after the matching checkout is recorded as paid. */
     public boolean activate() {
         synchronized (RuntimeSessionIdentity.LOCK) {
+            if (!AppRuntimeGateway.legacyMutationAllowed()) return false;
             if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return false;
             if (!canPurchase()) return false;
             boolean rearm = isProtectionRunning();
@@ -160,20 +164,23 @@ public final class PaidPauseManager {
     }
 
     public void applyBootPolicy() {
-        if (!isActive()) return;
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
-            if (until <= System.currentTimeMillis()) return;
-            String identity = preferences.getString("paid_pause_session_identity", "");
-            if (!SessionExpiryAlarms.validIdentity(identity)) {
-                identity = java.util.UUID.randomUUID().toString();
-                if (!preferences.edit().putString("paid_pause_session_identity", identity).commit()) return;
-                RuntimeSessionIdentity.changed();
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return;
+            if (!isActive()) return;
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                long until = preferences.getLong(KEY_ACTIVE_UNTIL, 0L);
+                if (until <= System.currentTimeMillis()) return;
+                String identity = preferences.getString("paid_pause_session_identity", "");
+                if (!SessionExpiryAlarms.validIdentity(identity)) {
+                    identity = java.util.UUID.randomUUID().toString();
+                    if (!preferences.edit().putString("paid_pause_session_identity", identity).commit()) return;
+                    RuntimeSessionIdentity.changed();
+                }
+                ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
+                new AppModeManager(context).setArmed(false);
+                SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, "", identity, until);
+                SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
             }
-            ScreenCaptureService.StopTarget capture = ScreenCaptureService.observedStopTarget(context);
-            new AppModeManager(context).setArmed(false);
-            SessionExpiryAlarms.update(context, SessionExpiryAlarms.Kind.PAUSE, "", identity, until);
-            SessionExpiryEffects.post(context, RuntimeSessionIdentity.componentObservation(context), capture, false, false);
         }
     }
 
@@ -208,15 +215,18 @@ public final class PaidPauseManager {
     }
 
     private boolean finishMatching(String expectedIdentity, long expectedUntil, boolean dueOnly) {
-        Boolean hardcore = null;
-        if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)
-                && !Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)) {
-            // Android admin status is an observation, never a query made inside the runtime transaction.
-            hardcore = context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
-                    .getBoolean(HardcoreModeManager.KEY_REQUESTED, false) && new HardcoreModeManager(context).isEnabled();
-        }
-        synchronized (RuntimeSessionIdentity.LOCK) {
-            return finishLocked(expectedIdentity, expectedUntil, dueOnly, hardcore);
+        try (AppRuntimeGateway.LegacyWork admitted = AppRuntimeGateway.tryBeginLegacyWork(context)) {
+            if (admitted == null) return false;
+            Boolean hardcore = null;
+            if (!Thread.holdsLock(RuntimeSessionIdentity.LOCK)
+                    && !Thread.holdsLock(com.subhub.app.security.SubFeaturePolicy.LOCK)) {
+                // Android admin status is an observation, never a query made inside the runtime transaction.
+                hardcore = context.getSharedPreferences(com.subhub.app.settings.SettingsRepository.PREFERENCES_NAME, 0)
+                        .getBoolean(HardcoreModeManager.KEY_REQUESTED, false) && new HardcoreModeManager(context).isEnabled();
+            }
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                return finishLocked(expectedIdentity, expectedUntil, dueOnly, hardcore);
+            }
         }
     }
 

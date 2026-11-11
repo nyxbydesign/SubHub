@@ -29,6 +29,7 @@ public final class ProfileViews {
     public static String targetDiscriminator(Context context, PersonId id, String device) {
         String label = device == null ? "" : device.trim();
         if (id.isLocal()) return label.isEmpty() ? context.getString(R.string.role_this_device) : label;
+        if (PersonId.INTERNAL.equals(id)) return context.getString(R.string.internal_sub_device);
         String identity = id.value();
         if (identity.startsWith("remote_") && identity.length() > 72 && identity.charAt(71) == '_') {
             String peer = identity.substring(7, 71);

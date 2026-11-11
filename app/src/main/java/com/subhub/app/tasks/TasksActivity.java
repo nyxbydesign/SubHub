@@ -54,7 +54,7 @@ public final class TasksActivity extends RolePage {
     private UiState model;
     private TaskRepository repository;
     private PersonId person;
-    private boolean primary;
+    private boolean primary, internalSubView;
     private boolean resumed;
     private TaskStore.Observation taskObservation;
     private boolean taskDataDirty;
@@ -64,6 +64,13 @@ public final class TasksActivity extends RolePage {
     private final java.util.Map<String, TaskCard> taskCards = new java.util.HashMap<>();
     private final Set<String> shownCards = new HashSet<>();
     private final Handler clock = new Handler(Looper.getMainLooper());
+    private final Runnable checkInternalAuthority = new Runnable() {
+        @Override public void run() {
+            if (!resumed || !com.subhub.app.people.DummySubPreview.ID.equals(person)) return;
+            if (!samePerson()) { if (body != null) body.removeAllViews(); closeInlineMedia(); finish(); return; }
+            clock.postDelayed(this, 250);
+        }
+    };
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!resumed) return;
@@ -104,7 +111,11 @@ public final class TasksActivity extends RolePage {
             getIntent().putExtra(PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value());
         try { person = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
-        repository = new TaskRepository(getApplicationContext(), person);
+        if (com.subhub.app.people.DummySubPreview.isRequested(getIntent())
+                && !com.subhub.app.people.DummySubPreview.isAllowed(this)) { finish(); return; }
+        internalSubView = com.subhub.app.people.DummySubPreview.ID.equals(person)
+                && state != null && state.getBoolean("tasks.internal_sub_view");
+        repository = new TaskRepository(getApplicationContext(), person, internalSubView);
         model = new ViewModelProvider(this).get(UiState.class);
         model.app = getApplicationContext();
         if (model.person == null) model.restore(person.value(), state);
@@ -121,14 +132,14 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onResume() {
         resumed = true;
-        taskObservation = TaskRuntime.get(this).store.observe(() -> {
+        if (repository != null) taskObservation = repository.observe(() -> {
             if (!resumed || model == null) return;
             if (model.loading || model.busy) taskDataDirty = true;
             else refresh();
         });
         if (model != null) model.changed = this::render;
         super.onResume();
-        if (model != null) clock.postDelayed(tick, 30_000);
+        if (model != null) { clock.postDelayed(tick, 30_000); clock.post(checkInternalAuthority); }
     }
 
     @Override protected void onPause() {
@@ -136,6 +147,7 @@ public final class TasksActivity extends RolePage {
         if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
         taskDataDirty = false;
         clock.removeCallbacks(tick);
+        clock.removeCallbacks(checkInternalAuthority);
         if (model != null) model.changed = null;
         rememberPagePosition();
         closeInlineMedia();
@@ -160,6 +172,8 @@ public final class TasksActivity extends RolePage {
             return;
         }
         setIntent(intent);
+        if (com.subhub.app.people.DummySubPreview.isRequested(intent)
+                && !com.subhub.app.people.DummySubPreview.isAllowed(this)) { finish(); return; }
         showSectionHome();
         refresh();
     }
@@ -174,6 +188,18 @@ public final class TasksActivity extends RolePage {
         scrollTop();
     }
 
+    private void switchInternalTaskView() {
+        if (model.busy || !model.form.isEmpty() || !repository.internal()
+                || !com.subhub.app.people.DummySubPreview.isAllowed(this)) return;
+        closeInlineMedia();
+        if (taskObservation != null) { taskObservation.close(); taskObservation = null; }
+        internalSubView = !internalSubView;
+        repository = new TaskRepository(getApplicationContext(), person, internalSubView);
+        taskObservation = repository.observe(this::refresh);
+        model.closeForm(); model.selected = ""; model.snapshot = null; renderedState = null;
+        refresh();
+    }
+
     private void navigateBack() {
         if (model == null || model.busy) return;
         if (!model.form.isEmpty()) { model.closeForm(); render(); scrollTop(); }
@@ -186,6 +212,7 @@ public final class TasksActivity extends RolePage {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean("tasks.primary", primary);
+        state.putBoolean("tasks.internal_sub_view", internalSubView);
         if (model != null) model.save(state);
         super.onSaveInstanceState(state);
     }
@@ -198,7 +225,9 @@ public final class TasksActivity extends RolePage {
     }
 
     private boolean samePerson() {
-        try { return person.equals(PersonRoutes.requireId(getIntent())); }
+        try { return person.equals(PersonRoutes.requireId(getIntent()))
+                && (!com.subhub.app.people.DummySubPreview.isRequested(getIntent())
+                || com.subhub.app.people.DummySubPreview.isAllowed(this)); }
         catch (IllegalArgumentException invalid) { return false; }
     }
 
@@ -210,7 +239,7 @@ public final class TasksActivity extends RolePage {
             return;
         }
         Snapshot state = model.snapshot;
-        List<Object> location = java.util.Arrays.asList(model.scope, TaskRepository.domSession(person),
+        List<Object> location = java.util.Arrays.asList(model.scope, repository.domView(),
                 primary, model.form, model.selected, model.proofAttachments);
         List<Object> signature = new ArrayList<>(location);
         java.util.Collections.addAll(signature, model.busy, model.history, model.message,
@@ -238,17 +267,17 @@ public final class TasksActivity extends RolePage {
         back.setVisibility(nested ? View.VISIBLE : View.GONE);
         back.setOnClickListener(v -> navigateBack());
         com.subhub.app.util.PrimaryHeader.editLockButton(findViewById(android.R.id.content))
-                .setVisibility(nested ? View.GONE : View.VISIBLE);
-        findViewById(R.id.primary_header_settings).setVisibility(nested ? View.GONE : View.VISIBLE);
+                .setVisibility(nested || repository.internal() ? View.GONE : View.VISIBLE);
+        findViewById(R.id.primary_header_settings).setVisibility(nested || repository.internal() ? View.GONE : View.VISIBLE);
         // Fit after all controls are set: the role badge and icon depend on this page's state.
         title("create".equals(model.form) ? R.string.tasks_new
                 : !model.form.isEmpty() ? R.string.tasks_request : R.string.tasks_title);
         if (state == null) {
             LinearLayout loading = PersonUi.card(body);
-            PersonUi.text(loading, getString(R.string.role_loading), false);
+            PersonUi.text(loading, getString(R.string.role_data_unknown), false);
             return;
         }
-        if (state.dom != TaskRepository.domSession(person)) {
+        if (state.dom != repository.domView()) {
             model.snapshot = null;
             refresh();
             return;
@@ -268,10 +297,15 @@ public final class TasksActivity extends RolePage {
             return;
         }
         PersonUi.text(body, state.name, true).setTag("tasks_target");
+        if (repository.internal()) {
+            PersonUi.text(body, getString(internalSubView ? R.string.internal_tasks_sub_view : R.string.internal_tasks_author_view), false);
+            if (model.form.isEmpty() && model.selected.isEmpty()) PersonUi.action(body,
+                    internalSubView ? R.string.internal_tasks_switch_author : R.string.internal_tasks_switch_sub,
+                    this::switchInternalTaskView, false).setTag("internal_tasks_switch_view");
+        }
         if (!person.isLocal() && !state.supported)
             PersonUi.text(body, getString(R.string.tasks_update_devices), false);
-        if (model.busy || model.loading) PersonUi.text(body,
-                getString(model.busy ? R.string.tasks_working : R.string.role_loading), false);
+        if (model.busy) PersonUi.text(body, getString(R.string.tasks_working), false);
         if (!model.form.isEmpty()) {
             if ("create".equals(model.form) && state.canCreate && state.allowed) author();
             else {
@@ -472,7 +506,7 @@ public final class TasksActivity extends RolePage {
     }
 
     private void confirmCancellation(TaskEngine.Occurrence occurrence) {
-        if (model.busy || !model.dom || !TaskRepository.domSession(person)) return;
+        if (model.busy || !model.dom || !repository.domView()) return;
         for (TaskAttachmentView media : inlineMedia) media.pause();
         boolean[] series = {false};
         androidx.appcompat.app.AlertDialog.Builder dialog = new androidx.appcompat.app.AlertDialog.Builder(this)
@@ -492,7 +526,7 @@ public final class TasksActivity extends RolePage {
     private boolean inlineAuthorized() {
         try {
             return resumed && samePerson() && model.form.isEmpty() && !model.selected.isEmpty()
-                    && model.dom == TaskRepository.domSession(person)
+                    && model.dom == repository.domView()
                     && model.scope.equals(repository.target().scope) && repository.allowed();
         } catch (RuntimeException denied) { return false; }
     }
@@ -796,8 +830,8 @@ public final class TasksActivity extends RolePage {
             Snapshot value = new Snapshot();
             TaskRepository.Target target = repo.target();
             value.scope = target.scope; value.dom = repo.isDom(); value.allowed = repo.allowed();
-            value.name = target.peer == null ? com.subhub.app.people.ProfileNames.get(app, false) : target.peer.name;
-            value.chosen = SubFeaturePolicy.chosen(app, "tasks");
+            value.name = repo.name();
+            value.chosen = repo.internal() || SubFeaturePolicy.chosen(app, "tasks");
             value.canOptOut = repo.person.isLocal() && !value.dom && !DeviceRolePreferences.isDomWorkspace(app);
             value.supported = repo.supported();
             value.canCancel = value.dom && repo.cancellationSupported();
@@ -884,7 +918,7 @@ public final class TasksActivity extends RolePage {
                     if (closed || sequence != readSequence) return;
                     loading = false;
                     if (problem == null) bind(result);
-                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = TaskRepository.domSession(repo.person); failure = problem; closeForm(); }
+                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = repo.domView(); failure = problem; closeForm(); }
                     notifyUi();
                 });
             });
@@ -910,7 +944,7 @@ public final class TasksActivity extends RolePage {
                     if (closed) return;
                     busy = false; loading = false;
                     if (refreshed != null) bind(refreshed);
-                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = TaskRepository.domSession(repo.person); closeForm(); }
+                    else { snapshot = new Snapshot(); snapshot.valid = false; snapshot.dom = repo.domView(); closeForm(); }
                     if (problem == null) success.accept(result);
                     else if (importing && !(problem instanceof SecurityException)) message = R.string.tasks_import_error;
                     else failure = problem;

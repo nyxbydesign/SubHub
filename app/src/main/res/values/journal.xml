@@ -3,7 +3,7 @@
     <string name="journal_title">Journal</string>
     <string name="journal_new">New entry</string>
     <string name="journal_add">Add</string>
-    <string name="journal_loading">Loading entries…</string>
+    <string name="journal_loading">No entry information yet</string>
     <string name="journal_load_failed">Could not load entries.</string>
     <string name="journal_retry">Retry</string>
     <string name="journal_working">Working…</string>

@@ -2,9 +2,9 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:id="@android:id/background">
         <shape android:shape="rectangle">
-            <corners android:radius="5dp" />
-            <solid android:color="@color/surface_card_raised" />
-            <stroke android:width="1dp" android:color="@color/outline_subtle" />
+            <corners android:radius="@dimen/progress_meter_radius" />
+            <solid android:color="@color/progress_track" />
+            <stroke android:width="1dp" android:color="@color/progress_outline" />
         </shape>
     </item>
     <item android:id="@android:id/progress">
@@ -12,9 +12,8 @@
              ScaleDrawable reads scaleGravity, not the generic gravity attribute. -->
         <scale android:scaleWidth="100%" android:scaleGravity="left">
             <shape android:shape="rectangle">
-                <corners android:radius="5dp" />
-                <gradient android:angle="0" android:startColor="@color/accent_mid"
-                    android:endColor="@color/accent_text" />
+                <corners android:radius="@dimen/progress_meter_radius" />
+                <solid android:color="@color/progress_fill" />
             </shape>
         </scale>
     </item>

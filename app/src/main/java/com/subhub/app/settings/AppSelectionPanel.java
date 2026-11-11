@@ -5,7 +5,6 @@ import android.util.AttributeSet;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.subhub.app.R;
@@ -21,7 +20,6 @@ import java.util.function.BooleanSupplier;
 public final class AppSelectionPanel extends LinearLayout implements androidx.lifecycle.DefaultLifecycleObserver {
     private final StateToggle all;
     private final TextView count, allHelp;
-    private final ProgressBar loading;
     private final ListView list;
     private final Set<String> included = new LinkedHashSet<>();
     private List<InstalledAppCatalog.Entry> entries;
@@ -31,7 +29,7 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
     private AsyncUiScope jobs;
     private BooleanSupplier editable;
     private Runnable changed;
-    private boolean rendering, countOnlyForOverride;
+    private boolean rendering, countOnlyForOverride, catalogLoaded;
     private AppCompatActivity host;
     private AutoCloseable iconObserver;
     private long iconEpoch;
@@ -61,9 +59,6 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
         content.setId(R.id.app_list_content);
         content.setOrientation(VERTICAL);
         addView(content, new LayoutParams(-1, -2));
-        loading = new ProgressBar(context);
-        loading.setId(R.id.loading_apps);
-        content.addView(loading, new LayoutParams(-1, dp(48)));
         list = new ListView(context);
         list.setId(R.id.app_list);
         list.setNestedScrollingEnabled(true);
@@ -91,6 +86,8 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
     }
     public void bind(AppCompatActivity activity, Context source, BooleanSupplier editable, Runnable changed) {
         if (host != null) host.getLifecycle().removeObserver(this);
+        if (jobs != null) jobs.cancel("included-app-selector");
+        entries = null; adapter = null; catalogLoaded = false; list.setAdapter(null);
         stopIcons(); host = activity; host.getLifecycle().addObserver(this);
         this.source = source.getApplicationContext();
         this.editable = editable;
@@ -103,37 +100,53 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
     /** Re-query metadata when returning from Android or another selector. */
     public void reload() {
         if (jobs == null) return;
-        jobs.cancel("included-app-selector");
-        entries = null;
-        loading.setVisibility(VISIBLE);
+        if (jobs.isPending("included-app-selector")) return;
+        catalogLoaded = false;
         refresh();
         load();
     }
 
     public void load() {
-        if (jobs == null || entries != null || jobs.isPending("included-app-selector")) return;
+        if (jobs == null || catalogLoaded || jobs.isPending("included-app-selector")) return;
+        if (entries == null) {
+            // Selected package identities are already stored. Metadata enriches these rows later.
+            List<InstalledAppCatalog.Entry> stored = new java.util.ArrayList<>();
+            for (String name : included) stored.add(new InstalledAppCatalog.Entry(name, name, null));
+            showEntries(stored);
+        }
         Context app = source;
         jobs.load("included-app-selector", () -> InstalledAppCatalog.load(app), loaded -> {
-            entries = loaded;
-            loading.setVisibility(GONE);
-            adapter = new IncludedAppsAdapter(getContext(), entries, included, (name, selected) -> {
+            catalogLoaded = true;
+            showEntries(loaded);
+            refresh();
+        }, failure -> count.setText(R.string.settings_apps_unavailable));
+    }
+
+    private void showEntries(List<InstalledAppCatalog.Entry> values) {
+        int first = list.getFirstVisiblePosition();
+        View anchor = list.getChildAt(0);
+        int top = anchor == null ? 0 : anchor.getTop();
+        String name = entries != null && first < entries.size() ? entries.get(first).packageName : null;
+        entries = values;
+        if (adapter == null) {
+            adapter = new IncludedAppsAdapter(getContext(), entries, included, (packageName, selected) -> {
                 if (!editable.getAsBoolean()) { refresh(); return; }
-                if (selected) included.add(name); else included.remove(name);
+                if (selected) included.add(packageName); else included.remove(packageName);
                 apps.saveIncludedPackages(included);
                 refresh();
                 changed.run();
             });
             list.setAdapter(adapter);
-            refresh();
-        }, failure -> {
-            loading.setVisibility(GONE);
-            count.setText(R.string.settings_apps_unavailable);
-        });
+        } else adapter.update(entries);
+        if (name != null) for (int index = 0; index < entries.size(); index++) {
+            if (name.equals(entries.get(index).packageName)) { list.setSelectionFromTop(index, top); break; }
+        }
+        refresh();
     }
 
     private void selectAll(boolean selected) {
         if (rendering || apps == null) return;
-        if (entries == null || !editable.getAsBoolean()) { refresh(); return; }
+        if (!catalogLoaded || !editable.getAsBoolean()) { refresh(); return; }
         if (selected) {
             Set<String> packages = new LinkedHashSet<>();
             for (InstalledAppCatalog.Entry entry : entries) packages.add(entry.packageName);
@@ -148,7 +161,7 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
         included.clear(); included.addAll(apps.getSelectedPackages());
         rendering = true;
         all.setChecked(apps.isAllApps());
-        all.setEnabled(entries != null && editable.getAsBoolean());
+        all.setEnabled(catalogLoaded && editable.getAsBoolean());
         allHelp.setVisibility(apps.isAllApps() ? VISIBLE : GONE);
         count.setVisibility(!countOnlyForOverride || apps.isAllApps() ? VISIBLE : GONE);
         count.setText(getResources().getQuantityString(R.plurals.apps_selected_count,
@@ -166,7 +179,7 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
     }
 
     private void observeIcons() {
-        if (com.subhub.app.configuration.FeatureEditorSession.preview(getContext())) return;
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(getContext())) return;
         com.subhub.app.configuration.FeatureEditorSession scope = com.subhub.app.configuration.FeatureEditorSession.scope(getContext());
         if (iconObserver != null || scope == null || host == null || !isAttachedToWindow()
                 || !host.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return;
