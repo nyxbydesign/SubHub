@@ -17,10 +17,11 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(131, len(selected))
-            self.assertEqual(131, len(set(selected)))
+            self.assertEqual(145, len(selected))
+            self.assertEqual(145, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
-            self.assertEqual(15, len(inventory))
+            self.assertEqual(16, len(inventory))
+            self.assertEqual(14, len(inventory["com.subhub.app.service.RuntimeCaptureHostAndroidTest"]["selectedMethods"]))
             self.assertEqual(21, len(inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]))
             preview = inventory["com.subhub.app.people.DummySubPreviewAndroidTest"]["selectedMethods"]
             for section in ("censor", "limits", "wallet", "atmosphere", "apps", "duration"):

@@ -23,6 +23,18 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         self.accessibility = (SERVICE / 'ScreenshotAccessibilityService.java').read_text()
         self.host = (SERVICE / 'RuntimeCaptureHost.java').read_text()
 
+    def test_android_routing_fixtures_are_not_mockable_android_unit_tests(self):
+        unit = (ROOT / 'app/src/test/java/com/subhub/app/service/RuntimeCaptureHostTest.java').read_text()
+        native = (ROOT / 'app/src/androidTest/java/com/subhub/app/service/RuntimeCaptureHostAndroidTest.java').read_text()
+        self.assertNotIn('import android.', unit)
+        self.assertEqual(['projectionRetainsEverySupportedLegacyApi',
+                          'displayAndModernWindowGuardsAreNotInterchangeable'],
+                         re.findall(r'@Test public void (\w+)\(', unit))
+        self.assertEqual(14, len(re.findall(r'@Test public void (\w+)\(', native)))
+        self.assertIn('@RunWith(AndroidJUnit4.class)', native)
+        self.assertIn('permissionPayloadIsCapturedInsteadOfMutableIntentAlias', native)
+        self.assertIn('assertEquals("approved", grant.consume(request, request.connection).getAction())', native)
+
     def test_service_field_initializers_do_not_acquire_shared_taps(self):
         for source in (self.projection, self.accessibility):
             self.assertNotRegex(source, r'private\s+(?:final\s+)?CensorTapTracker\s+tapTracker\s*=')
