@@ -5,6 +5,7 @@ import java.util.ArrayDeque;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import org.junit.Test;
 
@@ -37,6 +38,34 @@ public final class RuntimeStartGatewayTest {
         prompt.launch(() -> {}); f.authority.beginAuthorization(f.internal, RuntimeOrigin.LOCAL_UI);
         assertFalse(f.await(f.gateway.permissionResult(attempt, prompt, true)));
         f.worker.drain(); assertEquals(RuntimeOwnerStore.Phase.IDLE, f.backend.record.phase);
+    }
+    @Test public void hidingAndReaddingAfterPermissionRequiresFreshStartAttempt() {
+        Fixture f = new Fixture();
+        RuntimeStartAttempt old = f.reserve(f.internal).attempt;
+        RuntimeStartAttempt.Prompt prompt = f.await(f.gateway.permission(old, RuntimeStartAttempt.Permission.PROJECTION));
+        assertTrue(prompt.launch(() -> {}));
+        assertTrue(f.await(f.gateway.permissionResult(old, prompt, true)));
+
+        assertTrue(f.authority.completeAvailability(f.authority.beginAvailability(f.internal), "hidden", 2, false));
+        assertTrue(f.authority.completeAvailability(f.authority.beginAvailability(f.internal), "readded", 3, true));
+        assertTrue(f.authority.completeAuthorization(f.authority.beginAuthorization(f.internal, RuntimeOrigin.LOCAL_UI), 1, true));
+
+        CompletableFuture<RuntimeStartGateway.Starting> retired = f.gateway.begin(old, ignored -> {
+            fail("Retired generation must not reach readiness");
+            return true;
+        });
+        CompletionException failure = assertThrows(CompletionException.class, () -> f.await(retired));
+        assertTrue(failure.getCause() instanceof IllegalStateException);
+        assertTrue(old.revoked());
+        assertEquals(RuntimeOwnerStore.Phase.IDLE, f.backend.record.phase);
+
+        RuntimeStartGateway.Admission fresh = f.reserve(f.internal);
+        assertEquals(ActiveRuntimeCoordinator.Result.OK, fresh.result);
+        assertNotSame(old.lease(), fresh.attempt.lease());
+        assertEquals("readded", fresh.attempt.lease().identity.profileGeneration);
+        assertFalse(f.await(f.gateway.permissionResult(old, prompt, true)));
+        assertEquals(RuntimeOwnerStore.Phase.RESERVED, f.backend.record.phase);
+        assertEquals(fresh.attempt.lease().identity, f.backend.record.owner);
     }
     @Test public void readinessTransferPreventsOldActivityFromStoppingStartedOwner() {
         Fixture f = new Fixture(); RuntimeStartAttempt attempt = f.reserve(f.internal).attempt;
