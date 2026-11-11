@@ -47,8 +47,10 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
     @Override public CompletableFuture<AppRuntimeGateway.StartResult> rearmDevice(AppRuntimeGateway.RearmReason reason,
             RuntimeSessionIdentity.ComponentObservation expected, Runnable admittedLegacyAction) {
         Objects.requireNonNull(reason); Objects.requireNonNull(expected); Objects.requireNonNull(admittedLegacyAction);
-        return CompletableFuture.failedFuture(new AppRuntimeGateway.DeviceAdmissionException(
+        CompletableFuture<AppRuntimeGateway.StartResult> result = new CompletableFuture<>();
+        result.completeExceptionally(new AppRuntimeGateway.DeviceAdmissionException(
                 "Owned DEVICE continuation is not qualified; legacy rearm was not invoked"));
+        return result;
     }
     @Override public AppRuntimeGateway.DeviceMutationPermit admitManagedDeviceMutation(
             RuntimeLease.Identity expected, AppRuntimeGateway.Mutation mutation,
