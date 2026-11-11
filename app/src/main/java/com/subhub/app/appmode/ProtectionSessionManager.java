@@ -3,6 +3,7 @@ package com.subhub.app.appmode;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.settings.SettingsRepository;
 
 /** Persists user intent without attempting to persist Android's one-use MediaProjection token. */
@@ -13,19 +14,29 @@ public final class ProtectionSessionManager {
     private ProtectionSessionManager() {}
 
     public static void markMediaProjectionStarted(Context context) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
-        preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, true).apply();
-        RuntimeSessionIdentity.changed();
+        AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitDeviceMutation(
+                context, AppRuntimeGateway.Mutation.PROJECTION_STARTED);
+        try {
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (!com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
+                preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, true).apply();
+                RuntimeSessionIdentity.changed();
             }
+        } finally { permit.close(); }
     }
 
     public static void markMediaProjectionExplicitlyStopped(Context context) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        android.content.SharedPreferences.Editor edit=preferences(context).edit().putBoolean(KEY_MEDIA_PROJECTION_DESIRED, false);
-        com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context,edit);
-        edit.commit();RuntimeSessionIdentity.changed();
+        AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitDeviceMutation(
+                context, AppRuntimeGateway.Mutation.PROJECTION_STOPPED);
+        try {
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                SharedPreferences.Editor edit = preferences(context).edit()
+                        .putBoolean(KEY_MEDIA_PROJECTION_DESIRED, false);
+                com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+                edit.commit();
+                RuntimeSessionIdentity.changed();
             }
+        } finally { permit.close(); }
     }
 
     public static boolean needsMediaProjectionResume(Context context) {

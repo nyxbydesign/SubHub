@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.provider.Settings;
 import android.view.accessibility.AccessibilityManager;
 
+import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.settings.CaptureMethod;
 import com.subhub.app.settings.FeatureModuleManager;
 import com.subhub.app.settings.SettingsRepository;
@@ -40,16 +41,20 @@ public final class AppModeManager {
     }
 
     public void setArmed(boolean armed) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
-        boolean wasArmed = isArmed();
-        SharedPreferences.Editor edit = preferences.edit().putBoolean(KEY_ARMED, armed);
-        if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
-        edit.commit();
-        RuntimeSessionIdentity.changed();
-        if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
-        syncProtectionSession(wasArmed, armed);
+        AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitDeviceMutation(
+                context, armed ? AppRuntimeGateway.Mutation.ARM : AppRuntimeGateway.Mutation.DISARM);
+        try {
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
+                boolean wasArmed = isArmed();
+                SharedPreferences.Editor edit = preferences.edit().putBoolean(KEY_ARMED, armed);
+                if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+                edit.commit();
+                RuntimeSessionIdentity.changed();
+                if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+                syncProtectionSession(wasArmed, armed);
             }
+        } finally { permit.close(); }
     }
 
     /** Effective runtime scope; All Apps never changes the saved checkbox selection. */
@@ -125,24 +130,27 @@ public final class AppModeManager {
     }
 
     public void save(boolean armed, Set<String> packages) {
-        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
-        if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
-        boolean wasArmed = isArmed();
-        synchronized (AppModeManager.class) {
-        SharedPreferences.Editor edit = preferences.edit()
-                .putBoolean(KEY_ARMED, armed)
-                .putStringSet(
-                        KEY_INCLUDED_PACKAGES,
-                        new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
-                .putBoolean(KEY_ALL_APPS, false)
-                .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1);
-        if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
-        edit.commit();
-        }
-        RuntimeSessionIdentity.changed();
-        if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
-        syncProtectionSession(wasArmed, armed);
+        AppRuntimeGateway.DeviceMutationPermit permit = AppRuntimeGateway.admitDeviceMutation(
+                context, armed ? AppRuntimeGateway.Mutation.SAVE_ARMED : AppRuntimeGateway.Mutation.SAVE_DISARMED);
+        try {
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                if (armed && !com.subhub.app.remote.RemoteSessionNative.beforeLocalStart(context)) return;
+                boolean wasArmed = isArmed();
+                synchronized (AppModeManager.class) {
+                    SharedPreferences.Editor edit = preferences.edit()
+                            .putBoolean(KEY_ARMED, armed)
+                            .putStringSet(KEY_INCLUDED_PACKAGES,
+                                    new LinkedHashSet<>(AppModePolicy.sanitizePackages(packages)))
+                            .putBoolean(KEY_ALL_APPS, false)
+                            .putLong(KEY_SCOPE_REVISION, scopeRevision() + 1);
+                    if (!armed) com.subhub.app.remote.RemoteSessionNative.appendLocalEnd(context, edit);
+                    edit.commit();
+                }
+                RuntimeSessionIdentity.changed();
+                if (!armed) com.subhub.app.remote.RemoteSessionNative.reconcile(context);
+                syncProtectionSession(wasArmed, armed);
             }
+        } finally { permit.close(); }
     }
 
     private void migrateAppSelection() {
