@@ -41,6 +41,7 @@ public final class DeviceRuntimeEffects {
         catch (RuntimeException | Error unavailable) { runtime.requestStop(); throw unavailable; }
     }
     public RuntimeLease.Identity owner() { return owner; }
+    long appliedConfigurationRevision() { return runtime.appliedConfigurationRevision(); }
     /** Owner worker only, before any main service attachment or native construction. */
     public DeviceComponent component(String name) { return new DeviceComponent(runtime.registerComponent(name)); }
     DeviceContinuationScope.Borrow borrowMutation(DeviceContinuationScope.Mutation mutation) {

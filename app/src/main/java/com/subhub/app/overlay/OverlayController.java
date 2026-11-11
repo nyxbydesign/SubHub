@@ -434,6 +434,17 @@ public final class OverlayController implements AutoCloseable {
         });
     }
 
+    /**
+     * Source-fence withdrawal on main, not a NORMAL output operation. Old local content/taps are
+     * removed and a blank redraw requested even while NORMAL is busy. Actual on-screen removal
+     * follows Android rendering; this is not a synchronous compositor/pixel receipt.
+     */
+    public void withdrawOwnedSource() {
+        dependencies.requireRevokedSource();
+        view.clearContent();
+        view.postInvalidate();
+    }
+
     public void setAppearance(CensorAppearance appearance) {
         dependencies.command(() -> {
             if (dependencies.internal()) throw new IllegalStateException("Use exact owned configuration adoption");

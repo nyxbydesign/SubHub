@@ -90,8 +90,18 @@ import java.util.concurrent.atomic.AtomicReference;
 /** User-enabled screenshot capture mode backed by Android's accessibility consent screen. */
 final class AccessibilityLegacyPipeline {
     private final ScreenshotAccessibilityService host;
+    private final InternalAccessibilityInputs internal;
     private final android.os.Handler osMain = new android.os.Handler(android.os.Looper.getMainLooper());
-    AccessibilityLegacyPipeline(ScreenshotAccessibilityService host) { this.host = java.util.Objects.requireNonNull(host); }
+    AccessibilityLegacyPipeline(ScreenshotAccessibilityService host) { this(host, null); }
+    AccessibilityLegacyPipeline(ScreenshotAccessibilityService host, InternalAccessibilityInputs internal) {
+        this.host = java.util.Objects.requireNonNull(host);
+        this.internal = internal;
+        if (internal != null) internal.requireHost(host);
+    }
+    private DetectionEngine createDetector(DetectorConfig configuration, boolean latencyPriority) {
+        return internal == null ? new DetectionEngine(host, configuration, latencyPriority)
+                : internal.detector(host, configuration, latencyPriority);
+    }
     void dumpRenderLayout(java.io.PrintWriter writer) {
         if (overlay == null) writer.println("SUBHUB_RENDER_LAYOUT {\"schemaVersion\":1,\"active\":false}");
         else overlay.dumpRenderLayout(writer);
@@ -730,6 +740,7 @@ final class AccessibilityLegacyPipeline {
 
     /** Inactive integration seam: the future gateway selects this DEVICE path explicitly. */
     void initializeDeviceRuntime() {
+        if (internal != null) throw new SecurityException("Owned pipeline cannot initialize DEVICE dependencies");
         if (deviceInitialized) return;
         if (!managedModulesOnly && Build.VERSION.SDK_INT < 30)
             throw new IllegalStateException("Screenshot capture requires API30");
@@ -980,7 +991,7 @@ final class AccessibilityLegacyPipeline {
             Log.i(TAG, "STARTUP session=" + startupSession
                     + " phase=fast-init-begin uptimeMs=" + fastInitStarted);
             if (fastDetector == null) {
-                fastDetector = new DetectionEngine(host, fastConfig, true);
+                fastDetector = createDetector(fastConfig, true);
                 if (usesAtomicScenePipeline(config)) {
                     try {
                         // High/Ultra need two continuously available engines. CPU also unlocks
@@ -1074,7 +1085,7 @@ final class AccessibilityLegacyPipeline {
                         + " uptimeMs=" + SystemClock.uptimeMillis() + " reused=true");
                 return;
             }
-            candidate = new DetectionEngine(host, qualityDetectorConfig(requestedConfig), false);
+            candidate = createDetector(qualityDetectorConfig(requestedConfig), false);
             DetectionEngine realtime = fastDetector;
             candidate.initializeWithoutBenchmark(
                     realtime == null ? "CPU" : realtime.getActiveProvider());

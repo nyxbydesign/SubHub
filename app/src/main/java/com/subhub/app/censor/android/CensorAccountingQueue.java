@@ -30,7 +30,8 @@ final class CensorAccountingQueue implements Executor, AutoCloseable {
     }
     private final class Work {
         final Runnable action;
-        boolean started, returned, acknowledged, uncertain;
+        boolean started, returned, acknowledged, dispatched, uncertain;
+        final Receipt receipt = new Receipt();
         Work(Runnable action) { this.action = action; }
         void run() {
             synchronized (CensorAccountingQueue.this) {
@@ -39,14 +40,22 @@ final class CensorAccountingQueue implements Executor, AutoCloseable {
             }
             try { action.run(); }
             finally {
-                synchronized (CensorAccountingQueue.this) { returned = true; releaseIfComplete(); }
+                synchronized (CensorAccountingQueue.this) { returned = true; }
+                releaseIfComplete();
             }
         }
         void releaseIfComplete() {
-            if (returned && acknowledged && !uncertain) work.remove(this);
+            boolean complete;
+            synchronized (CensorAccountingQueue.this) {
+                complete = returned && acknowledged && dispatched && !uncertain;
+                if (complete) work.remove(this);
+            }
+            if (complete) receipt.succeeded();
         }
     }
-    @Override public void execute(Runnable action) {
+    @Override public void execute(Runnable action) { submit(action); }
+    /** Exact callback + writer ACK + dispatch-return receipt. Cancellation/direct completion cannot retire queued work. */
+    CompletableFuture<Void> submit(Runnable action) {
         Work admitted = new Work(Objects.requireNonNull(action));
         synchronized (this) {
             if (closed || failed) throw new RejectedExecutionException("Censor accounting is closed");
@@ -55,10 +64,11 @@ final class CensorAccountingQueue implements Executor, AutoCloseable {
         try {
             Objects.requireNonNull(dispatch.apply(admitted::run)).whenComplete((ignored, error) -> {
                 if (error != null) { failed(admitted, error); return; }
-                synchronized (CensorAccountingQueue.this) {
-                    admitted.acknowledged = true; admitted.releaseIfComplete();
-                }
+                synchronized (CensorAccountingQueue.this) { admitted.acknowledged = true; }
+                admitted.releaseIfComplete();
             });
+            synchronized (this) { admitted.dispatched = true; }
+            admitted.releaseIfComplete();
         } catch (AdmissionRefused refused) {
             boolean contradictory;
             synchronized (this) {
@@ -72,13 +82,24 @@ final class CensorAccountingQueue implements Executor, AutoCloseable {
             // the bound owner writer separately retains failed payloads for reconciliation.
             failed(admitted, uncertain); throw uncertain;
         }
+        return admitted.receipt;
     }
     private void failed(Work admitted, Throwable error) {
         boolean report;
         synchronized (this) {
             admitted.uncertain = true; report = !failed; failed = true; closed = true;
         }
+        admitted.receipt.failed(error);
         if (report) failure.accept(error);
+    }
+    private static final class Receipt extends CompletableFuture<Void> {
+        void succeeded() { super.complete(null); }
+        void failed(Throwable error) { super.completeExceptionally(error); }
+        @Override public boolean complete(Void value) { return false; }
+        @Override public boolean completeExceptionally(Throwable error) { return false; }
+        @Override public boolean cancel(boolean interrupt) { return false; }
+        @Override public void obtrudeValue(Void value) { throw new UnsupportedOperationException("Read-only accounting receipt"); }
+        @Override public void obtrudeException(Throwable error) { throw new UnsupportedOperationException("Read-only accounting receipt"); }
     }
     @Override public synchronized void close() { closed = true; }
     synchronized boolean drained() { return closed && !failed && work.isEmpty(); }

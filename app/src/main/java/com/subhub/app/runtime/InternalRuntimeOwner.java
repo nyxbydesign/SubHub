@@ -21,6 +21,12 @@ final class InternalRuntimeOwner {
     static final String ACCOUNTING_COMPONENT = "internal_accounting";
     final RuntimeEnvironment runtime;
     final OwnerWriteQueue writes;
+    final OwnerObservation startObservation;
+    final long startElapsed;
+    final com.subhub.app.service.RuntimeCaptureHost.InternalResources sourceResources;
+    private final OwnedResourceRegistry resources;
+    private final RuntimeLease lease;
+    RuntimeFenceObservation firstFence() { return resources.firstFence(lease); }
     private final AtomicReference<InternalOwnerDataBroker.Session> data = new AtomicReference<>();
     private final CompletableFuture<InternalOwnerDataBroker.SessionObservation> prepared = new CompletableFuture<>();
     private final CompletableFuture<Void> initializationReturned = new CompletableFuture<>();
@@ -31,11 +37,24 @@ final class InternalRuntimeOwner {
             InternalConfigurationStore configuration, InternalSubRecord acknowledged,
             InternalOwnerDataBroker broker, Executor ownerLifecycle, Runnable requireOwnerWorker,
             OwnerObservation started) {
+        // Existing direct accounting fixtures have no clock consumer. Production session
+        // assembly uses the explicit paired observation captured by the common factory.
+        this(coordinator, lease, configuration, acknowledged, broker, ownerLifecycle,
+                requireOwnerWorker, started, -1);
+    }
+    InternalRuntimeOwner(ActiveRuntimeCoordinator coordinator, RuntimeLease lease,
+            InternalConfigurationStore configuration, InternalSubRecord acknowledged,
+            InternalOwnerDataBroker broker, Executor ownerLifecycle, Runnable requireOwnerWorker,
+            OwnerObservation started, long startedElapsed) {
         Objects.requireNonNull(requireOwnerWorker).run();
+        if (startedElapsed < -1) throw new IllegalArgumentException("Invalid admitted monotonic clock");
+        startObservation = Objects.requireNonNull(started); startElapsed = startedElapsed;
         Objects.requireNonNull(broker); Objects.requireNonNull(started);
         RuntimeConfiguration initial = RuntimeConfiguration.internal(lease, configuration, acknowledged);
         AtomicReference<RuntimeEnvironment> execution = new AtomicReference<>();
-        OwnedResourceRegistry resources = coordinator.resources(lease);
+        this.lease = Objects.requireNonNull(lease);
+        resources = coordinator.resources(lease);
+        sourceResources = new com.subhub.app.service.RuntimeCaptureHost.InternalResources(lease.identity);
         writes = new OwnerWriteQueue(lease, resources, broker.runtimeWorker(), failure -> {
             prepared.completeExceptionally(failure);
             RuntimeEnvironment exact = execution.get();

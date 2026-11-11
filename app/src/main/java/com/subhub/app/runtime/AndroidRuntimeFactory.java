@@ -56,6 +56,19 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             java.util.Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<String, Pending> projection = new java.util.HashMap<>();
     private final Map<RuntimeLease, Intent> approvedProjection = new IdentityHashMap<>();
+    private final Map<RuntimeLease, InternalHandoff> internalHandoffs = new IdentityHashMap<>();
+    /** Exact reservation handoff, never recovered from a persisted identity or caller clock. */
+    private static final class InternalHandoff {
+        final RuntimeStartAttempt attempt;
+        final InternalSubRecord configuration;
+        RuntimeStartGateway.Starting started;
+        OwnerObservation observation;
+        long elapsed;
+        boolean transferred, settled;
+        InternalHandoff(RuntimeStartAttempt attempt, InternalSubRecord configuration) {
+            this.attempt = attempt; this.configuration = configuration;
+        }
+    }
     private Pending accessibility;
     /** One actual OS-bound but resource-neutral logical service, never a capture-ready component. */
     private NeutralAccessibility neutralAccessibility;
@@ -475,6 +488,8 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             throw new IllegalArgumentException("Incomplete INTERNAL component plan");
         return starts.reserve(internalAuthority.observe(data,expected),required).thenApply(admitted->{
             if(admitted.attempt!=null){pendingAttempt=admitted.attempt;admittedCapability=new AdmittedCapability(admitted.attempt.lease(),coordinator.resources(admitted.attempt.lease()));
+                internalHandoffs.entrySet().removeIf(entry -> entry.getValue().settled);
+                internalHandoffs.put(admitted.attempt.lease(), new InternalHandoff(admitted.attempt, expected));
                 if(recoveryRequired)starts.cancel(admitted.attempt);}
             return admitted;
         });
@@ -497,26 +512,221 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         });
     }
     CompletableFuture<RuntimeStartGateway.Starting> begin(RuntimeStartAttempt attempt, ActiveRuntimeCoordinator.StartReadiness readiness) {
-        requireUsable(); return starts.begin(attempt, readiness).thenApply(started->{
-            if(pendingAttempt==attempt)pendingAttempt=null;return started;
+        requireUsable();
+        InternalHandoff internal = null;
+        if (attempt.lease().identity.target.kind == RuntimeTarget.Kind.INTERNAL) {
+            internal = internalHandoffs.get(attempt.lease());
+            if (internal == null || internal.attempt != attempt || internal.started != null
+                    || !internal.configuration.equals(data.acknowledged()) || !internal.configuration.visible)
+                throw new SecurityException("Different or changed INTERNAL reservation");
+        }
+        final InternalHandoff captured = internal;
+        return starts.begin(attempt, readiness).thenApply(started -> {
+            if (pendingAttempt == attempt) pendingAttempt = null;
+            if (captured != null) {
+                // Retain the actual successfully begun capability before any clock/platform call.
+                captured.started = started;
+                try {
+                    captured.observation = OwnerObservation.capture(System.currentTimeMillis());
+                    captured.elapsed = android.os.SystemClock.elapsedRealtime();
+                } catch (RuntimeException | Error failure) {
+                    try { settleUnassembledInternal(captured, started); }
+                    catch (RuntimeException | Error uncertain) { recoveryRequired = true; failure.addSuppressed(uncertain); }
+                    throw failure;
+                }
+            }
+            return started;
         });
     }
     boolean cancel(RuntimeStartAttempt attempt) { return starts.cancel(attempt); }
-    InternalRuntimeOwner assembleInternal(RuntimeStartGateway.Starting started, InternalSubRecord expected, OwnerObservation observed) {
-        requireUsable(); Objects.requireNonNull(started); Objects.requireNonNull(observed);
-        if(!expected.equals(data.acknowledged())||!expected.visible)
-            throw new SecurityException("Internal profile changed before assembly");
-        // begin() supplied the current-process STARTING capability. A prior completed binding
-        // can still be cached here; target-only observation must not mistake this NEW lease for it.
-        coordinator.resources(started.lease);
-        if(current!=null && current.lease==started.lease)
+    /** Compatibility callers cannot replace the factory-captured admission clocks. */
+    InternalRuntimeOwner assembleInternal(RuntimeStartGateway.Starting started, InternalSubRecord expected,
+            OwnerObservation observed) {
+        Objects.requireNonNull(observed); return assembleInternal(started, expected);
+    }
+    InternalRuntimeOwner assembleInternal(RuntimeStartGateway.Starting started, InternalSubRecord expected) {
+        requireUsable(); Objects.requireNonNull(expected);
+        InternalHandoff handoff = requireInternalHandoff(Objects.requireNonNull(started));
+        if (handoff.transferred || handoff.settled || current != null && current.lease == started.lease)
             throw new SecurityException("Runtime assembly is single-use");
-        selections.entrySet().removeIf(entry->!entry.getKey().occupied()&&entry.getValue().attachment.managedResourcesDrained());
-        if(!selections.isEmpty())throw new SecurityException("Old physical attachments have not drained");
-        InternalRuntimeOwner owner=new InternalRuntimeOwner(coordinator,started.lease,data.configuration,expected,
-                data.ownerData(),this::executeLifecycle,this::requireWorker,observed);
-        current=new Binding(started.lease,owner.runtime,owner);
-        return owner;
+        try {
+            if (!expected.equals(handoff.configuration) || !expected.equals(data.acknowledged()) || !expected.visible)
+                throw new SecurityException("Internal profile changed before assembly");
+            ActiveRuntimeCoordinator.Observation state = coordinator.stateFor(started.lease.identity.target);
+            if (state == null || state.quarantined || state.effectsSealed
+                    || !started.lease.identity.equals(state.persisted.owner)
+                    || state.effectivePhase() != RuntimeOwnerStore.Phase.STARTING)
+                throw new SecurityException("Internal starting capability retired");
+            coordinator.resources(started.lease);
+            selections.entrySet().removeIf(entry -> !entry.getKey().occupied()
+                    && entry.getValue().attachment.managedResourcesDrained());
+            if (!selections.isEmpty()) throw new SecurityException("Old physical attachments have not drained");
+            InternalRuntimeOwner owner = new InternalRuntimeOwner(coordinator, started.lease, data.configuration, expected,
+                    data.ownerData(), action -> executeLifecycle(() -> {
+                        try { action.run(); }
+                        finally { internalLifecycleReturned(started.lease); }
+                    }), this::requireWorker, Objects.requireNonNull(handoff.observation), handoff.elapsed);
+            current = new Binding(started.lease, owner.runtime, owner);
+            handoff.transferred = true;
+            return owner;
+        } catch (RuntimeException | Error failed) {
+            try { settleUnassembledInternal(handoff, started); }
+            catch (RuntimeException | Error unsettled) { recoveryRequired = true; failed.addSuppressed(unsettled); }
+            throw failed;
+        }
+    }
+    /** The exact begun capability still has an owner if construction fails before returning a runtime. */
+    void rejectInternalStarting(RuntimeStartGateway.Starting started) {
+        requireWorker();
+        InternalHandoff handoff = requireInternalHandoff(Objects.requireNonNull(started));
+        if (handoff.settled) return;
+        settleUnassembledInternal(handoff, started);
+    }
+    private InternalHandoff requireInternalHandoff(RuntimeStartGateway.Starting started) {
+        InternalHandoff handoff = internalHandoffs.get(started.lease);
+        if (handoff == null || handoff.started != started || handoff.attempt.lease() != started.lease
+                || started.lease.identity.target.kind != RuntimeTarget.Kind.INTERNAL)
+            throw new SecurityException("Different INTERNAL starting capability");
+        return handoff;
+    }
+    private void settleUnassembledInternal(InternalHandoff handoff, RuntimeStartGateway.Starting started) {
+        requireWorker();
+        if (requireInternalHandoff(started) != handoff || handoff.transferred
+                || (current != null && current.lease == started.lease))
+            throw new SecurityException("INTERNAL assembly handoff already transferred");
+        OwnedResourceRegistry resources = coordinator.resources(started.lease);
+        ActiveRuntimeCoordinator.Observation before = coordinator.stateFor(started.lease.identity.target);
+        boolean unexpectedActive = before != null && before.persisted.phase == RuntimeOwnerStore.Phase.ACTIVE;
+        resources.fence(started.lease);
+        if (coordinator.requestStop(started.lease) != ActiveRuntimeCoordinator.Result.OK || unexpectedActive) {
+            recoveryRequired = true; return;
+        }
+        OwnedResourceRegistry.DrainReceipt receipt = resources.drained(started.lease);
+        if (receipt == null) { recoveryRequired = true; return; }
+        if (coordinator.completeStop(started.lease, receipt) != ActiveRuntimeCoordinator.Result.OK) {
+            recoveryRequired = true; return;
+        }
+        handoff.transferred = true; handoff.settled = true;
+        retireTerminalRouting();
+    }
+    /** Metadata for the actual retained Accessibility attachment, not a replacement runtime capability. */
+    static final class InternalAccessibilityAssembly {
+        final InternalRuntimeOwner owner;
+        final RuntimeCaptureHost.CapturePlan plan;
+        private final CompletableFuture<com.subhub.app.service.InternalRuntimeSession> prepared = new CompletableFuture<>();
+        private final CompletableFuture<RuntimeLease.Identity> active = new CompletableFuture<>();
+        private com.subhub.app.service.InternalRuntimeSession session;
+        InternalAccessibilityAssembly(InternalRuntimeOwner owner, RuntimeCaptureHost.CapturePlan plan) {
+            this.owner = owner; this.plan = plan;
+        }
+        CompletableFuture<com.subhub.app.service.InternalRuntimeSession> prepared() { return observation(prepared); }
+        CompletableFuture<RuntimeLease.Identity> active() { return observation(active); }
+        private <T> CompletableFuture<T> observation(CompletableFuture<T> source) {
+            CompletableFuture<T> response = new CompletableFuture<>();
+            response.whenComplete((value, failure) -> { if (response.isCancelled()) owner.runtime.requestStop(); });
+            source.whenComplete((value, failure) -> {
+                boolean returned = failure == null ? response.complete(value) : response.completeExceptionally(failure);
+                if (!returned) owner.runtime.requestStop();
+            });
+            return response;
+        }
+        private void failed(Throwable failure) {
+            prepared.completeExceptionally(failure); active.completeExceptionally(failure);
+        }
+    }
+    /** Real owner-worker producer; no module-only substitution for the selected pixel source. */
+    InternalAccessibilityAssembly awaitInternalAccessibility(InternalRuntimeOwner owner,
+            RuntimeCaptureHost.CapturePlan plan,
+            com.subhub.app.service.InternalLimitsBinding.LocalIntervention notice,
+            com.subhub.app.service.InternalRuntimeSession.CaptureFactory selectedCapture) {
+        requireUsable(); Objects.requireNonNull(owner); Objects.requireNonNull(plan); Objects.requireNonNull(notice);
+        Binding binding = requireBinding(owner.runtime);
+        if (binding.internal != owner || binding.internalAccessibility != null || owner.startElapsed < 0
+                || plan.kind() != RuntimeCaptureHost.Kind.ACCESSIBILITY || plan.sdkInt != android.os.Build.VERSION.SDK_INT)
+            throw new SecurityException("Different or duplicate INTERNAL Accessibility assembly");
+        owner.session();
+        ActiveRuntimeCoordinator.Observation phase = coordinator.stateFor(owner.runtime.identity().target);
+        if (phase == null || phase.effectsSealed || phase.quarantined
+                || phase.effectivePhase() != RuntimeOwnerStore.Phase.STARTING
+                || !phase.persisted.requiredComponents.contains(com.subhub.app.service.InternalRuntimeSession.COMPONENT))
+            throw new SecurityException("INTERNAL assembly is not part of the admitted start plan");
+        boolean modulesOnly = plan.mode == RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES;
+        if (modulesOnly != (selectedCapture == null))
+            throw new IllegalArgumentException("Selected pixel capture and module-only dependencies must stay distinct");
+        boolean censor = owner.runtime.configuration().main.getBoolean(
+                com.subhub.app.settings.FeatureModuleManager.KEY_CENSOR_ENABLED, true);
+        boolean projectionSelected = projection.values().stream().anyMatch(p -> p.binding == binding)
+                || selections.values().stream().anyMatch(p -> p.request.execution() == owner.runtime
+                        && p.request.connection.kind == RuntimeCaptureHost.Kind.PROJECTION);
+        if (!censor && !modulesOnly || censor && modulesOnly && !projectionSelected)
+            throw new SecurityException("Module-only service cannot replace the selected INTERNAL Censor source");
+        InternalAccessibilityAssembly assembly = new InternalAccessibilityAssembly(owner, plan);
+        binding.internalAccessibility = assembly;
+        try {
+            awaitAccessibility(owner.runtime, plan, connection -> new RuntimeCaptureHost.InternalRequest(
+                    connection, plan, owner.runtime, owner.session(), data.storage, owner.sourceResources, request -> {
+                        java.util.concurrent.ExecutorService reads = java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
+                            Thread thread = new Thread(task, "InternalForeground"); thread.setDaemon(true); return thread;
+                        });
+                        final com.subhub.app.service.InternalRuntimeSession session;
+                        try {
+                            session = new com.subhub.app.service.InternalRuntimeSession(request, owner.writes,
+                                    owner.startObservation, owner.startElapsed, owner::firstFence,
+                                    this::executeLifecycle, reads, this::executeLifecycle, notice, selectedCapture);
+                        } catch (RuntimeException | Error failed) {
+                            reads.shutdown(); assembly.failed(failed); owner.runtime.requestStop(); throw failed;
+                        }
+                        assembly.session = session;
+                        session.prepared().whenComplete((ignored, failure) -> dispatchOwner(() -> {
+                            if (current != binding || failure != null) {
+                                assembly.prepared.completeExceptionally(failure == null
+                                        ? new SecurityException("INTERNAL assembly retired") : failure);
+                                owner.runtime.requestStop(); return;
+                            }
+                            assembly.prepared.complete(session);
+                            internalLifecycleReturned(binding.lease);
+                        }, binding));
+                        return session;
+                    }));
+        } catch (RuntimeException | Error failed) {
+            assembly.failed(failed); owner.runtime.requestStop(); throw failed;
+        }
+        return assembly;
+    }
+    /** Called by the projection request factory only after its actual constructor returned. */
+    void bindInternalProjection(InternalAccessibilityAssembly assembly,
+            com.subhub.app.service.InternalRuntimeSession.Capture projection) {
+        requireUsable(); Objects.requireNonNull(assembly); Objects.requireNonNull(projection);
+        Binding binding = requireBinding(assembly.owner.runtime);
+        if (binding.internal != assembly.owner || binding.internalAccessibility != assembly || assembly.session == null
+                || !assembly.prepared.isDone() || assembly.prepared.isCompletedExceptionally() || assembly.prepared.isCancelled())
+            throw new SecurityException("Different or unprepared INTERNAL projection feed");
+        assembly.session.bindProjectionCapture(projection);
+    }
+    /** Runs after real lifecycle/selection returns; busy startup waits a real later receipt. */
+    private void internalLifecycleReturned(RuntimeLease lease) {
+        requireWorker();
+        Binding binding = current;
+        if (binding == null || binding.lease != lease || binding.internalAccessibility == null) return;
+        InternalAccessibilityAssembly assembly = binding.internalAccessibility;
+        if (assembly.active.isDone()) return;
+        ActiveRuntimeCoordinator.Observation phase = coordinator.stateFor(lease.identity.target);
+        if (recoveryRequired || phase == null || phase.quarantined || phase.effectsSealed
+                || !lease.identity.equals(phase.persisted.owner)) {
+            assembly.failed(new IllegalStateException("INTERNAL activation retired")); return;
+        }
+        if (assembly.session == null || !assembly.prepared.isDone() || assembly.prepared.isCompletedExceptionally()
+                || assembly.prepared.isCancelled()) return;
+        if (phase.effectivePhase() == RuntimeOwnerStore.Phase.ACTIVE) {
+            assembly.active.complete(lease.identity); return;
+        }
+        if (phase.effectivePhase() != RuntimeOwnerStore.Phase.STARTING) return;
+        ActiveRuntimeCoordinator.Result result = activate(binding.runtime);
+        if (result == ActiveRuntimeCoordinator.Result.OK) assembly.active.complete(lease.identity);
+        else if (result != ActiveRuntimeCoordinator.Result.NOT_READY) {
+            assembly.active.completeExceptionally(new IllegalStateException("INTERNAL activation not acknowledged: " + result));
+            binding.runtime.requestStop();
+        }
     }
     /** After concrete clock/modules/capture registration, not an API to substitute fake readiness. */
     ActiveRuntimeCoordinator.Result activate(RuntimeExecution<?> expected) {
@@ -700,6 +910,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             dispatchOwner(()->{
                 counted.close();
                 if(binding.device!=null)queueDeviceActivation(binding.device);
+                if(binding.internal!=null)internalLifecycleReturned(binding.lease);
                 ActiveRuntimeCoordinator.Observation state=coordinator.stateFor(binding.lease.identity.target);
                 if(state!=null&&binding.lease.identity.equals(state.persisted.owner)&&state.effectsSealed)binding.runtime.requestStop();
             },binding);
@@ -714,6 +925,8 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         if(state.startupReconciled&&!state.quarantined&&state.persisted!=null
                 &&state.persisted.phase==RuntimeOwnerStore.Phase.IDLE) {
             accessibility=null; approvedProjection.clear();pendingAttempt=null;
+            internalHandoffs.entrySet().removeIf(entry -> entry.getValue().started == null
+                    || entry.getValue().transferred && !entry.getValue().settled);
             // The service never received these selections, so it cannot report them drained.
             // Require both its exact neutral rejection return and the actual attachment proof,
             // after durable core IDLE. A delivered-but-unclaimed selection remains service-owned.
@@ -768,6 +981,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     }
     private static final class Binding {
         final RuntimeLease lease;final RuntimeExecution<?> runtime;final InternalRuntimeOwner internal;DeviceAssembly device;
+        InternalAccessibilityAssembly internalAccessibility;
         Binding(RuntimeLease lease,RuntimeExecution<?> runtime,InternalRuntimeOwner internal){this.lease=lease;this.runtime=runtime;this.internal=internal;}
     }
     private static final class Pending {

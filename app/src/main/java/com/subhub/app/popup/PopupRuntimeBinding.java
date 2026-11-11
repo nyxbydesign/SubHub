@@ -43,6 +43,11 @@ public final class PopupRuntimeBinding {
     private PopupStormManager manager;
     private ScopedDetectionHints<RectF>.Binding hints;
     private boolean insideEffect;
+    private boolean eligible;
+    private RuntimeConfiguration eligibilityConfiguration;
+    private long participationRevision;
+    private volatile boolean lifecycleDrained;
+
 
     /**
      * Owner worker only. Register before posting initialization or any image I/O. Executors must
@@ -116,8 +121,21 @@ public final class PopupRuntimeBinding {
     /** Main-thread gateway callback after activation; false means busy/revoked, never success. */
     public boolean activate() {
         requireMain();
-        return manager != null && work.isOpen() && admitted(manager::activateInternal);
+        return manager != null && work.isOpen() && admitted(() -> manager.applyInternalParticipation(
+                eligible && eligibilityConfiguration == configuration));
     }
+
+    /** Cached exact-revision participation. Revocation fences future commands even while busy. */
+    public boolean setEligible(RuntimeConfiguration expected, boolean value) {
+        requireMain(); requireOwner(expected);
+        if (!work.isOpen() || expected != configuration || expected != runtime.configuration()) return false;
+        if (eligible != value || eligibilityConfiguration != expected) participationRevision++;
+        eligible = value; eligibilityConfiguration = expected;
+        if (manager == null) return false;
+        if (!value) manager.revokeInternalParticipation();
+        return admitted(() -> manager.applyInternalParticipation(value));
+    }
+    public boolean managedResourcesDrained() { return lifecycleDrained && work.isDrained(); }
 
     /** Exact capture endpoint only. No source lookup through global/shared DEVICE state. */
     public boolean bindDetectionHints(Supplier<List<RectF>> source) {
@@ -139,6 +157,9 @@ public final class PopupRuntimeBinding {
             throw new SecurityException("Popup configuration revision went backwards");
         PopupArtworkManifest nextImages = new PopupArtworkManifest(snapshot.popupAssets, snapshot.disabledAssets);
         boolean artworkChanged = !artworkManifest.enabled.equals(nextImages.enabled);
+        participationRevision++; eligible = false; eligibilityConfiguration = null;
+        manager.revokeInternalParticipation();
+        manager.applyInternalParticipation(false);
         configuration = snapshot;
         // Content hashes are immutable. Unchanged artwork keeps its pending scan through scalar
         // revisions; changing away and back creates a new token and cannot revive an old callback.
@@ -199,6 +220,7 @@ public final class PopupRuntimeBinding {
 
     private final PopupStormManager.InternalEffects effects = new PopupStormManager.InternalEffects() {
         @Override public boolean run(Runnable effect) {
+            if (!eligible || eligibilityConfiguration != configuration) return false;
             try { return admitted(effect); }
             catch (RuntimeException failed) { component.failed(); return false; }
         }
@@ -221,11 +243,14 @@ public final class PopupRuntimeBinding {
     }
 
     private void postEffect(Runnable effect) {
+        final RuntimeConfiguration captured = configuration;
+        final long participation = participationRevision;
         PopupWorkScope.Ticket ticket = work.begin();
         if (ticket == null) return;
         Runnable callback = new Runnable() {
             @Override public void run() {
-                if (!ticket.isCurrent()) { ticket.close(); return; }
+                if (!ticket.isCurrent() || !eligible || eligibilityConfiguration != captured
+                        || configuration != captured || participationRevision != participation) { ticket.close(); return; }
                 try {
                     if (!admitted(effect)) { retry(this, ticket); return; }
                     ticket.close();
@@ -263,6 +288,7 @@ public final class PopupRuntimeBinding {
                     try {
                         if (manager != null) manager.releaseInternalSlot();
                         afterDrained.run(); // Registration closure/journal work is never done on main.
+                        lifecycleDrained = true;
                     } catch (RuntimeException failure) { component.cleanupFailed(); }
                 });
             } catch (RuntimeException rejected) { component.cleanupFailed(); }

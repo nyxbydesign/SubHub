@@ -34,6 +34,8 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
         void paused(boolean paused);
         P acquire();
         void release(P pixels);
+        /** Irreversible source acquisition/reissue fence, not a resource-drain receipt. */
+        default void seal() { }
         void close();
         boolean drained();
     }
@@ -44,7 +46,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
     private final ExecutorService producer;
     private final DrainScheduler drainScheduler;
     private final OwnedCaptureLifetime work = new OwnedCaptureLifetime();
-    private final AtomicBoolean started = new AtomicBoolean(), closing = new AtomicBoolean();
+    private final AtomicBoolean started = new AtomicBoolean(), closing = new AtomicBoolean(), sealed = new AtomicBoolean();
     private volatile boolean cleanupFailed;
     private volatile Runnable afterDrained;
 
@@ -105,7 +107,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
     /** NORMAL-only after ACTIVE, including screen transitions; caller retains refused demand. */
     public boolean paused(boolean paused, Consumer<Boolean> admission) {
         Objects.requireNonNull(admission);
-        return dispatch(() -> admission.accept(work.open()
+        return dispatch(() -> admission.accept(!sealed.get() && work.open()
                 && runtime.runEffect(() -> endpoint.paused(paused))));
     }
 
@@ -117,8 +119,9 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
     public boolean requestFrame(Consumer<Frame> receiver) {
         Objects.requireNonNull(receiver);
         return dispatch(() -> {
-            if (!work.open()) { receiver.accept(null); return; }
+            if (sealed.get() || !work.open()) { receiver.accept(null); return; }
             boolean admitted = runtime.runEffect(() -> {
+                if (sealed.get()) { receiver.accept(null); return; }
                 P pixels = endpoint.acquire();
                 if (pixels == null) { receiver.accept(null); return; }
                 OwnedCaptureLifetime.Ticket held = work.begin();
@@ -143,10 +146,17 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
         }
     }
 
+    /** Seal before any renderer releases submitted source frames. No native closure is implied. */
+    public void seal() {
+        if (!sealed.compareAndSet(false, true)) return;
+        try { endpoint.seal(); }
+        catch (RuntimeException | Error failure) { failCleanup(); throw failure; }
+    }
+
     /** Immediate admission seal. Previously accepted work/borrowed frames remain owned. */
     @Override public void close() {
         if (!closing.compareAndSet(false, true)) return;
-        runtime.requestStop();
+        try { seal(); } finally { runtime.requestStop(); }
         work.seal(() -> {
             try {
                 producer.execute(() -> {
@@ -187,7 +197,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
             AtomicBoolean readEntered = new AtomicBoolean();
             runtime.runEffect(() -> {
                 synchronized (this) {
-                    if (retired || !held.current() || configuration != runtime.configuration()
+                    if (sealed.get() || retired || !held.current() || configuration != runtime.configuration()
                             || configurationRevision != runtime.appliedConfigurationRevision()) return;
                     readers++;
                     readEntered.set(true);
@@ -200,6 +210,61 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
                 }
             });
             return readEntered.get();
+        }
+        /**
+         * Short NORMAL capture of exact immutable facts. The returned borrow has no effect
+         * authority: native computation uses it outside the gate, publication needs fresh
+         * admission. Keep it until actual native/renderer return, never merely enqueue/cancel.
+         * A rendered pixel reference may escape use only with this same borrow transferred to
+         * that renderer's actual release callback. Existing read() remains synchronous-only.
+         */
+        public <T> Borrow<T> borrowComputation(java.util.function.Supplier<T> captureFacts) {
+            Objects.requireNonNull(captureFacts);
+            java.util.concurrent.atomic.AtomicReference<Borrow<T>> result = new java.util.concurrent.atomic.AtomicReference<>();
+            runtime.runEffect(() -> {
+                synchronized (Frame.this) {
+                    if (sealed.get() || retired || !held.current() || configuration != runtime.configuration()
+                            || configurationRevision != runtime.appliedConfigurationRevision()) return;
+                    T facts = Objects.requireNonNull(captureFacts.get());
+                    // A capture callback can synchronously retire its source; recheck before grant.
+                    if (sealed.get() || retired || !held.current() || configuration != runtime.configuration()
+                            || configurationRevision != runtime.appliedConfigurationRevision()) return;
+                    readers++;
+                    result.set(new Borrow<>(facts));
+                }
+            });
+            return result.get();
+        }
+        public final class Borrow<T> implements AutoCloseable {
+            public final T facts;
+            private int uses;
+            private boolean closed, returned;
+            private Borrow(T facts) { this.facts = facts; }
+            /** Actual accepted computation may finish after Stop; this confers no draw/write authority. */
+            public boolean use(Consumer<P> action) {
+                Objects.requireNonNull(action);
+                synchronized (this) { if (closed) return false; uses++; }
+                try { action.accept(pixels); return true; }
+                finally {
+                    boolean release;
+                    synchronized (this) { uses--; release = returnIfUnused(); }
+                    if (release) releaseReader();
+                }
+            }
+            @Override public void close() {
+                boolean release;
+                synchronized (this) { closed = true; release = returnIfUnused(); }
+                if (release) releaseReader();
+            }
+            private boolean returnIfUnused() {
+                if (!closed || uses != 0 || returned) return false;
+                returned = true; return true;
+            }
+            private void releaseReader() {
+                boolean dispose;
+                synchronized (Frame.this) { readers--; dispose = retireIfUnused(); }
+                if (dispose) dispose();
+            }
         }
         @Override public void close() {
             boolean dispose;
@@ -276,7 +341,8 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
         private MediaProjection projection;
         private final int width, height, density, resolution;
         private final float scale;
-        private ScreenCaptureManager source;
+        private volatile ScreenCaptureManager source;
+        private volatile boolean sourceSealed;
         private ProjectionCallback callback;
         private boolean closeStarted; // Producer-confined, like the owned OS resources.
         private volatile boolean resourcesClosed, startupUncertain;
@@ -304,6 +370,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
                 // subclass/Callback that could retain the service or owner after relay retirement.
                 projection.registerCallback(callback, new Handler(Looper.getMainLooper()));
                 source = new ScreenCaptureManager(projection, width, height, density, resolution, scale);
+                if (sourceSealed) source.sealSubmittedFrames();
                 source.start(true); // Preserve API26+ manager; leave output detached until NORMAL activation.
             } catch (RuntimeException | Error failure) { startupUncertain = true; throw failure; }
         }
@@ -316,6 +383,11 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
             catch (RuntimeException | Error failure) { startupUncertain = true; throw failure; }
         }
         @Override public void release(Bitmap pixels) { source.releaseFrame(pixels); }
+        @Override public void seal() {
+            sourceSealed = true;
+            ScreenCaptureManager selected = source;
+            if (selected != null) selected.sealSubmittedFrames();
+        }
         @Override public void close() {
             // Never replay a native close with an uncertain outcome. The binding invokes this on
             // its sole producer only, after accepted capture jobs and frame borrows have returned.
@@ -324,6 +396,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
                 return;
             }
             closeStarted = true;
+            seal();
             // Retire before any fallible OS operation. Already admitted owner callbacks remain
             // counted; records not yet admitted lose all paths to this endpoint/binding/runtime.
             if (callback != null) callback.retire();
@@ -338,7 +411,8 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
             resourcesClosed = true;
         }
         @Override public boolean drained() {
-            return resourcesClosed && (callback == null || callback.drained());
+            return resourcesClosed && (source == null || source.managedResourcesDrained())
+                    && (callback == null || callback.drained());
         }
     }
 }

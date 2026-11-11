@@ -61,7 +61,17 @@ public final class AndroidDeviceStatisticsSource {
         Objects.requireNonNull(action);
         if (component == null || !owner.equals(component.owner()))
             throw new SecurityException("Statistics source belongs to another DEVICE runtime");
-        return component.normal(() -> {
+        return component.normal(() -> useAdmitted(action));
+    }
+
+    /** A retired capture generation cannot borrow the still-ACTIVE parent's data authority. */
+    public boolean use(DeviceCaptureSupervisor.Child child, Consumer<StatsRepository> action) {
+        Objects.requireNonNull(action);
+        if (child == null || !owner.equals(child.owner())) throw new SecurityException("Different capture runtime");
+        return child.normal(() -> useAdmitted(action));
+    }
+
+    private void useAdmitted(Consumer<StatsRepository> action) {
             synchronized (RuntimeSessionIdentity.LOCK) {
                 SharedPreferences main = physical.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
                 SharedPreferences statistics = physical.getSharedPreferences(StatsRepository.PREFS_NAME, 0);
@@ -71,6 +81,5 @@ public final class AndroidDeviceStatisticsSource {
                     throw new SecurityException("DEVICE statistics source is no longer current");
                 action.accept(repository);
             }
-        });
     }
 }

@@ -28,6 +28,7 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     final CustomImagePool images;
     final CensorTapTracker taps;
     private final boolean internal, managed;
+    private final java.util.function.BooleanSupplier sourceEligible;
     private volatile DeviceOwned selectedDevice;
     private volatile DeviceArtwork wantedDeviceArtwork, loadedDeviceArtwork;
     final Callbacks callbacks = new Callbacks();
@@ -67,10 +68,15 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     }
     /** Caller owns this exclusive executor until managedResourcesDrained; no editor Context. */
     public static LegacyRenderDependencies owned(RuntimeCaptureHost.InternalRequest request, ExecutorService loader) {
+        return owned(request, loader, () -> true);
+    }
+    /** Memory-only source fence supplements, and can never replace, runtime/config admission. */
+    public static LegacyRenderDependencies owned(RuntimeCaptureHost.InternalRequest request, ExecutorService loader,
+            java.util.function.BooleanSupplier sourceEligible) {
         Objects.requireNonNull(request); Objects.requireNonNull(loader);
         Owned state = new Owned(request, new OwnedCensorArtworkSource(request.storage, request.initialConfiguration),
                 request.initialConfiguration);
-        return new LegacyRenderDependencies(CustomImagePool.owned(loader), request.resources.taps, state, null);
+        return new LegacyRenderDependencies(CustomImagePool.owned(loader), request.resources.taps, state, null, sourceEligible);
     }
     /**
      * Exact DEVICE attachment only, under its STARTUP effect. All physical inputs are explicitly
@@ -86,6 +92,11 @@ public final class LegacyRenderDependencies implements AutoCloseable {
                 Objects.requireNonNull(taps), null, state);
     }
     private LegacyRenderDependencies(CustomImagePool images, CensorTapTracker taps, Owned owned, DeviceOwned device) {
+        this(images, taps, owned, device, () -> true);
+    }
+    private LegacyRenderDependencies(CustomImagePool images, CensorTapTracker taps, Owned owned, DeviceOwned device,
+            java.util.function.BooleanSupplier sourceEligible) {
+        this.sourceEligible = Objects.requireNonNull(sourceEligible);
         this.images = images; this.taps = taps; selected = owned; selectedDevice = device;
         internal = owned != null; managed = internal || device != null;
         acknowledged = owned == null ? null : owned.configuration;
@@ -265,13 +276,13 @@ public final class LegacyRenderDependencies implements AutoCloseable {
                         effect.run(); ran.set(true);
                     }
                 });
-            } else if (state != null && acknowledged == state.configuration
+            } else if (state != null && sourceEligible.getAsBoolean() && acknowledged == state.configuration
                     && state.request.runtime.configuration() == state.configuration
                     && state.request.runtime.appliedConfigurationRevision() == state.configuration.configRevision) {
                 state.request.runtime.runEffect(() -> {
                     // Recheck inside the gate: the owner worker may acknowledge or seal between
                     // the optimistic read above and this nonblocking admission.
-                    if (selected == state && callbacks.open() && acknowledged == state.configuration
+                    if (selected == state && callbacks.open() && sourceEligible.getAsBoolean() && acknowledged == state.configuration
                             && state.request.connection.isConnected()
                             && state.request.runtime.configuration() == state.configuration
                             && state.request.runtime.appliedConfigurationRevision() == state.configuration.configRevision) {
@@ -284,6 +295,13 @@ public final class LegacyRenderDependencies implements AutoCloseable {
             throw uncertain;
         }
         return ran.get();
+    }
+    /** Withdrawal only: denies any use as a bypass for ordinary rendering commands. */
+    void requireRevokedSource() {
+        requireMain();
+        try {
+            if (!internal || sourceEligible.getAsBoolean()) throw new IllegalStateException("Owned source is not revoked");
+        } catch (RuntimeException | Error failure) { cleanupUncertain(); throw failure; }
     }
     void command(Runnable effect) { requireMain(); if (!tryNormal(effect)) throw new Unavailable(); }
     <T> T value(Supplier<T> effect) {
