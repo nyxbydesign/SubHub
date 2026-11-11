@@ -38,7 +38,20 @@ public final class PopupStormManager {
     private static final int STOP_MARGIN = 16;
     public static final long PREVIEW_DURATION_MS = 10_000L;
     public enum PreviewResult { STARTED, ALREADY_RUNNING, UNAVAILABLE }
+    private static final Object PHYSICAL = new Object();
+    private static volatile PopupStormManager internalOwner;
     private static final PopupStormManager INSTANCE = new PopupStormManager();
+    /** Only the admitted binding can create an INTERNAL instance; DEVICE keeps the singleton. */
+    interface InternalEffects {
+        boolean run(Runnable effect);
+        void post(Runnable callback);
+        void recordImpression();
+        void requestStop();
+    }
+    private final InternalEffects internalEffects;
+    private OwnedPopupArtwork ownedArtwork;
+    private boolean internalClosed;
+    private boolean framePosted;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final PopupRunOwnership ownership = new PopupRunOwnership();
     private Runnable previewTimeout;
@@ -55,6 +68,8 @@ public final class PopupStormManager {
     private TextView stopControl;
     private volatile boolean running;
     private volatile boolean startRequested;
+    private volatile boolean physicalWindowsOutstanding;
+    private boolean deviceRemovalUncertain;
     private long lastTick;
     private long lastSpawn;
     private long burstStarted;
@@ -66,14 +81,121 @@ public final class PopupStormManager {
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
-            if (!running) return;
-            tick();
-            Choreographer.getInstance().postFrameCallback(this);
+            framePosted = false;
+            if (!running || internalClosed) return;
+            if (internalEffects == null) tick();
+            else internalEffects.run(PopupStormManager.this::tick);
+            if (running && !internalClosed) postFrame();
         }
     };
 
-    private PopupStormManager() {}
+    private PopupStormManager() { internalEffects = null; }
+
+    private PopupStormManager(Context physicalHost, PopupStormSettings initial,
+            InternalEffects effects) {
+        internalEffects = java.util.Objects.requireNonNull(effects);
+        context = java.util.Objects.requireNonNull(physicalHost).getApplicationContext();
+        windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        settings = java.util.Objects.requireNonNull(initial);
+        ownedArtwork = OwnedPopupArtwork.empty();
+        updateDisplayBounds();
+    }
+
+    static PopupStormManager forInternal(Context physicalHost, PopupStormSettings initial,
+            InternalEffects effects) {
+        requireMain();
+        synchronized (PHYSICAL) {
+            synchronized (INSTANCE.ownership) {
+                if (internalOwner != null || INSTANCE.running || INSTANCE.startRequested
+                        || INSTANCE.physicalWindowsOutstanding || INSTANCE.ownership.hasOwner())
+                    throw new IllegalStateException("Physical Popup renderer is already owned");
+                return internalOwner = new PopupStormManager(physicalHost, initial, effects);
+            }
+        }
+    }
+
+    /** Release only after the binding's windows, workers and posted callbacks really drained. */
+    void releaseInternalSlot() {
+        synchronized (PHYSICAL) {
+            if (internalOwner != this || !internalClosed)
+                throw new IllegalStateException("Popup physical ownership mismatch");
+            internalOwner = null;
+        }
+    }
+
+    boolean ownsInternalArtwork(OwnedPopupArtwork artwork) { return ownedArtwork == artwork; }
+
+    /** Called inside the exact runtime's admitted effect, never by a persisted owner identity. */
+    void activateInternal() {
+        requireInternal();
+        startRequested = true;
+        startIfReady();
+    }
+
+    void applyInternalSettings(PopupStormSettings next, boolean artworkChanged) {
+        requireInternal();
+        settings = java.util.Objects.requireNonNull(next);
+        if (artworkChanged) {
+            // Removed/disabled art disappears at the applied revision, before later decoding.
+            stopOnMain();
+            ownedArtwork.close();
+            ownedArtwork = OwnedPopupArtwork.empty();
+        } else if (!next.isEnabled() || !next.isAcknowledged()) {
+            stopOnMain();
+        } else {
+            startIfReady(); // Scalar settings do not reopen image I/O or reset existing popups.
+        }
+    }
+
+    void applyInternalArtwork(OwnedPopupArtwork replacement) {
+        requireInternal();
+        stopOnMain();
+        ownedArtwork.close();
+        ownedArtwork = java.util.Objects.requireNonNull(replacement);
+        startIfReady();
+    }
+
+    void closeInternal() {
+        requireMain();
+        if (internalEffects == null) throw new IllegalStateException("Not an owned popup renderer");
+        internalClosed = true;
+        startRequested = false;
+        stopOnMain(); // Throws on unacknowledged detach; retain assets and owner occupancy.
+        ownedArtwork.close();
+    }
+
+    boolean internalResourcesDrained() {
+        requireMain();
+        return internalEffects != null && internalClosed && !running && !framePosted
+                && popups.isEmpty() && stopControl == null && ownedArtwork.count() == 0;
+    }
+
+    /** Draw callbacks belong to this exact instance and are fenced after revocation. */
+    void drawPopup(Runnable draw) {
+        if (internalEffects == null) draw.run();
+        else if (!internalClosed) internalEffects.run(draw);
+    }
+
+    private void requireInternal() {
+        requireMain();
+        if (internalEffects == null || internalClosed)
+            throw new IllegalStateException("Owned popup renderer unavailable");
+    }
+    private static void requireMain() {
+        if (Looper.myLooper() != Looper.getMainLooper())
+            throw new IllegalStateException("Popup windows require the main thread");
+    }
+    private void postFrame() {
+        framePosted = true;
+        Choreographer.getInstance().postFrameCallback(frameCallback);
+    }
     public static PopupStormManager get() { return INSTANCE; }
+
+    /** Pure physical-occupancy witness for shared admission. No Context, disk or platform calls. */
+    public static boolean physicalResourcesOccupied() {
+        return internalOwner != null || INSTANCE.startRequested || INSTANCE.physicalWindowsOutstanding;
+    }
+
     public boolean isRunning() { return running; }
     public boolean isPreviewing() { return ownership.isPreview(); }
     /** Foreground/service reevaluation must not reset a preview or restart image I/O each event. */
@@ -92,7 +214,7 @@ public final class PopupStormManager {
     public long remainingPreviewMillis() {
         return ownership.remainingPreviewMillis(SystemClock.uptimeMillis());
     }
-    public int libraryImageCount() { return library == null ? 0 : library.count(); }
+    public int libraryImageCount() { return internalEffects != null ? ownedArtwork.count() : library == null ? 0 : library.count(); }
 
     public void reloadSettings(Context source) {
         initialize(source);
@@ -110,7 +232,8 @@ public final class PopupStormManager {
     private boolean canRender(Context source) {
         PopupStormSettings current = settings == null ? PopupStormSettings.load(source) : settings;
         return current.isAcknowledged()
-                && Settings.canDrawOverlays(source) && library != null && !library.isEmpty();
+                && Settings.canDrawOverlays(source) && (internalEffects != null
+                        ? ownedArtwork.count() > 0 : library != null && !library.isEmpty());
     }
 
     public void start(Context source) {
@@ -136,13 +259,16 @@ public final class PopupStormManager {
         com.subhub.app.appmode.RuntimeSessionIdentity.ComponentObservation observed =
                 com.subhub.app.appmode.RuntimeSessionIdentity.componentObservation(source);
         if (!observed.signature.equals(expectedSignature)) return null;
-        synchronized (ownership) {
-            // Runtime is released before this lock, which also guards Android rendering callbacks.
-            if (!observed.isCurrent()) return null;
-            token = ownership.serviceToken(expectedSignature);
-            if (token != 0) return new ServiceParticipation(token, expectedSignature);
-            token = ownership.adoptService(expectedSignature);
-            startRequested = true;
+        synchronized (PHYSICAL) {
+            if (internalOwner != null) return null;
+            synchronized (ownership) {
+                // Runtime is released before these locks, which also guard rendering ownership.
+                if (!observed.isCurrent()) return null;
+                token = ownership.serviceToken(expectedSignature);
+                if (token != 0) return new ServiceParticipation(token, expectedSignature);
+                token = ownership.adoptService(expectedSignature);
+                startRequested = true;
+            }
         }
         ServiceParticipation participation = new ServiceParticipation(token, expectedSignature);
         initialize(source);
@@ -177,27 +303,31 @@ public final class PopupStormManager {
         settings = PopupStormSettings.load(source);
         if (!settings.isAcknowledged()
                 || !Settings.canDrawOverlays(source)) return PreviewResult.UNAVAILABLE;
-        synchronized (ownership) {
-            if (running || ownership.hasOwner()) return PreviewResult.ALREADY_RUNNING;
-            long token = ownership.beginPreview(SystemClock.uptimeMillis(), PREVIEW_DURATION_MS);
-            startRequested = true;
-            cancelPreviewTimeout();
-            previewTimeout = () -> {
-                synchronized (ownership) {
-                    if (!ownership.expirePreview(token, SystemClock.uptimeMillis())) return;
-                    startRequested = false;
-                    previewTimeout = null;
-                    stopOnMain();
-                }
-            };
-            main.postDelayed(previewTimeout, PREVIEW_DURATION_MS);
-            rescanAsync();
-            startIfReady();
+        synchronized (PHYSICAL) {
+            if (internalOwner != null) return PreviewResult.ALREADY_RUNNING;
+            synchronized (ownership) {
+                if (running || ownership.hasOwner()) return PreviewResult.ALREADY_RUNNING;
+                long token = ownership.beginPreview(SystemClock.uptimeMillis(), PREVIEW_DURATION_MS);
+                startRequested = true;
+                cancelPreviewTimeout();
+                previewTimeout = () -> {
+                    synchronized (ownership) {
+                        if (!ownership.expirePreview(token, SystemClock.uptimeMillis())) return;
+                        startRequested = false;
+                        previewTimeout = null;
+                        stopOnMain();
+                    }
+                };
+                main.postDelayed(previewTimeout, PREVIEW_DURATION_MS);
+                rescanAsync();
+                startIfReady();
+            }
         }
         return PreviewResult.STARTED;
     }
 
     public void stop() {
+        if (internalEffects != null) { internalEffects.requestStop(); return; }
         long token;
         synchronized (ownership) {
             token = ownership.stop();
@@ -256,15 +386,18 @@ public final class PopupStormManager {
     }
 
     void onPopupTapped(Popup target) {
-        main.post(() -> {
+        Runnable tapped = () -> {
+            if (internalClosed) return;
             PopupStormSettings current = settings;
             if (current != null && current.isClickDismissesAll()) clearPopups();
             else for (LivePopup live : popups) if (live.popup == target) {
-                popups.remove(live);
                 remove(live);
+                popups.remove(live);
                 break;
             }
-        });
+        };
+        if (internalEffects == null) main.post(tapped);
+        else internalEffects.post(tapped);
     }
 
     private synchronized void initialize(Context source) {
@@ -301,7 +434,8 @@ public final class PopupStormManager {
                 stopOnMain();
                 return;
             }
-            if (running || !startRequested || !ownership.hasOwner()
+            if (running || internalClosed || !startRequested
+                    || (internalEffects == null && !ownership.hasOwner())
                     || context == null || (!ownership.isPreview() && !settings.isEnabled())
                     || !canRender(context)) return;
             updateDisplayBounds();
@@ -312,19 +446,21 @@ public final class PopupStormManager {
             burstUntil = 0;
             running = true;
             showStopControl();
-            Choreographer.getInstance().postFrameCallback(frameCallback);
+            if (running) postFrame();
         }
     }
 
     private void stopOnMain() {
-        if (running) Choreographer.getInstance().removeFrameCallback(frameCallback);
+        if (running || framePosted) Choreographer.getInstance().removeFrameCallback(frameCallback);
+        framePosted = false;
         running = false;
         clearPopups();
         if (stopControl != null) {
-            try { windowManager.removeViewImmediate(stopControl); } catch (Exception ignored) {}
+            detach(stopControl);
             stopControl = null;
         }
         detections = List.of();
+        physicalWindowsOutstanding = internalEffects == null && deviceRemovalUncertain;
     }
 
     private void tick() {
@@ -333,11 +469,14 @@ public final class PopupStormManager {
         lastTick = now;
         PopupStormSettings current = settings;
         if (current == null || (!ownership.isPreview() && !current.isEnabled())
-                || !current.isAcknowledged()) { stop(); return; }
+                || !current.isAcknowledged()) {
+            if (internalEffects == null) stop(); else stopOnMain();
+            return;
+        }
         for (LivePopup live : popups) {
             if (now >= live.popup.expiresAt()) {
-                popups.remove(live);
                 remove(live);
+                popups.remove(live);
                 continue;
             }
             if (current.isBouncing()) {
@@ -368,7 +507,8 @@ public final class PopupStormManager {
     }
 
     private boolean spawnOne(PopupStormSettings current, long now) {
-        PopupLibrary.BitmapSource source = library.randomBitmap();
+        PopupLibrary.BitmapSource source = internalEffects == null
+                ? library.randomBitmap() : ownedArtwork.randomBitmap();
         if (source == null) return false;
         Bitmap bitmap = source.bitmap;
         int requested = "fixed".equals(current.getSizeMode()) ? current.getFixedSize()
@@ -404,7 +544,8 @@ public final class PopupStormManager {
         LivePopup live = attach(popup);
         if (live == null) { popup.recycleDerived(); return false; }
         popups.add(live);
-        new StatsRepository(context).recordPopupImpression();
+        if (internalEffects == null) new StatsRepository(context).recordPopupImpression();
+        else internalEffects.recordImpression();
         return true;
     }
 
@@ -444,10 +585,16 @@ public final class PopupStormManager {
     private LivePopup attach(Popup popup) {
         PopupOverlayView view = new PopupOverlayView(context, this, popup);
         WindowManager.LayoutParams params = paramsFor(popup);
+        LivePopup live = new LivePopup(popup, view, params);
         try {
             windowManager.addView(view, params);
-            return new LivePopup(popup, view, params);
-        } catch (Exception error) {
+            return live;
+        } catch (RuntimeException error) {
+            if (internalEffects != null) {
+                // Retain even a partially attached window until its real detach is acknowledged.
+                popups.add(live);
+                throw error;
+            }
             Log.w(TAG, "Could not attach popup", error);
             return null;
         }
@@ -480,17 +627,31 @@ public final class PopupStormManager {
         WindowManager.LayoutParams next = paramsFor(live.popup);
         live.params.x = next.x;
         live.params.y = next.y;
-        try { windowManager.updateViewLayout(live.view, live.params); } catch (Exception ignored) {}
+        try { windowManager.updateViewLayout(live.view, live.params); }
+        catch (RuntimeException failure) { if (internalEffects != null) throw failure; }
+    }
+
+    private void detach(View view) {
+        if (internalEffects == null) {
+            try { windowManager.removeViewImmediate(view); } catch (Exception ignored) { }
+            if (view.isAttachedToWindow() || view.getParent() != null) deviceRemovalUncertain = true;
+            return;
+        }
+        if (view.isAttachedToWindow() || view.getParent() != null) windowManager.removeViewImmediate(view);
+        if (view.isAttachedToWindow() || view.getParent() != null)
+            throw new IllegalStateException("Owned popup window did not detach");
     }
 
     private void remove(LivePopup live) {
-        try { windowManager.removeViewImmediate(live.view); } catch (Exception ignored) {}
+        detach(live.view);
         live.popup.recycleDerived();
     }
 
     private void clearPopups() {
-        for (LivePopup live : popups) remove(live);
-        popups.clear();
+        for (LivePopup live : popups) {
+            remove(live);
+            popups.remove(live);
+        }
     }
 
     private void showStopControl() {
@@ -520,12 +681,16 @@ public final class PopupStormManager {
         params.x = dp(STOP_MARGIN);
         params.y = dp(STOP_MARGIN);
         try {
+            physicalWindowsOutstanding = true;
+            if (internalEffects != null) stopControl = stop;
             windowManager.addView(stop, params);
             stopControl = stop;
             reservedTop = dp(80);
-        } catch (Exception error) {
-            Log.w(TAG, "Persistent stop control unavailable; aborting Popup Storm", error);
+        } catch (RuntimeException error) {
             running = false;
+            if (internalEffects != null) throw error;
+            physicalWindowsOutstanding = stop.isAttachedToWindow() || stop.getParent() != null;
+            Log.w(TAG, "Persistent stop control unavailable; aborting Popup Storm", error);
         }
     }
 

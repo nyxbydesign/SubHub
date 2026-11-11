@@ -53,7 +53,7 @@ public final class SettingsActivity extends AppCompatActivity {
         binding.getRoot().setFocusableInTouchMode(true);
         binding.getRoot().requestFocus();
         repository = new SettingsRepository(FeatureEditorSession.context(this));
-        stats = FeatureEditorSession.preview(this) ? null
+        stats = FeatureEditorSession.remote(this) ? null
                 : new StatsRepository(FeatureEditorSession.context(this));
         images = new CensorImageEditor(this, binding.buttonAddCensorImages,
                 binding.censorImagesStatus, binding.censorImagesList);
@@ -76,7 +76,7 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     private void toggleEditSession() {
-        if (FeatureEditorSession.preview(this)) return;
+        if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
         if (ControllerPinManager.isDomModeActive()) {
             saveCustomPhrases();
             FeatureEditorSession.leaveEditor(this);
@@ -817,8 +817,9 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
+        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

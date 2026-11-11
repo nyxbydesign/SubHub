@@ -59,6 +59,30 @@ public final class PersonDirectoryTest {
         assertThrows(IllegalStateException.class, () -> directory.load(requested));
     }
 
+    @Test public void internalIdentityUsesOnlyItsExplicitBackendForFullAndSummaryReads() throws Exception {
+        int[] reads = {0};
+        PersonRepository internal = new PersonRepository() {
+            public List<PersonId> people() { return List.of(PersonId.INTERNAL); }
+            public PersonSnapshot load(PersonId id) { reads[0]++; return snapshot(id); }
+            public PersonSnapshot loadSummary(PersonId id) { reads[0] += 10; return snapshot(id); }
+        };
+        PersonDirectory directory = new PersonDirectory(repository(PersonId.LOCAL), repository(new PersonId("peer:one")), internal);
+        assertEquals(List.of(PersonId.LOCAL, new PersonId("peer:one"), PersonId.INTERNAL), directory.people());
+        assertEquals(PersonId.INTERNAL, directory.load(PersonId.INTERNAL).id);
+        assertEquals(PersonId.INTERNAL, directory.loadSummary(PersonId.INTERNAL).id);
+        assertEquals(11, reads[0]);
+        assertFalse(PersonId.INTERNAL.isLocal());
+    }
+
+    @Test public void missingInternalBackendNeverFallsThroughToAPeerOrDevice() {
+        PersonDirectory directory = new PersonDirectory(repository(PersonId.LOCAL), repository(PersonId.INTERNAL));
+        assertThrows(IllegalArgumentException.class, () -> directory.load(PersonId.INTERNAL));
+        assertThrows(IllegalArgumentException.class, () -> directory.loadSummary(PersonId.INTERNAL));
+        assertThrows(IllegalStateException.class, directory::people);
+        assertThrows(IllegalStateException.class, () -> new PersonDirectory(repository(PersonId.INTERNAL), null).people());
+        assertThrows(IllegalStateException.class, () -> new PersonDirectory(repository(PersonId.LOCAL), null, repository(PersonId.LOCAL)).people());
+    }
+
     @Test public void transportConnectionDoesNotMakeRuntimeOrConfigurationCurrent() {
         PersonSnapshot.SyncState state = new PersonSnapshot.SyncState(PersonSnapshot.Freshness.CURRENT,
                 PersonSnapshot.Freshness.CURRENT, PersonSnapshot.Freshness.STALE, "desired-2", "applied-1");

@@ -32,6 +32,10 @@ final class PopupOverlayView extends View {
     }
 
     @Override protected void onDraw(Canvas canvas) {
+        manager.drawPopup(() -> drawPopup(canvas));
+    }
+
+    private void drawPopup(Canvas canvas) {
         float alpha = Math.max(0, Math.min(1, popup.alphaAt(System.currentTimeMillis())));
         if (alpha <= 0) return;
         float centerX = getWidth() / 2f;

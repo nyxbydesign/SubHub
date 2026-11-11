@@ -24,12 +24,15 @@ final class InternalRecordCodec {
     private static final int MAGIC = 0x53484953;
     private InternalRecordCodec() { }
 
-    static byte[] encode(InternalSubRecord record) {
+    static byte[] encode(InternalSubRecord record) { return encode(record, 2); }
+    private static byte[] encode(InternalSubRecord record, int version) {
+        if (version == 1 && record.tasksResumeAfterMillis != 0) throw new IllegalArgumentException("Legacy boundary loss");
         try {
             ByteArrayOutputStream bytes = new BoundedBytes();
             DataOutputStream out = new DataOutputStream(bytes);
-            out.writeInt(MAGIC); out.writeInt(1); text(out, record.targetId); text(out, record.generation);
+            out.writeInt(MAGIC); out.writeInt(version); text(out, record.targetId); text(out, record.generation);
             out.writeLong(record.revision); out.writeLong(record.configurationRevision); out.writeBoolean(record.visible);
+            if (version == 2) out.writeLong(record.tasksResumeAfterMillis);
             text(out, record.profile.name); text(out, record.profile.about); text(out, record.profile.avatar);
             text(out, record.profile.gender); out.writeInt(record.profile.age);
             out.writeInt(record.configuration().size());
@@ -54,10 +57,13 @@ final class InternalRecordCodec {
             throw new IllegalArgumentException("Corrupt internal record");
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(body));
-            if (in.readInt() != MAGIC || in.readInt() != 1) throw new IOException("Unknown schema");
+            if (in.readInt() != MAGIC) throw new IOException("Unknown schema");
+            int version = in.readInt();
+            if (version != 1 && version != 2) throw new IOException("Unknown schema");
             String target = text(in), generation = text(in);
             long revision = in.readLong(), configRevision = in.readLong();
             boolean visible = in.readBoolean();
+            long tasksResumeAfterMillis = version == 2 ? in.readLong() : 0;
             InternalProfile profile = new InternalProfile(text(in), text(in), text(in), text(in), in.readInt());
             Map<String, Map<String, Object>> sections = new LinkedHashMap<>();
             int count = count(in, 16);
@@ -69,8 +75,8 @@ final class InternalRecordCodec {
                 if (sections.put(section, values) != null) throw new IOException("Duplicate section");
             }
             InternalSubRecord record = new InternalSubRecord(target, generation, revision, configRevision,
-                    visible, profile, sections);
-            if (in.available() != 0 || !Arrays.equals(bytes, encode(record))) throw new IOException("Noncanonical record");
+                    visible, tasksResumeAfterMillis, profile, sections);
+            if (in.available() != 0 || !Arrays.equals(bytes, encode(record, version))) throw new IOException("Noncanonical record");
             return record;
         } catch (IOException | IllegalArgumentException invalid) {
             throw new IllegalArgumentException("Unreadable internal record", invalid);

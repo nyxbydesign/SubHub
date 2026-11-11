@@ -15,7 +15,7 @@ import com.subhub.app.service.ScreenshotAccessibilityService;
 import com.subhub.app.settings.FeatureModuleManager;
 
 /** Configures and enforces a payment-unlocked, automatically expiring protection pause. */
-public final class PaidPauseManager {
+public final class PaidPauseManager implements PaidPauseRuleSettings {
     public static final int DEFAULT_PRICE_CENTS = 500;
     public static final int DEFAULT_DURATION_MINUTES = 15;
     public static final int MIN_PRICE_CENTS = 50;
@@ -35,6 +35,8 @@ public final class PaidPauseManager {
 
     public PaidPauseManager(Context context) {
         this.context = context.getApplicationContext();
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(this.context))
+            throw new SecurityException("Internal rule editors cannot construct a paid-pause runtime");
         preferences = this.context.getSharedPreferences(
                 PenanceManager.PREFS_NAME, Context.MODE_PRIVATE);
     }

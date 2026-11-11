@@ -38,6 +38,7 @@ public final class PenanceActivity extends AppCompatActivity {
             "com.subhub.app.extra.BEGIN_PAID_PAUSE";
     private ActivityPenanceBinding binding;
     private PenanceManager manager;
+    private PenanceRuleSettings ruleSettings;
     private PayPalCredentialStore paypalCredentials;
     private PayPalOrdersClient paypalClient;
     private String activeClientMetadataId = "";
@@ -78,7 +79,8 @@ public final class PenanceActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
         PrimaryHeader.bind(binding.getRoot(), R.drawable.ic_nav_money,
                 R.string.penance_title, 0);
-        manager = new PenanceManager(FeatureEditorSession.context(this));
+        ruleSettings = PenanceRuleSettings.forEditor(FeatureEditorSession.context(this));
+        manager = ruleSettings instanceof PenanceManager ? (PenanceManager) ruleSettings : null;
         if (FeatureEditorSession.remote(this)) {
             bindRemoteRules();
             return;
@@ -145,7 +147,7 @@ public final class PenanceActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (com.subhub.app.people.DummySubPreview.isRequested(intent)
-                && !FeatureEditorSession.preview(this)) { finish(); return; }
+                && !FeatureEditorSession.preview(this) && !FeatureEditorSession.internal(this)) { finish(); return; }
         if (FeatureEditorSession.remote(this)) { if (!FeatureEditorSession.canView(this, "wallet")) finish(); return; }
         if (intent.getBooleanExtra(SubHubNavigation.EXTRA_SECTION_HOME, false)) showSectionHome();
         handlePayPalReturn(intent);
@@ -308,8 +310,9 @@ public final class PenanceActivity extends AppCompatActivity {
 
     @Override
     protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (FeatureEditorSession.preview(this)) return;
+        // Raw input survives only while the same retained draft and authority are still current.
+        if (FeatureEditorSession.preview(this) || (FeatureEditorSession.internal(this)
+                && !FeatureEditorSession.restoreInternalWidgets(this, state))) return;
         // Restored CompoundButton callbacks must not overwrite newer saved tribute choices.
         populatingRules = true;
         try {
@@ -318,7 +321,7 @@ public final class PenanceActivity extends AppCompatActivity {
             populatingRules = false;
         }
         if (binding != null) {
-            populateRules();
+            if (!FeatureEditorSession.internal(this)) populateRules();
             renderRuleMathPreview();
         }
     }
@@ -389,14 +392,14 @@ public final class PenanceActivity extends AppCompatActivity {
         populateRule(PenanceInfraction.TAMPER_ATTEMPT,
                 binding.ruleTamperEnabled, binding.ruleTamperAmount,
                 binding.tamperCooldownMinutes);
-        binding.dailyCap.setText(decimalEuros(manager.getDailyCapCents()));
-        binding.weeklyCap.setText(decimalEuros(manager.getWeeklyCapCents()));
-        binding.mercyMinutes.setText(String.valueOf(manager.getMercyMinutes()));
-        binding.dwellSeconds.setText(String.valueOf(manager.getDwellSeconds()));
-        binding.detectionBatch.setText(String.valueOf(manager.getDetectionBatch()));
+        binding.dailyCap.setText(decimalEuros(ruleSettings.getDailyCapCents()));
+        binding.weeklyCap.setText(decimalEuros(ruleSettings.getWeeklyCapCents()));
+        binding.mercyMinutes.setText(String.valueOf(ruleSettings.getMercyMinutes()));
+        binding.dwellSeconds.setText(String.valueOf(ruleSettings.getDwellSeconds()));
+        binding.detectionBatch.setText(String.valueOf(ruleSettings.getDetectionBatch()));
         binding.tamperCooldownMinutes.setText(
-                String.valueOf(manager.getTamperCooldownMinutes()));
-        PaidPauseManager paidPause = new PaidPauseManager(FeatureEditorSession.context(this));
+                String.valueOf(ruleSettings.getTamperCooldownMinutes()));
+        PaidPauseRuleSettings paidPause = PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this));
         binding.paidPauseEnabled.setChecked(paidPause.isEnabled());
         binding.paidPauseAmount.setText(decimalEuros(paidPause.getPriceCents()));
         binding.paidPauseMinutes.setText(String.valueOf(paidPause.getDurationMinutes()));
@@ -407,8 +410,8 @@ public final class PenanceActivity extends AppCompatActivity {
     private void populateRule(
             PenanceInfraction infraction,
             CompoundButton toggle, EditText amount, View... dependents) {
-        toggle.setChecked(manager.isInfractionEnabled(infraction));
-        amount.setText(decimalEuros(manager.getInfractionCents(infraction)));
+        toggle.setChecked(ruleSettings.isInfractionEnabled(infraction));
+        amount.setText(decimalEuros(ruleSettings.getInfractionCents(infraction)));
         syncRuleInputState(toggle, amount, dependents);
     }
 
@@ -462,7 +465,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 return;
             }
             if (!populatingRules && !checked) {
-                PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
+                PaidPauseRuleSettings pause = PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this));
                 pause.configure(false, pause.getPriceCents(), pause.getDurationMinutes());
             }
             syncPaidPauseInputs();
@@ -494,7 +497,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 populateRules();
                 return;
             }
-            if (!populatingRules && !checked) manager.disableInfraction(rule);
+            if (!populatingRules && !checked) ruleSettings.disableInfraction(rule);
             syncRuleInputState(toggle, amount, dependents);
             renderRuleMathPreview();
             scheduleRulesSave();
@@ -522,7 +525,7 @@ public final class PenanceActivity extends AppCompatActivity {
         if (binding == null) return;
         binding.ruleMathPreview.setVisibility(View.VISIBLE);
         long now = System.currentTimeMillis();
-        if (manager.isEnabled() && manager.isInfractionEnabled(PenanceInfraction.NEW_DETECTION)) {
+        if (manager != null && ruleSettings.isEnabled() && ruleSettings.isInfractionEnabled(PenanceInfraction.NEW_DETECTION)) {
             if (manager.getDailyRemainingCents(now) == 0) {
                 binding.ruleMathPreview.setText(R.string.penance_daily_cap_reached);
                 return;
@@ -545,8 +548,12 @@ public final class PenanceActivity extends AppCompatActivity {
             binding.ruleMathPreview.setText(R.string.penance_rule_math_invalid);
             return;
         }
-        binding.ruleMathPreview.setText("");
-        binding.ruleMathPreview.setVisibility(View.GONE);
+        if (FeatureEditorSession.internal(this)) {
+            binding.ruleMathPreview.setText(R.string.internal_penalty_rules_notice);
+        } else {
+            binding.ruleMathPreview.setText("");
+            binding.ruleMathPreview.setVisibility(View.GONE);
+        }
     }
 
     private boolean saveRules(boolean showInvalid) {
@@ -603,9 +610,9 @@ public final class PenanceActivity extends AppCompatActivity {
             if (showInvalid) toast(R.string.penance_rules_invalid);
             return false;
         }
-        manager.configure(enabled, rules, daily, weekly, mercy, dwell, detectionBatch,
+        ruleSettings.configure(enabled, rules, daily, weekly, mercy, dwell, detectionBatch,
                 tamperCooldown);
-        new PaidPauseManager(FeatureEditorSession.context(this)).configure(binding.paidPauseEnabled.isChecked(),
+        PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this)).configure(binding.paidPauseEnabled.isChecked(),
                 pausePrice, pauseMinutes);
         dirtyRules = false;
         if (!FeatureEditorSession.remote(this)) HardcoreAutoPayManager.schedule(this);
@@ -776,7 +783,7 @@ public final class PenanceActivity extends AppCompatActivity {
         checkoutBusy = true;
         render();
         paypalClient.captureOrder(credentials, orderId, settlementId,
-                snapshot.getCheckoutCents(), manager.getCurrency(), activeClientMetadataId, result -> {
+                snapshot.getCheckoutCents(), ruleSettings.getCurrency(), activeClientMetadataId, result -> {
                     checkoutBusy = false;
                     if (binding == null) return;
                     if (!result.isSuccess()) {
@@ -850,10 +857,10 @@ public final class PenanceActivity extends AppCompatActivity {
         }
         long now = System.currentTimeMillis();
         PenanceSnapshot snapshot = manager.snapshot(now);
-        binding.dueAmount.setText(manager.money(snapshot.getDueCents()));
-        binding.mercyAmount.setText(manager.money(snapshot.getMercyCents()));
-        binding.checkoutAmount.setText(manager.money(snapshot.getCheckoutCents()));
-        binding.paidAmount.setText(manager.money(snapshot.getPaidCents()));
+        binding.dueAmount.setText(ruleSettings.money(snapshot.getDueCents()));
+        binding.mercyAmount.setText(ruleSettings.money(snapshot.getMercyCents()));
+        binding.checkoutAmount.setText(ruleSettings.money(snapshot.getCheckoutCents()));
+        binding.paidAmount.setText(ruleSettings.money(snapshot.getPaidCents()));
         boolean checkout = snapshot.getCheckoutCents() > 0;
         boolean automaticCheckout = checkout && manager.getActiveCheckoutMode()
                 == PenanceManager.CheckoutMode.HARDCORE_AUTO;
@@ -873,7 +880,7 @@ public final class PenanceActivity extends AppCompatActivity {
                 setupNeeded
                         ? getString(R.string.wallet_setup_paypal)
                         : getString(
-                                R.string.wallet_pay_amount, manager.money(snapshot.getDueCents())));
+                                R.string.wallet_pay_amount, ruleSettings.money(snapshot.getDueCents())));
         binding.buttonSettle.setVisibility(checkout ? View.GONE : View.VISIBLE);
         binding.buttonSettle.setEnabled(
                 !checkoutBusy
@@ -910,7 +917,7 @@ public final class PenanceActivity extends AppCompatActivity {
         int enabled = 0;
         for (PenanceInfraction infraction : PenanceInfraction.values())
             if (infraction != PenanceInfraction.PAID_PAUSE
-                    && manager.isInfractionEnabled(infraction)) enabled++;
+                    && ruleSettings.isInfractionEnabled(infraction)) enabled++;
         walletActions
                 .get("rules")
                 .summary()
@@ -922,9 +929,9 @@ public final class PenanceActivity extends AppCompatActivity {
                 .summary()
                 .setText(getString(
                         R.string.tribute_spending_limits_summary,
-                        manager.money(manager.getDailyCapCents()),
-                        manager.money(manager.getWeeklyCapCents())));
-        PaidPauseManager pause = new PaidPauseManager(FeatureEditorSession.context(this));
+                        ruleSettings.money(ruleSettings.getDailyCapCents()),
+                        ruleSettings.money(ruleSettings.getWeeklyCapCents())));
+        PaidPauseRuleSettings pause = PaidPauseRuleSettings.forEditor(FeatureEditorSession.context(this));
         walletActions
                 .get("pause")
                 .summary()
@@ -933,7 +940,7 @@ public final class PenanceActivity extends AppCompatActivity {
                                 ? getString(
                                         R.string.wallet_pause_summary,
                                         pause.getDurationMinutes(),
-                                        manager.money(pause.getPriceCents()))
+                                        ruleSettings.money(pause.getPriceCents()))
                                 : getString(R.string.control_state_off));
     }
 

@@ -22,6 +22,13 @@ public class RuntimeExecution<C> {
     public interface ConfigurationReceiver<C> {
         /** Synchronous module update on its bound executor; returning means the snapshot is applied. */
         void apply(C acknowledgedMainConfiguration);
+        /**
+         * Serial owner-worker callback after the journal acknowledges all module updates, before
+         * the public snapshot changes or ordinary effects reopen. Publish immutable accounting
+         * facts here; previously admitted events must retain their own captured facts. This is
+         * not a new effect/write admission. Throwing fences the runtime without reporting success.
+         */
+        default void acknowledged(C acknowledgedConfiguration) { }
     }
     private final ConfigurationReceiver<C> noConfiguration = ignored -> { };
 
@@ -36,6 +43,7 @@ public class RuntimeExecution<C> {
     // path performs deferred closure. A contended caller must retain/retry its work explicitly.
     private final ReentrantLock effectGate = new ReentrantLock();
     private final ThreadLocal<Integer> effectDepth = ThreadLocal.withInitial(() -> 0);
+    private final ThreadLocal<Boolean> acknowledgingConfiguration = ThreadLocal.withInitial(() -> false);
     private int effectsRunning;
     private volatile boolean stopSealed;
     private volatile C mainConfiguration;
@@ -100,7 +108,8 @@ public class RuntimeExecution<C> {
         if (!effectGate.tryLock()) return false;
         boolean acquired = false;
         try {
-            if (stopping.get() || (configurationQueued.get() && !insideEffect())) return false;
+            if (stopping.get() || acknowledgingConfiguration.get()
+                    || (configurationQueued.get() && !insideEffect())) return false;
             OwnedResourceRegistry.EffectPermit permit;
             try { permit = registry.acquireEffectPermit(lease, kind); }
             catch (SecurityException revoked) { return false; }
@@ -162,8 +171,10 @@ public class RuntimeExecution<C> {
                 ActiveRuntimeCoordinator.Result applied = coordinator.configurationApplied(lease, expected, revision);
                 result.set(applied);
                 if (applied == ActiveRuntimeCoordinator.Result.OK) {
-                    mainConfiguration = acknowledgedMainConfiguration;
-                    appliedConfigurationRevision = revision;
+                    if (acknowledgeConfiguration(acknowledgedMainConfiguration)) {
+                        mainConfiguration = acknowledgedMainConfiguration;
+                        appliedConfigurationRevision = revision;
+                    } else result.set(ActiveRuntimeCoordinator.Result.STALE_LEASE);
                 } else requestStop();
             });
             return admitted ? result.get() : ActiveRuntimeCoordinator.Result.STALE_LEASE;
@@ -268,8 +279,10 @@ public class RuntimeExecution<C> {
                     if (change.failure == null && applied == ActiveRuntimeCoordinator.Result.OK && !stopping.get()) {
                         applied = coordinator.configurationApplied(lease, change.expectedRevision, change.revision);
                         if (applied == ActiveRuntimeCoordinator.Result.OK && !stopping.get()) {
-                            mainConfiguration = change.configuration;
-                            appliedConfigurationRevision = change.revision;
+                            if (acknowledgeConfiguration(change.configuration)) {
+                                mainConfiguration = change.configuration;
+                                appliedConfigurationRevision = change.revision;
+                            } else applied = ActiveRuntimeCoordinator.Result.STALE_LEASE;
                         } else {
                             if (stopping.get()) applied = ActiveRuntimeCoordinator.Result.STALE_LEASE;
                             requestStop();
@@ -278,8 +291,8 @@ public class RuntimeExecution<C> {
                 } catch (RuntimeException | Error failed) {
                     change.failure = failed; requestStop();
                 } finally {
-                    // The permit spans actual module return AND journal ACK. Registration closure
-                    // also stays on the owner worker and can never block a window callback.
+                    // The permit spans module return, journal ACK and acknowledgment callbacks.
+                    // Registration closure stays on the owner worker, never a window callback.
                     try {
                         change.permit.close(); change.work.close();
                         if (configurationChange == change) configurationChange = null;
@@ -299,6 +312,19 @@ public class RuntimeExecution<C> {
             // stay owned until the failed worker can be reconciled.
             change.result.completeExceptionally(rejected);
         }
+    }
+
+    private boolean acknowledgeConfiguration(C configuration) {
+        acknowledgingConfiguration.set(true);
+        try {
+            for (Component component : components) {
+                if (stopping.get()) return false;
+                ConfigurationReceiver<C> receiver = component.configurationReceiver.get();
+                if (receiver == null) throw new IllegalStateException("Active component has no configuration binding");
+                receiver.acknowledged(configuration);
+            }
+            return !stopping.get();
+        } finally { acknowledgingConfiguration.remove(); }
     }
 
     private final class ConfigurationChange {

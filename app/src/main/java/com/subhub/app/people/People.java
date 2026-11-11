@@ -26,7 +26,7 @@ public final class People {
                             ? local.people() : java.util.Collections.emptyList();}
             @Override public PersonSnapshot load(PersonId id){return localProjection.apply(local.load(id));}
             @Override public PersonSnapshot loadSummary(PersonId id){return localProjection.apply(local.loadSummary(id));}
-        }, remote);
+        }, remote, new InternalPersonRepository(application));
     }
 
     public static void installRemoteRepository(PersonRepository repository) { remote = repository; }

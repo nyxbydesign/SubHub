@@ -179,7 +179,7 @@ public final class AppSelectionPanel extends LinearLayout implements androidx.li
     }
 
     private void observeIcons() {
-        if (com.subhub.app.configuration.FeatureEditorSession.preview(getContext())) return;
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(getContext())) return;
         com.subhub.app.configuration.FeatureEditorSession scope = com.subhub.app.configuration.FeatureEditorSession.scope(getContext());
         if (iconObserver != null || scope == null || host == null || !isAttachedToWindow()
                 || !host.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return;

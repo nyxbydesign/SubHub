@@ -15,12 +15,20 @@ public final class InternalSubRecord {
     static final int MAX_TEXT_LENGTH = 512_000;
     public final String targetId, generation;
     public final long revision, configurationRevision;
+    /** Zero is an unknown legacy/not-yet-enabled Tasks boundary, never a clock inferred during reads. */
+    public final long tasksResumeAfterMillis;
     public final boolean visible;
     public final InternalProfile profile;
     private final Map<String, Map<String, Object>> configuration;
 
     InternalSubRecord(String targetId, String generation, long revision, long configurationRevision,
             boolean visible, InternalProfile profile, Map<String, ? extends Map<String, ?>> configuration) {
+        this(targetId, generation, revision, configurationRevision, visible, 0, profile, configuration);
+    }
+    InternalSubRecord(String targetId, String generation, long revision, long configurationRevision,
+            boolean visible, long tasksResumeAfterMillis, InternalProfile profile,
+            Map<String, ? extends Map<String, ?>> configuration) {
+        if (tasksResumeAfterMillis < 0) throw new IllegalArgumentException("Invalid internal Tasks boundary");
         if (!InternalStorageScope.TARGET_ID.equals(targetId))
             throw new IllegalArgumentException("Not the internal Sub target");
         if (generation == null || !UUID.fromString(generation).toString().equals(generation)
@@ -28,6 +36,7 @@ public final class InternalSubRecord {
             throw new IllegalArgumentException("Invalid internal revision");
         this.targetId = targetId; this.generation = generation; this.revision = revision;
         this.configurationRevision = configurationRevision; this.visible = visible;
+        this.tasksResumeAfterMillis = tasksResumeAfterMillis;
         this.profile = Objects.requireNonNull(profile);
         Map<String, Map<String, Object>> sections = new LinkedHashMap<>();
         if (configuration == null || configuration.size() > 16)
@@ -53,6 +62,8 @@ public final class InternalSubRecord {
         int changes = (visibilityChanged ? 1 : 0) + (profileChanged ? 1 : 0) + (configurationChanged ? 1 : 0);
         if (!before.targetId.equals(after.targetId) || after.revision != Math.addExact(before.revision, 1L)
                 || changes != 1 || visibilityChanged == before.generation.equals(after.generation)
+                || (visibilityChanged && after.visible ? after.tasksResumeAfterMillis <= 0
+                        : after.tasksResumeAfterMillis != before.tasksResumeAfterMillis)
                 || after.configurationRevision != (configurationChanged
                         ? Math.addExact(before.configurationRevision, 1L) : before.configurationRevision))
             throw new IllegalArgumentException("Invalid internal record transition");
@@ -86,11 +97,12 @@ public final class InternalSubRecord {
         if (!(other instanceof InternalSubRecord)) return false;
         InternalSubRecord value = (InternalSubRecord) other;
         return revision == value.revision && configurationRevision == value.configurationRevision
-                && visible == value.visible && targetId.equals(value.targetId)
+                && visible == value.visible && tasksResumeAfterMillis == value.tasksResumeAfterMillis
+                && targetId.equals(value.targetId)
                 && generation.equals(value.generation) && profile.equals(value.profile)
                 && configuration.equals(value.configuration);
     }
     @Override public int hashCode() {
-        return Objects.hash(targetId, generation, revision, configurationRevision, visible, profile, configuration);
+        return Objects.hash(targetId, generation, revision, configurationRevision, visible, tasksResumeAfterMillis, profile, configuration);
     }
 }

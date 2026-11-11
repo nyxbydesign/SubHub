@@ -58,22 +58,27 @@ public final class InternalSubStore {
 
     /** Hiding/removing and re-enabling rotate generation, preserving profile/config/assets/tasks/history. */
     public InternalSubRecord setVisible(InternalSubRecord expected, boolean visible) {
+        return setVisible(expected, visible, System.currentTimeMillis());
+    }
+    /** Visibility and the explicit re-enable clock are one acknowledged full-record CAS. */
+    public InternalSubRecord setVisible(InternalSubRecord expected, boolean visible, long transitionAtMillis) {
+        if (transitionAtMillis <= 0) throw new IllegalArgumentException("Invalid visibility transition clock");
         return change(expected, old -> old.visible == visible ? old : new InternalSubRecord(old.targetId,
                 UUID.randomUUID().toString(), increment(old.revision), old.configurationRevision,
-                visible, old.profile, old.configuration()));
+                visible, visible ? transitionAtMillis : old.tasksResumeAfterMillis, old.profile, old.configuration()));
     }
 
     public InternalSubRecord saveProfile(InternalSubRecord expected, InternalProfile profile) {
         Objects.requireNonNull(profile);
         return change(expected, old -> old.profile.equals(profile) ? old : new InternalSubRecord(old.targetId,
                 old.generation, increment(old.revision), old.configurationRevision,
-                old.visible, profile, old.configuration()));
+                old.visible, old.tasksResumeAfterMillis, profile, old.configuration()));
     }
 
     InternalSubRecord saveConfiguration(InternalSubRecord expected, Map<String, ? extends Map<String, ?>> sections) {
         return change(expected, old -> old.configuration().equals(sections) ? old : new InternalSubRecord(old.targetId,
                 old.generation, increment(old.revision), increment(old.configurationRevision),
-                old.visible, old.profile, sections));
+                old.visible, old.tasksResumeAfterMillis, old.profile, sections));
     }
 
     private InternalSubRecord change(InternalSubRecord expected, UnaryOperator<InternalSubRecord> operation) {

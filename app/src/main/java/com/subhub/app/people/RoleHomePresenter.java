@@ -37,6 +37,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private com.subhub.app.stats.AchievementPreviewView subAchievements;
     private List<Object> renderedFavorite, renderedSummary, renderedRecent, renderedUsage, renderedRelationship;
     private long lastRefresh;
+    private String internalGeneration = "";
+    private long homeControllerRevision;
     private boolean displayedDom, sessionPage, refreshQueued;
     private AutoCloseable appIconObserver;
     private long appIconEpoch;
@@ -166,16 +168,20 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         com.subhub.app.relationships.RelationshipUi.Provider iconSource = com.subhub.app.relationships.RelationshipUi.provider();
         KeyholderProvider authoritySource = People.keyholder();
         java.util.Locale locale = activity.getResources().getConfiguration().getLocales().get(0);
+        long controllerRevision = ControllerPinManager.domWorkspaceRevision();
         data.load("role-home", () -> {
             List<PersonSnapshot> values = new ArrayList<>();
             com.subhub.app.relationships.RelationshipPresentation.Access access = null;
             boolean relationshipUnavailable = false;
+            String generation = "";
             if (dom) {
                 if (!ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(application))
                     throw new IllegalStateException("Home context changed");
                 try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
                 catch (Exception unavailable) { throw new RelationshipUnavailable(unavailable); }
-                values.addAll(com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale));
+                InternalRoster.Rows rows = InternalRoster.append(application,
+                        com.subhub.app.relationships.RelationshipPanel.roster(application, repository, access, locale), false);
+                values.addAll(rows); generation = rows.generation;
             } else {
                 values.add(repository.load(PersonId.LOCAL));
                 try { access = com.subhub.app.relationships.RelationshipPanel.readAccess(application); }
@@ -184,7 +190,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             AssignedDom assigned = dom || access == null ? null : access.legacy
                     ? assignedDom(application) : formalAssignedDom(application, access.snapshot, values.get(0));
             return new HomeData(values, assigned, dom ? null : TaskSummary.read(application),
-                    access, relationshipUnavailable);
+                    access, relationshipUnavailable, generation);
         }, loaded -> {
             try {
                 if (iconSource != com.subhub.app.relationships.RelationshipUi.provider() || authoritySource != People.keyholder()
@@ -194,6 +200,10 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                         && loaded.access.current(com.subhub.app.relationships.RelationshipUi::provider);
                 homeAccess = current ? loaded.access : null;
                 if (dom) {
+                    if (controllerRevision != ControllerPinManager.domWorkspaceRevision()
+                            || !InternalRoster.current(activity, loaded.internalGeneration)) { refreshQueued = true; return; }
+                    internalGeneration = loaded.internalGeneration;
+                    homeControllerRevision = controllerRevision;
                     if (!current) {
                         renderDomUnavailable(R.string.relationships_unavailable);
                         return;
@@ -268,7 +278,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 }, true).setTag("home_choose_favorite");
             } else favoriteOverview(favorite);
         }
-        if (favorite != null) com.subhub.app.appmode.ExtraTimeEntry.refresh(domFavorite, favorite.id);
+        if (favorite != null && !DummySubPreview.ID.equals(favorite.id)) com.subhub.app.appmode.ExtraTimeEntry.refresh(domFavorite, favorite.id);
         signature = new ArrayList<>();
         for (PersonSnapshot person : people) java.util.Collections.addAll(signature,
                 person.id, person.connection, person.serviceActive, person.sync.runtime);
@@ -312,6 +322,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
         java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
+            if (DummySubPreview.ID.equals(person.id)) continue;
             if (person.connection == PersonSnapshot.Connection.REVOKED
                     || person.connection == PersonSnapshot.Connection.PENDING
                     || person.connection == PersonSnapshot.Connection.UNPAIRED) continue;
@@ -428,7 +439,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         LinearLayout identity = identityHeader(card, person, true);
         identity.setTag("home_favorite_identity:" + person.id.value());
         LinearLayout copy = identity.findViewWithTag("home_identity_copy");
-        com.subhub.app.appmode.ExtraTimeEntry.review(card, person.id);
+        if (!DummySubPreview.ID.equals(person.id)) com.subhub.app.appmode.ExtraTimeEntry.review(card, person.id);
         if (person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN && person.sync.stats == PersonSnapshot.Freshness.UNKNOWN) {
             TextView unknown = OverviewUi.text(activity, activity.getString(R.string.overview_session_stats_unknown), 13, false);
             unknown.setTag("home_favorite_unknown:" + person.id.value()); copy.addView(unknown); return;
@@ -476,7 +487,9 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
 
     private void openPerson(PersonSnapshot person) {
         if (domWorkspace() && ControllerPinManager.isDomWorkspaceUnlocked() && homeAccess != null
-                && homeAccess.current(com.subhub.app.relationships.RelationshipUi::provider))
+                && homeAccess.current(com.subhub.app.relationships.RelationshipUi::provider)
+                && homeControllerRevision == ControllerPinManager.domWorkspaceRevision()
+                && InternalRoster.current(activity, internalGeneration))
             PersonRoutes.open(activity, person.id);
     }
 
@@ -689,10 +702,11 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         final TaskSummary tasks;
         final com.subhub.app.relationships.RelationshipPresentation.Access access;
         final boolean relationshipUnavailable;
+        final String internalGeneration;
         HomeData(List<PersonSnapshot> people, AssignedDom dom, TaskSummary tasks,
-                com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable) {
+                com.subhub.app.relationships.RelationshipPresentation.Access access, boolean relationshipUnavailable, String internalGeneration) {
             this.people = people; this.dom = dom; this.tasks = tasks;
-            this.access = access; this.relationshipUnavailable = relationshipUnavailable;
+            this.access = access; this.relationshipUnavailable = relationshipUnavailable; this.internalGeneration = internalGeneration;
         }
     }
 }

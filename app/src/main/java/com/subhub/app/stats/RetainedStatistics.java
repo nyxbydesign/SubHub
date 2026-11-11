@@ -17,6 +17,7 @@ final class RetainedStatistics {
             "tributes", "whispers", "popups", "photos", "videos", "paid_EUR", "paid_USD", "assessed_EUR", "assessed_USD"};
     private final ZoneId zone;
     private final long now;
+    private final boolean recoverSessionEventDates;
     private final Map<String, Map<String, Long>> recorded = new TreeMap<>();
     private final Map<String, Map<String, Map<String, Long>>> recovered = new HashMap<>();
     private final Set<String> receipts = new LinkedHashSet<>();
@@ -29,6 +30,11 @@ final class RetainedStatistics {
     private final Map<String, Long> undated = new LinkedHashMap<>();
 
     RetainedStatistics(ZoneId zone, long now, Map<String, Map<String, Long>> days) {
+        this(zone, now, days, true);
+    }
+    /** Exact owner daily sources must not be supplemented by inferred session event calendars. */
+    RetainedStatistics(ZoneId zone, long now, Map<String, Map<String, Long>> days, boolean recoverSessionEventDates) {
+        this.recoverSessionEventDates = recoverSessionEventDates;
         this.zone = zone;
         this.now = now;
         mergeRecorded(days);
@@ -81,7 +87,8 @@ final class RetainedStatistics {
         String key = entry.identity().isEmpty() ? start + ":" + seconds + ":" + entry.getBlocks() : entry.identity();
         StatsRepository.SessionEntry previous = sessions.get(key);
         if (previous == null) sessions.put(key, entry);
-        else sessions.put(key, new StatsRepository.SessionEntry(start, seconds, entry.getBlocks(),
+        else sessions.put(key, new StatsRepository.SessionEntry(start, recoverSessionEventDates ? seconds
+                        : Math.max(previous.getDurationSeconds(), seconds), entry.getBlocks(),
                 Math.max(previous.getLimitedAppMillis(), entry.getLimitedAppMillis()),
                 Math.max(previous.getLimitInterventions(), entry.getLimitInterventions()),
                 Math.max(previous.getTributeEvents(), entry.getTributeEvents()),
@@ -127,7 +134,7 @@ final class RetainedStatistics {
             // A session-wide count has no event clock within a session crossing midnight.
             long lastObserved = entry.getStartMillis() + entry.getDurationSeconds() * 1000;
             if (entry.getDurationSeconds() > 0) lastObserved--;
-            if (date.equals(day(lastObserved, calendar))) {
+            if (recoverSessionEventDates && date.equals(day(lastObserved, calendar))) {
                 add(sessionDays, date, "censors", entry.getBlocks());
                 add(sessionDays, date, "limits_ms", entry.getLimitedAppMillis());
                 add(sessionDays, date, "limit_stops", entry.getLimitInterventions());

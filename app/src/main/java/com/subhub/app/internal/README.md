@@ -1,9 +1,28 @@
-# Internal Sub storage foundation
+# Internal Sub data and adapter boundaries
 
-This package is not wired to production routes, editor Activities, services, Tasks, or runtime
-admission. It stores an independent, editable internal Sub. It never aliases `PersonId.LOCAL`,
-creates a remote peer, reads or swaps the physical user's configuration, or grants controller
-authority. The existing five-second Back toggle and all existing production behavior are unchanged.
+This package stores an independent, editable internal Sub. Explicit adapters connect its acknowledged
+profile and configuration to the ordinary profile, native settings, favorite/roster and Tasks layouts.
+The identity never aliases `PersonId.LOCAL`, creates a remote peer, reads or swaps the physical user's
+configuration, or grants controller authority. `InternalSubContext` is an editor data adapter, not a
+runtime host or security sandbox. Runtime and financial managers must not receive it.
+
+`InternalSubData` owns the chosen data instance and serial worker. `InternalOwnerDataBroker` supplies
+separate, invocation-bound editor, task, notification-cleanup and exact-runtime capabilities over
+that same owner data. Profile readability does not prove that its separate owner data is available.
+Initial creation acknowledges both namespaces before publishing readiness; established missing or
+corrupt data is never silently recreated or treated as an empty account.
+
+The five-second Back gesture remains confined to Add a Sub. Visibility changes require a typed
+`InternalVisibilityBarrier` proof consumed at the broker mutation boundary. Its provider must revoke
+availability and prove the exact physical owner journal idle, or stop and drain that exact internal
+owner, before changing generation. The default provider refuses because runtime reconciliation is
+not connected yet. Session Start also remains unavailable. These fail-closed paths are deliberate
+incomplete integration boundaries, not evidence of functioning enforcement.
+
+Tasks use an owned SQLite projection and journal through the same serial broker. Current progression
+is page-driven; the pure scheduler and bounded notification receipt adapters do not yet install a
+background worker, deliver notices or apply task-failure assessments. Background effects must use
+explicit owner admission and acknowledged receipts, never physical TaskRuntime or payment managers.
 
 ## Entry and persistence
 
@@ -26,6 +45,9 @@ authority. The existing five-second Back toggle and all existing production beha
    is not filled from defaults. A future schema change needs an explicit migration.
 4. `read()` returns an immutable `InternalSubRecord`: stable `targetId`, opaque UUID `generation`,
    nonnegative `revision`, `configurationRevision`, visibility, profile and complete typed config.
+   Version 2 also stores `tasksResumeAfterMillis`, atomically captured on an explicit enable transition.
+   Readable version 1 retains an unknown boundary of zero; reads never invent a clock or upgrade it.
+   Tasks with an unknown boundary remain unavailable rather than silently empty or disabled.
    `InternalProfileAdapter` bridges the ordinary `ProfileData` normalization/image validation.
    There is deliberately no role, credential, real identity, consent, financial account or peer.
 5. The backend compares the entire expected record under a process gate and OS file lock. New data

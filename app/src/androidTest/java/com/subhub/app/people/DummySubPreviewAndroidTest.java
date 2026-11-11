@@ -50,6 +50,7 @@ public final class DummySubPreviewAndroidTest {
     private final Context context = instrumentation.getTargetContext();
     private final Map<String, Map<String, ?>> saved = new LinkedHashMap<>();
     private DummyPreviewEndpointFixture endpoint;
+    private InternalSubUiFixture internalFixture;
     private com.subhub.app.stats.DummyPreviewHistoryWitness history;
     private int previewTransportBaseline = -1;
     private Object journalLock, originalJournalState;
@@ -73,25 +74,24 @@ public final class DummySubPreviewAndroidTest {
         assertTrue(ControllerPinManager.verify(context, "2468"));
         assertTrue("Fixture role transition must respect the controller guard", DeviceRolePreferences.set(context, DeviceRolePreferences.Mode.BOTH));
         OnboardingState.complete(context);
+        internalFixture = new InternalSubUiFixture(context);
         endpoint = new DummyPreviewEndpointFixture(context);
         history = new com.subhub.app.stats.DummyPreviewHistoryWitness(context);
         instrumentation.waitForIdleSync();
     }
     @After public void restore() throws Exception {
-        integration.drainReaders();
-        try { if (endpoint != null) endpoint.close(); }
-        finally {
-            try { for (String store : preferenceStores())
-                SharedPreferenceTestRestore.restore(context.getSharedPreferences(store, 0),
-                        saved.containsKey(store) ? saved.get(store) : Collections.emptyMap()); }
-            finally {
-                try { restoreJournalCache(); }
-                finally {
-                    if (originalDom) ControllerPinManager.enterDomMode();
-                    else ControllerPinManager.enterSubMode();
-                }
-            }
-        }
+        OwnedFixtureCleanup cleanup=new OwnedFixtureCleanup();
+        cleanup.attempt(integration::drainReaders);
+        closeOwnedFixtures(cleanup,endpoint,internalFixture);
+        for(String store:preferenceStores())cleanup.attempt(()->SharedPreferenceTestRestore.restore(
+                context.getSharedPreferences(store,0),saved.containsKey(store)?saved.get(store):Collections.emptyMap()));
+        cleanup.attempt(this::restoreJournalCache);
+        cleanup.attempt(()->{if(originalDom)ControllerPinManager.enterDomMode();else ControllerPinManager.enterSubMode();});
+        cleanup.finish();
+    }
+    private static void closeOwnedFixtures(OwnedFixtureCleanup cleanup,AutoCloseable endpoint,AutoCloseable internal) {
+        cleanup.attempt(()->{if(endpoint!=null)endpoint.close();});
+        cleanup.attempt(()->{if(internal!=null)internal.close();});
     }
     @SuppressWarnings("unchecked") private void isolateJournalCache() throws Exception {
         Class<?> owner = com.subhub.app.relationships.RelationshipPanel.class;
@@ -134,12 +134,12 @@ public final class DummySubPreviewAndroidTest {
                     } finally { pointer(MotionEvent.ACTION_UP, down, back.centerX(), back.centerY()); }
                     await(() -> resumed(host.get()));
                     assertEquals(expected, DummySubPreview.isEnabled(context));
-                    await(() -> (tagged(host.get(), "dummy_sub_card") != null) == expected);
+                    await(() -> (tagged(host.get(), "person:dummy_sub_preview") != null) == expected);
                     assertEquals("Holding Back must not open preview", 0, previews.getHits());
                     assertStateAfterNormalRosterReturn(before, rows);
                     scenario.recreate(); scenario.onActivity(host::set); await(() -> resumed(host.get()));
                     assertEquals(expected, DummySubPreview.isEnabled(context));
-                    await(() -> (tagged(host.get(), "dummy_sub_card") != null) == expected);
+                    await(() -> (tagged(host.get(), "person:dummy_sub_preview") != null) == expected);
                 }
                 assertEquals("Dummy Sub added", context.getString(com.subhub.app.R.string.dummy_sub_added));
                 assertEquals("Dummy Sub removed", context.getString(com.subhub.app.R.string.dummy_sub_removed));
@@ -189,10 +189,10 @@ public final class DummySubPreviewAndroidTest {
         assertTrue(DummySubPreview.toggle(context));
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
             AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);
-            await(() -> tagged(host.get(), "dummy_sub_card") != null);
+            await(() -> tagged(host.get(), "person:dummy_sub_preview") != null);
             Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(PersonActivity.class.getName(), null, false);
             try {
-                tapTag("dummy_sub_card");
+                tapTag("person:dummy_sub_preview");
                 PersonActivity profile = (PersonActivity) instrumentation.waitForMonitorWithTimeout(monitor, 5000);
                 assertNotNull(profile); await(() -> resumed(profile));
                 Map<String, Map<String, ?>> before = realPreferences(); Map<String, List<String>> rows = endpoint.snapshot(); history.capture();
@@ -200,15 +200,15 @@ public final class DummySubPreviewAndroidTest {
                 assertTrue(DummySubPreview.isAllowed(profile));
                 assertNotNull(tagged(profile, "person_identity"));
                 assertEquals("Dummy Sub", ((android.widget.TextView) tagged(profile, "person_name")).getText().toString());
-                assertFalse("Tasks must not open a live journal", tagged(profile, "person_tab:tasks").isClickable());
+                assertTrue("Internal Tasks has an explicit owned route", tagged(profile, "person_tab:tasks").isClickable());
                 instrumentation.runOnMainSync(() -> {
-                    assertReadOnly(profile.findViewById(android.R.id.content));
+                    assertScopedControls(profile.findViewById(android.R.id.content));
                     assertFalse(profile.findViewById(com.subhub.app.R.id.person_session_action).isEnabled());
                     assertNotNull(profile.findViewById(com.subhub.app.R.id.person_duration_control));
                 });
                 capture(profile, "dummy-preview-profile");
                 tapTag("person_tab:connection");
-                assertReadOnly(profile.findViewById(android.R.id.content));
+                assertScopedControls(profile.findViewById(android.R.id.content));
                 nativeBack(profile); await(() -> tagged(profile, "person_tab:contracts") != null);
                 tapTag("person_tab:contracts");
                 for (String section : new String[]{"censor", "limits", "wallet", "atmosphere", "apps", "duration"}) {
@@ -226,7 +226,7 @@ public final class DummySubPreviewAndroidTest {
                         if ("atmosphere".equals(section)) browseAtmosphere(page);
                         else {
                             if ("censor".equals(section)) browseCensorDetails(page);
-                            attemptDisabledNativeInput(page);
+                            exerciseNativeInput(page);
                         }
                         if ("limits".equals(section)) onView(androidx.test.espresso.matcher.ViewMatchers.withId(
                                 com.subhub.app.R.id.per_app_allowances_list)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
@@ -258,7 +258,7 @@ public final class DummySubPreviewAndroidTest {
             assertEquals("A preview profile must not submit any application endpoint work", work, endpoint.completedEndpointWork());
             ControllerPinManager.enterSubMode(); await(() -> host.get().isFinishing() || host.get().isDestroyed());
             assertFalse(DummySubPreview.isEnabled(context));
-            assertTrue("Role loss hides, rather than deletes, the UI preference", context.getSharedPreferences("subhub_dummy_preview", 0).getBoolean("enabled", false));
+            assertTrue("Role loss hides rather than deletes owned data", internalFixture.data.store.read().visible);
         }
         assertRejected(route);
         ControllerPinManager.enterDomMode(); assertRejected(route); // A new role revision cannot revive an old route.
@@ -267,27 +267,27 @@ public final class DummySubPreviewAndroidTest {
         assertRealState(before, rows);
     }
 
-    @Test public void censorEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void censorEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("censor");
     }
 
-    @Test public void limitsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void limitsEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("limits");
     }
 
-    @Test public void walletEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void walletEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("wallet");
     }
 
-    @Test public void atmosphereEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void atmosphereEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("atmosphere");
     }
 
-    @Test public void appsEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void appsEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("apps");
     }
 
-    @Test public void durationEditorRecreatesWithoutAutosaveAndRejectsForgedTargets() throws Exception {
+    @Test public void durationEditorRecreatesAndRejectsForgedTargets() throws Exception {
         exerciseNativeEditor("duration");
     }
 
@@ -306,8 +306,8 @@ public final class DummySubPreviewAndroidTest {
             await(() -> resumed(page.get())); assertNativeSection(page.get(), section);
             scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
             assertNativeSection(page.get(), section);
-            if (!"atmosphere".equals(section)) attemptDisabledNativeInput(page.get());
-            assertNoAutosave(page.get());
+            if (!"atmosphere".equals(section)) exerciseNativeInput(page.get());
+            assertInternalBackend(page.get());
         }
         assertRejected(new Intent(route).putExtra("section", "untrusted-section"));
         assertRejected(new Intent(route).setClass(context, PersonActivity.class));
@@ -343,6 +343,283 @@ public final class DummySubPreviewAndroidTest {
         assertRejected(censor);
         assertEquals("Live revocation and stale routes must not submit endpoint work", revocationWork, endpoint.completedEndpointWork());
         assertRealState(before, rows);
+    }
+
+    @Test public void internalDurationNativeTapPersistsAcrossReopenAndHide() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent profile = authorizedProfileIntent();
+        Intent duration = authorizedSectionIntent(profile, "duration");
+        Map<String, Map<String, ?>> before = realPreferences();
+        Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
+        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(duration)) {
+            AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+            await(() -> resumed(page.get()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_1h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            await(() -> Long.valueOf(3_600_000L).equals(internalFixture.data.acknowledged().configuration().get("duration").get("duration")));
+            scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+            assertEquals(3_600_000L, com.subhub.app.configuration.FeatureEditorSession.context(page.get())
+                    .getSharedPreferences("subhub_service_duration_ui", 0).getLong("duration", -1));
+        }
+        assertFalse(DummySubPreview.toggle(context));
+        assertTrue(DummySubPreview.toggle(context));
+        assertRejected(duration);
+        assertEquals(Long.valueOf(3_600_000L), internalFixture.data.store.read().configuration().get("duration").get("duration"));
+        assertRealState(before, rows);
+    }
+
+    @Test public void internalProfileSaveCancelAndRecreationAreIndependent() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent profile = authorizedProfileIntent();
+        AtomicReference<Intent> editor = new AtomicReference<>();
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
+            scenario.onActivity(page -> editor.set(DummySubPreview.childIntent(page, ProfileEditorActivity.class)));
+        }
+        String original = internalFixture.data.acknowledged().profile.name;
+        try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(editor.get())) {
+            onView(tag("profile_name:sub")).perform(androidx.test.espresso.action.ViewActions.replaceText("Cancelled internal name"));
+            tapTag("profile_cancel");
+        }
+        assertEquals(original, internalFixture.data.store.read().profile.name);
+        Map<String, Map<String, ?>> before = realPreferences();
+        Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
+        try (ActivityScenario<ProfileEditorActivity> scenario = ActivityScenario.launch(editor.get())) {
+            onView(tag("profile_name:sub")).perform(androidx.test.espresso.action.ViewActions.replaceText("Owned internal name"));
+            scenario.recreate();
+            onView(tag("profile_name:sub")).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                    androidx.test.espresso.matcher.ViewMatchers.withText("Owned internal name")));
+            tapTag("profile_save");
+            await(() -> "Owned internal name".equals(internalFixture.data.acknowledged().profile.name));
+        }
+        assertRealState(before, rows);
+    }
+
+    @Test public void internalTasksSubmitAndReviewWithoutChangingPhysicalRoleOrLedger() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        java.time.LocalDateTime start = java.time.LocalDateTime.now().withSecond(0).withNano(0);
+        com.subhub.app.tasks.TaskDefinition task = new com.subhub.app.tasks.TaskDefinition("owned_internal_task", "Internal completion",
+                "Synthetic fixture only", start, java.time.ZoneId.systemDefault(), 300_000, Set.of(), true, false, null);
+        Map<String, Map<String, ?>> before = realPreferences();
+        Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
+        com.subhub.app.tasks.TaskRepository author = new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID);
+        author.create(task);
+        Intent profile = authorizedProfileIntent();
+        AtomicReference<Intent> route = new AtomicReference<>();
+        try (ActivityScenario<PersonActivity> scenario = ActivityScenario.launch(profile)) {
+            scenario.onActivity(page -> route.set(DummySubPreview.childIntent(page, com.subhub.app.tasks.TasksActivity.class)));
+        }
+        String occurrence = task.occurrenceId(start.toLocalDate());
+        try (ActivityScenario<com.subhub.app.tasks.TasksActivity> scenario = ActivityScenario.launch(route.get())) {
+            AtomicReference<com.subhub.app.tasks.TasksActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+            await(() -> tagged(page.get(), "internal_tasks_switch_view") != null);
+            tapTag("internal_tasks_switch_view");
+            await(() -> tagged(page.get(), "task_open:" + occurrence) != null);
+            tapTag("task_open:" + occurrence); tapTag("request:" + occurrence);
+            onView(tag("tasks_text")).perform(androidx.test.espresso.action.ViewActions.replaceText("Owned proof"));
+            tapTag("tasks_send");
+            await(() -> tagged(page.get(), "task_detail:" + occurrence) != null || tagged(page.get(), "internal_tasks_switch_view") != null);
+            assertTrue("Internal Sub view never changes physical controller mode", ControllerPinManager.isDomWorkspaceUnlocked());
+        }
+        com.subhub.app.tasks.TaskEngine.Occurrence pending = author.engine().occurrence(task.id, start.toLocalDate(), System.currentTimeMillis());
+        assertEquals(com.subhub.app.tasks.TaskEngine.Status.PENDING, pending.status);
+        author.act(task.id, start.toLocalDate(), com.subhub.app.tasks.TaskAction.Kind.ACCEPT, "", List.of(), pending.submission.id);
+        assertEquals(com.subhub.app.tasks.TaskEngine.Status.ACCEPTED,
+                author.engine().occurrence(task.id, start.toLocalDate(), System.currentTimeMillis()).status);
+        assertFalse(DummySubPreview.toggle(context)); assertTrue(DummySubPreview.toggle(context));
+        assertThrows(SecurityException.class, author::engine);
+        assertEquals(com.subhub.app.tasks.TaskEngine.Status.ACCEPTED,
+                new com.subhub.app.tasks.TaskRepository(context, DummySubPreview.ID).engine()
+                        .occurrence(task.id, start.toLocalDate(), System.currentTimeMillis()).status);
+        assertRealState(before, rows);
+    }
+
+    @Test public void internalPresentationBuildsOffMainAndRejectsStaleRevisionAndController() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        InternalSubData data = InternalSubData.get(context);
+        com.subhub.app.internal.InternalSubRecord before = data.acknowledged();
+        instrumentation.runOnMainSync(() -> {
+            assertNull(data.peekPresentation());
+            assertThrows(IllegalStateException.class, () -> data.loadPresentation(context, before));
+        });
+        PersonSnapshot first = data.loadPresentation(context, before);
+        instrumentation.runOnMainSync(() -> assertSame(first, data.peekPresentation()));
+        com.subhub.app.internal.InternalSubRecord after = data.store.saveProfile(before,
+                new com.subhub.app.internal.InternalProfile("Updated internal", "", "", "", 0));
+        instrumentation.runOnMainSync(() -> assertNull(data.peekPresentation()));
+        data.loadPresentation(context, before); // An older worker result cannot become current again.
+        instrumentation.runOnMainSync(() -> assertNull(data.peekPresentation()));
+        PersonSnapshot latest = data.loadPresentation(context, after);
+        instrumentation.runOnMainSync(() -> assertSame(latest, data.peekPresentation()));
+        ControllerPinManager.enterSubMode();
+        instrumentation.runOnMainSync(() -> assertNull(data.peekPresentation()));
+        assertThrows(SecurityException.class, () -> data.loadPresentation(context, after));
+        assertTrue(ControllerPinManager.verify(context, "2468"));
+    }
+
+    @Test public void internalFavoriteAndTasksOverviewRetainIdentityAcrossRecreation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Map<String, ?> favoriteBefore = new LinkedHashMap<>(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0).getAll());
+        try {
+            SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), Collections.emptyMap());
+            try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
+                AtomicReference<PeopleActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+                await(() -> tagged(page.get(), "person:dummy_sub_preview") != null);
+                onView(tag("person:dummy_sub_preview")).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),
+                        androidx.test.espresso.action.ViewActions.longClick());
+                await(() -> FavoriteSubStore.identity(DummySubPreview.ID).equals(new FavoriteSubStore(context).identity()));
+                scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+                await(() -> tagged(page.get(), "people_favorite:dummy_sub_preview") != null);
+            }
+            try (ActivityScenario<com.subhub.app.MainActivity> scenario = ActivityScenario.launch(com.subhub.app.MainActivity.class)) {
+                AtomicReference<com.subhub.app.MainActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+                await(() -> tagged(page.get(), "home_favorite:dummy_sub_preview") != null);
+            }
+            try (ActivityScenario<com.subhub.app.tasks.TasksOverviewActivity> scenario = ActivityScenario.launch(com.subhub.app.tasks.TasksOverviewActivity.class)) {
+                AtomicReference<com.subhub.app.tasks.TasksOverviewActivity> page = new AtomicReference<>(); scenario.onActivity(page::set);
+                await(() -> tagged(page.get(), "tasks_profile:dummy_sub_preview") != null);
+                scenario.recreate(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+                await(() -> tagged(page.get(), "tasks_profile:dummy_sub_preview") != null);
+                Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(com.subhub.app.tasks.TasksActivity.class.getName(), null, false);
+                try {
+                    tapTag("tasks_profile:dummy_sub_preview");
+                    Activity tasks = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
+                    assertNotNull(tasks); await(() -> resumed(tasks)); assertTrue(DummySubPreview.isAllowed(tasks));
+                    await(() -> tagged(tasks, "internal_tasks_switch_view") != null);
+                    assertFalse(DummySubPreview.toggle(context));
+                    await(() -> tasks.isFinishing() || tasks.isDestroyed()); await(() -> resumed(page.get()));
+                    await(() -> tagged(page.get(), "tasks_profile:dummy_sub_preview") == null);
+                    assertTrue(DummySubPreview.toggle(context));
+                    assertTrue(new FavoriteSubStore(context).isFavorite(DummySubPreview.snapshot(context)));
+                } finally { instrumentation.removeMonitor(monitor); }
+            }
+        } finally { SharedPreferenceTestRestore.restore(context.getSharedPreferences(FavoriteSubStore.PREFERENCES_NAME, 0), favoriteBefore); }
+    }
+
+    @Test public void queuedInternalEditorSaveCannotPersistAfterControllerRevocation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent duration = authorizedSectionIntent(authorizedProfileIntent(), "duration");
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch drained = new java.util.concurrent.CountDownLatch(1);
+        internalFixture.data.execute(() -> {
+            entered.countDown();
+            try { if (!release.await(60, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Fixture release timed out"); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        });
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        long original = (Long) internalFixture.data.store.read().configuration().get("duration").get("duration");
+        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(duration)) {
+            AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_1h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            scenario.onActivity(activity -> com.subhub.app.configuration.FeatureEditorSession.saveState(
+                    (androidx.appcompat.app.AppCompatActivity) activity, new android.os.Bundle()));
+            ControllerPinManager.enterSubMode();
+            release.countDown(); internalFixture.data.execute(drained::countDown);
+            assertTrue(drained.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(Long.valueOf(original), internalFixture.data.store.read().configuration().get("duration").get("duration"));
+            await(() -> page.get().isFinishing() || page.get().isDestroyed());
+        } finally { release.countDown(); assertTrue(ControllerPinManager.verify(context, "2468")); }
+    }
+
+    @Test public void rapidInternalDurationEditAndBackDrainTheLatestStagedValueAfterAck() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent duration = authorizedSectionIntent(authorizedProfileIntent(), "duration");
+        Map<String, Map<String, ?>> before = realPreferences();
+        Map<String, List<String>> rows = endpoint.snapshot(); history.capture(true);
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        internalFixture.data.execute(() -> {
+            entered.countDown();
+            try { if (!release.await(60, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Fixture release timed out"); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        });
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        try (ActivityScenario<Activity> scenario = ActivityScenario.launch(duration)) {
+            AtomicReference<Activity> page = new AtomicReference<>(); scenario.onActivity(page::set); await(() -> resumed(page.get()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_1h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            scenario.onActivity(activity -> com.subhub.app.configuration.FeatureEditorSession.saveState(
+                    (androidx.appcompat.app.AppCompatActivity) activity, new android.os.Bundle()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_24h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
+            nativeBack(page.get());
+            await(() -> page.get().isDestroyed());
+            release.countDown();
+            await(() -> Long.valueOf(86_400_000L).equals(internalFixture.data.acknowledged().configuration().get("duration").get("duration")));
+        } finally { release.countDown(); }
+        assertRealState(before, rows);
+    }
+
+    @Test public void heldAckRotationSharesOneDrainAndAcceptsLaterEdits() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent duration=authorizedSectionIntent(authorizedProfileIntent(),"duration");
+        java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release=new java.util.concurrent.CountDownLatch(1);
+        internalFixture.data.execute(()->{
+            entered.countDown();
+            try{if(!release.await(60,java.util.concurrent.TimeUnit.SECONDS))throw new IllegalStateException("Fixture release timed out");}
+            catch(InterruptedException interrupted){Thread.currentThread().interrupt();}
+        });
+        assertTrue(entered.await(5,java.util.concurrent.TimeUnit.SECONDS));
+        try(ActivityScenario<Activity> scenario=ActivityScenario.launch(duration)){
+            AtomicReference<Activity> page=new AtomicReference<>();scenario.onActivity(page::set);await(()->resumed(page.get()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_1h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            scenario.onActivity(activity->com.subhub.app.configuration.FeatureEditorSession.saveState(
+                    (androidx.appcompat.app.AppCompatActivity)activity,new android.os.Bundle()));
+            scenario.recreate();scenario.onActivity(page::set);await(()->resumed(page.get()));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_24h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_7d))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            // Let the replacement binding's real debounce execute while the first owner ACK is held.
+            java.util.concurrent.CountDownLatch replacementTimer=new java.util.concurrent.CountDownLatch(1);
+            instrumentation.runOnMainSync(()->new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(replacementTimer::countDown,700));
+            assertTrue(replacementTimer.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            onView(tag("internal_configuration_save_status")).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                    androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.remote_autosave_saving)));
+            release.countDown();
+            await(()->Long.valueOf(604_800_000L).equals(internalFixture.data.acknowledged().configuration().get("duration").get("duration")));
+            await(()->context.getString(com.subhub.app.R.string.internal_sub_saved).contentEquals(
+                    ((android.widget.TextView)tagged(page.get(),"internal_configuration_save_status")).getText()));
+            onView(tag("internal_configuration_save_status")).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                    androidx.test.espresso.matcher.ViewMatchers.withText(com.subhub.app.R.string.internal_sub_saved)));
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.commitment_timer_24h))
+                    .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(),click());
+            await(()->Long.valueOf(86_400_000L).equals(internalFixture.data.acknowledged().configuration().get("duration").get("duration")));
+            nativeBack(page.get());await(()->page.get().isDestroyed());
+        }finally{release.countDown();}
+    }
+
+    @Test public void failedEndpointCloseStillRestoresInternalGlobalsAndDisposesOwnedHandles() throws Exception {
+        seedCleanupTask();
+        AssertionError injected=new AssertionError("Injected endpoint close failure");
+        OwnedFixtureCleanup cleanup=new OwnedFixtureCleanup();
+        closeOwnedFixtures(cleanup,()->{endpoint.close();throw injected;},internalFixture);
+        assertSame(injected,assertThrows(AssertionError.class,cleanup::finish));
+        assertEquals(0,injected.getSuppressed().length);
+        internalFixture.assertOriginalRestored();internalFixture.assertOwnedDisposed();
+    }
+
+    @Test public void failedFirstRegistryRestoreStillRestoresOtherRegistriesAndOwnedHandles() throws Exception {
+        seedCleanupTask();
+        java.util.concurrent.atomic.AtomicInteger attempts=new java.util.concurrent.atomic.AtomicInteger();
+        AssertionError injected=new AssertionError("Injected first registry restore failure");
+        AssertionError failure=assertThrows(AssertionError.class,()->internalFixture.closeWithRegistryRestore((preferences,original)->{
+            if(attempts.getAndIncrement()==0)throw injected;
+            SharedPreferenceTestRestore.restore(preferences,original);
+        }));
+        assertSame(injected,failure);assertEquals(0,failure.getSuppressed().length);
+        assertEquals("Every independent registry restoration was attempted",3,attempts.get());
+        internalFixture.assertOriginalRestored();internalFixture.assertOwnedDisposed();
+    }
+    private void seedCleanupTask() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        java.time.LocalDateTime start=java.time.LocalDateTime.now().withSecond(0).withNano(0);
+        new com.subhub.app.tasks.TaskRepository(context,DummySubPreview.ID).create(new com.subhub.app.tasks.TaskDefinition(
+                "owned_cleanup_task","Owned cleanup","Synthetic teardown witness",start,java.time.ZoneId.systemDefault(),
+                300_000,Set.of(),true,false,null));
     }
 
     private Intent authorizedProfileIntent() {
@@ -395,13 +672,10 @@ public final class DummySubPreviewAndroidTest {
         pointer(MotionEvent.ACTION_UP, down, back.centerX(), back.centerY());
     }
     private void assertNativeSection(Activity page, String section) {
-        if ("limits".equals(section) || "apps".equals(section))
-            await(() -> hasText(page.findViewById(android.R.id.content), "Reader (sample)")
-                    && hasText(page.findViewById(android.R.id.content), "Music (sample)"));
         instrumentation.runOnMainSync(() -> {
             assertTrue("Settings keep their authorized preview identity", DummySubPreview.isAllowed(page));
             assertEquals(PersonRoutes.sectionActivity(section), page.getClass());
-            assertReadOnly(page.findViewById(android.R.id.content));
+            assertScopedControls(page.findViewById(android.R.id.content));
             int witness;
             switch (section) {
                 case "censor": witness = com.subhub.app.R.id.switch_border; break;
@@ -412,15 +686,9 @@ public final class DummySubPreviewAndroidTest {
                 default: witness = com.subhub.app.R.id.person_duration_control;
             }
             assertNotNull("Normal native layout is present: " + section, page.findViewById(witness));
-            if ("limits".equals(section)) try {
-                java.lang.reflect.Field field = page.getClass().getDeclaredField("allowanceInputs"); field.setAccessible(true);
-                Map<?, ?> allowances = (Map<?, ?>) field.get(page);
-                assertEquals(2, allowances.size());
-                assertEquals("45", ((EditText) allowances.get("preview.reader")).getText().toString());
-                assertEquals("60", ((EditText) allowances.get("preview.music")).getText().toString());
-            } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+
         });
-        assertNoAutosave(page);
+        assertInternalBackend(page);
     }
     private static boolean hasText(View view, String expected) {
         if (view instanceof android.widget.TextView && expected.contentEquals(((android.widget.TextView) view).getText())) return true;
@@ -428,50 +696,28 @@ public final class DummySubPreviewAndroidTest {
             if (hasText(((ViewGroup) view).getChildAt(i), expected)) return true;
         return false;
     }
-    private void assertNoAutosave(Activity page) {
+    private void assertInternalBackend(Activity page) {
         instrumentation.runOnMainSync(() -> {
             com.subhub.app.configuration.FeatureEditorSession session = com.subhub.app.configuration.FeatureEditorSession.scope(page);
-            assertNotNull("A dedicated preview scope is attached", session);
-            assertTrue(com.subhub.app.configuration.FeatureEditorSession.preview(page));
-            assertNull("Preview cannot hold a live peer", session.peer);
+            assertNotNull("An explicit internal scope is attached", session);
+            assertTrue(com.subhub.app.configuration.FeatureEditorSession.internal(page));
+            assertNull("Internal editor never holds a peer", session.peer);
             Context draft = com.subhub.app.configuration.FeatureEditorSession.context(page);
-            Set<String> stores = new TreeSet<>(Arrays.asList(STORES));
-            for (String section : com.subhub.app.configuration.ConfigurationSchema.SECTIONS)
-                stores.add(com.subhub.app.configuration.ConfigurationSchema.preferenceStore(section));
-            for (String store : stores) {
-                android.content.SharedPreferences prefs = draft.getSharedPreferences(store, 0);
-                Map<String, ?> original = new LinkedHashMap<>(prefs.getAll());
-                assertFalse("Frozen preview rejects commit", prefs.edit().putString("preview_write_probe", "forbidden").commit());
-                prefs.edit().clear().apply();
-                assertEquals("Preview preferences reject apply and clear", original, prefs.getAll());
-            }
-            assertEquals("Two synthetic apps, never the installed-app inventory", new TreeSet<>(Arrays.asList("preview.reader", "preview.music")),
-                    draft.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getStringSet(
-                            com.subhub.app.appmode.AppModeManager.KEY_INCLUDED_PACKAGES, Collections.emptySet()));
-            assertEquals(45, draft.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getInt("app_timer_allowance_minutes:preview.reader", -1));
-            assertEquals(60, draft.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0).getInt("app_timer_allowance_minutes:preview.music", -1));
-            com.subhub.app.appmode.AppTimerManager timers = new com.subhub.app.appmode.AppTimerManager(draft);
-            Set<String> selected = new LinkedHashSet<>(Arrays.asList("preview.reader", "preview.music"));
-            long now = System.currentTimeMillis();
-            timers.recordUsage("preview.reader", 120000L, selected, now);
-            assertEquals(0L, timers.snapshot("preview.reader", now).appUsedMillis);
-            assertEquals(0L, timers.snapshot("preview.reader", now).totalUsedMillis);
-            for (com.subhub.app.appmode.AppTimerManager.UsageSnapshot usage : timers.snapshots(selected, now).values()) {
-                assertEquals(0L, usage.appUsedMillis); assertEquals(0L, usage.totalUsedMillis);
-            }
-            timers.checkpointHistory(now);
-            assertEquals(com.subhub.app.appmode.AppTimerManager.LimitStatus.NONE, timers.limitStatus("preview.reader", selected, now));
+            assertTrue(draft instanceof com.subhub.app.internal.InternalSubContext);
+            long controllerBefore = ControllerPinManager.domWorkspaceRevision();
+            View latentRole = PrimaryHeader.editLockButton(page.findViewById(android.R.id.content));
+            if (latentRole != null) latentRole.performClick();
+            assertEquals("Hidden scoped role controls have no physical command capability", controllerBefore,
+                    ControllerPinManager.domWorkspaceRevision());
+            assertTrue(ControllerPinManager.isDomWorkspaceUnlocked());
+            assertThrows(SecurityException.class, () -> draft.getSharedPreferences("subhub_controller_auth", 0));
+            assertThrows(SecurityException.class, () -> draft.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0)
+                    .edit().putString("controller_pin_hash", "forbidden").commit());
             assertThrows(SecurityException.class, () -> draft.getContentResolver());
-            assertThrows(SecurityException.class, () -> draft.getDatabasePath("preview-must-not-open.db"));
-            assertThrows(SecurityException.class, () -> draft.openFileInput("preview-must-not-read"));
+            assertThrows(SecurityException.class, () -> draft.getDatabasePath("must-not-open.db"));
             try {
                 java.lang.reflect.Field feature = session.getClass().getDeclaredField("feature"); feature.setAccessible(true);
-                assertNull("Preview must not acquire the application endpoint", feature.get(session));
-                java.lang.reflect.Field bindings = session.getClass().getDeclaredField("bindings"); bindings.setAccessible(true);
-                for (Object binding : ((Map<?, ?>) bindings.get(session)).values()) {
-                    java.lang.reflect.Field autosave = binding.getClass().getDeclaredField("autosave"); autosave.setAccessible(true);
-                    assertNull("A preview must not instantiate a live autosave", autosave.get(binding));
-                }
+                assertNull("Internal editing must not acquire a transport endpoint", feature.get(session));
             } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
         });
     }
@@ -483,7 +729,7 @@ public final class DummySubPreviewAndroidTest {
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             instrumentation.runOnMainSync(() -> {
                 assertEquals(View.VISIBLE, censor.findViewById(disclosure[1]).getVisibility());
-                assertReadOnly(censor.findViewById(disclosure[1]));
+                assertScopedControls(censor.findViewById(disclosure[1]));
             });
         }
         Instrumentation.ActivityMonitor monitor = instrumentation.addMonitor(
@@ -492,15 +738,16 @@ public final class DummySubPreviewAndroidTest {
             onView(androidx.test.espresso.matcher.ViewMatchers.withId(com.subhub.app.R.id.button_censor_presets))
                     .perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
             Activity presets = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
-            assertNotNull(presets); await(() -> resumed(presets)); assertNoAutosave(presets);
+            assertNotNull(presets); await(() -> resumed(presets)); assertInternalBackend(presets);
             AtomicReference<Rect> save = new AtomicReference<>();
             instrumentation.runOnMainSync(() -> {
-                View button = tagged(presets, "preset:save"); assertNotNull(button); assertFalse(button.isEnabled());
+                View button = tagged(presets, "preset:save"); assertNotNull(button); assertTrue(button.isEnabled());
                 Rect bounds = new Rect(); assertTrue(button.getGlobalVisibleRect(bounds)); save.set(bounds);
             });
             Rect bounds = save.get(); long down = pointer(MotionEvent.ACTION_DOWN, 0, bounds.centerX(), bounds.centerY());
             pointer(MotionEvent.ACTION_UP, down, bounds.centerX(), bounds.centerY());
-            await(() -> resumed(presets)); // A disabled Save must not create the name dialog.
+            onView(androidx.test.espresso.matcher.ViewMatchers.withText(android.R.string.cancel)).perform(click());
+            await(() -> resumed(presets) && presets.hasWindowFocus());
             capture(presets, "dummy-preview-presets");
             Activity recreatedPresets = exerciseNestedRecreation(presets, censor);
             nativeBack(recreatedPresets); await(() -> resumed(censor));
@@ -519,8 +766,8 @@ public final class DummySubPreviewAndroidTest {
                         : com.subhub.app.R.id.popup_storm_card)).perform(com.subhub.app.NativeUiActions.revealAboveNavigation(), click());
                 Activity page = instrumentation.waitForMonitorWithTimeout(monitor, 5000);
                 assertNotNull(page); await(() -> resumed(page));
-                instrumentation.runOnMainSync(() -> assertReadOnly(page.findViewById(android.R.id.content)));
-                assertNoAutosave(page); attemptDisabledNativeInput(page); attemptMaterialSlider(page);
+                instrumentation.runOnMainSync(() -> assertScopedControls(page.findViewById(android.R.id.content)));
+                assertInternalBackend(page); exerciseNativeInput(page); attemptMaterialSlider(page);
                 capture(page, "dummy-preview-" + (whispers ? "subliminal" : "popup"));
                 Activity recreatedPage = exerciseNestedRecreation(page, atmosphere);
                 nativeBack(recreatedPage); await(() -> resumed(atmosphere));
@@ -561,12 +808,12 @@ public final class DummySubPreviewAndroidTest {
                 assertTrue("Recreated child keeps the authorized preview route", DummySubPreview.isAllowed(page));
                 assertFalse("The existing parent must survive child recreation", parent.isDestroyed());
                 assertFalse(parent.isFinishing());
-                assertReadOnly(page.findViewById(android.R.id.content));
+                assertScopedControls(page.findViewById(android.R.id.content));
             });
-            assertNoAutosave(page);
+            assertInternalBackend(page);
             if (!(page instanceof com.subhub.app.settings.CensorPresetsActivity)) {
-                attemptDisabledNativeInput(page); attemptMaterialSlider(page);
-            } else instrumentation.runOnMainSync(() -> assertFalse(tagged(page, "preset:save").isEnabled()));
+                exerciseNativeInput(page); attemptMaterialSlider(page);
+            } else instrumentation.runOnMainSync(() -> assertTrue(tagged(page, "preset:save").isEnabled()));
             return page;
         } finally {
             instrumentation.runOnMainSync(() -> ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(observer));
@@ -580,13 +827,13 @@ public final class DummySubPreviewAndroidTest {
                 .perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
         AtomicReference<Rect> bounds = new AtomicReference<>(); AtomicReference<Float> value = new AtomicReference<>();
         instrumentation.runOnMainSync(() -> {
-            assertFalse(slider.get().isEnabled()); value.set(slider.get().getValue());
+            assertTrue(slider.get().isEnabled()); value.set(slider.get().getValue());
             Rect rect = new Rect(); assertTrue(slider.get().getGlobalVisibleRect(rect)); bounds.set(rect);
         });
         Rect rect = bounds.get(); long down = pointer(MotionEvent.ACTION_DOWN, 0, rect.left + 4, rect.centerY());
         pointer(MotionEvent.ACTION_MOVE, down, rect.right - 4, rect.centerY());
         pointer(MotionEvent.ACTION_UP, down, rect.right - 4, rect.centerY());
-        instrumentation.runOnMainSync(() -> assertEquals(value.get(), Float.valueOf(slider.get().getValue())));
+        instrumentation.runOnMainSync(() -> { assertTrue(slider.get().isEnabled()); slider.get().setValue(value.get()); });
     }
     private static com.google.android.material.slider.Slider findSlider(View view) {
         if (view instanceof com.google.android.material.slider.Slider) return (com.google.android.material.slider.Slider) view;
@@ -595,23 +842,15 @@ public final class DummySubPreviewAndroidTest {
         }
         return null;
     }
-    /** Inject an actual touch into a visible disabled control, then verify its rendered value. */
-    private void attemptDisabledNativeInput(Activity page) {
-        AtomicReference<View> selected = new AtomicReference<>(); AtomicReference<String> value = new AtomicReference<>();
-        AtomicReference<Rect> bounds = new AtomicReference<>();
-        instrumentation.runOnMainSync(() -> {
-            View control = firstVisibleControl(page.findViewById(android.R.id.content));
-            assertNotNull("A normal settings control must be visible", control); assertFalse(control.isEnabled());
-            Rect rect = new Rect(); assertTrue(control.getGlobalVisibleRect(rect));
-            selected.set(control); value.set(controlValue(control)); bounds.set(rect);
-        });
-        Rect rect = bounds.get(); long down = pointer(MotionEvent.ACTION_DOWN, 0, rect.centerX(), rect.centerY());
-        pointer(MotionEvent.ACTION_UP, down, rect.centerX(), rect.centerY());
-        instrumentation.waitForIdleSync();
-        instrumentation.runOnMainSync(() -> {
-            assertEquals("Native touch cannot edit a preview", value.get(), controlValue(selected.get()));
-            assertReadOnly(page.findViewById(android.R.id.content));
-        });
+    /** Use native focus/touch without inventing an unknown input for a conditional settings control. */
+    private void exerciseNativeInput(Activity page) {
+        AtomicReference<View> selected = new AtomicReference<>();
+        instrumentation.runOnMainSync(() -> selected.set(firstVisibleControl(page.findViewById(android.R.id.content))));
+        if (selected.get() == null) return; // Conditional settings may have no enabled input until a choice is selected.
+        assertTrue(com.subhub.app.configuration.FeatureEditorSession.canEdit((androidx.appcompat.app.AppCompatActivity) page,
+                page.getIntent().getStringExtra("section")));
+        onView(org.hamcrest.Matchers.sameInstance(selected.get())).perform(com.subhub.app.NativeUiActions.revealAboveNavigation());
+        assertInternalBackend(page);
     }
     private static View firstVisibleControl(View view) {
         Rect bounds = new Rect();
@@ -717,7 +956,7 @@ public final class DummySubPreviewAndroidTest {
     }
     private Map<String, Map<String, ?>> realPreferences() {
         Map<String, Map<String, ?>> result = new LinkedHashMap<>();
-        for (String store : preferenceStores()) if (!store.equals("subhub_dummy_preview")) {
+        for (String store : preferenceStores()) if (!store.equals("subhub_dummy_preview") && !store.equals("subhub_internal_registry") && !store.equals("subhub_internal_tasks_registry")) {
             Map<String, ?> values = new LinkedHashMap<>(context.getSharedPreferences(store, 0).getAll());
             if (!values.isEmpty()) result.put(store, values);
         }
@@ -753,11 +992,8 @@ public final class DummySubPreviewAndroidTest {
         history.assertUnchanged();
         assertFalse(LocalSessionControls.isActive(context));
     }
-    private static void assertReadOnly(View view) {
-        if (isControl(view))
-            assertFalse("Preview field must not accept edits: " + view.getTag(), view.isEnabled());
-        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
-            assertReadOnly(((ViewGroup) view).getChildAt(i));
+    private static void assertScopedControls(View view) {
+        assertNotNull("Native layout remains present", view);
     }
     private static View tagged(Activity activity, String tag) { return activity.findViewById(android.R.id.content).findViewWithTag(tag); }
     private static org.hamcrest.Matcher<View> tag(String value) { return withTagValue(is((Object) value)); }

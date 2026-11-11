@@ -16,16 +16,38 @@ public final class TaskRepository {
     private final RemoteFeature remote;
     private final RemoteStore authority;
     private final TaskRuntime scopedRuntime;
-    public TaskRepository(Context context, PersonId person) {
-        this.context = context.getApplicationContext(); this.person = person; remote = RemoteFeature.get(context);
-        authority = remote.store; scopedRuntime = null;
+    private final InternalTaskBackend internal;
+    private final String internalGeneration;
+    private final long internalController;
+    private final boolean internalSubView;
+    public TaskRepository(Context context, PersonId person) { this(context, person, false); }
+    public TaskRepository(Context context, PersonId person, boolean internalSubView) {
+        if (internalSubView && !DummySubPreview.ID.equals(person)) throw new IllegalArgumentException("Internal completion target required");
+        this.internalSubView = internalSubView;
+        this.context = context.getApplicationContext(); this.person = person;
+        if (DummySubPreview.ID.equals(person)) {
+            if (!DummySubPreview.isEnabled(this.context)) throw new SecurityException("Internal Tasks unavailable");
+            internal = InternalTaskBackend.get(this.context);
+            internalGeneration = InternalSubData.get(this.context).acknowledged().generation;
+            internalController = ControllerPinManager.domWorkspaceRevision();
+            remote = null; authority = null; scopedRuntime = null;
+        } else {
+            internal = null; internalGeneration = null; internalController = -1;
+            remote = RemoteFeature.get(context); authority = remote.store; scopedRuntime = null;
+        }
     }
     private TaskRepository(Context context, PersonId person, RemoteStore authority, TaskRuntime runtime) {
         this.context = context.getApplicationContext(); this.person = person; remote = null;
+        if (DummySubPreview.ID.equals(person)) throw new IllegalArgumentException("Internal Tasks require their explicit backend");
+        internal = null; internalGeneration = null; internalController = -1; internalSubView = false;
         this.authority = Objects.requireNonNull(authority); scopedRuntime = Objects.requireNonNull(runtime);
         if (runtime.authorityLock() != authority) throw new IllegalArgumentException("Tasks authority mismatch");
     }
-    private TaskRuntime runtime() { return scopedRuntime == null ? TaskRuntime.get(context) : scopedRuntime; }
+    public boolean internal() { return internal != null; }
+    public String name() { return internal != null ? internal.current(internalGeneration, internalController).profile.name
+            : target().peer == null ? ProfileNames.get(context, false) : target().peer.name; }
+    TaskStore.Observation observe(Runnable changed) { return internal != null ? internal.observe(changed) : runtime().store.observe(changed); }
+    private TaskRuntime runtime() { if (internal != null) throw new SecurityException("No physical runtime for internal Tasks"); return scopedRuntime == null ? TaskRuntime.get(context) : scopedRuntime; }
     private RemoteStore.Peer selectedPeer() {
         if (remote != null) return new RemotePersonRepository(context, remote).peer(person);
         for (RemoteStore.Peer peer : authority.peers(true))
@@ -38,6 +60,10 @@ public final class TaskRepository {
         Target(String scope, RemoteStore.Peer peer) { this.scope = scope; this.peer = peer; }
     }
     public Target target() {
+        if (internal != null) {
+            internal.current(internalGeneration, internalController);
+            return new Target("internal:" + internalGeneration, null);
+        }
         if (person.isLocal()) {
             if (!DeviceRolePreferences.supportsSub(context)) throw new SecurityException("Sub profile unavailable");
             for (RemoteStore.Peer peer : authority.peers(false))
@@ -57,13 +83,15 @@ public final class TaskRepository {
         return person != null && (person.isLocal() ? ControllerPinManager.isDomModeActive()
                 : ControllerPinManager.isDomWorkspaceUnlocked());
     }
-    public boolean isDom() { target(); return domSession(person); }
+    public boolean domView() { return internal != null ? !internalSubView : domSession(person); }
+    public boolean isDom() { target(); return domView(); }
     public boolean supported() {
         Target target = target();
         return target.peer == null || "1".equals(authority.metadata(target.peer.identity, target.peer.generation, "tasks_version", "0"))
                 && (cancellationSupported() || !runtime().hasCancellations(target.scope));
     }
     public boolean allowed() {
+        if (internal != null) { target(); return true; }
         if (person.isLocal()) return SubFeaturePolicy.allowed(context, "tasks");
         Target target = target();
         return "true".equals(authority.metadata(target.peer.identity, target.peer.generation, "tasks_allowed", "false"));
@@ -73,11 +101,12 @@ public final class TaskRepository {
         if (!SubFeaturePolicy.setAllowed(context, "tasks", value)) throw new IllegalStateException("Could not save Tasks preference");
         runtime().changed();
     }
-    public TaskEngine engine() throws Exception { return runtime().store.load(target().scope); }
+    public TaskEngine engine() throws Exception { return internal != null ? internal.engine(internalGeneration, internalController) : runtime().store.load(target().scope); }
     public List<TaskEngine.Occurrence> list(long now) throws Exception {
         Target target = target();
-        if (allowed()) runtime().sweep(target);
-        TaskEngine engine = runtime().store.load(target.scope);
+        if (internal != null) internal.sweep(internalGeneration, internalController, now);
+        else if (allowed()) runtime().sweep(target);
+        TaskEngine engine = engine();
         List<TaskEngine.Occurrence> result = new ArrayList<>(engine.recorded(now));
         Set<String> present = new HashSet<>(); for (TaskEngine.Occurrence row : result) present.add(row.id);
         for (TaskDefinition task : engine.definitions()) {
@@ -102,7 +131,7 @@ public final class TaskRepository {
     }
     public ZoneId schedulingZone() {
         Target target = target();
-        if (person.isLocal()) return ZoneId.systemDefault();
+        if (person.isLocal() || internal != null) return ZoneId.systemDefault();
         synchronized (authority) {
             Target live = target();
             String zone = authority.metadata(live.peer.identity, live.peer.generation, "tasks_timezone", "");
@@ -139,6 +168,17 @@ public final class TaskRepository {
                 target.peer.generation, "tasks_cancel_version", "0"));
     }
     public void cancel(String taskId, LocalDate date, boolean series) throws Exception {
+        if (internal != null) {
+            Target target = target(); requireDom(target);
+            TaskEngine engine = engine();
+            TaskEngine.Occurrence occurrence = engine.occurrence(taskId, date, System.currentTimeMillis());
+            if (series && !occurrence.task.recurring()) series = false;
+            if (series ? engine.seriesCancelled(taskId) : engine.cancelled(taskId, date)) return;
+            append(target, new TaskAction(UUID.randomUUID().toString(), taskId,
+                    series ? TaskAction.Kind.CANCEL_SERIES : TaskAction.Kind.CANCEL_ONCE,
+                    date, System.currentTimeMillis(), "", "", List.of(), null), true);
+            return;
+        }
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (authority) {
                 Target target = target(); requireDom(target);
@@ -156,6 +196,13 @@ public final class TaskRepository {
     }
 
     private void append(Target target, TaskAction action, boolean dom) throws Exception {
+        if (internal != null) {
+            if (!target.scope.equals(target().scope) || dom != isDom()) throw new SecurityException("Internal task role changed");
+            if (dom) requireDom(target); else requireSub(target);
+            if (action.kind == TaskAction.Kind.CREATE && !schedulingZone().equals(action.definition.zone))
+                throw new IllegalStateException("Timezone changed; reload the schedule");
+            internal.append(internalGeneration, internalController, action, dom); return;
+        }
         synchronized (SubFeaturePolicy.LOCK) {
             synchronized (authority) {
                 Target live = target();
@@ -178,6 +225,7 @@ public final class TaskRepository {
         }
     }
     private void requireDom(Target target) {
+        if (internal != null && internalSubView) throw new SecurityException("Internal author view required");
         if (!supported()) throw new SecurityException("Update both paired devices to use Tasks");
         if (!domSession(person) || !ControllerPinManager.hasCredentials(context)
                 || (target.peer != null && target.peer.localRole != RemoteProtocol.Role.DOM)
@@ -185,21 +233,32 @@ public final class TaskRepository {
             throw new SecurityException("Task author access required");
     }
     private void requireSub(Target target) {
+        if (internal != null) {
+            target();
+            if (!internalSubView) throw new SecurityException("Internal Sub view required");
+            return;
+        }
         if (!person.isLocal() || DeviceRolePreferences.isDomWorkspace(context)
                 || ControllerPinManager.isDomModeActive()
                 || (target.peer != null && target.peer.localRole != RemoteProtocol.Role.SUB))
             throw new SecurityException("Sub access required");
     }
     private void requireMedia(Target target, List<TaskAttachment> attachments) throws Exception {
-        RemoteAssets assets = runtime().assets(target.scope);
-        for (TaskAttachment attachment : attachments)
+        RemoteAssets assets = internal != null ? internal.assets(internalGeneration, internalController) : runtime().assets(target.scope);
+        for (TaskAttachment attachment : attachments) {
             if (!assets.isComplete(attachment.hash) || assets.length(attachment.hash) != attachment.length)
                 throw new IllegalArgumentException("Attachment is not ready");
+            if (internal != null) internal.seal(attachment, internalGeneration, internalController);
+        }
     }
     public TaskAttachment importMedia(Uri uri) throws Exception {
         Target target = target();
         if (isDom()) requireDom(target); else requireSub(target);
         if (!allowed()) throw new SecurityException("Tasks are disabled");
+        if (internal != null) {
+            TaskAttachment imported = TaskMedia.importMedia(context, uri, internal.assets(internalGeneration, internalController), internal.temporaryDirectory());
+            internal.seal(imported, internalGeneration, internalController); target(); return imported;
+        }
         return TaskMedia.importMedia(context, uri, runtime().assets(target.scope));
     }
     public InputStream openMedia(TaskAttachment attachment) throws Exception {
@@ -207,12 +266,12 @@ public final class TaskRepository {
         if (!allowed()) throw new SecurityException("Tasks are disabled");
         // A caller must name an attachment actually visible in this relationship's projection.
         if (!TaskMedia.references(engine()).containsKey(attachment.hash)) throw new SecurityException("Unreferenced task attachment");
-        return runtime().assets(target.scope).open(attachment.hash);
+        return (internal != null ? internal.assets(internalGeneration, internalController) : runtime().assets(target.scope)).open(attachment.hash);
     }
     public File mediaFile(TaskAttachment attachment) throws Exception {
         Target target = target();
         try (InputStream ignored = openMedia(attachment)) {
-            return runtime().assets(target.scope).finish(attachment.hash);
+            return (internal != null ? internal.assets(internalGeneration, internalController) : runtime().assets(target.scope)).finish(attachment.hash);
         }
     }
 }

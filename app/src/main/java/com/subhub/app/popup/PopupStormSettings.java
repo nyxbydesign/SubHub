@@ -124,7 +124,14 @@ public final class PopupStormSettings {
     }
 
     public static PopupStormSettings load(Context context) {
-        return new PopupStormSettings(preferences(context), com.subhub.app.security.SubFeaturePolicy.allowed(context, "popup"));
+        boolean internalEditor = com.subhub.app.configuration.FeatureEditorSession.internal(context.getApplicationContext());
+        return new PopupStormSettings(preferences(context), internalEditor
+                || com.subhub.app.security.SubFeaturePolicy.allowed(context, "popup"));
+    }
+
+    /** Immutable configuration only. This does not grant window, consent or runtime authority. */
+    public static PopupStormSettings forPreferences(SharedPreferences configuration) {
+        return new PopupStormSettings(java.util.Objects.requireNonNull(configuration), true);
     }
 
     public boolean isEnabled() { return enabled; }

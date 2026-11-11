@@ -56,7 +56,7 @@ public final class CensorPresetsActivity extends PreferencePage {
         TextView edit = PrimaryHeader.editLockButton(page);
         ControllerEditMode.renderButton(this, edit);
         edit.setOnClickListener(view -> {
-            if (FeatureEditorSession.preview(this)) return;
+            if (FeatureEditorSession.remote(this) || FeatureEditorSession.preview(this)) return;
             if (ControllerPinManager.isSessionUnlocked()) {
                 ControllerPinManager.enterSubMode();
                 render();
@@ -183,8 +183,9 @@ public final class CensorPresetsActivity extends PreferencePage {
         dialog.show();
     }
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview always renders its synthetic source, never restored editable widget state.
-        if (!FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
+        // Retain raw input only for the same current internal draft; stale widget bundles cannot write newer state.
+        if ((!FeatureEditorSession.internal(this) || FeatureEditorSession.restoreInternalWidgets(this, state))
+                && !FeatureEditorSession.preview(this)) super.onRestoreInstanceState(state);
     }
 
 }

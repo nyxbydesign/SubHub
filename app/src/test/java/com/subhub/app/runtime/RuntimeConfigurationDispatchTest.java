@@ -16,6 +16,116 @@ import org.junit.Test;
 
 /** Real module/owner separation; persistence failures never stand in for an application receipt. */
 public final class RuntimeConfigurationDispatchTest {
+    @Test public void acknowledgmentFollowsJournalAckBeforePublicationAndEffectsReopen() {
+        Queue owner = new Queue(), modules = new Queue(); Fixture f = new Fixture(owner);
+        CompletableFuture<ActiveRuntimeCoordinator.Result> result = f.apply(3, modules);
+        f.onAcknowledged = value -> {
+            assertEquals("revision3", value);
+            assertEquals(3, f.backend.record.appliedConfigurationRevision);
+            assertEquals(List.of("revision3"), f.values);
+            assertEquals("initial", f.execution.configuration());
+            assertEquals(2, f.execution.appliedConfigurationRevision());
+            assertFalse(result.isDone());
+            assertFalse(f.execution.runEffect(() -> fail("Effect crossed acknowledgment")));
+        };
+        owner.next(); assertTrue(f.acknowledgments.isEmpty());
+        modules.next(); assertTrue(f.acknowledgments.isEmpty());
+        owner.next(); assertEquals(OK, result.join());
+        assertEquals(List.of("revision3"), f.acknowledgments);
+        assertEquals("revision3", f.execution.configuration());
+        assertTrue(f.execution.runEffect(() -> { }));
+    }
+
+    @Test public void acknowledgmentCannotReenterConfigurationOrOrdinaryEffects() {
+        Queue owner = new Queue(), modules = new Queue(); Fixture f = new Fixture(owner);
+        f.onAcknowledged = value -> {
+            assertEquals(NOT_READY, f.apply(4, modules).join());
+            assertEquals(NOT_READY, f.execution.applyConfiguration("generation", 4, "nested"));
+            assertFalse(f.execution.runEffect(() -> fail("Nested acknowledgment effect")));
+        };
+        CompletableFuture<ActiveRuntimeCoordinator.Result> result = f.apply(3, modules);
+        owner.next(); modules.next(); owner.next(); assertEquals(OK, result.join());
+        assertEquals(List.of("revision3"), f.acknowledgments);
+        assertEquals(3, f.execution.appliedConfigurationRevision());
+    }
+
+    @Test public void partialAcknowledgmentFailureFencesWithoutPublishingUiSuccess() {
+        Queue owner = new Queue(), modules = new Queue();
+        Fixture f = new Fixture(owner, Set.of("one", "two", "three"));
+        f.onAcknowledged = value -> {
+            if (f.acknowledgments.size() == 2) throw new IllegalStateException("Accounting facts rejected");
+        };
+        CompletableFuture<ActiveRuntimeCoordinator.Result> result = f.apply(3, modules);
+        owner.next(); modules.next(); owner.drain();
+        assertThrows(CompletionException.class, result::join);
+        assertEquals(3, f.values.size()); assertEquals(2, f.acknowledgments.size());
+        assertEquals(3, f.backend.record.appliedConfigurationRevision);
+        assertEquals(2, f.execution.appliedConfigurationRevision());
+        assertEquals("initial", f.execution.configuration()); assertEquals(STOPPING, f.backend.record.phase);
+        assertFalse(f.execution.runEffect(() -> fail("Partial acknowledgment continued")));
+        assertNotNull(f.close.get()); assertEquals(OCCUPIED, f.admit().result);
+    }
+
+    @Test public void stopInsideAcknowledgmentSkipsLaterCallbacksAndPublication() {
+        Queue owner = new Queue(), modules = new Queue(); Fixture f = new Fixture(owner, Set.of("one", "two"));
+        f.onAcknowledged = value -> { f.execution.requestStop(); assertNull(f.close.get()); };
+        CompletableFuture<ActiveRuntimeCoordinator.Result> result = f.apply(3, modules);
+        owner.next(); modules.next(); owner.drain();
+        assertEquals(STALE_LEASE, result.join()); assertEquals(1, f.acknowledgments.size());
+        assertEquals(3, f.backend.record.appliedConfigurationRevision);
+        assertEquals(2, f.execution.appliedConfigurationRevision()); assertNotNull(f.close.get());
+    }
+
+    @Test public void synchronousPathAcknowledgesBeforePublicationAndRejectsNestedEffects() {
+        Fixture f = new Fixture(Runnable::run);
+        f.onAcknowledged = value -> {
+            assertEquals(3, f.backend.record.appliedConfigurationRevision);
+            assertEquals("initial", f.execution.configuration());
+            assertFalse(f.execution.runEffect(() -> fail("Nested synchronous acknowledgment effect")));
+            assertEquals(NOT_READY, f.execution.applyConfiguration("generation", 4, "nested"));
+        };
+        assertEquals(OK, f.execution.applyConfiguration("generation", 3, "next"));
+        assertEquals(List.of("next"), f.acknowledgments); assertEquals("next", f.execution.configuration());
+    }
+
+    @Test public void synchronousAcknowledgmentFailureRetainsOldPresentationAndStops() {
+        Fixture f = new Fixture(Runnable::run);
+        f.onAcknowledged = value -> { throw new IllegalStateException("Accounting acknowledgment failed"); };
+        assertThrows(IllegalStateException.class, () -> f.execution.applyConfiguration("generation", 3, "next"));
+        assertEquals(3, f.backend.record.appliedConfigurationRevision); assertEquals(STOPPING, f.backend.record.phase);
+        assertEquals(2, f.execution.appliedConfigurationRevision()); assertEquals("initial", f.execution.configuration());
+        assertFalse(f.execution.runEffect(() -> fail("Failed acknowledgment continued")));
+    }
+
+    @Test public void blockedAcknowledgmentKeepsPermitAndDoesNotBlockStop() throws Exception {
+        ExecutorService worker = Executors.newSingleThreadExecutor(); Queue modules = new Queue();
+        Fixture f = new Fixture(worker); CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicReference<Thread> ownerThread = new AtomicReference<>();
+        worker.submit(() -> ownerThread.set(Thread.currentThread())).get(2, TimeUnit.SECONDS);
+        f.onAcknowledged = value -> {
+            assertSame(ownerThread.get(), Thread.currentThread());
+            entered.countDown(); await(release);
+        };
+        try {
+            CompletableFuture<ActiveRuntimeCoordinator.Result> result = f.apply(3, modules);
+            worker.submit(() -> { }).get(2, TimeUnit.SECONDS); modules.next(); await(entered);
+            nonblocking(() -> {
+                assertFalse(f.execution.runEffect(() -> fail("Effect crossed blocked acknowledgment")));
+                assertEquals(NOT_READY, f.execution.requestStop());
+            });
+            assertFalse(result.isDone()); assertNull(f.close.get());
+            assertEquals(OCCUPIED, f.admit().result);
+            assertEquals(2, f.execution.appliedConfigurationRevision());
+            release.countDown(); assertEquals(STALE_LEASE, result.get(2, TimeUnit.SECONDS));
+            worker.submit(() -> { }).get(2, TimeUnit.SECONDS);
+            assertNotNull(f.close.get()); assertEquals(STOPPING, f.backend.record.phase);
+            f.close.get().run(); worker.submit(() -> { }).get(2, TimeUnit.SECONDS);
+            worker.submit(() -> { }).get(2, TimeUnit.SECONDS); assertEquals(IDLE, f.backend.record.phase);
+        } finally {
+            release.countDown(); worker.shutdownNow(); assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     @Test public void prepareModulesAndAckRunOnTheirExplicitExecutors() {
         Queue owner = new Queue(), modules = new Queue(); Fixture f = new Fixture(owner);
         int writes = f.backend.writes;
@@ -96,6 +206,7 @@ public final class RuntimeConfigurationDispatchTest {
         owner.next(); modules.next(); f.backend.next = UNCERTAIN; owner.drain();
         assertEquals(QUARANTINED, result.join()); assertEquals(2, f.execution.appliedConfigurationRevision());
         assertTrue(f.coordinator.observe().quarantined);
+        assertTrue(f.acknowledgments.isEmpty());
         assertFalse(f.execution.runEffect(() -> fail("Unknown commit permitted effect")));
         f.close.get().run(); owner.drain(); assertEquals(QUARANTINED, f.admit().result);
     }
@@ -132,6 +243,7 @@ public final class RuntimeConfigurationDispatchTest {
         assertEquals(PERSISTENCE_FAILED, result.join());
         assertEquals(2, f.execution.appliedConfigurationRevision()); assertEquals("initial", f.execution.configuration());
         assertEquals(3, f.backend.record.savedConfigurationRevision); assertEquals(STOPPING, f.backend.record.phase);
+        assertTrue(f.acknowledgments.isEmpty());
         assertFalse(f.execution.runEffect(() -> fail("Unacknowledged settings continued")));
     }
 
@@ -141,6 +253,7 @@ public final class RuntimeConfigurationDispatchTest {
         assertTrue(owner.empty());
         CompletableFuture<ActiveRuntimeCoordinator.Result> unchanged = f.apply(2, modules); owner.next();
         assertEquals(OK, unchanged.join()); assertTrue(modules.empty());
+        assertTrue(f.acknowledgments.isEmpty());
     }
 
     @Test public void rejectedModuleDispatchIsNotInventedCompletion() {
@@ -277,8 +390,10 @@ public final class RuntimeConfigurationDispatchTest {
                 authority, () -> ActiveRuntimeCoordinator.Occupancy.CLEAR, UUID.randomUUID().toString());
         final AtomicReference<Runnable> close = new AtomicReference<>();
         final List<String> values = new ArrayList<>(); final RuntimeExecution<String> execution;
+        final List<String> acknowledgments = new ArrayList<>();
         final RuntimeLease lease; final Set<String> required;
         volatile Consumer<String> onModule = ignored -> { };
+        volatile Consumer<String> onAcknowledged = ignored -> { };
         Fixture(Executor worker) { this(worker, Set.of("renderer")); }
         Fixture(Executor worker, Set<String> required) {
             this.required = required;
@@ -291,7 +406,10 @@ public final class RuntimeConfigurationDispatchTest {
             for (String name : required) {
                 RuntimeExecution<String>.Component component = execution.registerComponent(name);
                 component.installShutdown(close::set);
-                component.installConfigurationReceiver(value -> { values.add(value); onModule.accept(value); });
+                component.installConfigurationReceiver(new RuntimeExecution.ConfigurationReceiver<>() {
+                    @Override public void apply(String value) { values.add(value); onModule.accept(value); }
+                    @Override public void acknowledged(String value) { acknowledgments.add(value); onAcknowledged.accept(value); }
+                });
                 assertEquals(OK, component.ready());
             }
             assertEquals(OK, coordinator.activate(lease));

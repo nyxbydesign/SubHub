@@ -209,7 +209,7 @@ public final class InternalStorageChecks {
             FileInternalSubBackend first = FileInternalSubBackend.createNew(parent.toFile(), PROFILE, CONFIG);
             FileInternalSubBackend second = FileInternalSubBackend.openExisting(parent.toFile());
             InternalSubRecord initial = first.read();
-            InternalSubRecord a = new InternalSubRecord(initial.targetId, UUID.randomUUID().toString(), 1, 0, true, PROFILE, CONFIG);
+            InternalSubRecord a = new InternalSubRecord(initial.targetId, UUID.randomUUID().toString(), 1, 0, true, 1000L, PROFILE, CONFIG);
             InternalSubRecord b = new InternalSubRecord(initial.targetId, initial.generation, 1, 0, false,
                     new InternalProfile("Changed", "", "", "", 0), CONFIG);
             CountDownLatch start = new CountDownLatch(1);

@@ -6,6 +6,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -16,7 +17,6 @@ import com.subhub.app.stats.AchievementManager;
 import com.subhub.app.stats.StatsRepository;
 
 import java.security.SecureRandom;
-import java.util.Collections;
 import java.util.List;
 
 /** One touch-through accessibility overlay used only while an assigned app is protected. */
@@ -29,24 +29,39 @@ public final class SubliminalOverlayController implements AutoCloseable {
     private final SecureRandom random = new SecureRandom();
     private final FrameLayout root;
     private final TextView message;
-    private final StatsRepository stats;
-    private final SubliminalSettingsRepository repository;
-    private SubliminalSettings settings;
-    private List<String> phrases = Collections.emptyList();
-    private boolean eligible;
-    private boolean added;
-    private String lastPhrase;
+    /** The runtime implementation holds its counted effect permit through the entire callback. */
+    public interface Effects {
+        boolean run(Runnable effect);
+        void recordImpression();
+        /** Must be a lock-free capability observation, not a registry/journal query. */
+        default boolean revoked() { return false; }
+        default void failed() { }
+    }
 
-    private final Runnable showNext = this::showNextMessage;
+    private final Effects effects;
+    private SubliminalSettingsRepository repository;
+    private SubliminalSettings settings;
+    private List<String> phrases;
+    private final WhisperLifecycle lifetime;
+    private final Object apply = new Object(), show = new Object(), display = new Object(), fade = new Object();
+    private boolean eligible;
+    private String lastPhrase;
+    private long displayStarted;
 
     public SubliminalOverlayController(Context context) {
+        this(context, new SubliminalSettingsRepository(context), deviceEffects(context));
+    }
+
+    /** Window ownership and data/accounting are deliberately separate dependencies. */
+    public SubliminalOverlayController(Context context, SubliminalSettingsRepository repository, Effects effects) {
+        requireMain();
         // TYPE_ACCESSIBILITY_OVERLAY needs the AccessibilityService's window token. Using the
         // application context loses that token and can abort the event which activates censoring.
         Context windowContext = context;
         this.context = context.getApplicationContext();
         windows = windowContext.getSystemService(WindowManager.class);
-        stats = new StatsRepository(this.context);
-        repository = new SubliminalSettingsRepository(this.context);
+        this.effects = java.util.Objects.requireNonNull(effects);
+        this.repository = java.util.Objects.requireNonNull(repository);
         settings = repository.load();
         phrases = repository.phrases(settings);
 
@@ -61,29 +76,103 @@ public final class SubliminalOverlayController implements AutoCloseable {
         message.setShadowLayer(dp(3), 0f, dp(1), Color.BLACK);
         root.addView(message, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        lifetime = new WhisperLifecycle(new WhisperLifecycle.Effects() {
+            @Override public boolean run(Runnable effect) { return effects.run(effect); }
+            @Override public boolean revoked() { return effects.revoked(); }
+            @Override public void failed() { effects.failed(); }
+        }, new WhisperLifecycle.Queue() {
+            @Override public boolean post(Runnable callback, long delay) {
+                return main.postDelayed(callback, delay);
+            }
+            @Override public void remove(Runnable callback) { main.removeCallbacks(callback); }
+        }, new WhisperLifecycle.Window() {
+            @Override public void add() { addWindow(); }
+            @Override public boolean attached() {
+                return root.isAttachedToWindow() || root.getParent() != null;
+            }
+            @Override public void remove() {
+                if (windows == null) throw new IllegalStateException("Whisper window manager unavailable");
+                windows.removeViewImmediate(root);
+            }
+            @Override public void hide() { message.setAlpha(0f); }
+        });
     }
 
-    public void updateSettings() {
-        settings = repository.load();
-        phrases = repository.phrases(settings);
-        message.setTextSize(settings.getTextSizeSp());
-        if (phrases.isEmpty()) hideAndUnschedule();
-        else if (eligible) scheduleNext(false);
+    private static Effects deviceEffects(Context context) {
+        Context application = context.getApplicationContext();
+        StatsRepository statistics = new StatsRepository(application);
+        return new Effects() {
+            @Override public boolean run(Runnable effect) { effect.run(); return true; }
+            @Override public void recordImpression() {
+                statistics.recordSubliminalImpression();
+                new AchievementManager(application).checkAchievements(statistics.load());
+            }
+        };
+    }
+
+    /** All animation frames are owned callbacks, not untracked ViewPropertyAnimator end actions. */
+    private void displayMessage() {
+        if (!eligible || !lifetime.hasWindow() || phrases.isEmpty()) return;
+        placeInSafeRandomPosition();
+        message.setAlpha(0f);
+        displayStarted = SystemClock.uptimeMillis();
+        effects.recordImpression(); // Exactly one counted enqueue, inside the current effect.
+        lifetime.post(fade, this::fadeFrame, 16L);
+    }
+
+    private void fadeFrame() {
+        if (!eligible || !lifetime.hasWindow() || phrases.isEmpty()) return;
+        long elapsed = Math.max(0L, SystemClock.uptimeMillis() - displayStarted);
+        long visible = settings.getVisibleMillis();
+        float fraction;
+        if (elapsed < FADE_MILLIS) fraction = elapsed / (float) FADE_MILLIS;
+        else if (elapsed < visible - FADE_MILLIS) fraction = 1f;
+        else fraction = Math.max(0f, (visible - elapsed) / (float) FADE_MILLIS);
+        // Match the platform animator's default accelerate/decelerate interpolation.
+        float eased = (float) (0.5d - Math.cos(Math.PI * fraction) / 2d);
+        message.setAlpha(opacityAlpha(settings) * eased);
+        if (elapsed < visible) lifetime.post(fade, this::fadeFrame, Math.min(16L, visible - elapsed));
+        else scheduleNext(true);
+    }
+
+    /**
+     * True only when this snapshot was synchronously applied. Busy retains the latest request for
+     * retry; a runtime configuration receiver MUST reject false rather than acknowledge a revision.
+     */
+    public boolean updateSettings(SubliminalSettingsRepository acknowledgedRepository) {
+        requireMain();
+        if (lifetime.isClosed()) return false;
+        repository = java.util.Objects.requireNonNull(acknowledgedRepository);
+        return updateSettings();
+    }
+
+    public boolean updateSettings() {
+        requireMain();
+        if (lifetime.isClosed()) return false;
+        return lifetime.runOrRetry(apply, () -> {
+            SubliminalSettings next = repository.load();
+            List<String> nextPhrases = repository.phrases(next);
+            hideAndUnschedule();
+            settings = next;
+            phrases = nextPhrases;
+            message.setTextSize(settings.getTextSizeSp());
+            if (eligible && !phrases.isEmpty()) {
+                lifetime.ensureAdded();
+                scheduleNext(false);
+            }
+        });
     }
 
     public void setEligible(boolean value) {
-        if (eligible == value) return;
-        eligible = value;
+        requireMain();
+        if (lifetime.isClosed() || eligible == value) return;
+        eligible = value; // Desired eligibility survives busy admission and pending config updates.
         if (!eligible) hideAndUnschedule();
-        else {
-            ensureAdded();
-            updateSettings();
-            scheduleNext(false);
-        }
+        else updateSettings();
     }
 
-    private void ensureAdded() {
-        if (added || windows == null) return;
+    private void addWindow() {
+        if (windows == null) throw new IllegalStateException("Whisper window manager unavailable");
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -95,42 +184,28 @@ public final class SubliminalOverlayController implements AutoCloseable {
                 PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
         windows.addView(root, params);
-        added = true;
     }
 
     private void scheduleNext(boolean afterDisplay) {
-        main.removeCallbacks(showNext);
+        lifetime.cancel(show);
         if (!eligible || phrases.isEmpty()) return;
         long minimum = settings.getMinimumIntervalMillis();
         long maximum = Math.max(minimum, settings.getMaximumIntervalMillis());
         long delay = minimum;
-        if (maximum > minimum) {
-            delay += Math.floorMod(random.nextLong(), maximum - minimum + 1L);
-        }
+        if (maximum > minimum) delay += Math.floorMod(random.nextLong(), maximum - minimum + 1L);
         if (!afterDisplay) delay = Math.max(1_000L, delay);
-        main.postDelayed(showNext, delay);
+        lifetime.post(show, this::showNextMessage, delay);
     }
 
     private void showNextMessage() {
-        if (!eligible || phrases.isEmpty() || !added) return;
+        if (!eligible || phrases.isEmpty() || !lifetime.hasWindow()) return;
         int index = SubliminalPhraseSelection.nextIndex(phrases, lastPhrase, random);
         lastPhrase = phrases.get(index);
-        message.animate().cancel();
+        lifetime.cancel(fade);
         message.setAlpha(0f);
-        message.setText(phrases.get(index));
+        message.setText(lastPhrase);
         message.setTextSize(settings.getTextSizeSp());
-        root.post(() -> {
-            if (!eligible || !added) return;
-            placeInSafeRandomPosition();
-            float targetAlpha = opacityAlpha(settings);
-            long hold = Math.max(0L, settings.getVisibleMillis() - (FADE_MILLIS * 2L));
-            message.animate().alpha(targetAlpha).setDuration(FADE_MILLIS)
-                    .withEndAction(() -> message.animate().alpha(0f).setStartDelay(hold)
-                            .setDuration(FADE_MILLIS).withEndAction(() -> scheduleNext(true)).start())
-                    .start();
-            stats.recordSubliminalImpression();
-            new AchievementManager(context).checkAchievements(stats.load());
-        });
+        lifetime.post(display, this::displayMessage, 16L);
     }
 
     static float opacityAlpha(SubliminalSettings settings) {
@@ -161,22 +236,33 @@ public final class SubliminalOverlayController implements AutoCloseable {
     }
 
     private void hideAndUnschedule() {
-        main.removeCallbacks(showNext);
-        message.animate().cancel();
-        message.setAlpha(0f);
+        lifetime.cancel(show);
+        lifetime.cancel(display);
+        lifetime.cancel(fade);
+        lifetime.hide();
     }
 
     private int dp(int value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
 
-    @Override public void close() {
+    private static void requireMain() {
+        if (Looper.myLooper() != Looper.getMainLooper())
+            throw new IllegalStateException("Whisper windows require the main thread");
+    }
+
+    /** A runtime may release this component only after its exact window and callbacks are gone. */
+    public boolean managedResourcesDrained() { requireMain(); return lifetime.drained(); }
+
+    public void close(Runnable afterDrained) {
+        requireMain();
         eligible = false;
-        hideAndUnschedule();
-        if (added && windows != null) {
-            try { windows.removeViewImmediate(root); }
-            catch (IllegalArgumentException ignored) { }
-        }
-        added = false;
+        lifetime.close(java.util.Objects.requireNonNull(afterDrained));
+    }
+
+    @Override public void close() {
+        requireMain();
+        eligible = false;
+        lifetime.close(); // Repeated close retries uncertain teardown instead of inventing drain.
     }
 }

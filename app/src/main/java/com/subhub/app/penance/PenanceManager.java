@@ -22,7 +22,7 @@ import java.util.UUID;
  * Local, bounded penance ledger. Detection can create debt entries, but this class never initiates
  * a network request or payment by itself.
  */
-public final class PenanceManager {
+public final class PenanceManager implements PenanceRuleSettings {
     public static final String PREFS_NAME = "subhub_penance";
     public static final int DEFAULT_STRIKE_CENTS = 100;
     public static final int DEFAULT_DAILY_CAP_CENTS = 500;
@@ -107,6 +107,8 @@ public final class PenanceManager {
 
     public PenanceManager(Context context) {
         this.context = context.getApplicationContext();
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(this.context))
+            throw new SecurityException("Internal rule editors cannot construct a financial/runtime ledger");
         preferences = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         modules = new FeatureModuleManager(this.context);
         migrateRuleParticipation();
@@ -555,7 +557,7 @@ public final class PenanceManager {
     }
 
     private static boolean sourceEligible(StatsRepository.SessionStamp source, java.util.function.BooleanSupplier eligible) {
-        return (source == null || source.isCurrent()) && eligible.getAsBoolean();
+        return (source == null || source.isDeviceSession() && source.isCurrent()) && eligible.getAsBoolean();
     }
 
     private static void acknowledge(SharedPreferences.Editor edit) {

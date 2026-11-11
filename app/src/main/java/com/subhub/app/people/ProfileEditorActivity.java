@@ -14,7 +14,11 @@ import com.subhub.app.util.PreferencePage;
 /** Profile edits remain a local draft until Save; the picker grants only the selected image. */
 public final class ProfileEditorActivity extends PreferencePage {
     public static final String EXTRA_DOM = "profile_dom";
-    private boolean dom, importing;
+    private boolean dom, importing, internal, saving;
+    private InternalSubData internalData;
+    private com.subhub.app.internal.InternalSubRecord internalBase;
+    private String internalGeneration;
+    private long internalControllerRevision;
     private String avatar;
     private com.subhub.app.security.SubFeatureControls.Draft features;
     private EditText name, about, gender, age;
@@ -22,21 +26,39 @@ public final class ProfileEditorActivity extends PreferencePage {
     private TextView save, change, remove;
     private AsyncUiScope data;
     private ActivityResultLauncher<String> picker;
+    private final android.os.Handler authorityClock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable checkInternalAuthority = new Runnable() {
+        @Override public void run() {
+            if (!internal || isFinishing() || isDestroyed()) return;
+            if (!mayEdit()) { findViewById(android.R.id.content).setVisibility(View.INVISIBLE); finish(); return; }
+            authorityClock.postDelayed(this, 250);
+        }
+    };
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        dom = getIntent().getBooleanExtra(EXTRA_DOM, false);
-        if (!ProfileStore.mayEdit(this, dom)) { finish(); return; }
-        ProfileData profile = ProfileStore.load(this, dom);
+        internal = DummySubPreview.isRequested(getIntent());
+        dom = !internal && getIntent().getBooleanExtra(EXTRA_DOM, false);
+        if (internal) {
+            if (!DummySubPreview.isAllowed(this)) { finish(); return; }
+            internalData = InternalSubData.get(this); internalBase = internalData.acknowledged();
+            internalGeneration = internalBase.generation;
+            internalControllerRevision = com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+            if (state != null && state.getLong("internal_profile_base", -1) != internalBase.revision) {
+                finish(); return;
+            }
+        }
+        if (!mayEdit()) { finish(); return; }
+        ProfileData profile = loadProfile();
         avatar = state == null ? profile.avatar : state.getString("profile_avatar", profile.avatar);
         data = AsyncUiScope.forPage(this);
         picker = registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-            if (uri == null || !ProfileStore.mayEdit(this, dom)) return;
+            if (uri == null || !mayEdit()) return;
             importing = true; buttons();
             android.content.Context application = getApplicationContext();
             data.load("profile-import", () -> ProfileImages.importImage(application, uri), imported -> {
                 importing = false;
-                if (!ProfileStore.mayEdit(this, dom)) { finish(); return; }
+                if (!mayEdit()) { finish(); return; }
                 avatar = imported; renderAvatar(); buttons();
             }, failure -> {
                 importing = false; buttons(); notice(getString(R.string.profile_image_failed));
@@ -64,7 +86,7 @@ public final class ProfileEditorActivity extends PreferencePage {
         name.setTag(dom ? "profile_name:dom" : "profile_name:sub");
         name.setContentDescription(getString(dom ? R.string.profile_dom_name : R.string.profile_sub_name));
         name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileNames.MAX_LENGTH)});
-        name.setText(state == null ? ProfileNames.chosen(this, dom) : state.getString("profile_name", ""));
+        name.setText(state == null ? internal ? profile.name : ProfileNames.chosen(this, dom) : state.getString("profile_name", ""));
         com.subhub.app.util.FormRow details = new com.subhub.app.util.FormRow(this, null);
         form.addView(details, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout genderField = PersonUi.column(this), ageField = PersonUi.column(this);
@@ -90,7 +112,7 @@ public final class ProfileEditorActivity extends PreferencePage {
         about.setTag("profile_about"); about.setContentDescription(getString(R.string.profile_about_optional));
         about.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(ProfileData.MAX_ABOUT_LENGTH)});
         about.setText(state == null ? profile.about : state.getString("profile_about", profile.about));
-        if (!dom) {
+        if (!dom && !internal) {
             features = new com.subhub.app.security.SubFeatureControls.Draft(this, state);
             LinearLayout choices = card(page); choices.setTag("profile_edit_features");
             LinearLayout controls = PersonUi.column(this);
@@ -108,23 +130,28 @@ public final class ProfileEditorActivity extends PreferencePage {
 
     private void renderAvatar() {
         portrait.removeAllViews();
-        ProfileData value = new ProfileData(ProfileStore.load(this, dom).name, "", avatar);
+        ProfileData value = new ProfileData(loadProfile().name, "", avatar);
         ProfileAvatarView view = new ProfileAvatarView(this, value); view.setTag("profile_avatar_preview");
         portrait.addView(view, new LinearLayout.LayoutParams(dp(96), dp(96)));
     }
 
     private void buttons() {
         if (save == null) return;
-        save.setEnabled(!importing); change.setEnabled(!importing);
+        save.setEnabled(!importing && !saving); change.setEnabled(!importing && !saving);
         remove.setVisibility(avatar.isEmpty() ? View.GONE : View.VISIBLE);
-        remove.setEnabled(!importing);
+        remove.setEnabled(!importing && !saving);
     }
 
     private void save() {
-        if (importing || !ProfileStore.mayEdit(this, dom)) return;
+        if (importing || saving || !mayEdit()) return;
         int enteredAge;
         try { enteredAge = ProfileData.parseAge(age.getText().toString()); }
         catch (IllegalArgumentException invalid) { age.setError(getString(R.string.profile_age_invalid)); return; }
+        if (internal) {
+            saveInternal(new ProfileData(name.getText().toString(), about.getText().toString(), avatar,
+                    gender.getText().toString(), enteredAge));
+            return;
+        }
         if (!ProfileStore.save(this, dom, name.getText().toString(), about.getText().toString(), avatar,
                 gender.getText().toString(), enteredAge)) {
             notice(getString(R.string.profile_save_failed)); return;
@@ -136,12 +163,51 @@ public final class ProfileEditorActivity extends PreferencePage {
         finish();
     }
 
+    private boolean mayEdit() {
+        return internal ? internalData.ownerDataReady() && DummySubPreview.isAllowed(this)
+                && DummySubPreview.current(this, internalGeneration, internalControllerRevision)
+                : ProfileStore.mayEdit(this, dom);
+    }
+    private ProfileData loadProfile() {
+        return internal ? com.subhub.app.internal.InternalProfileAdapter.toProfileData(internalBase.profile)
+                : ProfileStore.load(this, dom);
+    }
+    private void saveInternal(ProfileData profile) {
+        saving = true; buttons();
+        InternalSubData backend = internalData;
+        com.subhub.app.internal.InternalSubRecord expected = internalBase;
+        android.content.Context physical = getApplicationContext();
+        String generation = internalGeneration; long revision = internalControllerRevision;
+        data.loadSerial("internal-profile-save", () -> {
+            return backend.await(backend.ownerData().submitEditor(generation, revision, access -> {
+                if (!expected.equals(access.record())) throw new SecurityException("Internal profile changed");
+                return com.subhub.app.internal.InternalProfileAdapter.save(backend.store, expected, profile);
+            }));
+        }, saved -> {
+            saving = false;
+            if (!mayEdit()) { finish(); return; }
+            internalBase = saved; finish();
+        }, failure -> {
+            saving = false;
+            if (!mayEdit()) { finish(); return; }
+            buttons(); notice(getString(R.string.internal_sub_save_failed));
+        });
+    }
+
     @Override protected void onResume() {
         super.onResume();
-        if (!ProfileStore.mayEdit(this, dom)) finish();
+        if (!mayEdit()) finish();
+        else if (internal) { findViewById(android.R.id.content).setVisibility(View.VISIBLE); authorityClock.post(checkInternalAuthority); }
+    }
+
+    @Override protected void onPause() {
+        authorityClock.removeCallbacks(checkInternalAuthority);
+        if (internal) findViewById(android.R.id.content).setVisibility(View.INVISIBLE);
+        super.onPause();
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        if (internal && internalBase != null) state.putLong("internal_profile_base", internalBase.revision);
         if (name != null) {
             state.putString("profile_name", name.getText().toString());
             state.putString("profile_about", about.getText().toString());

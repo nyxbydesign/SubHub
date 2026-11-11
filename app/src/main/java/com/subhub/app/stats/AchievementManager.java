@@ -38,6 +38,9 @@ public final class AchievementManager {
     private static final String KEY_UNLOCKED_AT_PREFIX = "unlocked_at.";
     private static final List<Achievement> ACHIEVEMENTS = achievements();
     private final Context context;
+    private final OwnerFacts ownerFacts;
+    private final Object unlockLock;
+    private final boolean ownerReadOnly;
     private final SharedPreferences preferences;
     private final Set<String> unlocked;
     private final AchievementRole role;
@@ -57,6 +60,7 @@ public final class AchievementManager {
 
     private AchievementManager(Context context, AchievementRole role, boolean workspaceBound) {
         this.context = context.getApplicationContext();
+        ownerFacts = null; unlockLock = UNLOCK_LOCK; ownerReadOnly = false;
         this.role = role;
         this.workspaceBound = workspaceBound;
         catalog = role == AchievementRole.DOM ? DomAchievementCatalog.all() : ACHIEVEMENTS;
@@ -65,8 +69,32 @@ public final class AchievementManager {
         unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
     }
 
+    /** Explicit owned facts. Unknown/unavailable values throw; never consult the physical device. */
+    public interface OwnerFacts {
+        boolean isAccessible();
+        long current(String achievementId);
+    }
+    static AchievementManager forOwner(SharedPreferences receipts, OwnerFacts facts) {
+        return new AchievementManager(receipts, facts, true);
+    }
+    static AchievementManager forOwnerReconciliation(SharedPreferences receipts, OwnerFacts facts) {
+        return new AchievementManager(receipts, facts, false);
+    }
+    private AchievementManager(SharedPreferences receipts, OwnerFacts facts, boolean readOnly) {
+        context = null; preferences = java.util.Objects.requireNonNull(receipts);
+        ownerFacts = java.util.Objects.requireNonNull(facts); unlockLock = new Object(); ownerReadOnly = readOnly;
+        role = AchievementRole.SUB; workspaceBound = false; catalog = ACHIEVEMENTS;
+        Set<String> stored = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
+        unlocked = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
+    }
+
+    private void requireWritableOwner() {
+        if (ownerReadOnly) throw new UnsupportedOperationException("Owned achievement views are immutable; reconcile through the owner store");
+    }
+
     public AchievementRole getRole() { return role; }
     public boolean isAccessible() {
+        if (ownerFacts != null) return ownerFacts.isAccessible();
         return workspaceBound ? role.accessible(context)
                 : com.subhub.app.security.DeviceRolePreferences.supportsSub(context);
     }
@@ -135,7 +163,8 @@ public final class AchievementManager {
     }
 
     private List<Achievement> unlock(java.util.function.Predicate<Achievement> qualifies) {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return Collections.emptyList();
             Set<String> current = preferences.getStringSet(KEY_UNLOCKED, Collections.emptySet());
             if (current != null) unlocked.addAll(current);
@@ -166,7 +195,8 @@ public final class AchievementManager {
     /** Historical eligibility updates presentation state only, never replaying product effects. */
     boolean reconcileHistory(java.util.Map<String, Long> dates, Set<String> sources, StatsSnapshot stats,
             DomStatsSnapshot aggregate) {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return false;
             String prefix = "history_v1." + role.name() + ".";
             long now = System.currentTimeMillis();
@@ -226,7 +256,8 @@ public final class AchievementManager {
     }
 
     public List<Achievement> takePendingNotifications() {
-        synchronized (UNLOCK_LOCK) {
+        requireWritableOwner();
+        synchronized (unlockLock) {
             if (!isAccessible()) return Collections.emptyList();
             Set<String> stored = preferences.getStringSet(KEY_PENDING, Collections.emptySet());
             Set<String> pending = new LinkedHashSet<>(stored == null ? Collections.emptySet() : stored);
@@ -276,6 +307,11 @@ public final class AchievementManager {
     }
 
     private long current(String id, StatsSnapshot stats, boolean observedOnly) {
+        if (ownerFacts != null && ownerFeatureFact(id)) {
+            long value = ownerFacts.current(id);
+            if (value < 0) throw new IllegalStateException("Unknown owner achievement fact");
+            return value;
+        }
         switch (id) {
             case "first_block": case "blocks_10": case "blocks_100": case "blocks_1000": case "blocks_10000":
                 return stats.getTotalBlocks();
@@ -352,6 +388,18 @@ public final class AchievementManager {
             case "subliminal_1": case "subliminal_100": case "subliminal_1000":
             case "subliminal_10000": return stats.getSubliminalImpressions();
             default: return isUnlocked(id) ? 1 : 0;
+        }
+    }
+
+    private static boolean ownerFeatureFact(String id) {
+        switch (id) {
+            case "app_mode_guardian": case "app_assignment_curator": case "limits_setter":
+            case "limits_dual_guard": case "pact_sealed": case "pact_long_haul":
+            case "hardcore_guardian": case "text_filter_enabled": case "text_filter_catalog":
+            case "wallet_keeper": case "tribute_rulesmith": case "paypal_vault": case "paid_pause":
+            case "wallet_paid_10": case "wallet_paid_100": case "wallet_paid_500": case "wallet_paid_1000":
+                return true;
+            default: return false;
         }
     }
 

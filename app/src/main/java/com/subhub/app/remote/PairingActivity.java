@@ -27,6 +27,7 @@ public final class PairingActivity extends RemotePage {
     private String operationId,operationGeneration;
     private boolean resumed,operationBusy,preparingStart,statusUnavailable;
     private com.subhub.app.util.FiveSecondBackGesture dummyBackGesture;
+    private boolean internalTogglePending;
     private long visibleRevision;
     private long selectionRevision;
     private String startingObservationKey;
@@ -45,15 +46,31 @@ public final class PairingActivity extends RemotePage {
         if(asDom?!com.subhub.app.security.DeviceRolePreferences.supportsDom(this):!com.subhub.app.security.DeviceRolePreferences.supportsSub(this)){finish();return;}
         if(directInvitation())dummyBackGesture=com.subhub.app.util.FiveSecondBackGesture.bind(
                 com.subhub.app.util.PrimaryHeader.backButton(findViewById(android.R.id.content)),
-                ()->visible()&&hasWindowFocus()&&directInvitation()
+                ()->visible()&&hasWindowFocus()&&directInvitation()&&!internalTogglePending
                         &&com.subhub.app.security.DeviceRolePreferences.supportsDom(this)
                         &&com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked(),
                 ()->{
-                    try {
-                        boolean added=com.subhub.app.people.DummySubPreview.toggle(this);
-                        Toast.makeText(this,added?R.string.dummy_sub_added:R.string.dummy_sub_removed,Toast.LENGTH_SHORT).show();
+                    if (internalTogglePending) return;
+                    internalTogglePending = true;
+                    android.content.Context app = getApplicationContext();
+                    long requestedRevision = com.subhub.app.security.ControllerPinManager.domWorkspaceRevision();
+                    com.subhub.app.util.AsyncUiScope.forPage(this).loadSerial("internal-sub-toggle", () -> {
+                        if (requestedRevision != com.subhub.app.security.ControllerPinManager.domWorkspaceRevision())
+                            throw new SecurityException("Dom workspace changed");
+                        return com.subhub.app.people.DummySubPreview.toggle(app);
+                    }, added -> {
+                        internalTogglePending = false;
+                        if (isFinishing() || isDestroyed() || !visible() || !directInvitation()
+                                || requestedRevision != com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()) return;
+                        Toast.makeText(this, added ? R.string.dummy_sub_added : R.string.dummy_sub_removed, Toast.LENGTH_SHORT).show();
                         finish();
-                    } catch(RuntimeException unavailable) { notice(R.string.remote_failure); }
+                    }, unavailable -> {
+                        internalTogglePending = false;
+                        if (visible() && directInvitation()
+                                && requestedRevision == com.subhub.app.security.ControllerPinManager.domWorkspaceRevision())
+                            notice(unavailable instanceof com.subhub.app.people.InternalVisibilityBarrier.UnavailableException
+                                    ? R.string.internal_sub_visibility_unavailable : R.string.internal_sub_save_failed);
+                    });
                 });
         if(asDom) {
             creation=new androidx.lifecycle.ViewModelProvider(this).get(InvitationCreation.class);

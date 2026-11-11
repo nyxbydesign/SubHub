@@ -7,18 +7,18 @@ import android.content.SharedPreferences;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 
-/** A local presentation flag, deliberately unrelated to identities or connections. */
+/** Explicit internal Sub routes. This identity never aliases LOCAL or a remote peer. */
 public final class DummySubPreview {
     public static final String PREFERENCES_NAME = "subhub_dummy_preview";
-    public static final PersonId ID = new PersonId("dummy_sub_preview");
+    public static final PersonId ID = PersonId.INTERNAL;
     private static final String AUTHORITY = "subhub.dummy.authority";
     private static final String REVISION = "subhub.dummy.revision";
     private static volatile String token = java.util.UUID.randomUUID().toString();
     private static final java.util.Set<String> SECTIONS = java.util.Set.of(
             "censor", "limits", "wallet", "apps", "duration", "atmosphere");
-    private static final String ENABLED = "enabled";
+    private static final String GENERATION = "subhub.dummy.generation";
     // A failed commit can update SharedPreferences' in-memory map. Never trust that map afterward.
-    private static boolean persistenceFailed;
+    private static volatile boolean persistenceFailed;
 
     private DummySubPreview() { }
 
@@ -26,32 +26,49 @@ public final class DummySubPreview {
         return ControllerPinManager.isDomWorkspaceUnlocked() && DeviceRolePreferences.supportsDom(context);
     }
 
-    public static synchronized boolean isEnabled(Context context) {
+    public static boolean isEnabled(Context context) {
         if (!authorized(context) || persistenceFailed) return false;
-        try {
-            return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).getBoolean(ENABLED, false);
-        } catch (ClassCastException invalidFlag) {
-            return false;
-        }
+        InternalSubData data = InternalSubData.peek(context);
+        try { return data != null && data.acknowledged().visible; }
+        catch (IllegalStateException unavailable) { return false; }
     }
 
-    /** Returns the resulting usable state; failed persistence always closes the preview. */
-    public static synchronized boolean toggle(Context context) {
-        if (!authorized(context)) throw new SecurityException("Dummy preview requires an unlocked Dom workspace");
-        boolean enabled = !isEnabled(context);
-        SharedPreferences preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
+    /** The Add-a-Sub gesture is the only first-provision entry; hiding preserves all owned data. */
+    public static boolean toggle(Context context) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Toggle internal data on a serialized worker");
+        if (!authorized(context)) throw new SecurityException("Internal Sub requires an unlocked Dom workspace");
+        long revision = ControllerPinManager.domWorkspaceRevision();
+        InternalSubData data = InternalSubData.provision(context);
+        com.subhub.app.internal.InternalSubRecord base = data.store.read();
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            if (!authorized(context) || revision != ControllerPinManager.domWorkspaceRevision())
+                throw new SecurityException("Dom workspace changed");
+        }
+        com.subhub.app.internal.InternalOwnerDataBroker broker = data.ownerData();
+        InternalVisibilityBarrier.Request request = new InternalVisibilityBarrier.Request(
+                base, !base.visible, revision, System.currentTimeMillis());
+        InternalVisibilityBarrier.Proof permit = data.await(InternalVisibilityBarrier.prepare(context.getApplicationContext(), request));
+        if (permit == null) throw new IllegalStateException("Visibility proof unavailable");
         persistenceFailed = true;
-        if (!preferences.edit().putBoolean(ENABLED, enabled).commit())
-            throw new IllegalStateException("Dummy preview could not be persisted");
+        // The broker completes the proof from the actual mutation result, even if this wait is interrupted.
+        com.subhub.app.internal.InternalSubRecord saved = data.await(broker.submitVisibility(permit));
         persistenceFailed = false;
         token = java.util.UUID.randomUUID().toString();
-        if (!authorized(context)) throw new SecurityException("Dom workspace changed");
-        return enabled;
+        if (!authorized(context) || revision != ControllerPinManager.domWorkspaceRevision())
+            throw new SecurityException("Dom workspace changed");
+        return saved.visible;
+    }
+
+    public static boolean current(Context context, String generation, long controllerRevision) {
+        if (!isEnabled(context) || controllerRevision != ControllerPinManager.domWorkspaceRevision()) return false;
+        try { return generation != null && generation.equals(InternalSubData.get(context).acknowledged().generation); }
+        catch (IllegalStateException unavailable) { return false; }
     }
 
     /** Reserved IDs or preview markers never fall through to live routes. */
     public static boolean isRequested(Intent intent) {
-        return intent != null && (intent.hasExtra(AUTHORITY) || intent.hasExtra(REVISION)
+        return intent != null && (intent.hasExtra(AUTHORITY) || intent.hasExtra(REVISION) || intent.hasExtra(GENERATION)
                 || ID.value().equals(intent.getStringExtra(PersonRoutes.EXTRA_PERSON_ID)));
     }
 
@@ -61,11 +78,12 @@ public final class DummySubPreview {
                 && ID.value().equals(intent.getStringExtra(PersonRoutes.EXTRA_PERSON_ID))
                 && routeMatches(activity.getClass(), intent.getStringExtra("section"))
                 && authorityFor(activity.getClass(), intent.getStringExtra("section")).equals(intent.getStringExtra(AUTHORITY))
-                && intent.getLongExtra(REVISION, -1) == ControllerPinManager.domWorkspaceRevision();
+                && current(activity, intent.getStringExtra(GENERATION), intent.getLongExtra(REVISION, -1));
     }
 
     private static String sectionFor(Class<?> destination) {
-        if (destination == PersonActivity.class) return "";
+        if (destination == PersonActivity.class || destination == ProfileEditorActivity.class
+                || destination == com.subhub.app.tasks.TasksActivity.class) return "";
         if (destination == com.subhub.app.settings.CensorPresetsActivity.class) return "censor";
         if (destination == com.subhub.app.subliminal.SubliminalSettingsActivity.class) return "subliminal";
         if (destination == com.subhub.app.popup.PopupStormActivity.class) return "popup";
@@ -86,7 +104,8 @@ public final class DummySubPreview {
     private static Intent route(Activity activity, Class<?> destination, String section) {
         return new Intent(activity, destination).putExtra(PersonRoutes.EXTRA_PERSON_ID, ID.value())
                 .putExtra(AUTHORITY, authorityFor(destination, section)).putExtra("section", section)
-                .putExtra(REVISION, ControllerPinManager.domWorkspaceRevision());
+                .putExtra(REVISION, ControllerPinManager.domWorkspaceRevision())
+                .putExtra(GENERATION, InternalSubData.get(activity).acknowledged().generation);
     }
 
     public static Intent childIntent(Activity activity, Class<?> destination) {
@@ -99,38 +118,23 @@ public final class DummySubPreview {
         if (isEnabled(activity)) activity.startActivity(route(activity, PersonActivity.class, null));
     }
 
+    /** A top-level Tasks roster supplies the exact generation it displayed, not a newly minted target. */
+    public static void openTasks(Activity activity, String generation, long controllerRevision) {
+        if (current(activity, generation, controllerRevision))
+            activity.startActivity(route(activity, com.subhub.app.tasks.TasksActivity.class, null));
+    }
+
     public static void openSection(Activity activity, String section) {
         if (isAllowed(activity) && SECTIONS.contains(section)) activity.startActivity(
                 route(activity, PersonRoutes.sectionActivity(section), section));
     }
 
-    /** Transient presentation only: never inserted into People or a relationship store. */
+    /** Internal presentation reads only acknowledged internal data and the public app catalog. */
     public static PersonSnapshot snapshot(Context context) {
-        if (!isEnabled(context)) throw new SecurityException("Preview unavailable");
-        java.util.List<PersonSnapshot.Section> sections = new java.util.ArrayList<>();
-        String[] keys = {"apps", "censor", "limits", "wallet", "atmosphere", "duration"};
-        int[] titles = {com.subhub.app.R.string.dummy_sub_apps,
-                com.subhub.app.R.string.dummy_sub_censor, com.subhub.app.R.string.dummy_sub_limits,
-                com.subhub.app.R.string.dummy_sub_wallet, com.subhub.app.R.string.atmosphere_title,
-                com.subhub.app.R.string.dummy_sub_duration};
-        java.util.List<PersonSnapshot.App> apps = java.util.List.of(
-                new PersonSnapshot.App("preview.reader", "Reader (sample)"),
-                new PersonSnapshot.App("preview.music", "Music (sample)"));
-        for (int i = 0; i < keys.length; i++) sections.add(new PersonSnapshot.Section(keys[i],
-                context.getString(titles[i]), context.getString("apps".equals(keys[i]) || "limits".equals(keys[i])
-                        ? com.subhub.app.R.string.dummy_sub_apps_examples : com.subhub.app.R.string.dummy_sub_defaults),
-                "", "apps".equals(keys[i]) ? apps : java.util.Collections.emptyList()));
-        java.util.Map<String, Boolean> consent = new java.util.LinkedHashMap<>();
-        for (String key : java.util.List.of("censor", "limits", "wallet", "subliminal", "popup")) consent.put(key, true);
-        return new PersonSnapshot(ID, context.getString(com.subhub.app.R.string.dummy_sub_title),
-                context.getString(com.subhub.app.R.string.dummy_sub_view_only), "",
-                context.getString(com.subhub.app.R.string.dummy_sub_duration_length_value),
-                PersonSnapshot.Connection.UNPAIRED, PersonSnapshot.Freshness.CURRENT, 0,
-                java.util.EnumSet.of(PersonSnapshot.Capability.VIEW_CONTRACT), sections,
-                java.util.List.of(new PersonSnapshot.Allowance("preview.reader", "Reader (sample)", 0, 45),
-                        new PersonSnapshot.Allowance("preview.music", "Music (sample)", 0, 60)),
-                "EUR", 0, 0, 0, 0, false)
-                .withProfile(new ProfileData(context.getString(com.subhub.app.R.string.dummy_sub_title),
-                        context.getString(com.subhub.app.R.string.dummy_sub_description), ""), consent);
+        if (!isEnabled(context)) throw new SecurityException("Internal Sub unavailable");
+        InternalSubData data=InternalSubData.get(context);
+        PersonSnapshot cached=data.peekPresentation();
+        if(cached!=null)return cached;
+        return data.loadPresentation(context.getApplicationContext(),data.acknowledged());
     }
 }

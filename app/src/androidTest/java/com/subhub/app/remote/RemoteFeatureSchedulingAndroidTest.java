@@ -599,11 +599,13 @@ public final class RemoteFeatureSchedulingAndroidTest {
         synchronized(com.subhub.app.stats.DailyAppUsageStore.class){usageField.set(null,ownedUsage);}
         Field sessionLockField=com.subhub.app.stats.StatsRepository.class.getDeclaredField("SESSION_LOCK");sessionLockField.setAccessible(true);
         Object sessionLock=sessionLockField.get(null);Map<Field,Object> sessionState=new LinkedHashMap<>();
+        Field deviceStateField=com.subhub.app.stats.StatsRepository.class.getDeclaredField("DEVICE_STATE");deviceStateField.setAccessible(true);
+        Object deviceState=deviceStateField.get(null);
         Field seenField=com.subhub.app.stats.StatsRepository.class.getDeclaredField("SEEN_TRACK_IDS");seenField.setAccessible(true);
         Set<Integer> seen;
         synchronized(sessionLock){
-            for(String name:List.of("sessionStartMs","sessionBlocks","activeStamp","memoryIdentity")){
-                Field field=com.subhub.app.stats.StatsRepository.class.getDeclaredField(name);field.setAccessible(true);sessionState.put(field,field.get(null));
+            for(String name:List.of("startedAt","blocks","stamp","identity","admittedIdentity")){
+                Field field=deviceState.getClass().getDeclaredField(name);field.setAccessible(true);sessionState.put(field,field.get(deviceState));
             }
             seen=new HashSet<>((Set<Integer>)seenField.get(null));
         }
@@ -631,7 +633,7 @@ public final class RemoteFeatureSchedulingAndroidTest {
             try{com.subhub.app.stats.DailyStatsStore.awaitWrites();ownedUsage.flush();}
             finally{
                 synchronized(sessionLock){
-                    for(Map.Entry<Field,Object> entry:sessionState.entrySet())entry.getKey().set(null,entry.getValue());
+                    for(Map.Entry<Field,Object> entry:sessionState.entrySet())entry.getKey().set(deviceState,entry.getValue());
                     Set<Integer> actual=(Set<Integer>)seenField.get(null);actual.clear();actual.addAll(seen);
                 }
                 synchronized(com.subhub.app.stats.DailyStatsStore.class){statsField.set(null,originalStats);}

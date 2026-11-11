@@ -58,6 +58,33 @@ public final class AppTimerManager {
             this.appUsedMillis = Math.max(0L, appUsedMillis);
             this.totalUsedMillis = Math.max(0L, totalUsedMillis);
         }
+
+        /** Actual measured owner data. Unavailable storage must throw, never supply fabricated zero. */
+        public static UsageSnapshot measured(long appUsedMillis, long totalUsedMillis) {
+            if (appUsedMillis < 0 || totalUsedMillis < 0 || appUsedMillis > totalUsedMillis)
+                throw new IllegalArgumentException("Invalid measured usage");
+            return new UsageSnapshot(appUsedMillis, totalUsedMillis);
+        }
+    }
+
+    /**
+     * Explicit internal usage provider. It owns daily rollover, retained usage and session counters
+     * in the same internal namespace. It must never call device singleton stores, remote extra-time
+     * credit, remote notifications or financial effects. A write returns only after its source
+     * delta/accounting was acknowledged; failure or uncertain writes throw and fence that provider.
+     * Runtime writers additionally hold the exact owner's effect permit through this call. Editor
+     * readers have no write capability. Any asynchronous history work has an owned drain receipt.
+     */
+    public interface OwnerUsage {
+        UsageSnapshot snapshot(String packageName, long nowMillis);
+        /** Includes the empty-string aggregate and every requested nonempty package, even at zero. */
+        Map<String, UsageSnapshot> snapshots(Set<String> packages, long nowMillis);
+        void recordUsage(String packageName, long elapsedMillis, long nowMillis);
+        void checkpointHistory(long nowMillis);
+    }
+    public static final class UsageUnavailableException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+        private UsageUnavailableException() { super("Internal usage data is not connected to this configuration editor"); }
     }
 
     /** Compact description data for the enabled apps' individual daily allowances. */
@@ -84,13 +111,19 @@ public final class AppTimerManager {
     private final boolean preview;
     private final Context context;
     private final com.subhub.app.stats.DailyAppUsageStore suppliedHistory;
+    private final OwnerUsage ownerUsage;
+    private final boolean configurationOnly;
 
     public AppTimerManager(Context context) {
         this(context,null);
     }
     AppTimerManager(Context context,com.subhub.app.stats.DailyAppUsageStore history) {
         Context application = context.getApplicationContext();
+        if (com.subhub.app.configuration.FeatureEditorSession.internal(application))
+            throw new SecurityException("Internal Limits requires its explicit owner usage provider");
         this.context = application;
+        ownerUsage = null;
+        configurationOnly = false;
         preview = com.subhub.app.configuration.FeatureEditorSession.preview(application);
         suppliedHistory=history;
         settingsPreferences = application.getSharedPreferences(
@@ -101,8 +134,22 @@ public final class AppTimerManager {
         stats = preview ? null : new StatsRepository(application);
     }
 
+    /** No Context, device statistics constructor, global history, policy lookup or peer credit. */
+    public static AppTimerManager forOwner(SharedPreferences configuration, OwnerUsage usage) {
+        return new AppTimerManager(configuration, java.util.Objects.requireNonNull(usage), false);
+    }
+    /** Editable rule values only; every measurement/runtime/history operation explicitly refuses. */
+    public static AppTimerManager forConfiguration(SharedPreferences configuration) {
+        return new AppTimerManager(configuration, null, true);
+    }
+    private AppTimerManager(SharedPreferences configuration, OwnerUsage usage, boolean configurationOnly) {
+        settingsPreferences = java.util.Objects.requireNonNull(configuration);
+        ownerUsage = usage; this.configurationOnly = configurationOnly;
+        context = null; usagePreferences = null; stats = null; suppliedHistory = null; preview = false;
+    }
+
     public Settings loadSettings() {
-        if (!com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits"))
+        if (ownerUsage == null && !configurationOnly && !com.subhub.app.security.SubFeaturePolicy.allowed(context, "limits"))
             return new Settings(false, DEFAULT_PER_APP_MINUTES, false, DEFAULT_TOTAL_MINUTES);
         return new Settings(
                 settingsPreferences.getBoolean(KEY_PER_APP_ENABLED, false),
@@ -190,10 +237,15 @@ public final class AppTimerManager {
 
     public synchronized void recordUsage(String packageName, long elapsedMillis,
             Set<String> selectedPackages, long nowMillis) {
+        requireUsage();
         if (preview) return;
         Settings settings = loadSettings();
         if (!settings.anyEnabled() || elapsedMillis <= 0L
                 || !isSelected(packageName, selectedPackages)) return;
+        if (ownerUsage != null) {
+            ownerUsage.recordUsage(packageName, elapsedMillis, nowMillis);
+            return;
+        }
         ensureCurrentDay(nowMillis);
         String packageKey = packageKey(packageName);
         long appUsed = safeAdd(usagePreferences.getLong(packageKey, 0L), elapsedMillis);
@@ -209,6 +261,8 @@ public final class AppTimerManager {
     }
 
     public synchronized UsageSnapshot snapshot(String packageName, long nowMillis) {
+        requireUsage();
+        if (ownerUsage != null) return measured(ownerUsage.snapshot(packageName == null ? "" : packageName, nowMillis));
         ensureCurrentDay(nowMillis);
         return new UsageSnapshot(
                 usagePreferences.getLong(packageKey(packageName), 0L),
@@ -217,6 +271,22 @@ public final class AppTimerManager {
 
     /** One day check and one consistent aggregate for a visible list of app budgets. */
     public synchronized Map<String, UsageSnapshot> snapshots(Set<String> packages, long nowMillis) {
+        requireUsage();
+        if (ownerUsage != null) {
+            java.util.LinkedHashSet<String> expected = new java.util.LinkedHashSet<>();
+            expected.add("");
+            if (packages != null) for (String name : packages) if (name != null && !name.isEmpty()) expected.add(name);
+            java.util.Set<String> requested = new java.util.LinkedHashSet<>(expected); requested.remove("");
+            Map<String, UsageSnapshot> loaded = java.util.Objects.requireNonNull(
+                    ownerUsage.snapshots(java.util.Collections.unmodifiableSet(requested), nowMillis));
+            if (!loaded.keySet().equals(expected)) throw new IllegalStateException("Incomplete owner usage snapshot");
+            Map<String, UsageSnapshot> result = new LinkedHashMap<>();
+            for (String name : expected) result.put(name, measured(loaded.get(name)));
+            long total = result.get("").totalUsedMillis;
+            for (UsageSnapshot row : result.values()) if (row.totalUsedMillis != total)
+                throw new IllegalStateException("Inconsistent owner usage snapshot");
+            return java.util.Collections.unmodifiableMap(result);
+        }
         ensureCurrentDay(nowMillis);
         long total = usagePreferences.getLong(KEY_TOTAL_USED, 0L);
         Map<String, UsageSnapshot> result = new LinkedHashMap<>();
@@ -234,12 +304,14 @@ public final class AppTimerManager {
 
     public synchronized LimitStatus limitStatus(String packageName,
             Set<String> selectedPackages, long nowMillis) {
+        requireUsage();
         if (preview) return LimitStatus.NONE;
         if (!isSelected(packageName, selectedPackages)) return LimitStatus.NONE;
         Settings settings = loadSettings();
         if (!settings.anyEnabled()) return LimitStatus.NONE;
         UsageSnapshot usage = snapshot(packageName, nowMillis);
-        ExtraTimeAllowance extra = com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
+        ExtraTimeAllowance extra = ownerUsage != null ? ExtraTimeAllowance.NONE
+                : com.subhub.app.remote.ExtraTimeRequests.allowance(context, packageName, nowMillis);
         if (settings.perAppEnabled
                 && usage.appUsedMillis >= extra.individualBudget(minutesToMillis(allowanceMinutes(packageName)))) {
             return LimitStatus.PER_APP;
@@ -262,6 +334,8 @@ public final class AppTimerManager {
 
     /** Keeps device tests isolated without exposing a reset control in the product UI. */
     synchronized void clearUsageForTesting() {
+        requireUsage();
+        if (ownerUsage != null) throw new UnsupportedOperationException("Owner usage cleanup belongs to its test fixture");
         if (preview) return;
         usagePreferences.edit().clear().commit();
     }
@@ -304,6 +378,8 @@ public final class AppTimerManager {
 
     /** Reconciles a durable current-day source after process restart, without waiting for more usage. */
     public synchronized void checkpointHistory(long nowMillis) {
+        requireUsage();
+        if (ownerUsage != null) { ownerUsage.checkpointHistory(nowMillis); return; }
         if (preview) return;
         ensureCurrentDay(nowMillis);
         java.util.List<com.subhub.app.stats.DailyAppUsageStore.Entry> rows=new java.util.ArrayList<>();
@@ -317,6 +393,8 @@ public final class AppTimerManager {
     }
 
     private com.subhub.app.stats.DailyAppUsageStore history() {
+        requireUsage();
+        if (ownerUsage != null) throw new IllegalStateException("Owner usage never enters device history");
         if (preview) throw new IllegalStateException("Preview has no usage history");
         return suppliedHistory==null?com.subhub.app.stats.DailyAppUsageStore.get(context):suppliedHistory;
     }
@@ -333,6 +411,13 @@ public final class AppTimerManager {
     private static String safePackage(String packageName) {
         return packageName == null ? "" : packageName.trim();
     }
+
+    private static UsageSnapshot measured(UsageSnapshot value) {
+        java.util.Objects.requireNonNull(value, "Unavailable owner usage");
+        return UsageSnapshot.measured(value.appUsedMillis, value.totalUsedMillis);
+    }
+
+    private void requireUsage() { if (configurationOnly) throw new UsageUnavailableException(); }
 
     private static String dayKey(long nowMillis) {
         return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(nowMillis));

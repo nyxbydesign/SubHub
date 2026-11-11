@@ -15,7 +15,8 @@ import com.subhub.app.util.SubHubNavigation;
 /** A selected person's contract, statistics and connection are always identity-bound. */
 public final class PersonActivity extends RolePage {
     private PersonId personId;
-    private boolean preview;
+    private boolean internal;
+    private long renderedInternalRevision = -1;
     private String section = "profile";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
@@ -32,7 +33,7 @@ public final class PersonActivity extends RolePage {
         @Override public void run() {
             if (!observing) return;
             observePerson();
-            if (observing) clock.postDelayed(this, preview ? 250 : 2000);
+            if (observing) clock.postDelayed(this, internal ? 250 : 2000);
         }
     };
 
@@ -41,7 +42,7 @@ public final class PersonActivity extends RolePage {
         if (!guardTarget()) return;
         observing = true;
         observeAppIcons();
-        clock.postDelayed(observe, preview ? 250 : 2000);
+        clock.postDelayed(observe, internal ? 250 : 2000);
     }
 
     @Override protected void onPause() {
@@ -55,7 +56,7 @@ public final class PersonActivity extends RolePage {
     @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
 
     private void observeAppIcons() {
-        if (preview || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
+        if (internal || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
         if (appIconObserver != null && provider == appIconProvider && authority == appIconAuthority) return;
@@ -78,7 +79,8 @@ public final class PersonActivity extends RolePage {
     }
 
     private void observePerson() {
-        if (!guardTarget() || preview) return;
+        if (!guardTarget()) return;
+        if (internal) { refreshInternal(false); return; }
         observeAppIcons();
         if (currentCountdown != null && personId != null && personId.isLocal()
                 && com.subhub.app.commitment.CommitmentManager.isActive(this)) {
@@ -106,7 +108,7 @@ public final class PersonActivity extends RolePage {
     }
 
     private boolean guardTarget() {
-        if (preview ? !DummySubPreview.isAllowed(this) || !DummySubPreview.ID.equals(personId)
+        if (internal ? !DummySubPreview.isAllowed(this) || !DummySubPreview.ID.equals(personId)
                 : DummySubPreview.isRequested(getIntent()) || !mayRead(this, personId)) {
             observing = false;
             stopAppIcons();
@@ -130,9 +132,9 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        preview = DummySubPreview.isRequested(getIntent());
-        if (preview && (!DummySubPreview.isAllowed(this)
-                || !FeatureEditorSession.attach(this, "duration", null))) { finish(); return; }
+        internal = DummySubPreview.isRequested(getIntent());
+        if (internal && (!DummySubPreview.isAllowed(this)
+                || !FeatureEditorSession.attach(this, "duration", state))) { finish(); return; }
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
         section = state == null ? getIntent().getStringExtra("person_section")
@@ -152,11 +154,12 @@ public final class PersonActivity extends RolePage {
     }
 
     @Override protected void onRestoreInstanceState(Bundle state) {
-        // Preview controls always come from the frozen example, never saved widget input.
-        if (!preview) super.onRestoreInstanceState(state);
+        // Raw internal fields are restored only for the same current retained draft.
+        if (!internal || FeatureEditorSession.restoreInternalWidgets(this, state)) super.onRestoreInstanceState(state);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        FeatureEditorSession.saveState(this, state);
         state.putString("person_section", section);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
@@ -165,7 +168,7 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void refresh() {
         if (!guardTarget()) return;
-        if (preview) { render(DummySubPreview.snapshot(this)); return; }
+        if (internal) { refreshInternal(true); return; }
         refreshLocalDuration();
         observeAppIcons();
         data.cancel("person-observe");
@@ -188,6 +191,31 @@ public final class PersonActivity extends RolePage {
                 && authority == People.keyholder()) { renderedSection = null; unavailable(); } });
     }
 
+    private void refreshInternal(boolean force) {
+        if (!guardTarget()) return;
+        InternalSubData backend=InternalSubData.get(this);
+        com.subhub.app.internal.InternalSubRecord record=backend.acknowledged();
+        if(!force&&renderedInternalRevision==record.revision){refreshLocalDuration();return;}
+        PersonSnapshot cached=backend.peekPresentation();
+        if(cached!=null){renderedInternalRevision=record.revision;render(cached);return;}
+        if(data.isPending("person"))return;
+        if(renderedInternalRevision<0)loading();
+        android.content.Context app=getApplicationContext();
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        data.load("person",()->{
+            if(!DummySubPreview.current(app,record.generation,controller))throw new SecurityException("Internal profile changed");
+            InternalSubData.loadIfProvisioned(app);
+            return backend.loadPresentation(app,record);
+        },person->{
+            if(!guardTarget()||!DummySubPreview.current(app,record.generation,controller))return;
+            if(backend.acknowledged().revision!=record.revision){refreshInternal(true);return;}
+            renderedInternalRevision=record.revision;render(person);
+        },failure->{
+            if(guardTarget()&&DummySubPreview.current(app,record.generation,controller)
+                    &&backend.acknowledged().revision==record.revision){renderedSection=null;unavailable();}
+        });
+    }
+
     private void render(PersonSnapshot person) {
         if (!guardTarget() || !personId.equals(person.id)) return;
         if ("stats".equals(section)) {
@@ -203,12 +231,23 @@ public final class PersonActivity extends RolePage {
             }
             if ("profile".equals(section)) {
                 title(R.string.role_profile);
-                reconcile("identity", java.util.Arrays.asList(person.profile), parent -> ProfileViews.identity(parent, person, !preview));
+                reconcile("identity", java.util.Arrays.asList(person.profile), parent -> {
+                    ProfileViews.identity(parent, person, !internal);
+                    if (internal) {
+                        boolean writable = InternalSubData.get(this).ownerDataReady();
+                        TextView edit = PersonUi.action(parent, R.string.internal_sub_edit_profile, () -> {
+                            if (guardTarget() && InternalSubData.get(this).ownerDataReady())
+                                startActivity(DummySubPreview.childIntent(this, ProfileEditorActivity.class));
+                        }, false);
+                        edit.setTag("internal_profile_edit"); edit.setEnabled(writable);
+                        if (!writable) PersonUi.text(parent, getString(R.string.internal_sub_owner_data_unavailable), false);
+                    }
+                });
                 ProfileViews.updateIdentityConnection(panels.get("identity"), person);
                 java.util.List<Object> session = new java.util.ArrayList<>(java.util.Arrays.asList(
                         person.id, person.serviceActive, person.sessionIdentity, person.sync.runtime,
-                        person.capabilities, person.sync.desiredRevision, person.sync.appliedRevision,
-                        preview ? null : People.connectionUi(), preview ? null : People.keyholder(),
+                        person.capabilities, internal ? null : person.sync.desiredRevision, internal ? null : person.sync.appliedRevision,
+                        internal ? null : People.connectionUi(), internal ? null : People.keyholder(),
                         com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()));
                 if (person.id.isLocal()) session.add(com.subhub.app.commitment.CommitmentManager.isActive(this));
                 reconcile("session", session, parent -> session(parent, person));
@@ -220,15 +259,16 @@ public final class PersonActivity extends RolePage {
                     LinearLayout destinations = PersonUi.card(parent);
                     destinations.setTag("person_destinations");
                     destination(destinations, person, "contracts", R.drawable.ic_nav_contract, R.string.role_contract);
-                    PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", preview ? null : () -> {
-                        if (guardTarget()) startActivity(new Intent(this, com.subhub.app.tasks.TasksActivity.class)
+                    PersonUi.row(destinations, R.drawable.ic_nav_tasks, getString(R.string.tasks_title), "", () -> {
+                        if (guardTarget()) startActivity(internal ? DummySubPreview.childIntent(this, com.subhub.app.tasks.TasksActivity.class)
+                                : new Intent(this, com.subhub.app.tasks.TasksActivity.class)
                                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
                 });
-                if (!preview) reconcile("activity", java.util.List.of(person.id), parent ->
+                if (!internal) reconcile("activity", java.util.List.of(person.id), parent ->
                         ActivityPreview.add(parent, person.id, 3, data, "person-recent-activity"));
             } else if ("connection".equals(section)) {
                 title(R.string.role_connection);
@@ -237,7 +277,7 @@ public final class PersonActivity extends RolePage {
                                 System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))
                         : getString(R.string.role_never_synced);
                 reconcile("connection", java.util.Arrays.asList(person.name, person.device,
-                        PersonUi.connection(this, person), observed, person.capabilities, preview ? null : People.connectionUi()), parent -> {
+                        PersonUi.connection(this, person), observed, person.capabilities, internal ? null : People.connectionUi()), parent -> {
                     PersonUi.text(parent, person.name, true);
                     PersonUi.text(parent, ProfileViews.targetDiscriminator(this, person), false)
                             .setTag("person_target:" + person.id.value());
@@ -246,12 +286,12 @@ public final class PersonActivity extends RolePage {
             } else {
                 title(R.string.role_contract);
                 java.util.List<Object> contract = PersonPresentation.contract(person);
-                java.util.Collections.addAll(contract, preview ? null : People.connectionUi(), preview ? null : People.keyholder(),
-                        preview ? null : com.subhub.app.relationships.RelationshipUi.provider(),
+                java.util.Collections.addAll(contract, internal ? null : People.connectionUi(), internal ? null : People.keyholder(),
+                        internal ? null : com.subhub.app.relationships.RelationshipUi.provider(),
                         ControllerPinManager.domWorkspaceRevision());
                 reconcile("contracts", contract, parent -> {
                     PersonUi.text(parent, person.name, true);
-                    ProfileViews.allowedFeatures(parent, person);
+                    if (!internal) ProfileViews.allowedFeatures(parent, person);
                     contracts(parent, person);
                 });
                 // Image bytes can arrive after the descriptor without changing the content signature.
@@ -265,8 +305,8 @@ public final class PersonActivity extends RolePage {
     }
 
     private void refreshLocalDuration() {
-        if (personId == null || !personId.isLocal() || body == null) return;
-        ServiceDurationView duration = body.findViewWithTag("person_duration:local");
+        if (personId == null || (!personId.isLocal() && !internal) || body == null) return;
+        ServiceDurationView duration = body.findViewWithTag("person_duration:" + personId.value());
         if (duration != null) duration.reloadIfChanged();
     }
 
@@ -313,23 +353,25 @@ public final class PersonActivity extends RolePage {
             PersonUi.text(session, person.sync.runtime == PersonSnapshot.Freshness.UNKNOWN
                     ? getString(R.string.role_unknown_data) : person.serviceLabel, false).setTag("person_service_label");
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
-            if (preview) {
+            if (internal) {
                 TextView start = PersonUi.action(session, R.string.role_start_session, () -> {}, true);
                 start.setEnabled(false);
                 start.setId(R.id.person_session_action);
                 start.setTag("person_session:" + person.id.value());
                 PersonUi.text(session, getString(R.string.role_service_duration), true);
                 ServiceDurationView duration = new ServiceDurationView(this, null,
-                        FeatureEditorSession.context(this), () -> false);
+                        FeatureEditorSession.context(this), () -> guardTarget() && FeatureEditorSession.canEdit(this, "duration"));
                 duration.setId(R.id.person_duration_control);
                 duration.setTag("person_duration:" + person.id.value());
                 duration.setHeadingVisible(false);
-                duration.setEditable(false);
+                duration.setEditable(FeatureEditorSession.canEdit(this, "duration"));
                 duration.setSaveEnabled(false);
                 session.addView(duration, new LinearLayout.LayoutParams(-1, -2));
+                FeatureEditorSession.bind(this, findViewById(android.R.id.content), "duration", duration::validateSelection);
+                PersonUi.text(session, getString(R.string.internal_sub_session_unavailable), false);
                 PersonUi.row(session, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
                         getString(R.string.dummy_sub_defaults), () -> {
-                            if (guardTarget()) DummySubPreview.openSection(this, "duration");
+                            if (guardTarget()) startActivity(FeatureEditorSession.child(this, ServiceDurationActivity.class));
                         }).setTag("person_duration");
                 return;
             }
@@ -386,7 +428,8 @@ public final class PersonActivity extends RolePage {
         }
 
         boolean editable = person.can(PersonSnapshot.Capability.EDIT_CONTRACT)
-                && (person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
+                && (internal ? FeatureEditorSession.canEdit(this, "apps")
+                        : person.id.isLocal() ? PersonRoutes.canEditLocal(this, person.id)
                         : ControllerPinManager.isDomWorkspaceUnlocked() && People.connectionUi() != null);
         LinearLayout scope = PersonUi.card(body);
         scope.setTag("person_contract_scope");
@@ -396,10 +439,10 @@ public final class PersonActivity extends RolePage {
         freshness(scope, person.sync.contract);
         PersonSnapshot.Section apps = contractSection(person, "apps");
         TextView appsTitle = PersonUi.text(scope, apps == null ? getString(R.string.person_apps_title) : apps.title, true);
-        if (!editable && !preview) appsTitle.setTag("person_apps");
+        if (!editable && !internal) appsTitle.setTag("person_apps");
         PersonUi.text(scope, apps == null ? getString(R.string.role_unknown_data) : apps.summary, false);
-        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !preview);
-        if (preview) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
+        if (apps != null && (!apps.details.isEmpty() || !apps.apps.isEmpty())) ContractAppList.add(scope, apps, !internal);
+        if (internal && !editable) PersonUi.row(scope, R.drawable.ic_settings_apps, getString(R.string.dummy_sub_apps),
                 getString(R.string.dummy_sub_defaults), () -> editSection(person, "apps")).setTag("person_apps");
         if (editable) PersonUi.action(scope, R.string.person_add_more_apps,
                 () -> editSection(person, "apps"), false).setTag("person_apps");
@@ -424,7 +467,7 @@ public final class PersonActivity extends RolePage {
             PersonSnapshot.Section value, boolean editable) {
         int icon = "apps".equals(value.key) ? R.drawable.ic_settings_apps
                 : "duration".equals(value.key) ? R.drawable.ic_nav_limits : PersonUi.icon(value.key);
-        boolean allowed = preview || (person.id.isLocal()
+        boolean allowed = internal || (person.id.isLocal()
                 ? !com.subhub.app.security.SubFeaturePolicy.FEATURES.contains(value.key) || com.subhub.app.security.SubFeaturePolicy.allowed(this, value.key)
                 : People.connectionUi() != null && People.connectionUi().canEditSection(person.id, value.key));
         boolean atmosphere = "atmosphere".equals(value.key);
@@ -432,7 +475,7 @@ public final class PersonActivity extends RolePage {
         LinearLayout row = PersonUi.row(parent, icon, value.title,
                 atmosphere ? (known ? value.summary : getString(R.string.role_unknown_data))
                         : allowed ? value.summary : getString(R.string.sub_feature_disabled),
-                (preview || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
+                (internal || editable) && allowed && (!atmosphere || known) ? () -> editSection(person, value.key) : null);
         row.setTag("apps".equals(value.key) ? "person_apps"
                 : "duration".equals(value.key) && editable ? "person_duration" : "person_section:" + value.key);
         if (atmosphere && known) {
@@ -448,7 +491,7 @@ public final class PersonActivity extends RolePage {
 
     private void editSection(PersonSnapshot person, String section) {
         if (!guardTarget() || !personId.equals(person.id)) return;
-        if (preview) { DummySubPreview.openSection(this, section); return; }
+        if (internal) { startActivity(FeatureEditorSession.child(this, PersonRoutes.sectionActivity(section))); return; }
         if (person.id.isLocal()) {
             PersonRoutes.editSection(this, person.id, section);
             return;
@@ -473,7 +516,8 @@ public final class PersonActivity extends RolePage {
         LinearLayout card = PersonUi.card(body);
         PersonUi.text(card, PersonUi.connection(this, person), true);
         PersonUi.row(card, R.drawable.ic_nav_people, getString(R.string.role_device), person.device, null);
-        if (!person.id.isLocal()) {
+        if (internal) PersonUi.text(card, getString(R.string.dummy_sub_remove_help), false);
+        if (!internal && !person.id.isLocal()) {
             PersonUi.text(card, person.lastSyncedAt > 0 ? getString(R.string.role_last_synced,
                     android.text.format.DateUtils.getRelativeTimeSpanString(person.lastSyncedAt,
                             System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS))
