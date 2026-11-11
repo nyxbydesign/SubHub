@@ -5,14 +5,17 @@ import android.content.SharedPreferences;
 
 import com.subhub.app.R;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.AppModePolicy;
 import com.subhub.app.appmode.AppTimerManager;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.text.TextSmutConfig;
 import com.subhub.app.penance.PaidPauseManager;
+import com.subhub.app.penance.InternalPenanceRules;
 import com.subhub.app.penance.PayPalCredentialStore;
 import com.subhub.app.penance.PenanceInfraction;
 import com.subhub.app.penance.PenanceManager;
 import com.subhub.app.security.HardcoreModeManager;
+import com.subhub.app.runtime.RuntimeConfiguration;
 import com.subhub.app.settings.SettingsRepository;
 
 import java.time.DayOfWeek;
@@ -73,6 +76,39 @@ public final class AchievementManager {
     public interface OwnerFacts {
         boolean isAccessible();
         long current(String achievementId);
+    }
+
+    /** Captured configuration facts for an exact INTERNAL session using visual projection. */
+    public static OwnerFacts forInternalProjection(RuntimeConfiguration image) {
+        java.util.Objects.requireNonNull(image);
+        SharedPreferences settings = image.main;
+        Set<String> selected = settings.getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Collections.emptySet());
+        int included = AppModePolicy.sanitizePackages(settings.getBoolean(AppModeManager.KEY_ALL_APPS, false)
+                ? settings.getStringSet("app_include_all_packages_v1", selected) : selected).size();
+        boolean perApp = settings.getBoolean(AppTimerManager.KEY_PER_APP_ENABLED, false);
+        boolean total = settings.getBoolean(AppTimerManager.KEY_TOTAL_ENABLED, false);
+        InternalPenanceRules rules = new InternalPenanceRules(image.penance);
+        int enabledRules = 0;
+        for (PenanceInfraction rule : PenanceInfraction.values()) {
+            if (rule != PenanceInfraction.PAID_PAUSE && rules.isInfractionEnabled(rule)) enabledRules++;
+        }
+        final int ledgerRules = enabledRules;
+        return new OwnerFacts() {
+            @Override public boolean isAccessible() { return true; }
+            @Override public long current(String id) {
+                return switch (id) {
+                    case "app_assignment_curator" -> included;
+                    case "limits_setter" -> perApp || total ? 1 : 0;
+                    case "limits_dual_guard" -> perApp && total ? 1 : 0;
+                    case "wallet_keeper" -> ledgerRules > 0 ? 1 : 0;
+                    case "tribute_rulesmith" -> ledgerRules;
+                    case "app_mode_guardian", "pact_sealed", "pact_long_haul", "hardcore_guardian",
+                            "text_filter_enabled", "text_filter_catalog", "paypal_vault", "paid_pause",
+                            "wallet_paid_10", "wallet_paid_100", "wallet_paid_500", "wallet_paid_1000" -> 0;
+                    default -> throw new IllegalArgumentException("Unknown INTERNAL achievement fact");
+                };
+            }
+        };
     }
     static AchievementManager forOwner(SharedPreferences receipts, OwnerFacts facts) {
         return new AchievementManager(receipts, facts, true);

@@ -34,6 +34,7 @@ import com.subhub.app.appmode.RuntimeSessionIdentity;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.capture.ScreenCaptureManager;
 import com.subhub.app.censor.android.CensorScreenState;
+import com.subhub.app.censor.android.OwnedLegacyCensorData;
 import com.subhub.app.commitment.CommitmentManager;
 import com.subhub.app.detection.Detection;
 import com.subhub.app.detection.DetectionEngine;
@@ -884,7 +885,8 @@ public final class ScreenCaptureService extends Service {
 
     private DisplayInfo displayInfo() {
         WindowManager manager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        DisplayMetrics metrics = getResources().getDisplayMetrics();
+        DisplayMetrics metrics = new DisplayMetrics();
+        metrics.setTo(getResources().getDisplayMetrics());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Rect bounds = manager.getMaximumWindowMetrics().getBounds();
             return new DisplayInfo(bounds.width(), bounds.height(), metrics.densityDpi);
@@ -1075,6 +1077,26 @@ public final class ScreenCaptureService extends Service {
     /** Owner-worker factory: component registration happens before any physical construction. */
     public RuntimeCaptureHost.Attachment prepareDeviceAttachment(RuntimeCaptureHost.DeviceRequest request) {
         return new DeviceProjectionAttachment(this, request);
+    }
+
+    /** Geometry and allocation for the exact neutral projection service selected by the owner. */
+    public InternalLegacyProjectionCapture prepareInternalAttachment(RuntimeCaptureHost.InternalRequest request,
+            InternalRuntimeSession session, OwnedLegacyCensorData data, OwnedLegacyCensorData.LocalNotice notice) {
+        if (request.connection.projection().service() != this || !request.connection.isConnected())
+            throw new SecurityException("Different projection service");
+        DisplayInfo display = displayInfo();
+        ExecutorService producer = Executors.newSingleThreadExecutor();
+        ExecutorService inference = Executors.newSingleThreadExecutor();
+        ExecutorService artwork = Executors.newSingleThreadExecutor();
+        try {
+            return new InternalLegacyProjectionCapture(request, session, data, notice,
+                    display.width, display.height, display.densityDpi, producer, inference, artwork);
+        } catch (RuntimeException | Error failure) {
+            producer.shutdown();
+            inference.shutdown();
+            artwork.shutdown();
+            throw failure;
+        }
     }
 
     private boolean postPipeline(Runnable action) {

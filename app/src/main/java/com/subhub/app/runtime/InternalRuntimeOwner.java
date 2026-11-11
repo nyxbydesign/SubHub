@@ -24,6 +24,7 @@ final class InternalRuntimeOwner {
     final OwnerObservation startObservation;
     final long startElapsed;
     final com.subhub.app.service.RuntimeCaptureHost.InternalResources sourceResources;
+    final com.subhub.app.censor.android.LegacyTrackIds legacyTrackIds = new com.subhub.app.censor.android.LegacyTrackIds();
     private final OwnedResourceRegistry resources;
     private final RuntimeLease lease;
     RuntimeFenceObservation firstFence() { return resources.firstFence(lease); }

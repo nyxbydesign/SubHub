@@ -694,6 +694,80 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         }
         return assembly;
     }
+
+    /** Start the real projection service only after its exact Accessibility modules acknowledge preparation. */
+    InternalAccessibilityAssembly awaitInternalProjection(InternalRuntimeOwner owner,
+            com.subhub.app.service.InternalLimitsBinding.LocalIntervention limitsNotice,
+            com.subhub.app.censor.android.OwnedLegacyCensorData.LocalNotice assessmentNotice) {
+        requireUsable();
+        Objects.requireNonNull(limitsNotice);
+        Objects.requireNonNull(assessmentNotice);
+        Binding binding = requireBinding(owner.runtime);
+        RuntimeConfiguration configuration = owner.runtime.configuration();
+        if (binding.internal != owner || binding.internalAccessibility != null
+                || !configuration.main.getBoolean(com.subhub.app.settings.FeatureModuleManager.KEY_CENSOR_ENABLED, true)
+                || SettingsRepository.forPreferences(configuration.main).loadCaptureMethod()
+                        != com.subhub.app.settings.CaptureMethod.SCREEN_RECORDING)
+            throw new SecurityException("Projection was not selected for this INTERNAL owner");
+        ActiveRuntimeCoordinator.Observation phase = coordinator.stateFor(binding.lease.identity.target);
+        if (phase == null || phase.quarantined || phase.effectsSealed
+                || phase.effectivePhase() != RuntimeOwnerStore.Phase.STARTING
+                || !binding.lease.identity.equals(phase.persisted.owner)
+                || !phase.persisted.requiredComponents.containsAll(Set.of(
+                        com.subhub.app.service.InternalLegacyProjectionCapture.COMPONENT,
+                        com.subhub.app.service.OwnedProjectionBinding.COMPONENT)))
+            throw new SecurityException("Projection components are absent from the INTERNAL start plan");
+        owner.session();
+        int sdk = android.os.Build.VERSION.SDK_INT;
+        RuntimeCaptureHost.CapturePlan pixels = new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.PROJECTION, sdk);
+        RuntimeCaptureHost.CapturePlan modules = new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES, sdk);
+        ProjectionTransport transport = awaitProjection(owner.runtime, pixels, connection ->
+                new RuntimeCaptureHost.InternalRequest(connection, pixels, owner.runtime, owner.session(),
+                        data.storage, owner.sourceResources, request -> {
+                            InternalAccessibilityAssembly exact = binding.internalAccessibility;
+                            if (exact == null || exact.session == null || !exact.prepared.isDone()
+                                    || exact.prepared.isCompletedExceptionally() || exact.prepared.isCancelled()
+                                    || !(connection.projection().service() instanceof ScreenCaptureService))
+                                throw new SecurityException("Projection arrived without its exact prepared modules");
+                            var accounting = new com.subhub.app.censor.android.OwnedLegacyCensorData(
+                                    owner.runtime, request.data, request.initialConfiguration, owner.legacyTrackIds,
+                                    com.subhub.app.stats.AchievementManager::forInternalProjection);
+                            try {
+                                var capture = ((ScreenCaptureService) connection.projection().service())
+                                        .prepareInternalAttachment(request, exact.session, accounting, assessmentNotice);
+                                bindInternalProjection(exact, capture);
+                                return capture;
+                            } catch (RuntimeException | Error failed) {
+                                accounting.close();
+                                throw failed;
+                            }
+                        }));
+        try {
+            InternalAccessibilityAssembly assembly = awaitInternalAccessibility(owner, modules, limitsNotice, null);
+            assembly.prepared.whenComplete((session, failure) -> {
+                if (failure != null) {
+                    transport.cancelBeforeLaunch();
+                    return;
+                }
+                try {
+                    if (!main.post(() -> {
+                        try {
+                            if (!transport.launch()) transport.cancelBeforeLaunch();
+                        } catch (RuntimeException | Error uncertain) {
+                            owner.runtime.requestStop();
+                        }
+                    })) transport.cancelBeforeLaunch();
+                } catch (RuntimeException | Error uncertain) {
+                    if (!transport.cancelBeforeLaunch()) owner.runtime.requestStop();
+                }
+            });
+            return assembly;
+        } catch (RuntimeException | Error failed) {
+            transport.cancelBeforeLaunch();
+            owner.runtime.requestStop();
+            throw failed;
+        }
+    }
     /** Called by the projection request factory only after its actual constructor returned. */
     void bindInternalProjection(InternalAccessibilityAssembly assembly,
             com.subhub.app.service.InternalRuntimeSession.Capture projection) {

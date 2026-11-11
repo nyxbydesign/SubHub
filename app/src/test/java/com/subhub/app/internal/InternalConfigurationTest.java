@@ -3,11 +3,20 @@ package com.subhub.app.internal;
 import android.content.SharedPreferences;
 import com.subhub.app.configuration.ConfigurationSchema;
 import com.subhub.app.people.PersonId;
+import com.subhub.app.runtime.ActiveRuntimeCoordinator;
+import com.subhub.app.runtime.RuntimeAdmissionAuthority;
+import com.subhub.app.runtime.RuntimeConfiguration;
+import com.subhub.app.runtime.RuntimeMutex;
+import com.subhub.app.runtime.RuntimeOrigin;
+import com.subhub.app.runtime.RuntimeOwnerStore;
+import com.subhub.app.runtime.RuntimeTarget;
 import com.subhub.app.settings.SettingsRepository;
+import com.subhub.app.stats.AchievementManager;
 import org.junit.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
 
@@ -45,6 +54,53 @@ public final class InternalConfigurationTest {
         f.config.flush(draft);
         assertEquals(50, frozen.getInt("censor_intensity", 0));
         assertThrows(UnsupportedOperationException.class, frozen::edit);
+    }
+
+    @Test public void projectionAchievementsUseOnlyCapturedOwnedCapabilities() {
+        Fixture f = new Fixture();
+        InternalSubRecord visible = f.storage.setVisible(f.config.read(), true, 1L);
+        InternalConfigurationStore.EditorDraft draft = f.config.edit(visible);
+        draft.preferences(SettingsRepository.PREFERENCES_NAME).edit()
+                .putStringSet("app_included_packages_v1", Set.of("com.example.reader"))
+                .putStringSet("app_include_all_packages_v1", Set.of("com.example.reader", "com.example.music"))
+                .putBoolean("app_include_all_v1", true).putBoolean("app_timer_per_app_enabled", true)
+                .putBoolean("app_timer_total_enabled", true).putBoolean("text_smut_enabled", true).apply();
+        draft.preferences(ConfigurationSchema.preferenceStore(ConfigurationSchema.WALLET)).edit()
+                .putBoolean("rule_new_detection_enabled", true).putBoolean("paid_pause_enabled", true).apply();
+        InternalSubRecord captured = f.config.flush(draft);
+        RuntimeTarget target = RuntimeTarget.internal(captured.targetId);
+        RuntimeMutex mutex = new RuntimeMutex(new Object());
+        RuntimeAdmissionAuthority authority = new RuntimeAdmissionAuthority(mutex);
+        RuntimeOwnerStore.Backend backend = new RuntimeOwnerStore.Backend() {
+            private RuntimeOwnerStore.Record stored = RuntimeOwnerStore.Record.idle(0);
+            @Override public RuntimeOwnerStore.Record read() { return stored; }
+            @Override public RuntimeOwnerStore.Outcome compareAndSet(RuntimeOwnerStore.Record expected,
+                    RuntimeOwnerStore.Record next) {
+                if (!expected.equals(stored)) return RuntimeOwnerStore.Outcome.CONFLICT;
+                stored = next;
+                return RuntimeOwnerStore.Outcome.COMMITTED;
+            }
+        };
+        ActiveRuntimeCoordinator coordinator = new ActiveRuntimeCoordinator(new RuntimeOwnerStore(mutex, backend),
+                authority, () -> ActiveRuntimeCoordinator.Occupancy.CLEAR, UUID.randomUUID().toString());
+        assertEquals(ActiveRuntimeCoordinator.Result.OK, coordinator.reconcileStartup());
+        assertTrue(authority.completeAvailability(authority.beginAvailability(target), captured.generation,
+                captured.configurationRevision, true));
+        assertTrue(authority.completeAuthorization(authority.beginAuthorization(target, RuntimeOrigin.LOCAL_UI), 1, true));
+        ActiveRuntimeCoordinator.Admission admitted = coordinator.reserve(authority.capture(target, RuntimeOrigin.LOCAL_UI),
+                Set.of("projection"));
+        assertEquals(ActiveRuntimeCoordinator.Result.OK, admitted.result);
+        AchievementManager.OwnerFacts facts = AchievementManager.forInternalProjection(
+                RuntimeConfiguration.internal(admitted.lease, f.config, captured));
+        assertEquals(2L, facts.current("app_assignment_curator"));
+        assertEquals(1L, facts.current("limits_dual_guard"));
+        assertEquals(1L, facts.current("wallet_keeper"));
+        assertEquals(0L, facts.current("paid_pause"));
+        assertEquals(0L, facts.current("wallet_paid_10"));
+        assertEquals(0L, facts.current("text_filter_enabled"));
+        draft.preferences(SettingsRepository.PREFERENCES_NAME).edit().putBoolean("app_timer_total_enabled", false).apply();
+        f.config.flush(draft);
+        assertEquals(1L, facts.current("limits_dual_guard"));
     }
 
     @Test public void unsafeReadsAndWritesNeverFallBackToRealPreferences() {
