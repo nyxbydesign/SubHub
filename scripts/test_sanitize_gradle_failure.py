@@ -1,4 +1,5 @@
 """Offline diagnostic privacy/bounds and actual CI shell exit-contract fixtures."""
+import ast
 import io
 import json
 from pathlib import Path
@@ -205,6 +206,257 @@ class GradleDiagnosticTest(unittest.TestCase):
         self.assertEqual(len(safe.TASKS), len(result["tasks"]))
 
 
+
+class JavacDiagnosticTest(unittest.TestCase):
+    report = GradleDiagnosticTest.report
+    SOURCE = b"app/src/test/java/com/subhub/app/FoundationTest.java"
+    SOURCE_LABEL = "unit_foundation"
+
+    def header(self, message=b"cannot find symbol", source=None, line=b"37"):
+        return (self.SOURCE if source is None else source) + b":" + line + b": error: " + message + b"\n"
+
+    def test_additive_schema_and_literal_allowlist_cover_all_tracked_unit_sources(self):
+        _, result = self.report(b"")
+        self.assertEqual(1, result["schema"])
+        self.assertEqual([], result["javac"])
+        self.assertEqual({"schema", "messagesOmitted", "truncated", "sanitizerFailed",
+                          "exceptionSectionSeen", "unknownException", "exceptions", "resources",
+                          "tasks", "lint", "lintSources", "javac"}, set(result))
+        module = ast.parse((ROOT / "scripts/sanitize_gradle_failure.py").read_text(encoding="utf-8"))
+        declaration = next(node.value for node in module.body if isinstance(node, ast.Assign)
+                           and any(isinstance(target, ast.Name) and target.id == "JAVAC_SOURCES"
+                                   for target in node.targets))
+        self.assertIsInstance(declaration, ast.Dict)
+        self.assertTrue(all(isinstance(node, ast.Constant) for node in declaration.keys + declaration.values))
+        self.assertEqual(len(declaration.keys), len(safe.JAVAC_SOURCES))
+        self.assertEqual(safe.JAVAC_SOURCES, ast.literal_eval(declaration))
+        tracked = subprocess.check_output(["git", "ls-files", "-z", "app/src/test/**/*.java"], cwd=ROOT)
+        self.assertEqual(set(tracked.rstrip(b"\0").split(b"\0")), set(safe.JAVAC_SOURCES))
+        self.assertGreater(len(safe.JAVAC_SOURCES), 300)
+        self.assertEqual(len(safe.JAVAC_SOURCES), len(set(safe.JAVAC_SOURCES.values())))
+        for source, label in safe.JAVAC_SOURCES.items():
+            self.assertTrue((ROOT / source.decode("ascii")).is_file())
+            self.assertRegex(label, r"^unit_[a-z0-9_]{1,59}$")
+
+    def test_every_fixed_source_maps_from_relative_and_linux_absolute_headers(self):
+        for source, label in safe.JAVAC_SOURCES.items():
+            for prefix in (b"", b"/home/private/PRIVATE_TOKEN/"):
+                with self.subTest(source=source, prefix=prefix):
+                    _, result = self.report(self.header(source=prefix + source))
+                    self.assertEqual([{"category": "cannot_find_symbol", "source": label, "line": 37}],
+                                     result["javac"])
+
+    def test_representative_javac_error_categories_never_copy_messages_or_symbols(self):
+        cases = (
+            (b"cannot find symbol", "cannot_find_symbol"),
+            (b"package private.PRIVATE_TOKEN does not exist", "missing_package"),
+            (b"incompatible types: PRIVATE_TOKEN cannot be converted to OtherPRIVATE", "incompatible_types"),
+            (b"method PRIVATE_TOKEN in class OtherPRIVATE cannot be applied to given types;", "argument_mismatch"),
+            (b"constructor PRIVATE_TOKEN in class OtherPRIVATE cannot be applied to given types;", "argument_mismatch"),
+            (b"no suitable method found for PRIVATE_TOKEN(PRIVATE_TOKEN)", "no_suitable_overload"),
+            (b"no suitable constructor found for PRIVATE_TOKEN(PRIVATE_TOKEN)", "no_suitable_overload"),
+            (b"method does not override or implement a method from a supertype", "invalid_override"),
+            (b"reference to PRIVATE_TOKEN is ambiguous", "ambiguous_reference"),
+            (b"PRIVATE_TOKEN has private access in OtherPRIVATE", "inaccessible_member"),
+            (b"PRIVATE_TOKEN has protected access in OtherPRIVATE", "inaccessible_member"),
+            (b"PRIVATE_TOKEN is not public in OtherPRIVATE; cannot be accessed from outside package", "inaccessible_type"),
+            (b"non-static method PRIVATE_TOKEN() cannot be referenced from a static context", "non_static_reference"),
+            (b"unreported exception PRIVATE_TOKEN; must be caught or declared to be thrown", "unreported_exception"),
+            (b"variable PRIVATE_TOKEN is already defined in method OtherPRIVATE()", "duplicate_definition"),
+            (b"PRIVATE_TOKEN is not abstract and does not override abstract method OtherPRIVATE() in ThirdPRIVATE", "missing_implementation"),
+            (b"PRIVATE_TOKEN is abstract; cannot be instantiated", "abstract_instantiation"),
+            (b"cannot access PRIVATE_TOKEN", "cannot_access_class"),
+            (b"missing return statement", "missing_return"),
+            (b"illegal start of expression", "syntax"),
+            (b"illegal start of type", "syntax"),
+            (b"not a statement", "syntax"),
+            (b"reached end of file while parsing", "syntax"),
+            (b"';' expected", "syntax"),
+            (b"')' expected", "syntax"),
+            (b"'}' expected", "syntax"),
+            (b"']' expected", "syntax"),
+            (b"'(' expected", "syntax"),
+            (b"'{' expected", "syntax"),
+            (b"<identifier> expected", "syntax"),
+        )
+        self.assertEqual({label for _, label in safe.JAVAC_ERRORS}, {label for _, label in cases})
+        for message, category in cases:
+            with self.subTest(category=category, message=message):
+                _, result = self.report(self.header(message))
+                self.assertEqual([{"category": category, "source": self.SOURCE_LABEL, "line": 37}],
+                                 result["javac"])
+
+    def test_multiline_symbol_overload_and_bad_class_details_are_omitted(self):
+        data = (b"> Task :app:compileDebugUnitTestJavaWithJavac\n"
+                + self.header()
+                + b"    PRIVATE_TOKEN.call(PRIVATE_TOKEN);\n                   ^\n"
+                  b"  symbol:   method PRIVATE_TOKEN(PRIVATE_TOKEN)\n"
+                  b"  location: variable PRIVATE_TOKEN of type PRIVATE_TOKEN\n"
+                + self.header(b"method PRIVATE_TOKEN in class OtherPRIVATE cannot be applied to given types;", line=b"49")
+                + b"    PRIVATE_TOKEN.call(PRIVATE_TOKEN);\n                 ^\n"
+                  b"  required: PRIVATE_TOKEN\n  found:    OtherPRIVATE\n"
+                  b"  reason: actual and formal argument lists differ in length\n"
+                + self.header(b"cannot access PRIVATE_TOKEN", line=b"63")
+                + b"  bad class file: /home/private/PRIVATE_TOKEN.class\n"
+                  b"    class file has wrong version 65.0, should be 61.0\n"
+                  b"    Please remove or make sure it appears in the correct subdirectory of the classpath.\n"
+                  b"3 errors\n> Task :app:compileDebugUnitTestJavaWithJavac FAILED\n")
+        _, result = self.report(data)
+        self.assertEqual([{"category": category, "source": self.SOURCE_LABEL, "line": number}
+                          for category, number in (("cannot_find_symbol", 37), ("argument_mismatch", 49),
+                                                   ("cannot_access_class", 63))], result["javac"])
+        self.assertEqual({"unit_java_compile": "failed"}, result["tasks"])
+
+    def test_unknown_category_keeps_fixed_source_and_unknown_source_omits_line(self):
+        for message in (PRIVATE, b"cannot find symbol PRIVATE_TOKEN", b"cannot find symbol\x1b[0m", b"", b"\xff\xfe"):
+            _, result = self.report(self.header(message))
+            self.assertEqual([{"category": "unknown", "source": self.SOURCE_LABEL, "line": 37}], result["javac"])
+        _, result = self.report(self.header(source=b"/home/private/PRIVATE_TOKEN.java"))
+        self.assertEqual([{"category": "cannot_find_symbol", "source": "unknown", "line": None}], result["javac"])
+        _, result = self.report(self.header(PRIVATE, source=b"/home/private/PRIVATE_TOKEN.java"))
+        self.assertEqual([{"category": "unknown", "source": "unknown", "line": None}], result["javac"])
+
+    def test_paths_cannot_spoof_a_source_with_traversal_controls_urls_or_suffixes(self):
+        for source in (
+            b"PRIVATE_TOKEN" + self.SOURCE, b"./" + self.SOURCE, b"../" + self.SOURCE,
+            b"/private/../" + self.SOURCE, b"/private/./" + self.SOURCE, b"/private//" + self.SOURCE,
+            b"https://private.invalid/" + self.SOURCE, b"file:///private/" + self.SOURCE,
+            b"C:\\private\\" + self.SOURCE, b"/private/\x00/" + self.SOURCE,
+            b"/private/\t/" + self.SOURCE, b"/private/\x1b[0m/" + self.SOURCE,
+            b"/private/\xff/" + self.SOURCE, b"/private/%2e%2e/" + self.SOURCE,
+            b"/private/" + self.SOURCE + b".PRIVATE.java", self.SOURCE.replace(b"/test/", b"/main/"),
+            self.SOURCE.replace(b"FoundationTest.java", b"PRIVATE_TOKEN.java"),
+        ):
+            with self.subTest(source=source):
+                _, result = self.report(self.header(source=source))
+                self.assertEqual([{"category": "cannot_find_symbol", "source": "unknown", "line": None}], result["javac"])
+
+    def test_line_numbers_are_positive_bounded_and_never_attached_to_unknown_sources(self):
+        for number, expected in ((b"1", 1), (b"999999", 999999), (b"0", None), (b"01", None),
+                                 (b"1000000", None), (b"9" * 4000, None)):
+            with self.subTest(length=len(number), expected=expected):
+                _, result = self.report(self.header(line=number))
+                self.assertEqual(expected, result["javac"][0]["line"])
+                _, result = self.report(self.header(source=b"PRIVATE_TOKEN.java", line=number))
+                self.assertIsNone(result["javac"][0]["line"])
+        for number in (b"-1", b"+1", b"1.0", b"PRIVATE_TOKEN", b"", b" 1", b"\xff"):
+            _, result = self.report(self.header(line=number))
+            self.assertEqual([], result["javac"])
+
+    def test_warnings_notes_indented_code_and_exception_section_do_not_become_javac_records(self):
+        data = (self.header().replace(b": error: ", b": warning: ")
+                + self.header().replace(b": error: ", b": Error: ")
+                + self.header().replace(b": error: ", b": note: ")
+                + b"    " + self.header() + b"\t" + self.header()
+                + b"* Exception is:\n" + self.header()
+                + b"java.lang.NullPointerException: " + PRIVATE + b"\n")
+        _, result = self.report(data)
+        self.assertEqual([], result["javac"])
+        self.assertEqual(["null_pointer"], result["exceptions"])
+        _, result = self.report(data + b"* Try:\n" + self.header())
+        self.assertEqual(1, len(result["javac"]))
+
+    def test_javac_byte_parser_handles_invalid_utf8_crlf_chunks_and_unterminated_line(self):
+        data = (self.header(b"incompatible types: \xff\xfePRIVATE_TOKEN")
+                + b"    PRIVATE_TOKEN\xff();\n         ^\n" + self.header(line=b"43").rstrip(b"\n"))
+        data = data.replace(b"\n", b"\r\n")
+        for size in (1, 7, safe.CHUNK_BYTES):
+            with self.subTest(size=size), mock.patch.object(safe, "CHUNK_BYTES", size):
+                code, result = self.report(data)
+                self.assertEqual(0, code)
+                self.assertEqual(["incompatible_types", "cannot_find_symbol"],
+                                 [record["category"] for record in result["javac"]])
+                self.assertFalse(result["truncated"])
+
+    def test_overlong_headers_and_source_lines_are_discarded_before_later_errors(self):
+        lines = (self.header(PRIVATE * safe.MAX_LINE_BYTES),
+                 self.header(source=b"/" + b"x" * safe.MAX_LINE_BYTES + b"/" + self.SOURCE),
+                 b"    " + PRIVATE * safe.MAX_LINE_BYTES + b"\n")
+        for oversized in lines:
+            with self.subTest(prefix=oversized[:20]):
+                source = io.BytesIO(oversized + self.header())
+                result = safe.summarize(source)
+                self.assertEqual(len(source.getvalue()), source.tell())
+                self.assertTrue(result["truncated"])
+                self.assertEqual([{"category": "cannot_find_symbol", "source": self.SOURCE_LABEL, "line": 37}], result["javac"])
+        _, result = self.report(self.header(PRIVATE * safe.MAX_LINE_BYTES).rstrip(b"\n"))
+        self.assertTrue(result["truncated"])
+        self.assertEqual([], result["javac"])
+
+    def test_exact_line_byte_boundary_is_inclusive(self):
+        prefix = self.header(b"").rstrip(b"\n")
+        for delta in (0, 1):
+            _, result = self.report(prefix + b"x" * (safe.MAX_LINE_BYTES - len(prefix) + delta) + b"\n")
+            self.assertEqual(bool(delta), result["truncated"])
+            self.assertEqual(0 if delta else 1, len(result["javac"]))
+
+    def test_javac_limit_deduplicates_and_drains_without_losing_other_categories(self):
+        data = self.header() * 50
+        _, result = self.report(data)
+        self.assertEqual(1, len(result["javac"]))
+        self.assertFalse(result["truncated"])
+        data += b"".join(self.header(line=str(i).encode("ascii")) for i in range(1, 50))
+        data += (b"> Task :app:compileDebugUnitTestJavaWithJavac FAILED\n* Exception is:\n"
+                 b"java.io.IOException: No space left on device\n")
+        source = io.BytesIO(data)
+        result = safe.summarize(source)
+        self.assertEqual(len(data), source.tell())
+        self.assertEqual(safe.MAX_JAVAC_DIAGNOSTICS, len(result["javac"]))
+        self.assertTrue(result["truncated"])
+        self.assertEqual(["io"], result["exceptions"])
+        self.assertEqual(["no_space"], result["resources"])
+        self.assertEqual({"unit_java_compile": "failed"}, result["tasks"])
+
+    def test_javac_parser_fault_is_private_and_keeps_draining(self):
+        source, output = io.BytesIO(self.header() + PRIVATE * safe.MAX_LINE_BYTES), io.StringIO()
+        with mock.patch.object(safe.Diagnostics, "accept_javac", side_effect=ValueError("PRIVATE_TOKEN")):
+            self.assertEqual(safe.FAILURE_EXIT, safe.emit(source, output))
+        self.assertEqual(len(source.getvalue()), source.tell())
+        self.assertNotIn("PRIVATE", output.getvalue())
+        self.assertTrue(json.loads(output.getvalue())["gradleDiagnostic"]["sanitizerFailed"])
+
+    def test_transient_read_fault_drains_and_returns_only_the_fixed_fallback(self):
+        class FaultyReader(io.BytesIO):
+            failed = False
+
+            def read(self, size=-1):
+                if not self.failed:
+                    self.failed = True
+                    raise UnicodeDecodeError("utf-8", b"PRIVATE_TOKEN", 0, 1, "PRIVATE_TOKEN")
+                return super().read(size)
+
+        source, output = FaultyReader(self.header()), io.StringIO()
+        self.assertEqual(safe.FAILURE_EXIT, safe.emit(source, output))
+        self.assertEqual(len(source.getvalue()), source.tell())
+        self.assertEqual({"gradleDiagnostic": {"schema": 1, "messagesOmitted": True, "sanitizerFailed": True}},
+                         json.loads(output.getvalue()))
+
+    def test_output_fault_returns_failure_without_forwarding_error_text(self):
+        output = mock.Mock()
+        output.write.side_effect = ValueError("PRIVATE_TOKEN")
+        source = io.BytesIO(self.header())
+        self.assertEqual(safe.FAILURE_EXIT, safe.emit(source, output))
+        self.assertEqual(len(source.getvalue()), source.tell())
+        self.assertNotIn("PRIVATE", output.write.call_args.args[0])
+
+    def test_worst_case_combined_summary_stays_small_with_javac_at_its_limit(self):
+        data = b"\n".join(b"> Task " + task + b" UP-TO-DATE" for task in safe.TASKS)
+        data += b"\n" + b"\n".join(path + b":1: Error: " + PRIVATE + b" [" + issue + b"]"
+                                  for path in safe.LINT_SOURCES for issue in safe.LINT_ISSUES)
+        sources = sorted(safe.JAVAC_SOURCES, key=lambda path: len(safe.JAVAC_SOURCES[path]), reverse=True)
+        for path in sources[:safe.MAX_JAVAC_DIAGNOSTICS]:
+            data += b"\n" + self.header(b"PRIVATE_TOKEN is not abstract and does not override abstract method PRIVATE_TOKEN()",
+                                        source=path, line=b"999999")
+        data += b"\n* Exception is:\n" + b"\n".join(name + b": " + PRIVATE for name in safe.EXCEPTIONS)
+        data += b"\n" + b"\n".join(b"java.io.IOException: " + phrase for phrase in safe.RESOURCE_MESSAGES)
+        code, result = self.report(data)
+        self.assertEqual(0, code)
+        self.assertEqual(safe.MAX_JAVAC_DIAGNOSTICS, len(result["javac"]))
+        self.assertEqual(len(safe.TASKS), len(result["tasks"]))
+        self.assertEqual(len(safe.LINT_SOURCES), len(result["lintSources"]))
+        self.assertEqual(len(safe.RESOURCE_MESSAGES), len(result["resources"]))
+
+
 class CanonicalShellTest(unittest.TestCase):
     def build_script(self):
         workflow = (ROOT / ".github/workflows/android-ci.yml").read_text(encoding="utf-8")
@@ -242,6 +494,8 @@ class CanonicalShellTest(unittest.TestCase):
             fake.write_text("#!/usr/bin/env python3\nimport json, os, signal, sys\nfrom pathlib import Path\n"
                             "with Path('calls.jsonl').open('a') as output:\n"
                             "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                            "print('app/src/test/java/com/subhub/app/FoundationTest.java:37: error: cannot find symbol', flush=True)\n"
+                            "print('    PRIVATE_TOKEN.call();\\n      ^\\n  symbol: PRIVATE_TOKEN', flush=True)\n"
                             "print('* Exception is:', flush=True)\n"
                             "sys.stderr.write('Caused by: java.lang.NullPointerException: PRIVATE_TOKEN\\n')\n"
                             "sys.stderr.flush()\n"
@@ -286,6 +540,7 @@ class CanonicalShellTest(unittest.TestCase):
                 self.assertEqual(code, actual.returncode)
                 result = json.loads(actual.stdout)["gradleDiagnostic"]
                 self.assertEqual(["null_pointer"], result["exceptions"])
+                self.assertEqual([{"category": "cannot_find_symbol", "source": "unit_foundation", "line": 37}], result["javac"])
                 self.assertTrue(result["truncated"])
 
     def test_reporter_fault_keeps_original_failure_or_fails_closed_after_success(self):
