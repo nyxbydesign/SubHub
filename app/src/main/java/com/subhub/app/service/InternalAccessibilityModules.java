@@ -105,7 +105,11 @@ public final class InternalAccessibilityModules {
                     else { prepared.completeExceptionally(new IllegalStateException("Module preparation not acknowledged")); component.failed(); }
                 } finally { readiness.close(); }
             });
-        } catch (RuntimeException | Error failure) { prepared.completeExceptionally(failure); component.failed(); }
+        } catch (RuntimeException | Error failure) {
+            com.subhub.app.runtime.RuntimeStartupDiagnostics.report(COMPONENT, failure);
+            prepared.completeExceptionally(failure);
+            component.failed();
+        }
     }
     public CompletableFuture<Void> prepared() {
         CompletableFuture<Void> response = new CompletableFuture<>();

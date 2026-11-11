@@ -7,6 +7,9 @@ import android.app.Instrumentation;
 import android.app.UiAutomation;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.widget.TextView;
@@ -15,7 +18,13 @@ import androidx.test.filters.SdkSuppress;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.Configurator;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.Until;
 import com.subhub.app.R;
+import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.censor.android.ProductTargetFixtureActivity;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.runtime.RuntimeOwnerStore;
@@ -23,6 +32,8 @@ import com.subhub.app.runtime.SQLiteRuntimeOwnerBackend;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.security.DeviceRolePreferences;
 import com.subhub.app.service.ScreenshotAccessibilityService;
+import com.subhub.app.settings.SettingsRepository;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -35,13 +46,14 @@ public final class DemoSessionHandoffAndroidTest {
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private final Context context = instrumentation.getTargetContext().getApplicationContext();
 
-    @Test public void profileStartAndEndReturnTheBoundAccessibilityService() {
+    @Test public void profileStartAndEndReturnTheBoundAccessibilityService() throws Exception {
         Assume.assumeTrue("Run only on a disposable app install",
                 "true".equals(InstrumentationRegistry.getArguments().getString("demo_handoff_fixture")));
         assertEquals("Grant notifications on the disposable guest before testing the capture handoff",
                 android.content.pm.PackageManager.PERMISSION_GRANTED,
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS));
         boolean reuse = "true".equals(InstrumentationRegistry.getArguments().getString("demo_handoff_reuse"));
+        boolean verifyCapture = "true".equals(InstrumentationRegistry.getArguments().getString("demo_handoff_capture"));
         if (reuse) {
             try (var journal = new SQLiteRuntimeOwnerBackend(context)) {
                 assertEquals(RuntimeOwnerStore.Phase.IDLE, journal.read().phase);
@@ -53,7 +65,12 @@ public final class DemoSessionHandoffAndroidTest {
         String originalEnabled = Settings.Secure.getString(resolver, Settings.Secure.ACCESSIBILITY_ENABLED);
         assertTrue(originalServices == null || originalServices.isEmpty());
         assertNotEquals("1", originalEnabled);
-        UiAutomation automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+        Configurator automationConfig = Configurator.getInstance();
+        int originalAutomationFlags = automationConfig.getUiAutomationFlags();
+        int automationFlags = (originalAutomationFlags | UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                & ~UiAutomation.FLAG_DONT_USE_ACCESSIBILITY;
+        automationConfig.setUiAutomationFlags(automationFlags);
+        UiAutomation automation = instrumentation.getUiAutomation(automationFlags);
         try {
             if (!ControllerPinManager.isConfigured(context)) assertTrue(ControllerPinManager.setPin(context, "2468"));
             assertTrue(ControllerPinManager.verify(context, "2468"));
@@ -61,6 +78,7 @@ public final class DemoSessionHandoffAndroidTest {
             OnboardingState.complete(context);
             if (reuse) InternalSubData.get(context);
             if (!DummySubPreview.isEnabled(context)) assertTrue(DummySubPreview.toggle(context));
+            if (verifyCapture) configureCaptureTarget();
             String component = new ComponentName(context, ScreenshotAccessibilityService.class).flattenToString();
             accessibilitySettings(automation, component, "1");
             await("ordinary Accessibility source to bind", ScreenshotAccessibilityService::isRunning);
@@ -81,6 +99,7 @@ public final class DemoSessionHandoffAndroidTest {
                         awaitAction(page, R.string.role_end_session);
                         assertNotNull(AppRuntimeGateway.current(context));
                         assertFalse("Legacy source must be parked during Demo", ScreenshotAccessibilityService.isRunning());
+                        if (verifyCapture && pass == 1) verifyForegroundMask(automation);
                         clickAction(page, R.string.role_end_session);
                         await("gateway and bound legacy source to restore",
                                 () -> AppRuntimeGateway.current(context) == null && ScreenshotAccessibilityService.isRunning());
@@ -89,8 +108,81 @@ public final class DemoSessionHandoffAndroidTest {
             }
             assertFalse(DummySubPreview.toggle(context));
         } finally {
-            accessibilitySettings(automation, originalServices, originalEnabled);
+            try { accessibilitySettings(automation, originalServices, originalEnabled); }
+            finally { automationConfig.setUiAutomationFlags(originalAutomationFlags); }
         }
+    }
+
+    private void configureCaptureTarget() throws Exception {
+        var data = InternalSubData.get(context);
+        var record = data.acknowledged();
+        var draft = data.configuration.edit(record);
+        draft.preferences(SettingsRepository.PREFERENCES_NAME).edit()
+                .putStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Set.of(instrumentation.getContext().getPackageName()))
+                .putBoolean("text_smut_enabled", true)
+                .putString("censor_type", "box")
+                .putInt("censor_intensity", 100)
+                .apply();
+        var saved = data.ownerData().submitEditor(record.generation, ControllerPinManager.domWorkspaceRevision(), access -> {
+            access.requireCurrent();
+            return data.configuration.flush(draft);
+        }).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        assertTrue(saved.configurationRevision > record.configurationRevision);
+    }
+
+    private void verifyForegroundMask(UiAutomation automation) {
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        String testPackage = instrumentation.getContext().getPackageName();
+        ComponentName target = new ComponentName(testPackage, ProductTargetFixtureActivity.class.getName());
+        context.startActivity(new Intent().setComponent(target)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                .putExtra("label", "porn"));
+        try {
+            var label = device.wait(Until.findObject(By.pkg(testPackage).text("porn")), 12_000);
+            assertNotNull("Synthetic target label must be foreground", label);
+            Rect bounds = label.getVisibleBounds();
+            await("Demo Censor to cover the synthetic label", () -> {
+                Bitmap screenshot = automation.takeScreenshot();
+                if (screenshot == null) return false;
+                try { return opaqueMask(screenshot, bounds); }
+                finally { screenshot.recycle(); }
+            });
+        } catch (AssertionError failure) {
+            retainCaptureFailure(automation, failure);
+            throw failure;
+        } finally { assertTrue(device.pressBack()); }
+    }
+
+    private void retainCaptureFailure(UiAutomation automation, AssertionError failure) {
+        java.io.File directory = context.getExternalFilesDir(null);
+        if (directory == null) return;
+        Bitmap screenshot = automation.takeScreenshot();
+        if (screenshot == null) return;
+        java.io.File output = new java.io.File(directory, "demo-handoff-capture-failure.png");
+        try (var stream = new java.io.FileOutputStream(output)) {
+            screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream);
+        } catch (java.io.IOException unavailable) {
+            failure.addSuppressed(unavailable);
+        } finally {
+            screenshot.recycle();
+        }
+    }
+
+    private static boolean opaqueMask(Bitmap screenshot, Rect bounds) {
+        if (bounds.width() < 12 || bounds.height() < 12 || bounds.left < 1 || bounds.top < 1
+                || bounds.right + 20 >= screenshot.getWidth() || bounds.bottom >= screenshot.getHeight()) return false;
+        int backdrop = screenshot.getPixel(bounds.right + 20, bounds.centerY());
+        if ((backdrop & 0x00ffffff) != (ProductTargetFixtureActivity.UNDERLYING & 0x00ffffff)) return false;
+        int dark = 0, samples = 0;
+        for (int y = bounds.top + 3; y < bounds.bottom - 3; y += 2) {
+            for (int x = bounds.left + 3; x < bounds.right - 3; x += 2) {
+                int pixel = screenshot.getPixel(x, y);
+                if (android.graphics.Color.red(pixel) < 40 && android.graphics.Color.green(pixel) < 40
+                        && android.graphics.Color.blue(pixel) < 40) dark++;
+                samples++;
+            }
+        }
+        return dark * 4 >= samples * 3;
     }
 
     private void accessibilitySettings(UiAutomation automation, String services, String enabled) {

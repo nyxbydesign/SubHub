@@ -129,6 +129,7 @@ final class AccessibilityLegacyPipeline {
     private static final String DIAGNOSTICS_MODE = "Accessibility screenshot";
     private volatile boolean running;
     private boolean legacyParked, legacyCaptureWindowAttempted;
+    private boolean legacySettingsChangedWhileParked;
     private volatile boolean recognitionActive;
     private static final long MIN_TEXT_REFRESH_MS = 120L;
     private static final long TEXT_CANDIDATE_CONFIRM_MS = 48L;
@@ -343,7 +344,7 @@ final class AccessibilityLegacyPipeline {
     private boolean productQualificationRoute;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener listener =
             (preferences, key) -> {
-                if (legacyParked) return;
+                if (legacyParked) { legacySettingsChangedWhileParked = true; return; }
                 if (DiagnosticsRepository.PREF_OVERLAY.equals(key)) {
                     refreshDiagnosticsOverlay();
                     return;
@@ -7390,29 +7391,33 @@ final class AccessibilityLegacyPipeline {
     
 
     /** Park only a legacy shell with no native window history and no accepted effect left. */
-    boolean parkLegacy() {
+    ScreenshotAccessibilityService.LegacyParking parkLegacy() {
         if (!running || legacyParked || managedAttachment != null || productQualificationRoute
                 || recognitionActive || legacyCaptureWindowAttempted || overlay != null
-                || nativeScreenshotRequests.get() != 0 || pipelineCallbacks.failed()
+                || pipelineCallbacks.failed()
                 || hardcoreSettingsGuard == null || !hardcoreSettingsGuard.canParkLegacy()
                 || subliminalOverlay == null || !subliminalOverlay.canParkLegacy()
-                || PopupStormManager.physicalResourcesOccupied()) return false;
+                || PopupStormManager.physicalResourcesOccupied())
+            return ScreenshotAccessibilityService.LegacyParking.BLOCKED;
         main.removeCallbacks(timerTick);
         if (idleRetirement != null) main.removeCallbacks(idleRetirement);
-        if (pipelineCallbacks.outstanding() != 0 || hasPendingScrollLookup()) {
-            main.post(timerTick);
-            return false;
+        if (nativeScreenshotRequests.get() != 0 || pipelineCallbacks.outstanding() != 0 || hasPendingScrollLookup()) {
+            main.postDelayed(timerTick, 1000L);
+            return ScreenshotAccessibilityService.LegacyParking.BUSY;
         }
         legacyParked = true;
         running = false;
-        return true;
+        return ScreenshotAccessibilityService.LegacyParking.PARKED;
     }
 
     void resumeParkedLegacy() {
         if (!legacyParked) return;
         legacyParked = false;
         running = true;
-        reloadSettings();
+        if (legacySettingsChangedWhileParked) {
+            legacySettingsChangedWhileParked = false;
+            reloadSettings();
+        }
         main.post(timerTick);
     }
 

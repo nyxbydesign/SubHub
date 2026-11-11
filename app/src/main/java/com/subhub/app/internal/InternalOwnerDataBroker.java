@@ -445,8 +445,9 @@ public final class InternalOwnerDataBroker {
             Objects.requireNonNull(execution); Objects.requireNonNull(startedAt); Objects.requireNonNull(random);
             if (!identity().equals(execution.identity()) || clockRuntime != null)
                 throw new SecurityException("Clock execution is different or already bound");
-            java.util.concurrent.atomic.AtomicReference<InternalSessionClock.State> receipt = new java.util.concurrent.atomic.AtomicReference<>();
-            if (!execution.runStartupEffect(() -> receipt.set(binding.held(OwnedResourceRegistry.Effect.STARTUP, handle -> {
+            // The serial writer already holds this owner's STARTUP permit. Clock data must not
+            // contend for the window effect lock while Accessibility components are preparing.
+            InternalSessionClock.State receipt = binding.held(OwnedResourceRegistry.Effect.STARTUP, handle -> {
                 SessionObservation observation = started;
                 if (observation == null || ended || observation.startedAt != startedAt.calendar.at
                         || !observation.zone.equals(startedAt.calendar.zone))
@@ -461,9 +462,9 @@ public final class InternalOwnerDataBroker {
                     InternalSessionClock.State clock = InternalSessionClock.begin(readClock(handle), identity(), startedAt, selection, random);
                     writeClock(handle, clock); return clock;
                 });
-            })))) throw new SecurityException("Clock startup effect refused");
+            });
             clockRuntime = execution;
-            return Objects.requireNonNull(receipt.get(), "Clock startup did not acknowledge");
+            return receipt;
         }
         private InternalSessionClock.Rules clockRules(RuntimeConfiguration expected) {
             RuntimeExecution<RuntimeConfiguration> exact = clockRuntime;

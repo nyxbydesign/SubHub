@@ -87,20 +87,24 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
         }
     }
 
+    public enum LegacyParking { PARKED, BUSY, BLOCKED }
+
     /** The factory still seals and checks every other legacy admission before provisioning. */
-    public static boolean parkLegacyForDemo(android.app.Application physical) {
+    public static LegacyParking parkLegacyForDemo(android.app.Application physical) {
         requireShellMain();
         ScreenshotAccessibilityService shell = liveShell;
-        if (shell == null) return true;
-        if (shell.getApplication() != physical || shell.managedShell) return false;
+        if (shell == null) return LegacyParking.PARKED;
+        if (shell.getApplication() != physical || shell.managedShell) return LegacyParking.BLOCKED;
         AccessibilityLegacyPipeline current = shell.pipeline;
-        if (current == null) return shell.legacyServiceWork == null;
-        if (shell.legacyServiceWork == null || !current.parkLegacy()) return false;
+        if (current == null) return shell.legacyServiceWork == null ? LegacyParking.PARKED : LegacyParking.BLOCKED;
+        if (shell.legacyServiceWork == null) return LegacyParking.BLOCKED;
+        LegacyParking parking = current.parkLegacy();
+        if (parking != LegacyParking.PARKED) return parking;
         shell.parkedLegacy = current;
         shell.pipeline = null;
         shell.legacyServiceWork.close();
         shell.legacyServiceWork = null;
-        return true;
+        return LegacyParking.PARKED;
     }
 
     public static void connectDemoSource(android.app.Application physical,

@@ -105,7 +105,10 @@ public final class InternalSessionClockBinding {
             writes.submitStartup(runtime.identity(), () -> initialized.set(data.initializeSessionClock(runtime, started, random)))
                     .whenComplete((ignored, failure) -> {
                         try {
-                            if (failure != null) { fail(failure); return; }
+                            if (failure != null) {
+                                RuntimeStartupDiagnostics.report(COMPONENT, failure);
+                                fail(failure); return;
+                            }
                             state = Objects.requireNonNull(initialized.get(), "Missing durable clock initialization");
                             if (sealed.get()) { prepared.completeExceptionally(new IllegalStateException("Clock stopped during initialization")); return; }
                             snapshot = InternalSessionClock.live(state, runtime.identity(), clock.now(), rules(acknowledged), false);

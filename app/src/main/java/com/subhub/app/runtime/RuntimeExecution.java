@@ -119,7 +119,12 @@ public class RuntimeExecution<C> {
                 Objects.requireNonNull(admitted);
                 effectDepth.set(effectDepth.get() + 1);
                 try { effect.run(); return true; }
-                catch (RuntimeException | Error failed) { requestStop(); throw failed; }
+                catch (RuntimeException | Error failed) {
+                    if (kind == OwnedResourceRegistry.Effect.STARTUP && lease.identity.target.kind == RuntimeTarget.Kind.INTERNAL)
+                        RuntimeStartupDiagnostics.report("internal_startup_effect", failed);
+                    requestStop();
+                    throw failed;
+                }
                 finally { effectDepth.set(effectDepth.get() - 1); }
             } finally { effectsRunning--; }
         } finally {

@@ -102,36 +102,28 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             return response;
         }
         Handler main = new Handler(Looper.getMainLooper());
+        long parkDeadline = android.os.SystemClock.uptimeMillis() + 2_000L;
         try {
-            if (!main.post(() -> {
-                if (response.isCancelled()) { openingDemo.set(false); return; }
-                try {
-                    if (ScreenCaptureService.legacyProjectionNeedsHandoff()
-                            || new com.subhub.app.security.HardcoreModeManager(app).isAdminActive()
-                            || !ScreenshotAccessibilityService.parkLegacyForDemo(app))
-                        throw new IllegalStateException("The current Accessibility source has not retired");
-                    host.execute(() -> {
-                        try {
-                            if (response.isCancelled()) throw new java.util.concurrent.CancellationException();
-                            var controller = ControllerPinManager.captureInternalStartWitness(app);
-                            InternalSubRecord record = host.acknowledged();
-                            if (controller.revision != specification.controllerRevision || !record.visible
-                                    || !record.generation.equals(specification.generation)
-                                    || record.configurationRevision != specification.configurationRevision
-                                    || !specification.target.equals(RuntimeTarget.internal(record.targetId)))
-                                throw new SecurityException("Demo profile or controller changed");
-                            AndroidRuntimeFactory factory = prepareAfterLegacyQuiescence(app, host);
-                            factory.installTemporaryDemo(specification, response);
-                        } catch (RuntimeException | Error unavailable) {
-                            openingDemo.set(false);
-                            main.post(() -> AppRuntimeGateway.resumeLegacyAccessibility(app));
-                            response.completeExceptionally(unavailable);
+            if (!main.post(new Runnable() {
+                @Override public void run() {
+                    if (response.isCancelled()) { openingDemo.set(false); return; }
+                    try {
+                        if (ScreenCaptureService.legacyProjectionNeedsHandoff()
+                                || new com.subhub.app.security.HardcoreModeManager(app).isAdminActive())
+                            throw new IllegalStateException("Device protection owns a physical source");
+                        var parking = ScreenshotAccessibilityService.parkLegacyForDemo(app);
+                        if (parking == ScreenshotAccessibilityService.LegacyParking.BUSY
+                                && android.os.SystemClock.uptimeMillis() < parkDeadline && main.postDelayed(this, 32L)) return;
+                        if (parking != ScreenshotAccessibilityService.LegacyParking.PARKED) {
+                            throw new IllegalStateException("The current Accessibility source has not retired");
                         }
-                    });
-                } catch (RuntimeException | Error unavailable) {
-                    openingDemo.set(false);
-                    AppRuntimeGateway.resumeLegacyAccessibility(app);
-                    response.completeExceptionally(unavailable);
+                        host.execute(() -> openParkedDemo(app, host, specification, main, response));
+                    } catch (RuntimeException | Error unavailable) {
+                        RuntimeStartupDiagnostics.report("temporary_demo_legacy_park", unavailable);
+                        openingDemo.set(false);
+                        AppRuntimeGateway.resumeLegacyAccessibility(app);
+                        response.completeExceptionally(unavailable);
+                    }
                 }
             })) throw new IllegalStateException("Demo Accessibility handoff could not be queued");
         } catch (RuntimeException | Error unavailable) {
@@ -139,6 +131,28 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             response.completeExceptionally(unavailable);
         }
         return response;
+    }
+
+    private static void openParkedDemo(Application app, InternalSubData host,
+            AppRuntimeGateway.InternalStartSpec specification, Handler main,
+            CompletableFuture<AppRuntimeGateway.InternalStart> response) {
+        try {
+            if (response.isCancelled()) throw new java.util.concurrent.CancellationException();
+            var controller = ControllerPinManager.captureInternalStartWitness(app);
+            InternalSubRecord record = host.acknowledged();
+            if (controller.revision != specification.controllerRevision || !record.visible
+                    || !record.generation.equals(specification.generation)
+                    || record.configurationRevision != specification.configurationRevision
+                    || !specification.target.equals(RuntimeTarget.internal(record.targetId)))
+                throw new SecurityException("Demo profile or controller changed");
+            AndroidRuntimeFactory factory = prepareAfterLegacyQuiescence(app, host);
+            factory.installTemporaryDemo(specification, response);
+        } catch (RuntimeException | Error unavailable) {
+            RuntimeStartupDiagnostics.report("temporary_demo_owner_open", unavailable);
+            openingDemo.set(false);
+            main.post(() -> AppRuntimeGateway.resumeLegacyAccessibility(app));
+            response.completeExceptionally(unavailable);
+        }
     }
 
     private void installTemporaryDemo(AppRuntimeGateway.InternalStartSpec specification,
@@ -798,7 +812,10 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                     }
                     return awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice, null);
                 })).whenComplete((assembly, failure) -> {
-                    if (failure != null) owner.runtime.requestStop();
+                    if (failure != null) {
+                        RuntimeStartupDiagnostics.report("capture_assembly", failure);
+                        owner.runtime.requestStop();
+                    }
                 });
             }).whenComplete((assembled, failure) -> {
                 if (failure != null) starts.cancel(admitted.attempt);
@@ -1211,7 +1228,10 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         // seal registration; its exact rejection callback still needs the pre-owned obligation.
         OwnedResourceRegistry.Registration counted;
         try { counted=pending.reservedDelivery!=null?pending.reservedDelivery:coordinator.registerWork(binding.lease,"service_delivery"); }
-        catch(RuntimeException stale) { rejectUnowned(completion,RuntimeCaptureHost.Rejection.NO_RESERVATION);return; }
+        catch(RuntimeException stale) {
+            if (binding.internal != null) RuntimeStartupDiagnostics.report("internal_attachment_admission", stale);
+            rejectUnowned(completion,RuntimeCaptureHost.Rejection.NO_RESERVATION);return;
+        }
         Runnable cancellation=()->completion.rejected(RuntimeCaptureHost.Rejection.NO_RESERVATION);
         if(recoveryRequired||current!=binding||!connection.isConnected()||connection.kind!=pending.plan.kind()||connection.occupied()) {
             binding.runtime.requestStop();
@@ -1231,6 +1251,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             selected=new RuntimeCaptureHost.Selection(request,attachment,grant);
             if(selections.putIfAbsent(connection,selected)!=null)throw new SecurityException("Capture connection already selected");
         } catch(RuntimeException|Error failure) {
+            if (binding.internal != null) RuntimeStartupDiagnostics.report("internal_attachment_preparation", failure);
             binding.runtime.requestStop();
             new Delivery(binding,counted,()->completion.rejected(RuntimeCaptureHost.Rejection.ATTACHMENT_FAILED),false,cancellation).post();return;
         }
@@ -1290,7 +1311,11 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                         },binding);
                     }
                 } else callback.run();
-            } catch(RuntimeException|Error failure) {binding.runtime.requestStop();throw failure;}
+            } catch(RuntimeException|Error failure) {
+                if (startup && binding.internal != null) RuntimeStartupDiagnostics.report("internal_attachment_delivery", failure);
+                binding.runtime.requestStop();
+                throw failure;
+            }
             finally {if(complete)finish();}
         }
         void finish() {

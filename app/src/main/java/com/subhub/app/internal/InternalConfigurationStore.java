@@ -79,16 +79,23 @@ public final class InternalConfigurationStore {
 
     /** Immutable data source for SettingsRepository.forPreferences; never a runtime capability. */
     public SharedPreferences snapshotPreferences(InternalSubRecord acknowledged, String name) {
-        SharedPreferences source = edit(acknowledged).preferences(name);
+        Map<String, ?> values = edit(acknowledged).preferences(name).getAll();
         return new SharedPreferences() {
-            @Override public Map<String, ?> getAll() { return source.getAll(); }
-            @Override public String getString(String key, String fallback) { return source.getString(key, fallback); }
-            @Override public Set<String> getStringSet(String key, Set<String> fallback) { return source.getStringSet(key, fallback); }
-            @Override public int getInt(String key, int fallback) { return source.getInt(key, fallback); }
-            @Override public long getLong(String key, long fallback) { return source.getLong(key, fallback); }
-            @Override public float getFloat(String key, float fallback) { return source.getFloat(key, fallback); }
-            @Override public boolean getBoolean(String key, boolean fallback) { return source.getBoolean(key, fallback); }
-            @Override public boolean contains(String key) { return source.contains(key); }
+            @Override public Map<String, ?> getAll() { return values; }
+            @Override public String getString(String key, String fallback) { return read(key, fallback, String.class); }
+            @Override @SuppressWarnings("unchecked") public Set<String> getStringSet(String key, Set<String> fallback) {
+                Set<String> stored = read(key, null, Set.class);
+                return stored == null ? fallback : new LinkedHashSet<>(stored);
+            }
+            @Override public int getInt(String key, int fallback) { return read(key, fallback, Integer.class); }
+            @Override public long getLong(String key, long fallback) { return read(key, fallback, Long.class); }
+            @Override public float getFloat(String key, float fallback) { return read(key, fallback, Float.class); }
+            @Override public boolean getBoolean(String key, boolean fallback) { return read(key, fallback, Boolean.class); }
+            @Override public boolean contains(String key) { return values.containsKey(key); }
+            private <T> T read(String key, T fallback, Class<T> type) {
+                Object value = values.get(key);
+                return value == null ? fallback : type.cast(value);
+            }
             @Override public Editor edit() { throw new UnsupportedOperationException("Immutable internal configuration snapshot"); }
             @Override public void registerOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) { }
             @Override public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) { }

@@ -584,6 +584,7 @@ JAVAC_MAIN_SOURCES = {
     b"app/src/main/java/com/subhub/app/runtime/RuntimeConfiguration.java": "main_runtime_runtime_configuration",
     b"app/src/main/java/com/subhub/app/runtime/RuntimeEnvironment.java": "main_runtime_runtime_environment",
     b"app/src/main/java/com/subhub/app/runtime/RuntimeExecution.java": "main_runtime_runtime_execution",
+    b"app/src/main/java/com/subhub/app/runtime/RuntimeStartupDiagnostics.java": "main_runtime_runtime_startup_diagnostics",
     b"app/src/main/java/com/subhub/app/runtime/RuntimeFenceObservation.java": "main_runtime_runtime_fence_observation",
     b"app/src/main/java/com/subhub/app/runtime/RuntimeInstallationBarrier.java": "main_runtime_runtime_installation_barrier",
     b"app/src/main/java/com/subhub/app/runtime/RuntimeJournalMigration.java": "main_runtime_runtime_journal_migration",

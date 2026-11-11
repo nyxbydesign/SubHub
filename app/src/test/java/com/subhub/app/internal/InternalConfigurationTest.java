@@ -53,6 +53,11 @@ public final class InternalConfigurationTest {
         draft.preferences(SettingsRepository.PREFERENCES_NAME).edit().putInt("censor_intensity", 77).apply();
         f.config.flush(draft);
         assertEquals(50, frozen.getInt("censor_intensity", 0));
+        var popup = com.subhub.app.popup.PopupStormSettings.forPreferences(frozen);
+        assertTrue(popup.getFolders().isEmpty());
+        assertEquals("", popup.getPackImageDir());
+        assertFalse(frozen.contains("controller_pin_hash"));
+        assertEquals("fallback", frozen.getString("controller_pin_hash", "fallback"));
         assertThrows(UnsupportedOperationException.class, frozen::edit);
     }
 

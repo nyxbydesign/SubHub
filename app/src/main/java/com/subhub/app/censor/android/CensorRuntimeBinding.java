@@ -78,6 +78,7 @@ public final class CensorRuntimeBinding implements InternalRuntimeSession.Captur
     private boolean activated;
     private long lastTapEvent, lastTapUptime;
     private CensorBindingWork.Ticket wakeTicket; // Main only.
+    private final AtomicBoolean firstWindowFrameReported = new AtomicBoolean();
 
     public static CensorRuntimeBinding forDemo(InternalRuntimeSession session, LocalNotice notices) {
         RuntimeCaptureHost.InternalRequest exact = session.request();
@@ -308,6 +309,12 @@ public final class CensorRuntimeBinding implements InternalRuntimeSession.Captur
         }
     }
     private final CensorProductSession.Observer observer = new CensorProductSession.Observer() {
+        @Override public void prepared(long requestId, PixelFrame.Kind kind, long nanos, int bytes) {
+            if (kind == PixelFrame.Kind.ACCESSIBILITY_WINDOW && bytes > 0
+                    && firstWindowFrameReported.compareAndSet(false, true))
+                com.subhub.app.runtime.RuntimeStartupDiagnostics.demoWindowFramePrepared();
+        }
+
         @Override public void foreground(AccessibilityWindowReader.Window window) {
             if (sealed.get()) { if (product != null) product.stop(); return; }
             RuntimeConfiguration image = adopted;
@@ -318,6 +325,7 @@ public final class CensorRuntimeBinding implements InternalRuntimeSession.Captur
             } else approvedForeground = window;
         }
         @Override public void sessionFailure(Throwable failure) {
+            com.subhub.app.runtime.RuntimeStartupDiagnostics.report(COMPONENT, failure);
             status = new Status(adopted, Stage.FAILED); component.failed();
         }
     };
