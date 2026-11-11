@@ -1,7 +1,6 @@
 package com.subhub.app.appmode;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
@@ -104,14 +103,12 @@ final class ExtraTimeViews {
         }
         // Shared-only budgets must not manufacture a per-app denominator.
         if (dailyMinutes <= 0) return;
-        ProgressBar progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
+        ProgressBar progress = new ProgressBar(context, null, 0, R.style.Widget_SubHub_ProgressMeter);
         progress.setTag("extra_time_usage_progress");
         progress.setMax(1000);
         progress.setProgress(total <= 0 ? 0 : (int) Math.min(1000, used * 1000 / Math.max(1L, budgetMillis)));
-        progress.setProgressTintList(ColorStateList.valueOf(context.getColor(R.color.accent_mid)));
-        progress.setProgressBackgroundTintList(ColorStateList.valueOf(context.getColor(R.color.outline_subtle)));
         progress.setContentDescription(context.getString(R.string.extra_time_usage, used / 60_000L, total));
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, PersonUi.dp(context, 5));
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(-1, context.getResources().getDimensionPixelSize(R.dimen.progress_meter_height));
         size.topMargin = PersonUi.dp(context, 6);
         size.bottomMargin = PersonUi.dp(context, 4);
         parent.addView(progress, size);

@@ -62,11 +62,13 @@ public final class AllowanceProgressAndroidTest {
                 assertEquals("The track has rounded transparent corners", 0, Color.alpha(pixels.getPixel(0, 0)));
                 assertEquals("The track center is visible", 255,
                         Color.alpha(pixels.getPixel(pixels.getWidth() / 2, pixels.getHeight() / 2)));
-                assertNotEquals("The fill has a soft gradient",
+                assertEquals("The fill is consistently muted rather than fading to bright text color",
                         pixels.getPixel(pixels.getWidth() / 16, pixels.getHeight() / 2),
                         pixels.getPixel(pixels.getWidth() * 3 / 16, pixels.getHeight() / 2));
-                assertEquals(context.getColor(R.color.surface_card_raised),
+                assertEquals(context.getColor(R.color.progress_track),
                         pixels.getPixel(pixels.getWidth() / 2, pixels.getHeight() / 2));
+                assertEquals(context.getColor(R.color.progress_fill),
+                        pixels.getPixel(pixels.getWidth() / 8, pixels.getHeight() / 2));
                 Rect fill = renderedFillBounds(bar);
                 assertEquals(0, fill.left);
                 assertEquals(pixels.getWidth() / 4f, fill.width(), 1f);
@@ -97,9 +99,9 @@ public final class AllowanceProgressAndroidTest {
                     assertEquals(pixels.getWidth() / 4f, fill.width(), 1f);
                     int trackX = rtl ? pixels.getWidth() / 4 : pixels.getWidth() * 3 / 4;
                     int fillX = rtl ? pixels.getWidth() * 7 / 8 : pixels.getWidth() / 8;
-                    assertEquals(context.getColor(R.color.surface_card_raised),
+                    assertEquals(context.getColor(R.color.progress_track),
                             pixels.getPixel(trackX, pixels.getHeight() / 2));
-                    assertNotEquals(context.getColor(R.color.surface_card_raised),
+                    assertNotEquals(context.getColor(R.color.progress_track),
                             pixels.getPixel(fillX, pixels.getHeight() / 2));
                 } catch (AssertionError failure) {
                     retainFailure(context, pixels, "allowance-direction-" + direction, failure);
@@ -126,7 +128,8 @@ public final class AllowanceProgressAndroidTest {
     private Bitmap draw(ProgressBar bar, int direction) {
         Context context = bar.getContext();
         assertTrue("Meter must belong to an attached native window", bar.isAttachedToWindow());
-        int width = PersonUi.dp(context, 200), height = PersonUi.dp(context, 10);
+        int width = PersonUi.dp(context, 200);
+        int height = context.getResources().getDimensionPixelSize(R.dimen.progress_meter_height);
         bar.setLayoutDirection(direction);
         bar.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
@@ -149,7 +152,7 @@ public final class AllowanceProgressAndroidTest {
         assertEquals(0, bar.getPaddingRight());
         assertEquals(0, bar.getPaddingTop());
         assertEquals(0, bar.getPaddingBottom());
-        // Widget.SubHub.AllowanceProgress enables mirrorForRtl. ProgressBar.drawTrack
+        // Widget.SubHub.ProgressMeter enables mirrorForRtl. ProgressBar.drawTrack
         // maps drawable x to width - x in RTL; raw Drawable bounds are not View pixels.
         // Independent pixel checks above still detect missing or double mirroring.
         if (bar.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {

@@ -51,11 +51,10 @@
                 android:textStyle="bold" />
             <ProgressBar
                 android:id="@+id/download_progress"
-                style="?android:attr/progressBarStyleHorizontal"
+                style="@style/Widget.SubHub.ProgressMeter"
                 android:layout_width="match_parent"
-                android:layout_height="6dp"
+                android:layout_height="@dimen/progress_meter_height"
                 android:layout_marginTop="@dimen/ui_gap_control"
-                android:progressTint="@color/accent"
                 android:visibility="gone" />
             <Button
                 android:id="@+id/button_check"

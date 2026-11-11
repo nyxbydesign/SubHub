@@ -3,7 +3,6 @@ package com.subhub.app.stats;
 import com.subhub.app.util.PrimaryHeader;
 
 import android.app.Dialog;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -470,15 +469,10 @@ final class AchievementsPane extends android.content.ContextWrapper {
         progressRowParams.topMargin = dp(11);
         progressRow.setLayoutParams(progressRowParams);
         if (progress.isCountable() && progress.isKnown() && !concealed) {
-            ProgressBar bar = new ProgressBar(this, null,
-                    android.R.attr.progressBarStyleHorizontal);
+            ProgressBar bar = new ProgressBar(this, null, 0, R.style.Widget_SubHub_ProgressMeter);
             bar.setMax(100);
             bar.setProgress(progress.percent());
-            bar.setProgressTintList(ColorStateList.valueOf(getColor(
-                    unlocked ? R.color.accent_hot : R.color.accent_mid)));
-            bar.setProgressBackgroundTintList(
-                    ColorStateList.valueOf(getColor(R.color.outline_subtle)));
-            bar.setLayoutParams(new LinearLayout.LayoutParams(0, dp(6), 1f));
+            bar.setLayoutParams(new LinearLayout.LayoutParams(0, getResources().getDimensionPixelSize(R.dimen.progress_meter_height), 1f));
             progressRow.addView(bar);
             TextView count = text(formatProgress(achievement, progress), 10,
                     unlocked ? R.color.accent_hot : R.color.text_muted, true);
