@@ -28,7 +28,8 @@ public final class RuntimeAdmissionAuthority {
             AvailabilityPublication next = new AvailabilityPublication(this, target,
                     lastAcknowledgedAvailability.get(target));
             availabilityPublications.put(target, next);
-            availability.remove(target);
+            Availability revoked = availability.remove(target);
+            if (revoked != null) revoked.revoked = true;
             return next;
         });
     }
@@ -56,7 +57,8 @@ public final class RuntimeAdmissionAuthority {
         return mutex.runtime(() -> {
             AuthorizationPublication next = new AuthorizationPublication(this, key, availability.get(target));
             authorizationPublications.put(key, next);
-            authorizations.remove(key);
+            Authorization revoked = authorizations.remove(key);
+            if (revoked != null) revoked.revoked = true;
             return next;
         });
     }
@@ -117,6 +119,16 @@ public final class RuntimeAdmissionAuthority {
                 Authorization authorization) {
             this.source = source; this.target = target; this.origin = origin; this.availability = availability; this.authorization = authorization;
         }
+        /**
+         * Monotonic process-local permission-launch fence. No map/RuntimeMutex/IO access.
+         * Only a coordinator-issued RESERVED obligation may consume this observation. An
+         * invalidated witness never becomes current again, even if later revisions are equal.
+         */
+        boolean permitsLaunch() {
+            return availability != null && authorization != null && availability.enabled
+                    && authorization.allowed && authorization.availability == availability
+                    && !availability.revoked && !authorization.revoked;
+        }
         public String profileGeneration() { return availability == null ? "" : availability.generation; }
         public long configurationRevision() { return availability == null ? -1 : availability.configurationRevision; }
         public long authorizationRevision() {
@@ -144,6 +156,7 @@ public final class RuntimeAdmissionAuthority {
         @Override public int hashCode() { return Objects.hash(target, kind, peer, relationshipGeneration); }
     }
     private static final class Authorization {
+        volatile boolean revoked;
         final long revision;
         final boolean allowed;
         final Availability availability;
@@ -152,6 +165,7 @@ public final class RuntimeAdmissionAuthority {
         }
     }
     private static final class Availability {
+        volatile boolean revoked;
         final String generation;
         final long configurationRevision;
         final boolean enabled;

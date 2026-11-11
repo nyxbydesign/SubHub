@@ -112,7 +112,9 @@ public final class ScreenCaptureService extends Service {
     private StatsRepository stats;
     private PenanceManager penance;
     private final DwellInfractionTracker dwellTracker = new DwellInfractionTracker();
-    private final CensorTapTracker tapTracker = CensorTapTracker.shared();
+    // DEVICE dependencies are selected only after a recognized DEVICE start.
+    private CensorTapTracker tapTracker;
+    private boolean deviceInitialized;
     private volatile DetectorConfig detectorConfig;
     private volatile boolean overlayNeedsSourceFrame;
     private volatile boolean explicitlyStoppedByController;
@@ -375,6 +377,15 @@ public final class ScreenCaptureService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+    }
+
+    /** Inactive integration seam: no INTERNAL request may enter this DEVICE-only initializer. */
+    private void initializeDeviceRuntime() {
+        if (deviceInitialized) return;
+        if (destroyed) throw new IllegalStateException("Capture service already destroyed");
+        // Mark before the first allocation so partial DEVICE construction still gets DEVICE cleanup.
+        deviceInitialized = true;
+        tapTracker = CensorTapTracker.shared();
         executor = Executors.newSingleThreadScheduledExecutor();
         inferenceExecutor = Executors.newSingleThreadExecutor();
         loadGovernor = new CaptureLoadGovernor(this);
@@ -401,7 +412,10 @@ public final class ScreenCaptureService extends Service {
             stopSelfResult(startId);
             return START_NOT_STICKY;
         }
-        if (intent == null) return START_NOT_STICKY;
+        if (intent == null) {
+            if (!deviceInitialized) stopSelfResult(startId);
+            return START_NOT_STICKY;
+        }
         if (ACTION_STOP_OWNED.equals(intent.getAction())) {
             try { stopOwned(stopTarget(intent)); }
             catch (IllegalArgumentException | ClassCastException malformed) { Log.w(TAG, "Invalid capture stop target"); }
@@ -409,6 +423,8 @@ public final class ScreenCaptureService extends Service {
             return START_NOT_STICKY;
         }
         if (ACTION_STOP.equals(intent.getAction())) {
+            // A stop-only delivery must not open settings, statistics, penance or shared taps.
+            if (!deviceInitialized) { stopSelfResult(startId); return START_NOT_STICKY; }
             if (ProtectionStopPolicy.decision(this)
                     != ProtectionStopPolicy.Decision.ALLOW) return START_STICKY;
             explicitlyStoppedByController = true;
@@ -418,7 +434,11 @@ public final class ScreenCaptureService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (!ACTION_START.equals(intent.getAction()) || isRunning()) return START_NOT_STICKY;
+        if (!ACTION_START.equals(intent.getAction()) || isRunning()) {
+            if (!deviceInitialized) stopSelfResult(startId);
+            return START_NOT_STICKY;
+        }
+        initializeDeviceRuntime();
         if (!MediaProjectionLeaseRegistry.acquire(
                 MediaProjectionLeaseRegistry.Owner.PROTECTION)) {
             explicitlyStoppedByController = true;
@@ -764,6 +784,13 @@ public final class ScreenCaptureService extends Service {
     @Override
     public void onDestroy() {
         if (destroyed) return;
+        if (!deviceInitialized) {
+            destroyed = true;
+            // No selected data owner or resources exist. Never perform DEVICE cleanup/rearming.
+            super.onDestroy();
+            destructionComplete = true;
+            return;
+        }
         pipelineActive = false;
         mainHandler.removeCallbacks(screenTick);
         if (screenReceiverRegistered) { unregisterReceiver(screenReceiver); screenReceiverRegistered = false; }

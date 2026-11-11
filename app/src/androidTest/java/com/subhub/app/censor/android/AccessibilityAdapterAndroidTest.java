@@ -38,6 +38,51 @@ import java.util.function.Consumer;
 public final class AccessibilityAdapterAndroidTest {
     private static final CensorEngine.WorkTiming TIMING = new CensorEngine.WorkTiming(3, 7, 2);
 
+    @Test public void rejectedOwnerGateNeverDispatchesAndroidCapture() {
+        try (Harness h = new Harness(34, false, 240, 320, 400, 600, 70, 100, 2, effect -> false)) {
+            h.begin(); assertEquals(0, h.platform.windows); assertEquals(0, h.platform.displays);
+            assertFalse(h.engine.captureInFlight()); assertEquals(0, h.prepared);
+        }
+    }
+
+    @Test public void revokedOwnerCallbackReleasesActualRawResourcesWithoutCopying() {
+        boolean[] allowed = { true };
+        CensorEffectScope scope = effect -> { if (!allowed[0]) return false; effect.run(); return true; };
+        try (Harness h = new Harness(34, false, 240, 320, 400, 600, 70, 100, 2, scope)) {
+            h.begin(); assertEquals(1, h.platform.windows); allowed[0] = false;
+            Bitmap bitmap = pixels(240, 320); int[] closed = { 0 };
+            h.platform.deliver(new AccessibilityCapturer.RawFrame(bitmap, 100, () -> closed[0]++));
+            assertTrue(bitmap.isRecycled()); assertEquals(1, closed[0]); assertEquals(0, h.prepared);
+            assertEquals(0, h.fastExecutor.tasks.size()); assertEquals(0, h.engine.livePixelFrames());
+            assertFalse(h.engine.captureInFlight());
+        }
+    }
+
+    @Test public void ownerPermitSpansActualRawCopyAndCleanup() {
+        boolean[] inside = { false }; int[] admissions = { 0 };
+        CensorEffectScope scope = effect -> {
+            assertFalse(inside[0]); inside[0] = true; admissions[0]++;
+            try { effect.run(); return true; } finally { inside[0] = false; }
+        };
+        try (Harness h = new Harness(34, false, 240, 320, 400, 600, 70, 100, 2, scope)) {
+            h.begin(); assertFalse(inside[0]);
+            h.platform.deliver(new AccessibilityCapturer.RawFrame(pixels(240, 320), 100, () -> assertTrue(inside[0])));
+            assertEquals(2, admissions[0]); assertFalse(inside[0]); assertEquals(1, h.prepared);
+            h.fastExecutor.runOne(); assertEquals(1, h.inputs.size());
+        }
+    }
+
+    @Test public void temporarilyBusyOwnerRetriesThroughNextRealCaptureDemand() {
+        boolean[] allowed = { false };
+        CensorEffectScope scope = effect -> { if (!allowed[0]) return false; effect.run(); return true; };
+        try (Harness h = new Harness(34, false, 240, 320, 400, 600, 70, 100, 2, scope)) {
+            h.begin(); assertEquals(0, h.platform.windows); allowed[0] = true; h.next();
+            assertEquals(1, h.platform.windows);
+            h.platform.deliver(new AccessibilityCapturer.RawFrame(pixels(240, 320), 100, () -> { }));
+            assertEquals(1, h.prepared); h.fastExecutor.runOne(); assertEquals(1, h.inputs.size());
+        }
+    }
+
     @Test public void hardwareWrapperBufferAndReadableCopyHaveSeparateLifetimes() {
         try (Harness h = new Harness(34, false, 240, 320, 400, 600, 70, 100, 2)) {
             Bitmap source = pixels(240, 320);
@@ -320,6 +365,10 @@ public final class AccessibilityAdapterAndroidTest {
 
         Harness(int sdk, boolean qualityEnabled, int width, int height, int displayWidth, int displayHeight,
                 int left, int top, int threads) {
+            this(sdk, qualityEnabled, width, height, displayWidth, displayHeight, left, top, threads, CensorEffectScope.DEVICE);
+        }
+        Harness(int sdk, boolean qualityEnabled, int width, int height, int displayWidth, int displayHeight,
+                int left, int top, int threads, CensorEffectScope effects) {
             this.left = left;
             DetectorConfig configured = DetectorConfig.builder().inferenceThreads(threads).inferenceResolution(512)
                     .enabledCategories(new LinkedHashSet<>(Arrays.asList("face", "unsupported"))).build();
@@ -328,7 +377,7 @@ public final class AccessibilityAdapterAndroidTest {
             AccessibilityCapturer capturer = new AccessibilityCapturer(platform, sdk, Runnable::run,
                     request -> target(request, width, height, displayWidth, displayHeight, top), new AccessibilityCapturer.Observer() {
                         @Override public void prepared(long requestId, PixelFrame.Kind kind, long nanos, int bytes) { prepared++; }
-                    });
+                    }, effects);
             List<CensorEngine.LaneWorker<PixelFrame>> workers = new ArrayList<>();
             workers.add(new CensorEngine.LaneWorker<>(SceneEngine.Lane.FAST, fastExecutor, recording(fast, inputs)));
             if (qualityEnabled) workers.add(new CensorEngine.LaneWorker<>(SceneEngine.Lane.QUALITY, qualityExecutor, recording(quality, qualityInputs)));

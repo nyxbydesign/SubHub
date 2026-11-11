@@ -1,7 +1,6 @@
 package com.subhub.app.detection;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -44,7 +43,6 @@ import ai.onnxruntime.providers.NNAPIFlags;
 /** Owns the ONNX Runtime session and converts Android bitmaps to model input. */
 public final class DetectionEngine implements AutoCloseable {
     private static final String TAG = "DetectionEngine";
-    private static final String PROVIDER_PREFS = "detector_provider_cache";
     private static final String PROVIDER_CONFIG_REVISION = "ep-v3";
     private static final float INV_255 = 1f / 255f;
     private static final AtomicLong NATIVE_RUN_SEQUENCE = new AtomicLong();
@@ -56,6 +54,8 @@ public final class DetectionEngine implements AutoCloseable {
                     runnable, "SubHub-quality-input", Process.THREAD_PRIORITY_DEFAULT));
 
     private final Context context;
+    private final ProviderCacheOpener providerCaches;
+
     private final OrtEnvironment environment;
     private final DetectionPostProcessor postProcessor = new DetectionPostProcessor();
     private final InferencePerformanceHints performanceHints;
@@ -91,6 +91,14 @@ public final class DetectionEngine implements AutoCloseable {
     private volatile long lastCancellationMs;
     private final AtomicReference<InferenceRun> activeInference = new AtomicReference<>();
 
+    /** Opens once at the legacy initialization point; explicit caches never consult Context. */
+    private interface ProviderCacheOpener { DetectorProviderCache open(Context applicationContext); }
+
+    private static ProviderCacheOpener explicitCache(DetectorProviderCache cache) {
+        java.util.Objects.requireNonNull(cache, "providerCache");
+        return ignored -> cache;
+    }
+
     public DetectionEngine(Context context, DetectorConfig config) {
         this(context, config, true);
     }
@@ -98,6 +106,13 @@ public final class DetectionEngine implements AutoCloseable {
     public DetectionEngine(
             Context context, DetectorConfig config, boolean latencyPriority) {
         this(context, config, latencyPriority, false);
+    }
+
+    /** Explicit data dependency; the Context remains only the OS/assets host. No cache fallback. */
+    public DetectionEngine(Context context, DetectorConfig config, boolean latencyPriority,
+            DetectorProviderCache providerCache) {
+        this(context, config, latencyPriority, false, null,
+                explicitCache(providerCache));
     }
 
     DetectionEngine(
@@ -111,6 +126,14 @@ public final class DetectionEngine implements AutoCloseable {
     /** Test-only explicit resource grant; production constructors preserve their existing policy. */
     DetectionEngine(Context context, DetectorConfig config, boolean latencyPriority,
             boolean nnapiFp16Relaxation, CpuExecutionBudget executionBudget) {
+        this(context, config, latencyPriority, nnapiFp16Relaxation, executionBudget,
+                DeviceDetectorProviderCache::new);
+    }
+
+    private DetectionEngine(Context context, DetectorConfig config, boolean latencyPriority,
+            boolean nnapiFp16Relaxation, CpuExecutionBudget executionBudget,
+            ProviderCacheOpener providerCaches) {
+        this.providerCaches = java.util.Objects.requireNonNull(providerCaches, "providerCaches");
         if (executionBudget != null) executionBudget.validate(latencyPriority, Runtime.getRuntime().availableProcessors());
         this.context = context.getApplicationContext();
         this.config = config;
@@ -157,13 +180,12 @@ public final class DetectionEngine implements AutoCloseable {
                 continue;
             }
             String cacheKey = providerCacheKey(model);
-            SharedPreferences providerPrefs = context.getSharedPreferences(
-                    PROVIDER_PREFS, Context.MODE_PRIVATE);
-            String cachedProvider = providerPrefs.getString(cacheKey, null);
+            DetectorProviderCache providerCache = providerCaches.open(context);
+            String cachedProvider = providerCache.get(cacheKey);
             ProviderCandidate fastest = cachedProvider == null ? null
                     : selectFastestProvider(bytes, model, new String[]{cachedProvider});
             if (fastest == null && cachedProvider != null) {
-                providerPrefs.edit().remove(cacheKey).apply();
+                providerCache.remove(cacheKey);
             }
             if (fastest == null) {
                 fastest = selectFastestProvider(
@@ -178,7 +200,7 @@ public final class DetectionEngine implements AutoCloseable {
                         + fastest.provider + " (" + fastest.benchmarkNanos / 1_000_000f
                         + " ms" + (cachedProvider == null ? "" : ", cached")
                         + ", profile=" + (latencyPriority ? "realtime" : "quality") + ")");
-                providerPrefs.edit().putString(cacheKey, fastest.provider).apply();
+                providerCache.put(cacheKey, fastest.provider);
                 return;
             }
         }
@@ -200,9 +222,8 @@ public final class DetectionEngine implements AutoCloseable {
         String model = config.getModelFilename();
         byte[] bytes = readAsset(model);
         String cacheKey = providerCacheKey(model);
-        SharedPreferences providerPrefs = context.getSharedPreferences(
-                PROVIDER_PREFS, Context.MODE_PRIVATE);
-        String cachedProvider = providerPrefs.getString(cacheKey, null);
+        DetectorProviderCache providerCache = providerCaches.open(context);
+        String cachedProvider = providerCache.get(cacheKey);
         List<String> providers = new java.util.ArrayList<>();
         // This entry point is used by the optional quality lane. Prefer the device accelerator
         // before a cached CPU/XNNPACK winner from another profile; otherwise Accessibility's
@@ -218,7 +239,7 @@ public final class DetectionEngine implements AutoCloseable {
                 inputName = session.getInputNames().iterator().next();
                 activeProvider = provider;
                 activeModel = model;
-                providerPrefs.edit().putString(cacheKey, provider).apply();
+                providerCache.put(cacheKey, provider);
                 Log.i(TAG, "Loaded " + model + " using direct provider " + provider
                         + " (profile=" + (latencyPriority ? "realtime" : "quality") + ")");
                 return;
@@ -227,7 +248,7 @@ public final class DetectionEngine implements AutoCloseable {
                 lastFailure = error;
                 closeSession();
                 if (provider.equals(cachedProvider)) {
-                    providerPrefs.edit().remove(cacheKey).apply();
+                    providerCache.remove(cacheKey);
                 }
                 Log.w(TAG, "Direct provider " + provider + " rejected " + model
                         + ": " + error.getMessage());

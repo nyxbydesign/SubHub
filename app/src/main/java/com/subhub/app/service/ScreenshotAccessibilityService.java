@@ -408,7 +408,9 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     private AppTimerManager timers;
     private PenanceManager penance;
     private final DwellInfractionTracker dwellTracker = new DwellInfractionTracker();
-    private final CensorTapTracker tapTracker = CensorTapTracker.shared();
+    // An OS accessibility connection is not authority to construct another owner's data.
+    private CensorTapTracker tapTracker;
+    private boolean deviceInitialized;
     private long lastMatchedTapUptimeMillis;
     private long lastMatchedTapEventUptimeMillis;
     private final ForegroundUsageSession usageSession = new ForegroundUsageSession();
@@ -537,12 +539,22 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        MainThreadSampler.startIfArmed(this);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Accessibility screenshot capture requires Android 11 or newer");
             disableSelf();
             return;
         }
+        initializeDeviceRuntime();
+    }
+
+    /** Inactive integration seam: the future gateway selects this DEVICE path explicitly. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    private void initializeDeviceRuntime() {
+        if (deviceInitialized) return;
+        // Keep partial construction owned by this branch, never fall through into INTERNAL.
+        deviceInitialized = true;
+        tapTracker = CensorTapTracker.shared();
+        MainThreadSampler.startIfArmed(this);
         settings = new SettingsRepository(this);
         censorScreen = new com.subhub.app.censor.android.CensorScreenState(this);
         censorScreenGeneration = censorScreen.generation();
@@ -5276,6 +5288,7 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (!deviceInitialized) return;
         try {
             refreshCensorScreen(null);
             handleAccessibilityEvent(event);
@@ -7064,6 +7077,11 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        if (!deviceInitialized) {
+            // Unsupported/unselected OS shells have no DEVICE state to account, stop or clear.
+            super.onDestroy();
+            return;
+        }
         if (censorInstance == this) censorInstance = null;
         idleGeneration++;
         if (idleRetirement != null) main.removeCallbacks(idleRetirement);

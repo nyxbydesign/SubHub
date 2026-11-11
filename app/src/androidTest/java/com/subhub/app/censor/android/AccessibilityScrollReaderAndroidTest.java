@@ -146,6 +146,65 @@ public final class AccessibilityScrollReaderAndroidTest {
         }
     }
 
+    @Test public void refusedOwnerOfferNeverCopiesOrAcquiresNativeSource() throws Exception {
+        createReader(effect -> false); offerScroll("scrollToY", 50, false);
+        assertEquals(0, reader.outstanding()); assertEquals(0, reads.get());
+        assertTrue(samples.isEmpty()); assertTrue(gaps.isEmpty()); assertTrue(current.get());
+        nativeAssertionPassed = true;
+    }
+
+    @Test public void runtimeRefusalBeforeQueuedReadRetainsExactInputAndRetries() throws Exception {
+        AtomicInteger deniedReads = new AtomicInteger(); AtomicBoolean readAllowed = new AtomicBoolean(false);
+        createReader(effect -> {
+            if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() && !readAllowed.get()) {
+                deniedReads.incrementAndGet(); return false;
+            }
+            effect.run(); return true;
+        });
+        offerScroll("scrollToY", 50, false);
+        await("Actual read gate refused while lifecycle is still current", () -> deniedReads.get() > 0);
+        assertTrue(current.get()); assertEquals(1, reader.outstanding()); assertEquals(0, reads.get());
+        readAllowed.set(true);
+        await("Same copied input resumes without another framework event", () -> samples.size() == 1 && reader.outstanding() == 0);
+        assertEquals(1, reads.get()); assertTrue(gaps.isEmpty()); assertFalse(resourceFailure.get()); nativeAssertionPassed = true;
+    }
+
+    @Test public void busyOwnerRetainsPreviouslyReadDeliveryUntilSameOwnerAllowed() throws Exception {
+        AtomicBoolean allowed = new AtomicBoolean(true);
+        heldDeliveries = Collections.synchronizedList(new ArrayList<>());
+        createReader(effect -> { if (!allowed.get()) return false; effect.run(); return true; });
+        offerScroll("scrollToY", 50, false);
+        await("Actual source read held at delivery", () -> reads.get() > 0 && !heldDeliveries.isEmpty());
+        allowed.set(false); instrumentation.runOnMainSync(this::releaseHeldDeliveries);
+        assertEquals(1, reader.outstanding()); assertTrue(current.get()); assertTrue(samples.isEmpty());
+        allowed.set(true);
+        await("Only the existing sample is delivered after contention", () -> samples.size() == 1 && reader.outstanding() == 0);
+        assertEquals(1, reads.get()); assertTrue(gaps.isEmpty()); assertFalse(resourceFailure.get()); nativeAssertionPassed = true;
+    }
+
+    @Test public void refusedOfferPublishesContinuityGapWithoutAnotherEvent() throws Exception {
+        AtomicBoolean allowed = new AtomicBoolean(false);
+        createReader(effect -> { if (!allowed.get()) return false; effect.run(); return true; });
+        offerScroll("scrollToY", 50, false);
+        assertEquals(0, reader.outstanding()); assertEquals(0, reads.get()); assertTrue(gaps.isEmpty());
+        allowed.set(true);
+        await("Retained unknown continuity gap wakes itself", () -> gaps.size() == 1);
+        assertTrue(samples.isEmpty()); assertEquals(0, reads.get()); assertFalse(resourceFailure.get()); nativeAssertionPassed = true;
+    }
+
+    @Test public void closeReleasesBusyReadAndLateDeliveryWithoutPublishing() throws Exception {
+        AtomicBoolean allowed = new AtomicBoolean(true);
+        heldDeliveries = Collections.synchronizedList(new ArrayList<>());
+        createReader(effect -> { if (!allowed.get()) return false; effect.run(); return true; });
+        offerScroll("scrollToY", 50, false);
+        await("Actual source read queued at delivery", () -> reads.get() > 0 && !heldDeliveries.isEmpty());
+        allowed.set(false); instrumentation.runOnMainSync(this::releaseHeldDeliveries);
+        assertEquals(1, reader.outstanding()); instrumentation.runOnMainSync(reader::close);
+        await("Exact copied input, retry callbacks and worker drained", reader::managedResourcesDrained);
+        assertTrue(samples.isEmpty()); assertTrue(gaps.isEmpty()); assertEquals(1, reads.get());
+        assertFalse(resourceFailure.get()); nativeAssertionPassed = true;
+    }
+
     @Test public void validatedOwnerKindIgnoresDifferentAndSpoofedFrameworkEventLabels() throws Exception {
         createReader();
         JSONArray rows = new JSONArray();
@@ -303,6 +362,10 @@ public final class AccessibilityScrollReaderAndroidTest {
     }
 
     private void createReader() {
+        createReader(CensorEffectScope.DEVICE);
+    }
+
+    private void createReader(CensorEffectScope effects) {
         instrumentation.runOnMainSync(() -> reader = new AccessibilityScrollReader(
                 value -> current.get() && scope.same(value), new AccessibilityScrollReader.Observer() {
                     @Override public void observed(ScrollMotionLedger.Sample sample) {
@@ -324,7 +387,7 @@ public final class AccessibilityScrollReaderAndroidTest {
                         held.countDown(); try { assertTrue("Release actual held provider read", release.await(10, TimeUnit.SECONDS)); }
                         catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
                     }
-                }, heldDeliveries == null ? null : action -> { heldDeliveries.add(action); return true; }));
+                }, heldDeliveries == null ? null : action -> { heldDeliveries.add(action); return true; }, effects));
     }
 
     private void releaseHeldDeliveries() {
@@ -334,6 +397,10 @@ public final class AccessibilityScrollReaderAndroidTest {
     }
 
     private void offerScroll(String key, int value) throws Exception {
+        offerScroll(key, value, true);
+    }
+
+    private void offerScroll(String key, int value, boolean awaitObservation) throws Exception {
         int expected = samples.size() + 1;
         Bundle extras = new Bundle(); extras.putInt(key, value);
         AccessibilityEvent event = ui.executeAndWaitForEvent(() -> target(extras), candidate ->
@@ -344,7 +411,7 @@ public final class AccessibilityScrollReaderAndroidTest {
             assertEquals("android.widget.ScrollView", event.getClassName().toString());
             instrumentation.runOnMainSync(() -> reader.offer(event, scope, "com.subhub.app.test"));
         } finally { event.recycle(); }
-        if (held == null) await("Copied packet actual native source read", () -> samples.size() == expected);
+        if (held == null && awaitObservation) await("Copied packet actual native source read", () -> samples.size() == expected);
     }
 
     private void target(Bundle extras) {

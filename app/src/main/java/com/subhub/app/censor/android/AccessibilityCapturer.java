@@ -107,6 +107,7 @@ public final class AccessibilityCapturer implements CensorEngine.Capturer<PixelF
     private final Executor callbackExecutor;
     private final TargetResolver targets;
     private final Observer observer;
+    private final CensorEffectScope effects;
 
     public AccessibilityCapturer(AccessibilityService service, Executor callbackExecutor,
             TargetResolver targets, Observer observer) {
@@ -116,14 +117,32 @@ public final class AccessibilityCapturer implements CensorEngine.Capturer<PixelF
     /** Explicit platform boundary for native contract fixtures, not a claim of bound-service proof. */
     public AccessibilityCapturer(Platform platform, int sdkInt, Executor callbackExecutor,
             TargetResolver targets, Observer observer) {
+        this(platform, sdkInt, callbackExecutor, targets, observer, CensorEffectScope.DEVICE);
+    }
+
+    AccessibilityCapturer(AccessibilityService service, Executor callbackExecutor,
+            TargetResolver targets, Observer observer, CensorEffectScope effects) {
+        this(new ServicePlatform(service), Build.VERSION.SDK_INT, callbackExecutor, targets, observer, effects);
+    }
+
+    /** Explicit effect gate also fences asynchronous source-copy callbacks after owner revocation. */
+    AccessibilityCapturer(Platform platform, int sdkInt, Executor callbackExecutor,
+            TargetResolver targets, Observer observer, CensorEffectScope effects) {
         this.platform = Objects.requireNonNull(platform);
         this.sdkInt = sdkInt;
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor);
         this.targets = Objects.requireNonNull(targets);
         this.observer = Objects.requireNonNull(observer);
+        this.effects = Objects.requireNonNull(effects);
     }
 
     @Override public void capture(CensorEngine.CaptureRequest request, CensorEngine.CaptureCallback<PixelFrame> callback) {
+        // Dispatch admission must precede capture() returning; a denied gate never queues an OS call.
+        if (effects == CensorEffectScope.DEVICE) captureAdmitted(request, callback);
+        else if (!effects.run(() -> captureAdmitted(request, callback))) callback.failure(0);
+    }
+
+    private void captureAdmitted(CensorEngine.CaptureRequest request, CensorEngine.CaptureCallback<PixelFrame> callback) {
         Target target = targets.resolve(request);
         if (target == null || target.epoch != request.epoch || target.geometry != request.geometry
                 || sdkInt < 30) { callback.failure(0); return; }
@@ -139,6 +158,19 @@ public final class AccessibilityCapturer implements CensorEngine.Capturer<PixelF
                     catch (RuntimeException cleanupFailure) { callback.resourceFailure(); }
                     return;
                 }
+                if (effects == CensorEffectScope.DEVICE) { prepareOwned(raw, callbackTime); return; }
+                try {
+                    if (!effects.run(() -> prepareOwned(raw, callbackTime))) {
+                        // Revocation never prevents releasing this callback's actual Android resources.
+                        raw.releaseOwned(); callback.failure(0);
+                    }
+                } catch (RuntimeException | Error uncertain) {
+                    try { raw.releaseOwned(); }
+                    finally { callback.resourceFailure(); }
+                }
+            }
+
+            private void prepareOwned(RawFrame raw, long callbackTime) {
                 Bitmap readable = null;
                 PixelFrame frame = null;
                 boolean cleanupFailed = false;

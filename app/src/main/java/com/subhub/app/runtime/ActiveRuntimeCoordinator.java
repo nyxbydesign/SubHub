@@ -133,12 +133,22 @@ public final class ActiveRuntimeCoordinator {
                 && !resources.isSealed() && authority.current(witness));
     }
 
+    /** Worker-only issuance; the returned private gate performs actual main-thread admission. */
+    OwnedResourceRegistry.PermissionObligation reservePermission(RuntimeLease requested) {
+        return mutex.runtime(() -> {
+            if (guard(requested, Phase.RESERVED) != Result.OK || !authority.current(witness))
+                throw new SecurityException("Start authority changed before prompt");
+            return resources.reservePermission(requested, witness);
+        });
+    }
+
     public Result beginStarting(RuntimeLease requested, StartReadiness readiness) {
         Objects.requireNonNull(readiness);
         return mutex.runtime(() -> {
             Result guard = guard(requested, Phase.RESERVED);
             if (guard != Result.OK) return guard;
             if (!authority.current(witness)) { stopLocked(requested); return Result.AUTHORITY_CHANGED; }
+            if (!resources.permissionsReturned()) return Result.NOT_READY;
             boolean ready;
             try { ready = readiness.current(requested.identity); }
             catch (RuntimeException unknown) { ready = false; }

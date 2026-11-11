@@ -28,6 +28,12 @@ public final class NativeTextReader implements CensorEngine.NativeTextWorker, Au
     public static final int MAXIMUM_TEXT_LENGTH = 2000;
 
     public interface Provider {
+        /**
+         * Hold exact owner admission through an actual scan/confirmation, including node reads.
+         * False runs nothing. Delayed confirmation remains owned until its real cleanup returns.
+         * The physical-device default preserves the existing reader path.
+         */
+        default boolean readEffect(Runnable operation) { operation.run(); return true; }
         /** Transfers root ownership only on successful return; dispose unreturned handles on failure. */
         Tree open(CensorEngine.NativeTextInput input) throws Exception;
         /** Hard foreground/window/config validity; soft tree revision is recorded independently. */
@@ -125,7 +131,7 @@ public final class NativeTextReader implements CensorEngine.NativeTextWorker, Au
         completion.costStarted(new NativeReadCost.Start(input.identity, input.epoch, input.geometry, input.hardGeneration, operation.costInvokedAt, mode));
         // Cancellation does not free a root concurrently with Binder work, nor cancel its cleanup runnable.
         input.onCancellation(operation::cancel);
-        operation.scan();
+        operation.admitted(operation::scan);
     }
 
     /** Request serial retirement; an active operation releases its cache only at its real terminal. */
@@ -184,6 +190,15 @@ public final class NativeTextReader implements CensorEngine.NativeTextWorker, Au
             costInvokedAt = input.nowMillis();
         }
         void cancel() { cancelled = true; }
+        void admitted(Runnable operation) {
+            try {
+                if (!provider.readEffect(operation)) { cancel(); fail(); }
+            } catch (RuntimeException | Error uncertain) {
+                // A rejected scope never prevents exact owned-root/cache cleanup. Never retry a
+                // possibly partly completed read as though it were new source evidence.
+                cancel(); fail();
+            }
+        }
         void valid(Boundary boundary) {
             if (cancelled || input.cancelled() || scope == null) throw new Incomplete();
             NativeReadCost.Stage stage = boundary == Boundary.TRAVERSAL ? NativeReadCost.Stage.TRAVERSAL_CURRENT : NativeReadCost.Stage.PROVIDER_CURRENT;
@@ -327,7 +342,7 @@ public final class NativeTextReader implements CensorEngine.NativeTextWorker, Au
             if (probes.isEmpty()) finish(Collections.emptyList(), 0);
             else {
                 provider.beforeConfirmationScheduled(input, scope);
-                executor.schedule(this::confirm, confirmationMillis, TimeUnit.MILLISECONDS);
+                executor.schedule(() -> admitted(this::confirm), confirmationMillis, TimeUnit.MILLISECONDS);
             }
         }
         void confirm() {

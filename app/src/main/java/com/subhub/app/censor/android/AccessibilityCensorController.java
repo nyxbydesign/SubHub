@@ -98,6 +98,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
     private final AccessibilityCensorHost host;
     private final AccessibilityScrollReader scrollReader;
     private final SnapshotCensorSurface surface;
+    private final CensorEffectScope effects;
     private final ReplacementScrollPresentation scrollPresentation = new ReplacementScrollPresentation();
     private final float displayDensity;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -111,7 +112,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
     private volatile Transition transition;
     private volatile boolean active, closed, resourceFailed;
     private volatile boolean ownerDrained, executorsTerminated, disposalSucceeded;
-    private boolean attached;
+    private boolean attached, attachmentAttempted;
     private long appearanceGeneration;
     private static final class Transition {
         final Configuration configuration;
@@ -159,8 +160,22 @@ public final class AccessibilityCensorController implements AutoCloseable {
             CensorTapTracker taps, Observer observer, AccessibilityCensorHost.WorkerFactory models,
             Runnable rootAcquired, Runnable nativeReadSelected, NativeBoundaryControl nativeBoundaryControl,
             CensorScreenState screen) {
+        this(service, scenePolicy, taps, observer, models, rootAcquired, nativeReadSelected,
+                nativeBoundaryControl, screen, CensorEffectScope.DEVICE, null);
+    }
+    /** Owned binding supplies both the real effect capability and its immutable owned artwork. */
+    AccessibilityCensorController(AccessibilityService service, SceneEngine.Policy scenePolicy,
+            CensorTapTracker taps, Observer observer, AccessibilityCensorHost.WorkerFactory models,
+            Runnable rootAcquired, Runnable nativeReadSelected, NativeBoundaryControl nativeBoundaryControl,
+            CensorScreenState screen, CensorEffectScope effects, SnapshotRenderSession.ArtworkLoader artwork) {
         onMain(); Objects.requireNonNull(service); this.observer = Objects.requireNonNull(observer);
         this.screen = Objects.requireNonNull(screen);
+        this.effects = Objects.requireNonNull(effects);
+        if (effects != CensorEffectScope.DEVICE && artwork == null)
+            throw new IllegalArgumentException("Owned Censor requires an explicit artwork source");
+        SnapshotRenderSession.ArtworkLoader selectedArtwork = artwork != null ? artwork :
+                (policy, revision, obsolete) -> new com.subhub.app.capture.CustomImageManager(service).loadOwnedBitmaps(
+                        policy.artworkDimension, policy.artworkCount, policy.maximumArtworkBytes, revision, obsolete);
         displayDensity = service.getResources().getDisplayMetrics().density;
         this.nativeReadSelected = Objects.requireNonNull(nativeReadSelected);
         this.nativeBoundaryControl = Objects.requireNonNull(nativeBoundaryControl);
@@ -212,7 +227,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
             }
         };
         host = new AccessibilityCensorHost(service, scenePolicy,
-                executor -> new AccessibilityCapturer(service, executor, this::captureTarget, bridge),
+                executor -> new AccessibilityCapturer(service, executor, this::captureTarget, bridge, effects),
                 Objects.requireNonNull(models), bridge, new NativeProvider());
         surface = new SnapshotCensorSurface(service, new SnapshotRenderSession.Owner() {
             @Override public CensorEngine.ActiveScope activeScope() {
@@ -236,13 +251,13 @@ public final class AccessibilityCensorController implements AutoCloseable {
                     long generation, List<Long> members, boolean reverse) {
                 return paintEligible(scope) ? host.acknowledgePaint(scope, revision, generation, members, reverse) : null;
             }
-        }, Objects.requireNonNull(taps), new SnapshotCensorSurface.Observer() {
+        }, selectedArtwork, Objects.requireNonNull(taps), new SnapshotCensorSurface.Observer() {
             @Override public boolean collectSubmissions() { return observer.collectSubmissions(); }
             @Override public void submitted(SurfaceSubmission submission) { observer.submitted(submission); }
             @Override public void resourceFailure() { resourceFailed = true; observer.resourceFailure(); }
             @Override public void endpointFailure() { observer.endpointFailure(); }
             @Override public void posted(SnapshotCensorSurface.Post receipt) { observer.posted(receipt); }
-        });
+        }, effects);
         surface.presentationAllowed(false);
         scrollReader = Build.VERSION.SDK_INT < 33 ? null : new AccessibilityScrollReader(this::scrollCurrent,
                 new AccessibilityScrollReader.Observer() {
@@ -251,16 +266,16 @@ public final class AccessibilityCensorController implements AutoCloseable {
                     @Override public void resourceFailure() {
                         resourceFailed = true; host.platformResourceFailure(); observer.resourceFailure();
                     }
-                });
+                }, () -> { }, null, effects);
     }
 
     /** Source selection is observed off-main through this same platform reader. */
     public AccessibilityWindowReader.Window observeWindow(String packageName, int windowId) {
-        return windows.observe(packageName, windowId);
+        return effects.read(() -> windows.observe(packageName, windowId));
     }
 
     public AccessibilityWindowReader.Window observeForeground(String inputMethodPackage, String preferredPackage) {
-        return windows.observeForeground(inputMethodPackage, preferredPackage);
+        return effects.read(() -> windows.observeForeground(inputMethodPackage, preferredPackage));
     }
 
     /** One existing host survives window/settings changes and stop/start. Tokens must change. */
@@ -269,6 +284,11 @@ public final class AccessibilityCensorController implements AutoCloseable {
     public void suspendForScreen() { onMain(); if (!closed) { stop(); host.suspendForScreen(); } }
 
     public void start(Configuration selected) {
+        onMain();
+        if (effects == CensorEffectScope.DEVICE) startAdmitted(selected);
+        else if (!effects.run(() -> startAdmitted(selected))) throw new CensorEffectScope.Unavailable();
+    }
+    private void startAdmitted(Configuration selected) {
         onMain(); if (closed) throw new IllegalStateException("Closed controller"); Objects.requireNonNull(selected);
         screen.refresh(null);
         if (!screen.eligible()) { suspendForScreen(); return; }
@@ -286,7 +306,11 @@ public final class AccessibilityCensorController implements AutoCloseable {
             if (!current(next)) return;
             surface.configure(selected.appearance, selected.paintPolicy, selected.artworkRevision, true);
             if (!current(next)) return;
-            if (!attached) { manager.addView(surface, overlayParameters()); attached = true; }
+            if (!attached) {
+                // addView may attach before throwing. Cleanup owns the attempt, not just success.
+                attachmentAttempted = true;
+                manager.addView(surface, overlayParameters()); attached = true;
+            }
             if (!current(next)) return;
             host.canvasSamplingControls(selected.appearance.requiresSourceFrame());
             if (!current(next)) return;
@@ -317,6 +341,12 @@ public final class AccessibilityCensorController implements AutoCloseable {
 
     /** Appearance resources change without resetting capture, inference, geometry or identities. */
     public void appearanceChanged(CensorAppearance appearance, SnapshotPaintPolicy policy, long artworkRevision) {
+        onMain();
+        if (effects == CensorEffectScope.DEVICE) appearanceAdmitted(appearance, policy, artworkRevision);
+        else if (!effects.run(() -> appearanceAdmitted(appearance, policy, artworkRevision)))
+            throw new CensorEffectScope.Unavailable();
+    }
+    private void appearanceAdmitted(CensorAppearance appearance, SnapshotPaintPolicy policy, long artworkRevision) {
         onMain(); Objects.requireNonNull(appearance); Objects.requireNonNull(policy);
         if (closed) throw new IllegalStateException("Closed controller");
         if (artworkRevision < 0) throw new IllegalArgumentException("Artwork revision");
@@ -352,8 +382,13 @@ public final class AccessibilityCensorController implements AutoCloseable {
         finally {
             try { surface.close(); }
             finally {
-                if (attached || surface.isAttachedToWindow() || surface.getParent() != null) {
-                    try { manager.removeViewImmediate(surface); attached = false; }
+                if (attachmentAttempted || attached || surface.isAttachedToWindow() || surface.getParent() != null) {
+                    try {
+                        manager.removeViewImmediate(surface);
+                        if (surface.isAttachedToWindow() || surface.getParent() != null)
+                            throw new IllegalStateException("Censor window removal did not detach its exact Surface");
+                        attached = false; attachmentAttempted = false;
+                    }
                     catch (RuntimeException | Error failure) { resourceFailed = true; observer.resourceFailure(); throw failure; }
                 }
             }
@@ -364,7 +399,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
     public boolean managedResourcesDrained() {
         return closed && ownerDrained && executorsTerminated && disposalSucceeded && !resourceFailed
                 && (Build.VERSION.SDK_INT < 33 || scrollReader == null || scrollReader.managedResourcesDrained())
-                && windows.managedResourcesDrained() && !attached && surface.managedResourcesDrained();
+                && windows.managedResourcesDrained() && !attached && !attachmentAttempted && surface.managedResourcesDrained();
     }
 
     public CensorEngine.ActiveScope activeScope() { return host.activeScope(); }
@@ -499,6 +534,7 @@ public final class AccessibilityCensorController implements AutoCloseable {
     }
 
     private final class NativeProvider implements NativeTextReader.Provider {
+        @Override public boolean readEffect(Runnable operation) { return effects.run(operation); }
         @Override public boolean addressRefreshSupported() { return true; }
         @Override public void beforeConfirmationScheduled(CensorEngine.NativeTextInput input, NativeTextReader.Scope scope) {
             ProductCensorQualification.nativeConfirmationPending(input);

@@ -133,6 +133,7 @@ public final class SnapshotCensorSurface extends FrameLayout implements AutoClos
     private final Observer observer;
     private final Endpoint endpoint;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final CensorEffectScope effects;
     private final ExecutorService rendering;
     private final LatestResourceCoordinator.Delivery completionDelivery;
     // Only counters/immutable metadata and pure tap-map mutation under this gate. NO holder, View,
@@ -201,7 +202,19 @@ public final class SnapshotCensorSurface extends FrameLayout implements AutoClos
     SnapshotCensorSurface(Context context, SnapshotRenderSession.Owner owner, SnapshotRenderSession.ArtworkLoader artwork,
             CensorTapTracker taps, Observer observer, Endpoint endpoint,
             LatestResourceCoordinator.Delivery completionDelivery, ExecutorService rendering) {
+        this(context, owner, artwork, taps, observer, endpoint, completionDelivery, rendering, CensorEffectScope.DEVICE);
+    }
+
+    SnapshotCensorSurface(Context context, SnapshotRenderSession.Owner owner, SnapshotRenderSession.ArtworkLoader artwork,
+            CensorTapTracker taps, Observer observer, CensorEffectScope effects) {
+        this(context, owner, artwork, taps, observer, HOLDER, null, null, effects);
+    }
+
+    SnapshotCensorSurface(Context context, SnapshotRenderSession.Owner owner, SnapshotRenderSession.ArtworkLoader artwork,
+            CensorTapTracker taps, Observer observer, Endpoint endpoint,
+            LatestResourceCoordinator.Delivery completionDelivery, ExecutorService rendering, CensorEffectScope effects) {
         super(context); onMain(); this.observer = Objects.requireNonNull(observer);
+        this.effects = Objects.requireNonNull(effects);
         collectSubmissions = observer.collectSubmissions();
         this.taps = Objects.requireNonNull(taps); this.endpoint = Objects.requireNonNull(endpoint);
         this.completionDelivery = completionDelivery == null ? main::post : completionDelivery;
@@ -357,7 +370,24 @@ public final class SnapshotCensorSurface extends FrameLayout implements AutoClos
                 surfaceUsers++; // Reserve BEFORE holder acquisition; destruction must wait for it.
             }
             Completion result;
-            try (SurfaceUse use = new SurfaceUse()) { result = recordAndPost(pose, use); }
+            try (SurfaceUse use = new SurfaceUse()) {
+                if (effects == CensorEffectScope.DEVICE) result = recordAndPost(pose, use);
+                else {
+                    java.util.concurrent.atomic.AtomicReference<Completion> admitted = new java.util.concurrent.atomic.AtomicReference<>();
+                    try {
+                        if (!effects.run(() -> admitted.set(recordAndPost(pose, use)))) {
+                            // No holder access occurred. Retain normal demand through the existing counted
+                            // main callback; a busy live-config gate is retried, not fabricated as a post.
+                            presentationChanged();
+                        }
+                    } catch (RuntimeException | Error failedGate) {
+                        // Scope failure cannot strand the render reservation after the actual
+                        // drawing returned. SurfaceUse still releases only this exact holder use.
+                        failSubmission(); return;
+                    }
+                    result = admitted.get();
+                }
+            }
             if (result != null) offerCompletion(result);
         }
     }

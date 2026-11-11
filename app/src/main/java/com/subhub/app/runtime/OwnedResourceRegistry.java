@@ -21,6 +21,7 @@ public final class OwnedResourceRegistry {
     private final Set<Registration> resources = new HashSet<>();
     private final Map<String, Registration> components = new HashMap<>();
     private final Set<EffectPermit> permits = new HashSet<>();
+    private final Set<PermissionObligation> permissions = new HashSet<>();
     // Lock order: RuntimeMutex -> permitLock. Never enter RuntimeMutex, persistence, callbacks,
     // or Android from permitLock. Window callbacks can acquire/release without waiting for fsync.
     private final Object permitLock = new Object();
@@ -30,9 +31,22 @@ public final class OwnedResourceRegistry {
     OwnedResourceRegistry(RuntimeMutex mutex, RuntimeLease lease, Runnable requiredComponentClosed) {
         this.mutex = mutex; this.lease = lease; this.requiredComponentClosed = requiredComponentClosed;
     }
+    /** Coordinator-only reservation; not general RESERVED work/effect authority. */
+    PermissionObligation reservePermission(RuntimeLease requested, RuntimeAdmissionAuthority.Witness witness) {
+        mutex.requireHeld();
+        synchronized (permitLock) {
+            if (requested != lease || mode != Mode.RESERVED || receipt != null || !witness.permitsLaunch())
+                throw new SecurityException("Permission admission revoked");
+            PermissionObligation obligation = new PermissionObligation(this, witness);
+            permissions.add(obligation); return obligation;
+        }
+    }
+    boolean permissionsReturned() {
+        mutex.requireHeld(); synchronized (permitLock) { return permissions.isEmpty(); }
+    }
     boolean starting() {
         mutex.requireHeld(); synchronized (permitLock) {
-            if (mode != Mode.RESERVED) return false;
+            if (mode != Mode.RESERVED || !permissions.isEmpty()) return false;
             mode = Mode.STARTING; return true;
         }
     }
@@ -91,7 +105,7 @@ public final class OwnedResourceRegistry {
     public DrainReceipt drained(RuntimeLease requested) {
         return mutex.runtime(() -> {
             synchronized (permitLock) {
-                if (requested != lease || mode != Mode.SEALED || !resources.isEmpty() || !permits.isEmpty()) return null;
+                if (requested != lease || mode != Mode.SEALED || !resources.isEmpty() || !permits.isEmpty() || !permissions.isEmpty()) return null;
                 if (receipt == null) receipt = new DrainReceipt(this, lease, epoch);
                 return receipt;
             }
@@ -101,10 +115,53 @@ public final class OwnedResourceRegistry {
         mutex.requireHeld();
         synchronized (permitLock) {
             return value != null && value == receipt && value.registry == this && value.lease == lease
-                    && value.epoch.equals(epoch) && mode == Mode.SEALED && resources.isEmpty() && permits.isEmpty();
+                    && value.epoch.equals(epoch) && mode == Mode.SEALED && resources.isEmpty() && permits.isEmpty() && permissions.isEmpty();
         }
     }
     boolean isSealed() { mutex.requireHeld(); return mode == Mode.SEALED; }
+
+    /**
+     * Exact prompt obligation, registered before its UI handle is exposed. The short permission
+     * gate is separate from RuntimeMutex: launch/return never waits for journal IO. The final
+     * freshness read is the launch admission linearization point. A concurrent revocation after
+     * that read may not undo an admitted OS call, so both actual launch and result return remain
+     * counted. Recovery uses this same set and cannot infer prompt closure from STOPPING alone.
+     */
+    static final class PermissionObligation {
+        private final OwnedResourceRegistry registry;
+        private final RuntimeAdmissionAuthority.Witness witness;
+        private boolean launched, launchReturned, resultReturned, closed;
+        private PermissionObligation(OwnedResourceRegistry registry, RuntimeAdmissionAuthority.Witness witness) {
+            this.registry = registry; this.witness = witness;
+        }
+        boolean tryLaunch() {
+            synchronized (registry.permitLock) {
+                if (closed || launched || registry.mode != Mode.RESERVED || !witness.permitsLaunch()) return false;
+                launched = true; return true;
+            }
+        }
+        void cancelBeforeLaunch() {
+            synchronized (registry.permitLock) {
+                if (!launched) { closed = true; registry.permissions.remove(this); }
+            }
+        }
+        void launchReturned() {
+            synchronized (registry.permitLock) {
+                if (!launched) throw new IllegalStateException("Prompt was never admitted");
+                launchReturned = true; retireIfReturned();
+            }
+        }
+        boolean resultReturned() {
+            synchronized (registry.permitLock) {
+                if (!launched) throw new IllegalStateException("Prompt was never admitted");
+                boolean current = registry.mode == Mode.RESERVED && witness.permitsLaunch();
+                resultReturned = true; retireIfReturned(); return current;
+            }
+        }
+        private void retireIfReturned() {
+            if (launchReturned && resultReturned) { closed = true; registry.permissions.remove(this); }
+        }
+    }
 
     public static final class Registration implements AutoCloseable {
         private final OwnedResourceRegistry registry;
