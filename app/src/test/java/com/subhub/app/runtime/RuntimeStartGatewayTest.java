@@ -10,6 +10,15 @@ import java.util.concurrent.Executor;
 import org.junit.Test;
 
 public final class RuntimeStartGatewayTest {
+    @Test public void demoStartInputCannotUseDeviceOrMissingRevision() {
+        String generation = UUID.randomUUID().toString();
+        assertThrows(IllegalArgumentException.class,
+                () -> new AppRuntimeGateway.InternalStartSpec("local", generation, 1, 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new AppRuntimeGateway.InternalStartSpec("demo", generation, -1, 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new AppRuntimeGateway.InternalStartSpec("demo", "not-a-generation", 1, 1));
+    }
     @Test public void internalProjectionReservesPixelAndModuleComponents() {
         AndroidRuntimeFactory.InternalStartPlan plan = AndroidRuntimeFactory.InternalStartPlan.select(
                 true, com.subhub.app.settings.CaptureMethod.SCREEN_RECORDING, 35);

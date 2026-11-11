@@ -8,6 +8,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.accessibility.AccessibilityManager;
 import com.subhub.app.appmode.RuntimeSessionIdentity;
+import com.subhub.app.censor.android.OwnedLegacyCensorData;
+import com.subhub.app.service.InternalLimitsBinding;
 import com.subhub.app.service.RuntimeCaptureHost;
 import com.subhub.app.service.ScreenCaptureService;
 import com.subhub.app.service.ScreenshotAccessibilityService;
@@ -17,17 +19,23 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Actual DEVICE Start adapter. INACTIVE: no installer may expose this until owned ACTIVE-loss
+ * Android Start transport for DEVICE and Demo. INACTIVE until owned DEVICE capture replacement
  * continuation and whole-transition End/boot/remote/expiry routing are qualified. Rearm refuses
  * explicitly rather than invoking a legacy action outside exact admitted resource ownership.
  */
 final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
     private final Application physical;
     private final AndroidRuntimeFactory factory;
+    private final InternalLimitsBinding.LocalIntervention internalLimitsNotice;
+    private final OwnedLegacyCensorData.LocalNotice internalAssessmentNotice;
     private final Handler main = new Handler(Looper.getMainLooper());
 
-    AndroidDeviceBackend(Application physical, AndroidRuntimeFactory factory) {
+    AndroidDeviceBackend(Application physical, AndroidRuntimeFactory factory,
+            InternalLimitsBinding.LocalIntervention internalLimitsNotice,
+            OwnedLegacyCensorData.LocalNotice internalAssessmentNotice) {
         this.physical = Objects.requireNonNull(physical); this.factory = Objects.requireNonNull(factory);
+        this.internalLimitsNotice = Objects.requireNonNull(internalLimitsNotice);
+        this.internalAssessmentNotice = Objects.requireNonNull(internalAssessmentNotice);
     }
     @Override public CompletableFuture<AppRuntimeGateway.DeviceStart> deviceStart(AppRuntimeGateway.DeviceStartSpec specification) {
         CompletableFuture<AppRuntimeGateway.DeviceStart> result = new CompletableFuture<>();
@@ -43,6 +51,16 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
             if (!result.complete(start)) start.cancel();
         });
         return result;
+    }
+    @Override public CompletableFuture<AppRuntimeGateway.InternalStart> internalStart(
+            AppRuntimeGateway.InternalStartSpec specification) {
+        CompletableFuture<AppRuntimeGateway.InternalStart> response = new CompletableFuture<>();
+        factory.reserveInternal(specification).whenComplete((admission, failure) -> {
+            if (failure != null) { response.completeExceptionally(failure); return; }
+            InternalStart start = new InternalStart(admission);
+            if (!response.complete(start)) start.cancel();
+        });
+        return response;
     }
     @Override public CompletableFuture<AppRuntimeGateway.StartResult> rearmDevice(AppRuntimeGateway.RearmReason reason,
             RuntimeSessionIdentity.ComponentObservation expected, Runnable admittedLegacyAction) {
@@ -61,6 +79,72 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
         return factory.admitDeviceMutation(mutation);
     }
     @Override public AppRuntimeGateway.ServiceAccess serviceAccess() { return factory.serviceAccess(); }
+
+    private final class InternalStart implements AppRuntimeGateway.InternalStart {
+        private final AndroidRuntimeFactory.InternalStartAdmission admission;
+        private volatile AndroidRuntimeFactory.InternalAccessibilityAssembly assembly;
+        private CompletableFuture<RuntimeLease.Identity> result;
+        InternalStart(AndroidRuntimeFactory.InternalStartAdmission admission) { this.admission = admission; }
+        @Override public RuntimeLease.Identity identity() { return admission.attempt.identity(); }
+        @Override public boolean requiresProjection() { return admission.plan.requiresProjection(); }
+        @Override public CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt.Permission kind) {
+            Objects.requireNonNull(kind);
+            if (!requiresProjection() && (kind == RuntimeStartAttempt.Permission.PROJECTION
+                    || kind == RuntimeStartAttempt.Permission.OVERLAY))
+                throw new SecurityException("Permission does not belong to the selected Demo capture plan");
+            return observePrompt(factory.submitDevice(() -> factory.permission(admission.attempt, kind))
+                    .thenCompose(prompt -> prompt));
+        }
+        @Override public CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted,
+                int resultCode, Intent projectionData) {
+            Intent captured = projectionData == null ? null : new Intent(projectionData);
+            return observePrompt(factory.internalPermissionResult(admission, prompt, granted, resultCode, captured));
+        }
+        private <T> CompletableFuture<T> observePrompt(CompletableFuture<T> response) {
+            response.whenComplete((ignored, failure) -> { if (failure != null) cancel(); });
+            return response;
+        }
+        @Override public CompletableFuture<RuntimeLease.Identity> start() {
+            if (Looper.myLooper() != main.getLooper()) throw new IllegalStateException("Start Demo from main");
+            if (result != null) return result;
+            result = new CompletableFuture<>();
+            result.whenComplete((ignored, failure) -> {
+                if (result.isCancelled()) fail(new java.util.concurrent.CancellationException("Demo Start response withdrawn"));
+            });
+            try {
+                // Main-only entry: readiness cannot run before Handler.post returns on this Looper.
+                if (!main.post(this::observeAndStart)) fail(new IllegalStateException("Demo Start queue refused"));
+            } catch (RuntimeException | Error uncertain) { fail(uncertain); }
+            return result;
+        }
+        private void observeAndStart() {
+            if (result.isDone()) return;
+            try {
+                boolean accessibility = accessibilityReady();
+                boolean overlay = !requiresProjection() || Settings.canDrawOverlays(physical);
+                factory.submitDevice(() -> factory.beginInternalStart(admission, accessibility, overlay,
+                        internalLimitsNotice, internalAssessmentNotice)).thenCompose(value -> value)
+                        .whenComplete((prepared, failure) -> {
+                            if (failure != null) { fail(failure); return; }
+                            assembly = prepared;
+                            if (result.isDone()) { prepared.owner.runtime.requestStop(); return; }
+                            prepared.active().whenComplete((active, activationFailure) -> {
+                                if (activationFailure != null) fail(activationFailure);
+                                else if (active == null || active.target.kind != RuntimeTarget.Kind.INTERNAL || !identity().equals(active))
+                                    fail(new SecurityException("Different Demo owner acknowledged activation"));
+                                else if (!result.complete(active)) prepared.owner.runtime.requestStop();
+                            });
+                        });
+            } catch (RuntimeException | Error unavailable) { fail(unavailable); }
+        }
+        @Override public boolean cancel() { return factory.cancel(admission.attempt); }
+        private void fail(Throwable failure) {
+            completeFailureSteps(failure, this::cancel, () -> {
+                AndroidRuntimeFactory.InternalAccessibilityAssembly exact = assembly;
+                if (exact != null) exact.owner.runtime.requestStop();
+            }, () -> result.completeExceptionally(failure));
+        }
+    }
 
     private final class Start implements AppRuntimeGateway.DeviceStart {
         private final AndroidRuntimeFactory.DeviceAdmission admission;

@@ -71,6 +71,32 @@ public final class AppRuntimeGateway {
         /** Nonblocking fence; outstanding prompts/native resources remain owned until actual return. */
         boolean cancel();
     }
+    /** Values shown by the Demo editor after its save acknowledgement. They do not grant Start. */
+    public static final class InternalStartSpec {
+        public final RuntimeTarget target;
+        public final String generation;
+        public final long configurationRevision, controllerRevision;
+        public InternalStartSpec(String targetId, String generation, long configurationRevision, long controllerRevision) {
+            target = RuntimeTarget.internal(targetId);
+            if (generation == null || !java.util.UUID.fromString(generation).toString().equals(generation)
+                    || configurationRevision < 0 || controllerRevision < 0)
+                throw new IllegalArgumentException("Invalid Demo Start revision");
+            this.generation = generation;
+            this.configurationRevision = configurationRevision;
+            this.controllerRevision = controllerRevision;
+        }
+    }
+    /** Exact process-local Demo attempt. No grants or saved-state restoration enter this facade. */
+    public interface InternalStart {
+        RuntimeLease.Identity identity();
+        boolean requiresProjection();
+        CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt.Permission kind);
+        CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted,
+                int resultCode, Intent projectionData);
+        /** Main thread. Completes only for the exact INTERNAL durable ACTIVE acknowledgement. */
+        CompletableFuture<RuntimeLease.Identity> start();
+        boolean cancel();
+    }
     public interface DeviceMutationPermit extends AutoCloseable {
         /** Holds exact counted DEVICE authority through the actual synchronous mutation return. */
         @Override void close();
@@ -82,6 +108,11 @@ public final class AppRuntimeGateway {
     /** Implemented only by the physical Android owner factory; no public setter or fallback hook. */
     interface Backend {
         CompletableFuture<DeviceStart> deviceStart(DeviceStartSpec specification);
+        default CompletableFuture<InternalStart> internalStart(InternalStartSpec specification) {
+            CompletableFuture<InternalStart> result = new CompletableFuture<>();
+            result.completeExceptionally(new DeviceAdmissionException("Demo Start is unavailable"));
+            return result;
+        }
         /**
          * expected is actual immutable component evidence, not authority or a caller-trusted string.
          * Verify current exact DEVICE lease + actual component identities. Hold counted authority
@@ -283,6 +314,9 @@ public final class AppRuntimeGateway {
     }
     public CompletableFuture<DeviceStart> deviceStart(DeviceStartSpec specification) {
         return Objects.requireNonNull(backend.deviceStart(Objects.requireNonNull(specification)));
+    }
+    public CompletableFuture<InternalStart> internalStart(InternalStartSpec specification) {
+        return Objects.requireNonNull(backend.internalStart(Objects.requireNonNull(specification)));
     }
     public CompletableFuture<StartResult> rearmDevice(RearmReason reason,
             RuntimeSessionIdentity.ComponentObservation expected, Runnable admittedLegacyAction) {

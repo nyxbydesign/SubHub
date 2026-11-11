@@ -521,8 +521,19 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             this.configuration = configuration;
         }
     }
+    CompletableFuture<InternalStartAdmission> reserveInternal(AppRuntimeGateway.InternalStartSpec specification) {
+        Objects.requireNonNull(specification);
+        return submitDevice(() -> {
+            InternalSubRecord current = data.acknowledged();
+            if (!current.visible || !specification.target.equals(RuntimeTarget.internal(current.targetId))
+                    || !specification.generation.equals(current.generation)
+                    || specification.configurationRevision != current.configurationRevision)
+                throw new SecurityException("Demo Start is stale");
+            return reserveInternal(current, specification.controllerRevision);
+        }).thenCompose(answer -> answer);
+    }
     /** Same serial broker lane as editor saves. Competing starts cannot replace a pending witness. */
-    CompletableFuture<InternalStartAdmission> reserveInternal(InternalSubRecord expected, long controllerRevision) {
+    private CompletableFuture<InternalStartAdmission> reserveInternal(InternalSubRecord expected, long controllerRevision) {
         requireUsable(); retireTerminalRouting();
         if(visibility!=null)throw new SecurityException("Visibility mutation owns admission");
         ActiveRuntimeCoordinator.Observation existing = coordinator.observe();
@@ -548,6 +559,15 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             }
             return new InternalStartAdmission(attempt, plan, expected);
         });
+    }
+    /** A revoked/withdrawn UI still returns the real OS callback for its exact prompt. */
+    CompletableFuture<Boolean> internalPermissionResult(InternalStartAdmission admitted, RuntimeStartAttempt.Prompt prompt,
+            boolean granted, int resultCode, Intent projectionData) {
+        Objects.requireNonNull(admitted);
+        Objects.requireNonNull(prompt);
+        return dispatchDeviceCommand(this::requireWorker,
+                () -> permissionResult(admitted.attempt, prompt, granted, resultCode, projectionData))
+                .thenCompose(answer -> answer);
     }
     /** Observations are captured from Android before entering this owner-lane method. */
     CompletableFuture<InternalAccessibilityAssembly> beginInternalStart(InternalStartAdmission admitted,
