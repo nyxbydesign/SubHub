@@ -3,13 +3,17 @@ package com.subhub.app.appmode;
 import static org.junit.Assert.*;
 import com.subhub.app.runtime.AppRuntimeGateway;
 import com.subhub.app.runtime.DeviceStartEntryFixture;
+import com.subhub.app.runtime.RuntimeLease;
+import com.subhub.app.runtime.RuntimeOrigin;
 import com.subhub.app.runtime.RuntimeOwnerStore;
+import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.runtime.RuntimeStartAttempt.Permission;
 import com.subhub.app.settings.CaptureMethod;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import org.junit.Test;
 
@@ -198,6 +202,59 @@ public final class DeviceStartViewModelTest {
             f.ui.grants.add(kind); f.returned(kind, () -> true, -1, null); f.queue.drain();
         }
         assertEquals(1, f.owner.starts); assertEquals(4, f.owner.results);
+    }
+
+    @Test public void demoWaitsForDurationAndDurableStartAcrossHostReplacement() {
+        Fixture f = new Fixture();
+        f.ui.grants.addAll(List.of(Permission.NOTIFICATIONS, Permission.ACCESSIBILITY));
+        AppRuntimeGateway.InternalStartSpec spec = demoSpec();
+        InternalOwner owner = new InternalOwner(spec);
+        CompletableFuture<AppRuntimeGateway.InternalStartSpec> duration = new CompletableFuture<>();
+        assertTrue(f.model.beginInternal(ack -> {
+            assertSame(spec, ack);
+            return CompletableFuture.completedFuture(owner);
+        }, () -> duration));
+        f.queue.drain(); assertEquals(0, owner.starts);
+        f.model.detach(f.ui);
+        duration.complete(spec); f.queue.drain(); assertEquals(0, owner.starts);
+        Ui replacement = new Ui(); replacement.grants.addAll(f.ui.grants);
+        f.model.attach(replacement); assertEquals(1, owner.starts);
+        assertTrue(replacement.completed.isEmpty());
+        owner.active.complete(owner.identity); f.queue.drain();
+        assertEquals(List.of(AppRuntimeGateway.StartState.ACTIVE), replacement.completed);
+    }
+
+    @Test public void cancelledDemoDoesNotReserveWhenDurationAcknowledgesLater() {
+        Fixture f = new Fixture();
+        CompletableFuture<AppRuntimeGateway.InternalStartSpec> duration = new CompletableFuture<>();
+        assertTrue(f.model.beginInternal(ack -> { fail("Cancelled Demo reserved"); return null; }, () -> duration));
+        f.model.cancel();
+        duration.complete(demoSpec()); f.queue.drain();
+        assertTrue(f.ui.launched.isEmpty());
+        assertFalse(f.model.busy());
+    }
+
+    private static AppRuntimeGateway.InternalStartSpec demoSpec() {
+        return new AppRuntimeGateway.InternalStartSpec("dummy_sub_preview", UUID.randomUUID().toString(), 4, 2);
+    }
+
+    private static final class InternalOwner implements AppRuntimeGateway.InternalStart {
+        final RuntimeLease.Identity identity;
+        final CompletableFuture<RuntimeLease.Identity> active = new CompletableFuture<>();
+        int starts;
+        InternalOwner(AppRuntimeGateway.InternalStartSpec spec) {
+            identity = new RuntimeLease.Identity(spec.target, RuntimeOrigin.LOCAL_UI, spec.generation,
+                    UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(), spec.configurationRevision);
+        }
+        @Override public RuntimeLease.Identity identity() { return identity; }
+        @Override public boolean requiresProjection() { return false; }
+        @Override public CompletableFuture<RuntimeStartAttempt.Prompt> permission(Permission kind) {
+            throw new AssertionError("Unexpected permission: " + kind);
+        }
+        @Override public CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted,
+                int code, android.content.Intent data) { throw new AssertionError("Unexpected permission result"); }
+        @Override public CompletableFuture<RuntimeLease.Identity> start() { starts++; return active; }
+        @Override public boolean cancel() { return true; }
     }
 
     private static final class Queue implements DeviceStartViewModel.MainQueue {

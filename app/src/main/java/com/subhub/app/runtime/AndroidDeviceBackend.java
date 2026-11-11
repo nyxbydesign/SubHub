@@ -70,6 +70,10 @@ final class AndroidDeviceBackend implements AppRuntimeGateway.Backend {
                 "Owned DEVICE continuation is not qualified; legacy rearm was not invoked"));
         return result;
     }
+    @Override public CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,
+            long controllerRevision) {
+        return factory.endLocalDevice(expected, controllerRevision);
+    }
     @Override public AppRuntimeGateway.DeviceMutationPermit admitManagedDeviceMutation(
             RuntimeLease.Identity expected, AppRuntimeGateway.Mutation mutation,
             AppRuntimeGateway.ManagedDevicePhase phase) {

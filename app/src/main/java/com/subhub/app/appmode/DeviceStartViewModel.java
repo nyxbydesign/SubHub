@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import androidx.lifecycle.ViewModel;
 import com.subhub.app.runtime.AppRuntimeGateway;
+import com.subhub.app.runtime.RuntimeLease;
 import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.settings.CaptureMethod;
 import java.util.EnumSet;
@@ -16,10 +17,11 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Retains the exact process-local DEVICE attempt across Home recreation. Nothing is saved in a
+ * Retains the exact process-local Start attempt across Activity recreation. Nothing is saved in a
  * Bundle. Separate start-only launchers return here even after role loss or cancellation; a new
  * Activity may present the same attempt, but cannot reconstruct one from preferences or an Intent.
  */
@@ -37,13 +39,57 @@ public final class DeviceStartViewModel extends ViewModel {
     private final MainQueue main;
     private final EnumSet<RuntimeStartAttempt.Permission> attempted =
             EnumSet.noneOf(RuntimeStartAttempt.Permission.class);
-    private volatile AppRuntimeGateway.DeviceStart attempt;
+    private volatile Attempt attempt;
     private volatile boolean cleared, dispatchFailed;
     private Ui ui;
     private PromptRoute route;
     private boolean active, reserving, issuing, waitingResult, starting, cancelled;
     private boolean projectionApproved;
     private AppRuntimeGateway.StartState terminal;
+
+    private record PermissionPlan(boolean notifications, boolean accessibility, boolean overlay, boolean projection) {}
+    private record Outcome(AppRuntimeGateway.StartState state, RuntimeLease.Identity owner) {}
+    private interface Attempt {
+        RuntimeLease.Identity identity();
+        PermissionPlan plan();
+        CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt.Permission kind);
+        CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted, int code, Intent data);
+        CompletableFuture<Outcome> start();
+        boolean cancel();
+    }
+    private record DeviceAttempt(AppRuntimeGateway.DeviceStart owner) implements Attempt {
+        @Override public RuntimeLease.Identity identity() { return owner.identity(); }
+        @Override public PermissionPlan plan() {
+            AppRuntimeGateway.DevicePlan plan = owner.plan();
+            return new PermissionPlan(plan.requestNotifications, plan.requiresAccessibility, plan.requiresOverlay,
+                    plan.capture == CaptureMethod.SCREEN_RECORDING);
+        }
+        @Override public CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt.Permission kind) {
+            return owner.permission(kind);
+        }
+        @Override public CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted,
+                int code, Intent data) { return owner.permissionResult(prompt, granted, code, data); }
+        @Override public CompletableFuture<Outcome> start() {
+            return owner.start().thenApply(result -> result == null ? null : new Outcome(result.state, result.owner));
+        }
+        @Override public boolean cancel() { return owner.cancel(); }
+    }
+    private record InternalAttempt(AppRuntimeGateway.InternalStart owner) implements Attempt {
+        @Override public RuntimeLease.Identity identity() { return owner.identity(); }
+        @Override public PermissionPlan plan() {
+            boolean projection = owner.requiresProjection();
+            return new PermissionPlan(true, true, projection, projection);
+        }
+        @Override public CompletableFuture<RuntimeStartAttempt.Prompt> permission(RuntimeStartAttempt.Permission kind) {
+            return owner.permission(kind);
+        }
+        @Override public CompletableFuture<Boolean> permissionResult(RuntimeStartAttempt.Prompt prompt, boolean granted,
+                int code, Intent data) { return owner.permissionResult(prompt, granted, code, data); }
+        @Override public CompletableFuture<Outcome> start() {
+            return owner.start().thenApply(identity -> new Outcome(AppRuntimeGateway.StartState.ACTIVE, identity));
+        }
+        @Override public boolean cancel() { return owner.cancel(); }
+    }
 
     public DeviceStartViewModel() {
         Handler handler = new Handler(Looper.getMainLooper());
@@ -67,7 +113,7 @@ public final class DeviceStartViewModel extends ViewModel {
         private volatile boolean launched;
         private Delivery delivery;
         private final Map<Runnable, Boolean> retired = new IdentityHashMap<>();
-        private PromptRoute(DeviceStartViewModel model, AppRuntimeGateway.DeviceStart owner,
+        private PromptRoute(DeviceStartViewModel model, Attempt owner,
                 RuntimeStartAttempt.Prompt prompt) {
             permission = prompt.permission; delivery = new Delivery(model, owner, prompt);
         }
@@ -99,9 +145,9 @@ public final class DeviceStartViewModel extends ViewModel {
     }
     private static final class Delivery {
         final DeviceStartViewModel model;
-        final AppRuntimeGateway.DeviceStart owner;
+        final Attempt owner;
         final RuntimeStartAttempt.Prompt prompt;
-        Delivery(DeviceStartViewModel model, AppRuntimeGateway.DeviceStart owner, RuntimeStartAttempt.Prompt prompt) {
+        Delivery(DeviceStartViewModel model, Attempt owner, RuntimeStartAttempt.Prompt prompt) {
             this.model = model; this.owner = owner; this.prompt = prompt;
         }
     }
@@ -118,6 +164,32 @@ public final class DeviceStartViewModel extends ViewModel {
         return begin(() -> gateway.deviceStart(specification));
     }
     boolean begin(Supplier<CompletableFuture<AppRuntimeGateway.DeviceStart>> admission) {
+        return beginAttempt(() -> admission.get().thenApply(owner -> owner == null ? null : new DeviceAttempt(owner)));
+    }
+
+    public boolean beginInternal(AppRuntimeGateway gateway,
+            Supplier<CompletableFuture<AppRuntimeGateway.InternalStartSpec>> acknowledged) {
+        return beginInternal(gateway::internalStart, acknowledged);
+    }
+
+    boolean beginInternal(Function<AppRuntimeGateway.InternalStartSpec, CompletableFuture<AppRuntimeGateway.InternalStart>> admit,
+            Supplier<CompletableFuture<AppRuntimeGateway.InternalStartSpec>> acknowledged) {
+        return beginAttempt(() -> acknowledged.get().thenCompose(spec -> {
+            if (cancelled || cleared || dispatchFailed) throw new java.util.concurrent.CancellationException();
+            return admit.apply(spec).thenApply(owner -> {
+                if (owner == null) return null;
+                RuntimeLease.Identity identity = owner.identity();
+                if (identity == null || !spec.target.equals(identity.target) || !spec.generation.equals(identity.profileGeneration)
+                        || spec.configurationRevision != identity.initialConfigurationRevision) {
+                    owner.cancel();
+                    throw new SecurityException("Different Demo Start reservation");
+                }
+                return new InternalAttempt(owner);
+            });
+        }));
+    }
+
+    private boolean beginAttempt(Supplier<CompletableFuture<Attempt>> admission) {
         if (busy() || cleared) return false;
         active = reserving = true;
         cancelled = projectionApproved = false;
@@ -146,7 +218,7 @@ public final class DeviceStartViewModel extends ViewModel {
     private void permissionReturned(PromptRoute returned, Delivery delivery, BooleanSupplier granted,
             int resultCode, Intent projectionData) {
         RuntimeStartAttempt.Prompt exact = delivery.prompt;
-        AppRuntimeGateway.DeviceStart owner = delivery.owner;
+        Attempt owner = delivery.owner;
         boolean observed = false;
         try { observed = granted.getAsBoolean(); }
         catch (RuntimeException unavailable) {
@@ -186,21 +258,21 @@ public final class DeviceStartViewModel extends ViewModel {
         if (!active || cleared || cancelled || dispatchFailed || reserving || issuing || waitingResult || starting) return;
         Ui host = ui;
         if (host == null || !host.available()) return;
-        AppRuntimeGateway.DeviceStart owner = attempt;
+        Attempt owner = attempt;
         if (owner == null) { abort(AppRuntimeGateway.StartState.FAILED); return; }
         try {
-            AppRuntimeGateway.DevicePlan plan = owner.plan();
-            if (plan.requestNotifications && !attempted.contains(RuntimeStartAttempt.Permission.NOTIFICATIONS)
+            PermissionPlan plan = owner.plan();
+            if (plan.notifications && !attempted.contains(RuntimeStartAttempt.Permission.NOTIFICATIONS)
                     && !host.granted(RuntimeStartAttempt.Permission.NOTIFICATIONS)) {
                 issue(RuntimeStartAttempt.Permission.NOTIFICATIONS); return;
             }
-            if (plan.requiresAccessibility && !host.granted(RuntimeStartAttempt.Permission.ACCESSIBILITY)) {
+            if (plan.accessibility && !host.granted(RuntimeStartAttempt.Permission.ACCESSIBILITY)) {
                 require(RuntimeStartAttempt.Permission.ACCESSIBILITY); return;
             }
-            if (plan.requiresOverlay && !host.granted(RuntimeStartAttempt.Permission.OVERLAY)) {
+            if (plan.overlay && !host.granted(RuntimeStartAttempt.Permission.OVERLAY)) {
                 require(RuntimeStartAttempt.Permission.OVERLAY); return;
             }
-            if (plan.capture == CaptureMethod.SCREEN_RECORDING && !projectionApproved) {
+            if (plan.projection && !projectionApproved) {
                 require(RuntimeStartAttempt.Permission.PROJECTION); return;
             }
             starting = true;
@@ -226,7 +298,7 @@ public final class DeviceStartViewModel extends ViewModel {
         else issue(kind);
     }
     private void issue(RuntimeStartAttempt.Permission kind) {
-        AppRuntimeGateway.DeviceStart owner = attempt;
+        Attempt owner = attempt;
         issuing = true; attempted.add(kind); changed();
         try {
             Objects.requireNonNull(owner.permission(kind)).whenComplete((issued, failure) -> post(() -> {
@@ -281,12 +353,12 @@ public final class DeviceStartViewModel extends ViewModel {
         if (!starting && terminal == null) terminal = reason;
         changed();
     }
-    private void cancel(AppRuntimeGateway.DeviceStart exact) {
+    private void cancel(Attempt exact) {
         if (exact == null) return;
         try { exact.cancel(); }
         catch (RuntimeException uncertain) { dispatchFailed = true; }
     }
-    private void post(Runnable action, AppRuntimeGateway.DeviceStart exact) {
+    private void post(Runnable action, Attempt exact) {
         try { if (main.post(action)) return; }
         catch (RuntimeException uncertain) { /* A queued callback may still arrive; fence it below. */ }
         // Queue failure is not cleanup proof. Retain occupancy and prevent any local retry/fallback.

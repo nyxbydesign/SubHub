@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import com.subhub.app.appmode.AppModeManager;
+import com.subhub.app.appmode.RuntimeSessionIdentity;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.diagnostics.CensorLabCensorSession;
 import com.subhub.app.diagnostics.CensorLabRecorder;
@@ -246,6 +247,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         // Set at the actual durable ACTIVE acknowledgement, before any fallible main/UI delivery.
         // False is not a rollback receipt: uncertain journal/write outcomes still require recovery.
         volatile boolean activeAcknowledged;
+        private volatile CompletableFuture<Boolean> explicitLocalEnd;
         // Aggregate activation errors may follow a committed ACTIVE CAS (including failed Stop).
         // Only definite pre-write NOT_READY may restore this attempt's prior value.
         private volatile boolean activationMayHaveCommitted;
@@ -257,6 +259,10 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             AndroidDeviceStatisticsSource source=statistics;
             if(source==null)throw new SecurityException("DEVICE statistics startup has not been acknowledged");
             return source;
+        }
+        void endFailed(Throwable failure) {
+            CompletableFuture<Boolean> end = explicitLocalEnd;
+            if (end != null) end.completeExceptionally(failure);
         }
     }
     private <T> CompletableFuture<T> deviceResult(CompletableFuture<CompletableFuture<T>> dispatched) {
@@ -444,6 +450,49 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                 &&assembly.lease.identity.equals(state.persisted.owner)
                 &&(state.persisted.phase==RuntimeOwnerStore.Phase.STARTING
                     ||state.persisted.phase==RuntimeOwnerStore.Phase.STOPPING);
+    }
+    CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,
+            long controllerRevision) {
+        Objects.requireNonNull(expected);
+        return submitDevice(() -> {
+            final DeviceAssembly exact;
+            final CompletableFuture<Boolean> end = new CompletableFuture<>();
+            synchronized (RuntimeSessionIdentity.LOCK) {
+                Binding selected = current;
+                if (selected == null || selected.device == null
+                        || !ControllerPinManager.isDomModeActive()
+                        || controllerRevision != ControllerPinManager.domWorkspaceRevision())
+                    return CompletableFuture.completedFuture(false);
+                exact = selected.device;
+                ActiveRuntimeCoordinator.Observation state = coordinator.observe();
+                RuntimeSessionIdentity.ComponentObservation started = exact.componentObservation;
+                RuntimeSessionIdentity.ComponentObservation now = RuntimeSessionIdentity.componentObservation(physical);
+                if (!exact.activeAcknowledged || exact.explicitLocalEnd != null
+                        || state.persisted == null || state.quarantined || state.effectsSealed
+                        || state.effectivePhase() != RuntimeOwnerStore.Phase.ACTIVE
+                        || !exact.lease.identity.equals(state.persisted.owner)
+                        || !expected.isCurrent() || started == null
+                        || !expected.signature.equals(now.signature) || !started.signature.equals(now.signature))
+                    return CompletableFuture.completedFuture(false);
+                // Only this authenticated End can make ACTIVE cleanup eligible. Ordinary loss of
+                // capture and stale UI callbacks must keep the current physical policy intact.
+                exact.explicitLocalEnd = end;
+            }
+            exact.runtime.requestStop();
+            if (exact.runtime.lifecycleNeedsAttention())
+                exact.endFailed(new IllegalStateException("DEVICE Stop dispatch needs reconciliation"));
+            return end;
+        }).thenCompose(answer -> answer);
+    }
+    boolean deviceEndCleanupEligible(DeviceAssembly assembly) {
+        requireWorker();
+        requireDevice(assembly);
+        if (assembly.explicitLocalEnd == null || !assembly.activeAcknowledged || recoveryRequired
+                || starts.needsRecovery()) return false;
+        ActiveRuntimeCoordinator.Observation state = coordinator.observe();
+        return state.startupReconciled && !state.quarantined && state.persisted != null
+                && assembly.lease.identity.equals(state.persisted.owner)
+                && state.persisted.phase == RuntimeOwnerStore.Phase.STOPPING;
     }
     private void requireDevice(DeviceAssembly assembly) {
         Binding binding=current;if(binding==null||binding.device!=assembly||binding.runtime!=assembly.runtime)
@@ -1106,6 +1155,11 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
     /** Only durable terminal IDLE, never a Stop request or a guessed cancelled callback. */
     private void retireTerminalRouting() {
         requireWorker(); ActiveRuntimeCoordinator.Observation state=coordinator.observe();
+        Binding pendingStop = current;
+        if (pendingStop != null && pendingStop.device != null && pendingStop.device.explicitLocalEnd != null
+                && (state.quarantined || pendingStop.runtime.lifecycleNeedsAttention()
+                    || pendingStop.runtime.cleanupNeedsAttention()))
+            pendingStop.device.endFailed(new IllegalStateException("DEVICE Stop needs reconciliation"));
         if(state.startupReconciled&&!state.quarantined&&state.persisted!=null
                 &&state.persisted.phase==RuntimeOwnerStore.Phase.IDLE) {
             accessibility=null; approvedProjection.clear();pendingAttempt=null;
@@ -1127,6 +1181,11 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             // Every launched projection has registry obligations. IDLE with an unresolved token
             // would contradict those receipts; keep it visible and require recovery, never erase it.
             if(!projection.isEmpty())recoveryRequired=true;
+            if (terminal != null && terminal.device != null && terminal.device.explicitLocalEnd != null) {
+                if (recoveryRequired || starts.needsRecovery())
+                    terminal.device.endFailed(new IllegalStateException("DEVICE retirement needs reconciliation"));
+                else terminal.device.explicitLocalEnd.complete(true);
+            }
         }
     }
     private void dispatchOwner(Runnable action,Binding binding) {

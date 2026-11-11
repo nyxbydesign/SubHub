@@ -80,6 +80,25 @@ final class InternalEditorAutosave implements AutoCloseable {
             stageFailed = true; render(drain.state());
         }
     }
+    java.util.concurrent.CompletableFuture<Void> acknowledge() {
+        java.util.concurrent.CompletableFuture<Void> result = new java.util.concurrent.CompletableFuture<>();
+        if (closed || unavailable || !current.getAsBoolean()) {
+            result.completeExceptionally(new SecurityException("Internal editor unavailable"));
+            return result;
+        }
+        dirty = true;
+        flush();
+        InternalEditorSaveDrain.Observation receipt = drain.observe(state -> {
+            if (dirty || invalidFields || stageFailed || state == InternalEditorSaveDrain.State.FAILED
+                    || state == InternalEditorSaveDrain.State.REVOKED || !current.getAsBoolean()) {
+                result.completeExceptionally(new IllegalStateException("Internal edit was not acknowledged"));
+            } else if (state == InternalEditorSaveDrain.State.SAVED && !drain.pending()) {
+                result.complete(null);
+            }
+        });
+        result.whenComplete((ignored, failure) -> receipt.close());
+        return result;
+    }
     private void render(InternalEditorSaveDrain.State state) {
         if (closed) return;
         if (unavailable) { status.setText(R.string.internal_sub_owner_data_unavailable); return; }

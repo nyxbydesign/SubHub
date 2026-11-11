@@ -53,7 +53,7 @@ class DeviceStartEntryInventoryTest(unittest.TestCase):
         callback = body(self.flow, 'private void permissionReturned(')
         self.assertLess(callback.index('post(() ->'), callback.index('owner.permissionResult('))
         self.assertIn('RuntimeStartAttempt.Prompt exact = delivery.prompt', callback)
-        self.assertIn('AppRuntimeGateway.DeviceStart owner = delivery.owner', callback)
+        self.assertIn('Attempt owner = delivery.owner', callback)
         self.assertIn('submitted.compareAndSet(false, true)', self.flow)
         self.assertNotIn('.resultReturned()', self.flow)
         self.assertNotIn('getSharedPreferences', self.flow)

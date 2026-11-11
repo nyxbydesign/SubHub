@@ -113,6 +113,8 @@ public final class AppRuntimeGateway {
             result.completeExceptionally(new DeviceAdmissionException("Demo Start is unavailable"));
             return result;
         }
+        default CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,
+                long controllerRevision) { return CompletableFuture.completedFuture(false); }
         /**
          * expected is actual immutable component evidence, not authority or a caller-trusted string.
          * Verify current exact DEVICE lease + actual component identities. Hold counted authority
@@ -317,6 +319,11 @@ public final class AppRuntimeGateway {
     }
     public CompletableFuture<InternalStart> internalStart(InternalStartSpec specification) {
         return Objects.requireNonNull(backend.internalStart(Objects.requireNonNull(specification)));
+    }
+    /** Completes true only when the exact local DEVICE owner has durably retired. */
+    public CompletableFuture<Boolean> endLocalDevice(RuntimeSessionIdentity.ComponentObservation expected,
+            long controllerRevision) {
+        return Objects.requireNonNull(backend.endLocalDevice(Objects.requireNonNull(expected), controllerRevision));
     }
     public CompletableFuture<StartResult> rearmDevice(RearmReason reason,
             RuntimeSessionIdentity.ComponentObservation expected, Runnable admittedLegacyAction) {

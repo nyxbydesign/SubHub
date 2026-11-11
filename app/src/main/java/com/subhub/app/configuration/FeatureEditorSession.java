@@ -317,6 +317,23 @@ public final class FeatureEditorSession {
         void flush(){if(internalAutosave!=null)internalAutosave.flush();else if(autosave!=null)autosave.flush();}
         void close(){if(internalAutosave!=null)internalAutosave.close();else if(autosave!=null)autosave.close();}
     }
+
+    /** Stage the current duration widgets and wait for their exact broker acknowledgement. */
+    public static java.util.concurrent.CompletableFuture<InternalSubRecord> acknowledgeInternalDuration(AppCompatActivity activity) {
+        FeatureEditorSession scope = scope(activity);
+        EditorBinding binding = scope == null ? null : scope.bindings.get(activity);
+        if (scope == null || !scope.internal || binding == null || binding.internalAutosave == null
+                || !canEdit(activity, "duration"))
+            throw new SecurityException("Internal duration editor unavailable");
+        Context physical = activity.getApplicationContext();
+        return binding.internalAutosave.acknowledge().thenApply(ignored -> {
+            InternalSubRecord saved = scope.internalDraft.acknowledgedBase();
+            if (!DummySubPreview.current(physical, scope.internalGeneration, scope.controllerRevision)
+                    || scope.internalDraft.hasUnflushedChanges() || !saved.equals(scope.internalData.acknowledged()))
+                throw new SecurityException("Internal duration acknowledgement changed");
+            return saved;
+        });
+    }
     private void remember(EditorBinding binding){
         if(binding.autosave==null)return;
         try{editBase=binding.autosave.base();}catch(Exception ignored){/* Keep the prior acknowledged base. */}

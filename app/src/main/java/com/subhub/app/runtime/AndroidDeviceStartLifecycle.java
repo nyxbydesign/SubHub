@@ -8,8 +8,8 @@ import com.subhub.app.settings.CaptureMethod;
 import java.util.Objects;
 
 /**
- * Concrete acknowledged DEVICE startup and pre-ACTIVE rollback. Not an installer or general End
- * authority. An ACTIVE capture loss must preserve pact/Hardcore continuation; until that owned
+ * Concrete acknowledged DEVICE startup, rollback, and cleanup for an admitted local End.
+ * An ACTIVE capture loss must preserve pact/Hardcore continuation; until that owned
  * continuation is integrated, it retains recovery occupancy instead of silently ending protection.
  */
 final class AndroidDeviceStartLifecycle {
@@ -76,10 +76,10 @@ final class AndroidDeviceStartLifecycle {
 
     private void close(DeviceRuntimeEffects.DeviceComponent.Cleanup cleanup) {
         factory.submitDeviceCleanup(assembly, () -> {
-            // This is intentionally not a generic ACTIVE End adapter. Loss of a capture component
-            // is not controller consent to cancel the physical pact or bypass real Hardcore.
-            if (!factory.deviceStartupRollbackEligible(assembly)) {
+            // Loss of a capture component is not controller consent to cancel the physical pact.
+            if (!factory.deviceStartupRollbackEligible(assembly) && !factory.deviceEndCleanupEligible(assembly)) {
                 component.cleanupFailed();
+                assembly.endFailed(new IllegalStateException("DEVICE cleanup authority is unavailable"));
                 return null;
             }
             try {
@@ -97,7 +97,10 @@ final class AndroidDeviceStartLifecycle {
             }
             return null;
         }).whenComplete((ignored, failure) -> {
-            if (failure != null) component.cleanupFailed();
+            if (failure != null) {
+                component.cleanupFailed();
+                assembly.endFailed(failure);
+            }
         });
     }
 }

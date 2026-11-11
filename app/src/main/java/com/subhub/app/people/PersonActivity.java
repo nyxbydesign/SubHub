@@ -2,12 +2,19 @@ package com.subhub.app.people;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.lifecycle.ViewModelProvider;
 import com.subhub.app.R;
 import com.subhub.app.activity.ActivityPreview;
+import com.subhub.app.appmode.DeviceStartResultRegistry;
+import com.subhub.app.appmode.DeviceStartViewModel;
 import com.subhub.app.commitment.ServiceDurationView;
 import com.subhub.app.configuration.FeatureEditorSession;
+import com.subhub.app.runtime.AppRuntimeGateway;
+import com.subhub.app.runtime.RuntimeStartAttempt;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.stats.StatsActivity;
 import com.subhub.app.util.SubHubNavigation;
@@ -30,6 +37,40 @@ public final class PersonActivity extends RolePage {
     private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
     private com.subhub.app.security.KeyholderProvider appIconAuthority;
     private TextView currentCountdown;
+    private DeviceStartViewModel demoStart;
+    private DeviceStartResultRegistry demoResults;
+    private TextView demoStartAction, demoStartStatus;
+    private boolean demoUiResumed, demoSessionActive;
+    private final DeviceStartViewModel.Ui demoUi = new DeviceStartViewModel.Ui() {
+        @Override public boolean available() {
+            return demoUiResumed && !isFinishing() && !isDestroyed() && demoGateway() != null;
+        }
+        @Override public boolean granted(RuntimeStartAttempt.Permission permission) {
+            return demoPermissionGranted(permission);
+        }
+        @Override public Runnable prepare(DeviceStartViewModel.PromptRoute route) {
+            DeviceStartResultRegistry.Prepared prepared = demoResults.prepare(route);
+            Intent intent = switch (route.permission) {
+                case NOTIFICATIONS -> null;
+                case ACCESSIBILITY -> new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                case OVERLAY -> new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.fromParts("package", getPackageName(), null));
+                case PROJECTION -> java.util.Objects.requireNonNull(
+                        getSystemService(android.media.projection.MediaProjectionManager.class)).createScreenCaptureIntent();
+            };
+            return () -> prepared.launch(intent);
+        }
+        @Override public void changed() { updateDemoStartAction(); }
+        @Override public void completed(AppRuntimeGateway.StartState state) {
+            if (state == AppRuntimeGateway.StartState.ACTIVE) {
+                if (demoStartAction != null) demoStartAction.setEnabled(false);
+                refreshInternal(true);
+            } else if (demoStartStatus != null) {
+                demoStartStatus.setText(R.string.internal_sub_session_unavailable);
+                demoStartStatus.setVisibility(View.VISIBLE);
+            }
+        }
+    };
     private final Runnable observe = new Runnable() {
         @Override public void run() {
             if (!observing) return;
@@ -47,6 +88,9 @@ public final class PersonActivity extends RolePage {
     }
 
     @Override protected void onPause() {
+        demoUiResumed = false;
+        if (demoStart != null) demoStart.detach(demoUi);
+        updateDemoStartAction();
         observing = false;
         stopAppIcons();
         clock.removeCallbacks(observe);
@@ -54,7 +98,70 @@ public final class PersonActivity extends RolePage {
         super.onPause();
     }
 
-    @Override protected void onDestroy() { stopAppIcons(); super.onDestroy(); }
+    @Override protected void onPostResume() {
+        super.onPostResume();
+        if (demoStart == null || !guardTarget()) return;
+        demoUiResumed = true;
+        demoStart.attach(demoUi);
+        updateDemoStartAction();
+    }
+
+    @Override protected void onDestroy() {
+        if (demoStart != null) demoStart.detach(demoUi);
+        if (demoResults != null) demoResults.close();
+        stopAppIcons();
+        super.onDestroy();
+    }
+
+    private AppRuntimeGateway demoGateway() {
+        if (!internal || !DummySubPreview.ID.equals(personId) || !DummySubPreview.isAllowed(this)) return null;
+        InternalSubData data = InternalSubData.peek(this);
+        return data != null && data.ownerDataReady() ? AppRuntimeGateway.current(this) : null;
+    }
+
+    private boolean demoPermissionGranted(RuntimeStartAttempt.Permission permission) {
+        switch (permission) {
+            case NOTIFICATIONS:
+                return android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
+                        || androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            case OVERLAY: return android.provider.Settings.canDrawOverlays(this);
+            case PROJECTION: return false;
+            case ACCESSIBILITY:
+                var manager = getSystemService(android.view.accessibility.AccessibilityManager.class);
+                if (manager == null) return false;
+                for (var service : manager.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                    var resolved = service.getResolveInfo();
+                    if (resolved != null && resolved.serviceInfo != null
+                            && getPackageName().equals(resolved.serviceInfo.packageName)
+                            && com.subhub.app.service.ScreenshotAccessibilityService.class.getName().equals(resolved.serviceInfo.name)) return true;
+                }
+                return false;
+            default: throw new IllegalArgumentException("Unknown Start permission");
+        }
+    }
+
+    private void updateDemoStartAction() {
+        if (demoStartAction == null) return;
+        demoStartAction.setEnabled(demoStart != null && demoUi.available() && !demoSessionActive
+                && !demoStart.busy() && FeatureEditorSession.canEdit(this, "duration"));
+    }
+
+    private void beginDemoStart() {
+        if (!demoUi.available() || demoSessionActive || !guardTarget() || demoStart.busy()) return;
+        AppRuntimeGateway gateway = demoGateway();
+        if (gateway == null) return;
+        android.content.Context physical = getApplicationContext();
+        long controllerRevision = ControllerPinManager.domWorkspaceRevision();
+        if (demoStartStatus != null) demoStartStatus.setVisibility(View.GONE);
+        demoStart.beginInternal(gateway, () -> FeatureEditorSession.acknowledgeInternalDuration(this).thenApply(saved -> {
+            if (!DummySubPreview.current(physical, saved.generation, controllerRevision)
+                    || gateway != AppRuntimeGateway.current(physical))
+                throw new SecurityException("Demo Start authority changed");
+            return new AppRuntimeGateway.InternalStartSpec(saved.targetId, saved.generation,
+                    saved.configurationRevision, controllerRevision);
+        }));
+    }
 
     private void observeAppIcons() {
         if (internal || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
@@ -116,6 +223,7 @@ public final class PersonActivity extends RolePage {
             clock.removeCallbacks(observe);
             if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
             currentCountdown = null;
+            if (demoStart != null) demoStart.cancel();
             if (body != null) body.removeAllViews();
             finish();
             return false;
@@ -134,8 +242,13 @@ public final class PersonActivity extends RolePage {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         internal = DummySubPreview.isRequested(getIntent());
+        if (internal) {
+            demoStart = new ViewModelProvider(this).get(DeviceStartViewModel.class);
+            demoResults = new DeviceStartResultRegistry(getActivityResultRegistry(), this::demoPermissionGranted);
+            demoResults.restore(state == null ? null : state.getBundle("demo_start_result_routes"), demoStart.pendingRoute());
+        }
         if (internal && (!DummySubPreview.isAllowed(this)
-                || !FeatureEditorSession.attach(this, "duration", state))) { finish(); return; }
+                || !FeatureEditorSession.attach(this, "duration", state))) { demoStart.cancel(); finish(); return; }
         try { personId = PersonRoutes.requireId(getIntent()); }
         catch (IllegalArgumentException invalid) { finish(); return; }
         section = state == null ? getIntent().getStringExtra("person_section")
@@ -161,10 +274,22 @@ public final class PersonActivity extends RolePage {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         FeatureEditorSession.saveState(this, state);
+        if (demoResults != null) state.putBundle("demo_start_result_routes", demoResults.saveMetadata());
         state.putString("person_section", section);
         for (java.util.Map.Entry<String, Integer> position : positions.entrySet())
             state.putInt("person_position:" + position.getKey(), position.getValue());
         super.onSaveInstanceState(state);
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        try { super.onActivityResult(requestCode, resultCode, result); }
+        finally { if (demoResults != null) demoResults.onFrameworkResultReturned(); }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] results) {
+        try { super.onRequestPermissionsResult(requestCode, permissions, results); }
+        finally { if (demoResults != null) demoResults.onFrameworkResultReturned(); }
     }
 
     @Override protected void refresh() {
@@ -361,10 +486,10 @@ public final class PersonActivity extends RolePage {
                     ? getString(R.string.role_unknown_data) : person.serviceLabel, false).setTag("person_service_label");
             if (person.sync.runtime == PersonSnapshot.Freshness.STALE) freshness(session, person.sync.runtime);
             if (internal) {
-                TextView start = PersonUi.action(session, R.string.role_start_session, () -> {}, true);
-                start.setEnabled(false);
-                start.setId(R.id.person_session_action);
-                start.setTag("person_session:" + person.id.value());
+                demoSessionActive = person.serviceActive;
+                demoStartAction = PersonUi.action(session, R.string.role_start_session, this::beginDemoStart, true);
+                demoStartAction.setId(R.id.person_session_action);
+                demoStartAction.setTag("person_session:" + person.id.value());
                 PersonUi.text(session, getString(R.string.role_service_duration), true);
                 ServiceDurationView duration = new ServiceDurationView(this, null,
                         FeatureEditorSession.context(this), () -> guardTarget() && FeatureEditorSession.canEdit(this, "duration"));
@@ -375,7 +500,9 @@ public final class PersonActivity extends RolePage {
                 duration.setSaveEnabled(false);
                 session.addView(duration, new LinearLayout.LayoutParams(-1, -2));
                 FeatureEditorSession.bind(this, findViewById(android.R.id.content), "duration", duration::validateSelection);
-                PersonUi.text(session, getString(R.string.internal_sub_session_unavailable), false);
+                demoStartStatus = PersonUi.text(session, getString(R.string.internal_sub_session_unavailable), false);
+                demoStartStatus.setVisibility(demoGateway() == null ? View.VISIBLE : View.GONE);
+                updateDemoStartAction();
                 PersonUi.row(session, R.drawable.ic_nav_limits, getString(R.string.role_service_duration),
                         getString(R.string.dummy_sub_defaults), () -> {
                             if (guardTarget()) startActivity(FeatureEditorSession.child(this, ServiceDurationActivity.class));
@@ -411,8 +538,14 @@ public final class PersonActivity extends RolePage {
                     active ? R.string.role_end_session : R.string.role_start_session,
                     () -> {
                         if (!guardTarget()) return;
-                        if (active) { LocalSessionControls.end(this, person.id); refresh(); }
-                        else PersonRoutes.openLocalSession(this, person.id);
+                        if (active) {
+                            long controller = ControllerPinManager.domWorkspaceRevision();
+                            LocalSessionControls.endAsync(this, person.id).whenComplete((ended, failure) -> runOnUiThread(() -> {
+                                if (failure == null && Boolean.TRUE.equals(ended) && !isFinishing() && !isDestroyed()
+                                        && PersonId.LOCAL.equals(personId) && controller == ControllerPinManager.domWorkspaceRevision()
+                                        && guardTarget()) refresh();
+                            }));
+                        } else PersonRoutes.openLocalSession(this, person.id);
                     }, !active);
             manageSession.setId(R.id.person_session_action);
             manageSession.setTag("person_session:local");
