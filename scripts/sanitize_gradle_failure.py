@@ -12,6 +12,7 @@ MAX_LINE_BYTES = 8192
 MAX_CATEGORIES = 16
 MAX_JAVAC_DIAGNOSTICS = 8
 MAX_JAVAC_LINE = 999999
+MAX_UNIT_FAILURE_SOURCES = 8
 MAX_OUTPUT_BYTES = 4096
 FAILURE_EXIT = 70
 
@@ -1237,6 +1238,7 @@ EXCEPTION_LINE = re.compile(
     rb"[ \t]*(?:(?:Caused by|Suppressed): )?([A-Za-z0-9_.$]{1,256})(?::(.*))?")
 TASK_LINE = re.compile(rb"> Task ([A-Za-z0-9_:]+)(?: (FAILED|UP-TO-DATE|FROM-CACHE|SKIPPED|NO-SOURCE))?")
 LINT_LINE = re.compile(rb"([^\r\n]+):[0-9]{1,7}: (?:Error|Fatal): [^\r\n]* \[([A-Za-z][A-Za-z0-9]{0,63})\]")
+UNIT_FAILURE_LINE = re.compile(rb"[ \t]*([A-Za-z_$][A-Za-z0-9_.$]{0,200}) > [^\r\n]+ FAILED")
 
 
 class Diagnostics:
@@ -1244,7 +1246,7 @@ class Diagnostics:
         self.result = {"schema": 1, "messagesOmitted": True, "truncated": False,
                        "sanitizerFailed": False, "exceptionSectionSeen": False, "unknownException": False,
                        "exceptions": [], "resources": [], "tasks": {}, "lint": [], "lintSources": [],
-                       "javac": []}
+                       "javac": [], "unitFailureSources": []}
         self.in_exception = False
 
     def add(self, key, label, limit=None):
@@ -1304,6 +1306,13 @@ class Diagnostics:
                 key = TASKS[task[1]]
                 if self.result["tasks"].get(key) != "failed":
                     self.result["tasks"][key] = STATUSES[task[2]]
+            if "unit_tests" in self.result["tasks"]:
+                failure = UNIT_FAILURE_LINE.fullmatch(line)
+                if failure:
+                    suffix = b"/" + failure[1].replace(b".", b"/") + b".java"
+                    labels = [label for path, label in JAVAC_SOURCES.items() if path.endswith(suffix)]
+                    self.add("unitFailureSources", labels[0] if len(labels) == 1 else "unknown",
+                             limit=MAX_UNIT_FAILURE_SOURCES)
             return
         error = EXCEPTION_LINE.fullmatch(line)
         if not error:

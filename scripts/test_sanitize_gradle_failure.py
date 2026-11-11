@@ -242,7 +242,7 @@ class JavacDiagnosticTest(unittest.TestCase):
         self.assertEqual([], result["javac"])
         self.assertEqual({"schema", "messagesOmitted", "truncated", "sanitizerFailed",
                           "exceptionSectionSeen", "unknownException", "exceptions", "resources",
-                          "tasks", "lint", "lintSources", "javac"}, set(result))
+                          "tasks", "lint", "lintSources", "javac", "unitFailureSources"}, set(result))
         module = ast.parse((ROOT / "scripts/sanitize_gradle_failure.py").read_text(encoding="utf-8"))
         declaration = next(node.value for node in module.body if isinstance(node, ast.Assign)
                            and any(isinstance(target, ast.Name) and target.id == "JAVAC_SOURCES"
@@ -258,6 +258,21 @@ class JavacDiagnosticTest(unittest.TestCase):
         for source, label in safe.JAVAC_SOURCES.items():
             self.assertTrue((ROOT / source.decode("ascii")).is_file())
             self.assertRegex(label, r"^unit_[a-z0-9_]{1,59}$")
+
+    def test_unit_failure_reports_only_known_source_labels_after_the_unit_task(self):
+        status, result = self.report(
+            b"RuntimeFoundationTest > unrelated PRIVATE_TOKEN FAILED\n"
+            b"> Task :app:testDebugUnitTest\n"
+            b"FoundationTest > method PRIVATE_TOKEN FAILED\n"
+            b"com.subhub.app.FoundationTest > parameter PRIVATE_TOKEN FAILED\n"
+            b"PrivateRuntimeClass > another PRIVATE_TOKEN FAILED\n"
+            b"    java.lang.AssertionError: PRIVATE_TOKEN\n"
+            b"> Task :app:testDebugUnitTest FAILED\n")
+        self.assertEqual(0, status)
+        self.assertEqual([self.SOURCE_LABEL, "unknown"], result["unitFailureSources"])
+        self.assertEqual("failed", result["tasks"]["unit_tests"])
+        self.assertNotIn("PRIVATE_TOKEN", str(result))
+        self.assertNotIn("PrivateRuntimeClass", str(result))
 
     def test_production_integration_labels_are_literals_and_do_not_publish_messages(self):
         module = ast.parse((ROOT / "scripts/sanitize_gradle_failure.py").read_text(encoding="utf-8"))
@@ -514,6 +529,8 @@ class JavacDiagnosticTest(unittest.TestCase):
         data += b"\n" + b"\n".join(path + b":1: Error: " + PRIVATE + b" [" + issue + b"]"
                                   for path in safe.LINT_SOURCES for issue in safe.LINT_ISSUES)
         sources = sorted(safe.JAVAC_SOURCES, key=lambda path: len(safe.JAVAC_SOURCES[path]), reverse=True)
+        for path in sources[:safe.MAX_UNIT_FAILURE_SOURCES]:
+            data += b"\n" + path.removeprefix(b"app/src/test/java/")[:-5].replace(b"/", b".") + b" > PRIVATE_TOKEN FAILED"
         for path in sources[:safe.MAX_JAVAC_DIAGNOSTICS]:
             data += b"\n" + self.header(b"PRIVATE_TOKEN is not abstract and does not override abstract method PRIVATE_TOKEN()",
                                         source=path, line=b"999999")
@@ -522,6 +539,7 @@ class JavacDiagnosticTest(unittest.TestCase):
         code, result = self.report(data)
         self.assertEqual(0, code)
         self.assertEqual(safe.MAX_JAVAC_DIAGNOSTICS, len(result["javac"]))
+        self.assertEqual(safe.MAX_UNIT_FAILURE_SOURCES, len(result["unitFailureSources"]))
         self.assertEqual(len(safe.TASKS), len(result["tasks"]))
         self.assertEqual(len(safe.LINT_SOURCES), len(result["lintSources"]))
         self.assertEqual(len(safe.RESOURCE_MESSAGES), len(result["resources"]))
