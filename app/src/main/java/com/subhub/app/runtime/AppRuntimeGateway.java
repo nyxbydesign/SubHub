@@ -145,8 +145,10 @@ public final class AppRuntimeGateway {
     /** Null only when legacy admission has closed. It never authorizes a managed transition. */
     public static LegacyWork tryBeginLegacyWork(Context physical) {
         Context context = Objects.requireNonNull(physical).getApplicationContext();
-        if (!(context instanceof Application)) throw new SecurityException("Physical application required");
-        bindPhysicalApplication((Application) context);
+        Application application = context instanceof Application ? (Application) context
+                : com.subhub.app.remote.RemoteSessionNative.legacyFixtureApplication(context);
+        if (application == null) throw new SecurityException("Physical application required");
+        bindPhysicalApplication(application);
         RuntimeInstallationBarrier.LegacyWork counted = BOOTSTRAP.tryLegacyWork();
         return counted == null ? null : new LegacyWork(counted);
     }
@@ -294,6 +296,14 @@ public final class AppRuntimeGateway {
      */
     public static DeviceMutationPermit admitDeviceMutation(Context physical, Mutation mutation) {
         Objects.requireNonNull(mutation);
+        // Registered debug fixtures keep their stores isolated. Even these exact scopes cannot
+        // acquire the installed gateway or continue through a sealed legacy boundary.
+        Context scope = Objects.requireNonNull(physical).getApplicationContext();
+        if (!(scope instanceof Application)
+                && com.subhub.app.remote.RemoteSessionNative.legacyFixtureApplication(scope) != null) {
+            LegacyWork counted = beginLegacyWork(physical);
+            return counted::close;
+        }
         AppRuntimeGateway gateway = current(physical);
         if (gateway == null) {
             LegacyWork counted = beginLegacyWork(physical);

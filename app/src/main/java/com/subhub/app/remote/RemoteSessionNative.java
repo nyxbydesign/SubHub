@@ -1,7 +1,10 @@
 package com.subhub.app.remote;
 
+import android.app.Application;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.SharedPreferences;
+import com.subhub.app.BuildConfig;
 import com.subhub.app.appmode.AppModeManager;
 import com.subhub.app.appmode.RuntimeSessionIdentity;
 import com.subhub.app.commitment.CommitmentManager;
@@ -26,11 +29,17 @@ public final class RemoteSessionNative implements AutoCloseable {
     private final Context context;
     private final SharedPreferences main;
     private final Supplier<StatsRepository> statsFactory;
+    private final Application fixtureApplication;
     private StatsRepository statistics;
     private com.subhub.app.service.ScreenCaptureService.StopTarget stopCapture;
 
     private RemoteSessionNative(Context context, Supplier<StatsRepository> statsFactory) {
+        this(context, statsFactory, null);
+    }
+    private RemoteSessionNative(Context context, Supplier<StatsRepository> statsFactory,
+            Application fixtureApplication) {
         this.context = context.getApplicationContext(); this.statsFactory = Objects.requireNonNull(statsFactory);
+        this.fixtureApplication = fixtureApplication;
         main = this.context.getSharedPreferences(SettingsRepository.PREFERENCES_NAME, 0);
     }
     public static RemoteSessionNative get(Context context) {
@@ -38,9 +47,25 @@ public final class RemoteSessionNative implements AutoCloseable {
         return scopes.computeIfAbsent(app, key -> new RemoteSessionNative(key, () -> new StatsRepository(key)));
     }
     static RemoteSessionNative installFixture(Context context, Supplier<StatsRepository> factory) {
-        RemoteSessionNative value = new RemoteSessionNative(context, factory);
+        return registerFixture(new RemoteSessionNative(context, factory));
+    }
+    static RemoteSessionNative installLegacyFixture(Context scope, Supplier<StatsRepository> factory,
+            Application physical) {
+        if (!BuildConfig.DEBUG || scope instanceof Application || !(scope instanceof ContextWrapper)
+                || scope.getApplicationContext() != scope
+                || ((ContextWrapper) scope).getBaseContext().getApplicationContext() != physical)
+            throw new SecurityException("Legacy fixture requires an explicit isolated app scope");
+        return registerFixture(new RemoteSessionNative(scope, factory, Objects.requireNonNull(physical)));
+    }
+    private static RemoteSessionNative registerFixture(RemoteSessionNative value) {
         if (scopes.putIfAbsent(value.context, value) != null) throw new IllegalStateException("Native scope already installed");
         return value;
+    }
+    /** The exact registered instrumentation scope may count legacy work, never obtain the gateway. */
+    public static Application legacyFixtureApplication(Context scope) {
+        if (!BuildConfig.DEBUG || scope == null) return null;
+        RemoteSessionNative exact = scopes.get(scope);
+        return exact != null && exact.context == scope ? exact.fixtureApplication : null;
     }
     private StatsRepository stats() { if (statistics == null) statistics = statsFactory.get(); return statistics; }
     public static StatsRepository statistics(Context context) {
