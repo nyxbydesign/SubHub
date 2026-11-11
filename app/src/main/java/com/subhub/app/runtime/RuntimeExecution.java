@@ -130,6 +130,18 @@ public class RuntimeExecution<C> {
     }
 
     /**
+     * Package-private lifetime only: minted inside a short admitted effect, never an authority
+     * to perform later effects. STARTUP retention also prevents activation before native return.
+     */
+    OwnedResourceRegistry.EffectPermit retainNativeWork(OwnedResourceRegistry.Effect phase) {
+        if (!insideEffect() || (phase != OwnedResourceRegistry.Effect.STARTUP
+                && phase != OwnedResourceRegistry.Effect.NORMAL))
+            throw new SecurityException("Native work requires an admitted capture");
+        return registry.acquireEffectPermit(lease, phase);
+    }
+    void nativeWorkReturned() { tryCompleteStop(); }
+
+    /**
      * Apply only an acknowledged snapshot of this generation, on the components' bound executor.
      * The effect gate drains earlier callbacks first. Every module updates its existing data source
      * before the owner journal acknowledges the applied revision. Partial application stops the

@@ -70,15 +70,22 @@ public final class RuntimeAdmissionAuthority {
     /** A monotonic source retirement signal, never an independent grant of start authority. */
     public static final class Revocation {
         private volatile boolean revoked;
+        private final RuntimeTarget.Kind scope;
+        /** Existing controller witnesses are INTERNAL-only. */
+        public Revocation() { this(RuntimeTarget.Kind.INTERNAL); }
+        private Revocation(RuntimeTarget.Kind scope) { this.scope = scope; }
+        /** Distinct local DEVICE role retirement, never an incoming remote authorization. */
+        public static Revocation forDeviceLocalStart() { return new Revocation(RuntimeTarget.Kind.DEVICE); }
         public void revoke() { revoked = true; }
         public boolean isRevoked() { return revoked; }
     }
 
-    /** INTERNAL factories may bind the real controller's synchronous cached revocation witness. */
+    /** Local factories bind the real role/controller's cached start-only retirement witness. */
     public boolean completeAuthorization(AuthorizationPublication publication, long revision, boolean allowed,
             Revocation sourceRevocation) {
-        if (sourceRevocation != null && (publication == null || publication.key.target.kind != RuntimeTarget.Kind.INTERNAL))
-            throw new IllegalArgumentException("External controller retirement is INTERNAL-only");
+        if (sourceRevocation != null && (publication == null || publication.key.kind != RuntimeOrigin.Kind.LOCAL_UI
+                || sourceRevocation.scope != publication.key.target.kind))
+            throw new IllegalArgumentException("Source retirement belongs to another local target kind");
         return mutex.runtime(() -> {
             if (publication == null || publication.source != this || publication.completed
                     || authorizationPublications.get(publication.key) != publication) return false;

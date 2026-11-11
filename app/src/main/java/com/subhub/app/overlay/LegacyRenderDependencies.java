@@ -34,6 +34,7 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     private volatile Owned selected;
     private volatile RuntimeConfiguration acknowledged, loaded;
     private volatile boolean artworkWanted;
+    private volatile boolean nativeRetiring;
     private volatile long artworkEpoch;
     private final AtomicBoolean renderDemand = new AtomicBoolean();
     private final AtomicBoolean resourceFailure = new AtomicBoolean();
@@ -295,9 +296,11 @@ public final class LegacyRenderDependencies implements AutoCloseable {
     boolean needsRenderReconciliation() { return renderDemand.get(); }
     /** Immediate fence only; already admitted draw/load/callback work stays counted. */
     public void seal() {
+        if (managed) { nativeRetiring = true; images.abandonSubmittedImages(); }
         callbacks.seal(); selected = null; selectedDevice = null;
         acknowledged = null; loaded = null; wantedDeviceArtwork = null; loadedDeviceArtwork = null; renderDemand.set(false);
     }
+    boolean nativeRetiring() { return nativeRetiring; }
     void transientArtworkRetirement() {
         if (artworkEpoch == Long.MAX_VALUE) throw new IllegalStateException("Artwork epoch exhausted");
         artworkEpoch++;

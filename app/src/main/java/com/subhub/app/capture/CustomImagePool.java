@@ -31,6 +31,7 @@ public final class CustomImagePool implements AutoCloseable {
 
     private final Legacy device;
     private final State<PreparedImage> state;
+    private volatile boolean abandonSubmitted;
 
     public CustomImagePool(Context context) { device = new Legacy(context); state = null; }
     /** Preserves the existing export constructor and its DEVICE dependency behavior. */
@@ -39,7 +40,7 @@ public final class CustomImagePool implements AutoCloseable {
     }
     private CustomImagePool(ExecutorService ownedLoader) {
         device = null;
-        state = new State<>(java.util.Objects.requireNonNull(ownedLoader), PreparedImage::release);
+        state = new State<>(java.util.Objects.requireNonNull(ownedLoader), image -> { if (!abandonSubmitted) image.release(); });
     }
     /** No Context, SettingsRepository, physical image library or implicit executor is constructed. */
     public static CustomImagePool owned(ExecutorService ownedLoader) { return new CustomImagePool(ownedLoader); }
@@ -85,6 +86,11 @@ public final class CustomImagePool implements AutoCloseable {
     public void supersedePending() {
         if (state == null) throw new IllegalStateException("Explicit owned artwork required");
         state.supersedePending();
+    }
+    /** Terminal managed ownership only: drop old references, never recycle/reissue View inputs. */
+    public void abandonSubmittedImages() {
+        if (state == null) throw new IllegalStateException("Explicit owned artwork required");
+        abandonSubmitted = true;
     }
     public boolean pending() { return state != null && state.pending(); }
     public boolean needsRetry() { return state != null && state.needsRetry(); }

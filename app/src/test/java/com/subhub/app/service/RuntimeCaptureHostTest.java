@@ -25,4 +25,17 @@ public final class RuntimeCaptureHostTest {
                 new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW, 34).kind());
     }
 
+    @Test public void modulesOnlyHostDoesNotClaimScreenshotSupportOnAnyApi() {
+        for (int sdk = 26; sdk <= 35; sdk++) {
+            RuntimeCaptureHost.CapturePlan plan = new RuntimeCaptureHost.CapturePlan(
+                    RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES, sdk);
+            assertEquals(RuntimeCaptureHost.Kind.ACCESSIBILITY, plan.kind());
+            assertFalse(plan.capturesPixels());
+        }
+        assertThrows(IllegalArgumentException.class, () -> new RuntimeCaptureHost.CapturePlan(
+                RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES, 25));
+        assertTrue(new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.PROJECTION, 26).capturesPixels());
+        assertTrue(new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.ACCESSIBILITY_DISPLAY, 30).capturesPixels());
+        assertTrue(new RuntimeCaptureHost.CapturePlan(RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW, 34).capturesPixels());
+    }
 }

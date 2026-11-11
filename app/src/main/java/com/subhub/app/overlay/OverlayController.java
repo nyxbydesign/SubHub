@@ -21,6 +21,9 @@ public final class OverlayController implements AutoCloseable {
     private final int windowType;
     private boolean attached, windowAttempted;
     private volatile boolean closureStarted, closureFailed, windowClosed;
+    private final android.os.Handler nativeCloseHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private NativeRemoval nativeRemoval;
+    private volatile boolean nativeCloseRequested, nativeRemoving, nativeWindowRetired;
     private final LegacyRenderDependencies dependencies;
 
     public OverlayController(Context context) {
@@ -493,11 +496,82 @@ public final class OverlayController implements AutoCloseable {
     public boolean managedResourcesDrained() {
         return closureStarted && !closureFailed && windowClosed && dependencies.managedResourcesDrained();
     }
-    public boolean cleanupFailed() { return closureFailed || dependencies.cleanupFailed(); }
+    public boolean cleanupFailed() {
+        NativeRemoval removal = nativeRemoval;
+        return closureFailed || dependencies.cleanupFailed() || removal != null && removal.failed();
+    }
+
+    /**
+     * Nonblocking terminal initiation. ALWAYS posts its own fresh plain main dispatch, even when
+     * called on main/from draw or detach. Receipt is client renderer lifecycle, never GPU idle.
+     */
+    public void closeFromFreshMainQueue() {
+        dependencies.requireMain();
+        if (!dependencies.managed()) throw new IllegalStateException("Unbound renderer has no native owner receipt");
+        if (nativeCloseRequested) return;
+        if (closureStarted) throw new IllegalStateException("CPU-only closure cannot be upgraded into native proof");
+        nativeCloseRequested = true; dependencies.seal();
+        nativeRemoval = new NativeRemoval(() -> {
+            nativeRemoving = true;
+            try {
+                close();
+                boolean lifecycle = !view.isAttachedToWindow() && view.getWindowToken() == null
+                        && view.nativeWindowCallbacksRetired()
+                        && (windowAttempted || view.neverHadNativeWindowOrDraw());
+                if (!lifecycle || closureFailed) throw new IllegalStateException("Native window retirement witnesses incomplete");
+                nativeWindowRetired = true;
+            } catch (RuntimeException | Error uncertain) { closureFailed = true; throw uncertain; }
+            finally { nativeRemoving = false; }
+        });
+        try { nativeRemoval.post(nativeCloseHandler::post); }
+        catch (RuntimeException | Error uncertain) { closureFailed = true; throw uncertain; }
+    }
+    /** Client window/RenderThread lifecycle only; native/GPU/compositor references may outlive it. */
+    public boolean nativeResourcesRetired() {
+        NativeRemoval removal = nativeRemoval;
+        return nativeWindowRetired && !closureFailed && removal != null && removal.returned();
+    }
+
+    /** Counts submission and the actual removal-body return, never a sentinel or cancelled post. */
+    static final class NativeRemoval {
+        interface Poster { boolean post(Runnable callback); }
+        private Runnable action;
+        private final java.util.concurrent.atomic.AtomicBoolean entered = new java.util.concurrent.atomic.AtomicBoolean();
+        private boolean submitted, submissionReturned, bodyReturned, failed;
+        NativeRemoval(Runnable action) { this.action = java.util.Objects.requireNonNull(action); }
+        void post(Poster poster) {
+            java.util.Objects.requireNonNull(poster);
+            synchronized (this) {
+                if (submitted) throw new IllegalStateException("Removal already submitted");
+                submitted = true;
+            }
+            boolean accepted = true;
+            try {
+                accepted = poster.post(this::run);
+                if (!accepted && entered.get()) throw new IllegalStateException("Removal refused after invocation");
+                if (!accepted) {
+                    synchronized (this) { action = null; bodyReturned = true; failed = true; }
+                    throw new IllegalStateException("Removal dispatch refused");
+                }
+            } catch (RuntimeException | Error uncertain) { synchronized (this) { failed = true; } throw uncertain; }
+            finally { synchronized (this) { submissionReturned = true; } }
+        }
+        private void run() {
+            if (!entered.compareAndSet(false, true)) return;
+            Runnable target;
+            synchronized (this) { target = action; action = null; }
+            try { if (target != null) target.run(); }
+            catch (RuntimeException | Error uncertain) { synchronized (this) { failed = true; } throw uncertain; }
+            finally { target = null; synchronized (this) { bodyReturned = true; } }
+        }
+        synchronized boolean returned() { return submissionReturned && bodyReturned && !failed; }
+        synchronized boolean failed() { return failed; }
+    }
 
     @Override
     public void close() {
         dependencies.requireMain();
+        if (nativeCloseRequested && !nativeRemoving) return;
         if (closureStarted) return;
         closureStarted = true;
         dependencies.seal();

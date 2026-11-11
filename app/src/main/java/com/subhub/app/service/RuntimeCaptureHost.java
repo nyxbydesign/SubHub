@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class RuntimeCaptureHost {
     private RuntimeCaptureHost() { }
     public enum Kind { PROJECTION, ACCESSIBILITY }
-    public enum Mode { PROJECTION, ACCESSIBILITY_DISPLAY, ACCESSIBILITY_WINDOW }
+    public enum Mode { PROJECTION, ACCESSIBILITY_DISPLAY, ACCESSIBILITY_WINDOW, ACCESSIBILITY_MODULES }
     public enum Rejection {
         NO_RESERVATION, STALE_CONNECTION, ALREADY_CLAIMED, CONFLICT, PERMISSION_DENIED,
         UNSUPPORTED, DISPATCH_UNCERTAIN, ATTACHMENT_FAILED, CLEANUP_UNCERTAIN
@@ -49,6 +49,8 @@ public final class RuntimeCaptureHost {
                 throw new IllegalArgumentException("Unsupported capture plan");
         }
         public Kind kind() { return mode == Mode.PROJECTION ? Kind.PROJECTION : Kind.ACCESSIBILITY; }
+        /** Modules require a real Accessibility host on API26+, but provide no screenshot readiness. */
+        public boolean capturesPixels() { return mode != Mode.ACCESSIBILITY_MODULES; }
     }
 
     /** Real framework Service only. Never pass an editor Context or an owner-data Context wrapper. */

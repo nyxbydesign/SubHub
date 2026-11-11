@@ -28,7 +28,8 @@ class RuntimeCaptureHostInventoryTest(unittest.TestCase):
         native = (ROOT / 'app/src/androidTest/java/com/subhub/app/service/RuntimeCaptureHostAndroidTest.java').read_text()
         self.assertNotIn('import android.', unit)
         self.assertEqual(['projectionRetainsEverySupportedLegacyApi',
-                          'displayAndModernWindowGuardsAreNotInterchangeable'],
+                          'displayAndModernWindowGuardsAreNotInterchangeable',
+                          'modulesOnlyHostDoesNotClaimScreenshotSupportOnAnyApi'],
                          re.findall(r'@Test public void (\w+)\(', unit))
         self.assertEqual(15, len(re.findall(r'@Test public void (\w+)\(', native)))
         self.assertIn('@RunWith(AndroidJUnit4.class)', native)

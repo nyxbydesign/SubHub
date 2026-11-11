@@ -54,6 +54,39 @@ public final class RuntimeSourceRevocationTest {
         assertTrue(f.coordinator.anyOccupied());
         assertFalse(f.gateway.permissionResult(attempt, prompt, true).join()); assertFalse(f.coordinator.anyOccupied());
     }
+    @Test public void deviceRoleSourceRetiresPendingLocalDevicePrompt() {
+        Fixture f = new Fixture(); var source = RuntimeAdmissionAuthority.Revocation.forDeviceLocalStart();
+        f.authority.completeAvailability(f.authority.beginAvailability(RuntimeTarget.DEVICE), "device_plan", 1, true);
+        assertTrue(f.authority.completeAuthorization(f.authority.beginAuthorization(RuntimeTarget.DEVICE, RuntimeOrigin.LOCAL_UI), 1, true, source));
+        var attempt = f.gateway.reserve(f.authority.capture(RuntimeTarget.DEVICE, RuntimeOrigin.LOCAL_UI), Set.of("component")).join().attempt;
+        var prompt = f.gateway.permission(attempt, RuntimeStartAttempt.Permission.ACCESSIBILITY).join();
+        source.revoke(); assertFalse(prompt.launch(() -> fail("Retired DEVICE prompt launched")));
+        assertFalse(f.coordinator.acceptsPermissionResult(attempt.lease()));
+    }
+    @Test public void deviceSourceCannotAuthorizeInternalOrIncomingRemote() {
+        Fixture f = new Fixture(); var source = RuntimeAdmissionAuthority.Revocation.forDeviceLocalStart();
+        assertThrows(IllegalArgumentException.class, () -> f.authority.completeAuthorization(
+                f.authority.beginAuthorization(f.target, RuntimeOrigin.LOCAL_UI), 1, true, source));
+        String digest = "0000000000000000000000000000000000000000000000000000000000000000";
+        RuntimeOrigin remote = RuntimeOrigin.remote(new RuntimeOrigin.RemoteProof(digest, "peer_generation",
+                UUID.randomUUID().toString(), digest, digest, 1, "", "", ""));
+        f.authority.completeAvailability(f.authority.beginAvailability(RuntimeTarget.DEVICE), "device", 1, true);
+        assertThrows(IllegalArgumentException.class, () -> f.authority.completeAuthorization(
+                f.authority.beginAuthorization(RuntimeTarget.DEVICE, remote), 1, true, source));
+    }
+    @Test public void deviceRoleRetirementDoesNotEndActiveDeviceSession() {
+        Fixture f = new Fixture(); var source = RuntimeAdmissionAuthority.Revocation.forDeviceLocalStart();
+        f.authority.completeAvailability(f.authority.beginAvailability(RuntimeTarget.DEVICE), "device", 1, true);
+        f.authority.completeAuthorization(f.authority.beginAuthorization(RuntimeTarget.DEVICE, RuntimeOrigin.LOCAL_UI), 1, true, source);
+        RuntimeLease lease = f.coordinator.reserve(f.authority.capture(RuntimeTarget.DEVICE, RuntimeOrigin.LOCAL_UI), Set.of("component")).lease;
+        assertEquals(ActiveRuntimeCoordinator.Result.OK, f.coordinator.beginStarting(lease, ignored -> true));
+        var component = f.coordinator.registerComponent(lease, "component");
+        f.coordinator.componentReady(lease, component); f.coordinator.activate(lease); source.revoke();
+        try (var permit = f.coordinator.resources(lease).acquireEffectPermit(lease, OwnedResourceRegistry.Effect.NORMAL)) {
+            assertNotNull(permit);
+        }
+        assertEquals(RuntimeOwnerStore.Phase.ACTIVE, f.coordinator.observe().persisted.phase);
+    }
     private static final class Fixture {
         final RuntimeMutex mutex = new RuntimeMutex(new Object());
         final RuntimeAdmissionAuthority authority = new RuntimeAdmissionAuthority(mutex);

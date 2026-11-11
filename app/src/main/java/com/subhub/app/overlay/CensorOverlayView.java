@@ -99,6 +99,9 @@ final class CensorOverlayView extends View {
     private int captureHeight = 1;
     private int textCaptureWidth = 1;
     private int textCaptureHeight = 1;
+    private long nativeAttachSequence, nativeDetachedSequence;
+    private int nativeAttachDepth, nativeDetachDepth;
+    private boolean nativeAttachAfterSeal, nativeHardwareDrawSeen;
     private Bitmap frame;
     private Runnable frameRelease;
     private Bitmap effectScratch;
@@ -853,6 +856,7 @@ final class CensorOverlayView extends View {
         super.onDraw(canvas);
         if (!dependencies.tryNormal(() -> {
             customImages.draw(drawing -> {
+                if (canvas.isHardwareAccelerated()) nativeHardwareDrawSeen = true;
                 artworkDraw = drawing;
                 try { drawAdmitted(canvas); }
                 finally { artworkDraw = null; }
@@ -1904,10 +1908,10 @@ final class CensorOverlayView extends View {
         clearPersonCoverage();
         stopFrameCallback();
         releaseFrame();
-        if (effectScratch != null && !effectScratch.isRecycled()) effectScratch.recycle();
+        if (!dependencies.nativeRetiring() && effectScratch != null && !effectScratch.isRecycled()) effectScratch.recycle();
         effectScratch = null;
         effectCanvas = null;
-        if (noiseBitmap != null && !noiseBitmap.isRecycled()) noiseBitmap.recycle();
+        if (!dependencies.nativeRetiring() && noiseBitmap != null && !noiseBitmap.isRecycled()) noiseBitmap.recycle();
         noiseBitmap = null;
         noisePixels = null;
         if (terminal) customImages.close();
@@ -1930,22 +1934,41 @@ final class CensorOverlayView extends View {
         frameRelease = null;
         if (owned == null || owned.isRecycled()) return;
         if (release != null) release.run();
-        else owned.recycle();
+        else if (!dependencies.nativeRetiring()) owned.recycle();
     }
 
     @Override
     protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        scheduleNextFrame(SystemClock.uptimeMillis());
+        nativeAttachDepth++;
+        nativeAttachSequence = Math.addExact(nativeAttachSequence, 1);
+        if (dependencies.nativeRetiring()) nativeAttachAfterSeal = true;
+        try { super.onAttachedToWindow(); scheduleNextFrame(SystemClock.uptimeMillis()); }
+        finally { nativeAttachDepth--; }
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        // A same-owner window can be detached/re-attached by Android. Retire its paint inputs,
-        // but keep the explicit data binding until the controller requests terminal closure.
-        release(!dependencies.managed() || !dependencies.open());
-        super.onDetachedFromWindow();
+        nativeDetachDepth++; boolean returned = false;
+        try {
+            if (dependencies.nativeRetiring()) {
+                // Detach precedes RenderThread destruction. Only fence/unpublish here; the fresh
+                // removal call must actually return before terminal resource references retire.
+                tapTracker.clearDisplayed(this); removeRenderCallback(refreshDisplayedTapGeometry); stopFrameCallback();
+            } else {
+                // Existing same-owner transient detach/re-attach semantics remain unchanged.
+                release(!dependencies.managed() || !dependencies.open());
+            }
+            super.onDetachedFromWindow(); returned = true;
+        } finally {
+            nativeDetachDepth--;
+            if (returned) nativeDetachedSequence = nativeAttachSequence;
+        }
     }
+    boolean nativeWindowCallbacksRetired() {
+        return nativeAttachDepth == 0 && nativeDetachDepth == 0 && !nativeAttachAfterSeal
+                && nativeDetachedSequence == nativeAttachSequence;
+    }
+    boolean neverHadNativeWindowOrDraw() { return nativeAttachSequence == 0 && !nativeHardwareDrawSeen; }
 
     @Override protected void onVisibilityChanged(View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
