@@ -9,7 +9,7 @@ on a fresh GitHub-hosted Linux x64 runner. PRs never opt into native execution v
 labels. There are no feature-specific native workflow files.
 
 The selectable suites are `extra-time` (21 methods), `subhub-pass` (52),
-`reconnect` (6), `battery` (31), `device-pass` (54), and `dummy-preview` (22).
+`reconnect` (6), `battery` (31), `device-pass` (57), and `dummy-preview` (224).
 These are exact inventories, not wildcards or class-wide selections. This workflow
 runs the complete selected suite; it does not accept a method-subset input.
 The retained producer's standalone selector parsing remains available to existing
