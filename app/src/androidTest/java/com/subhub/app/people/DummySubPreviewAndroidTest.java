@@ -622,6 +622,78 @@ public final class DummySubPreviewAndroidTest {
                 300_000,Set.of(),true,false,null));
     }
 
+    @Test public void ownerDataAckRefreshesInternalPresentationWithoutProfileMutation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        InternalSubData backend=internalFixture.data;
+        com.subhub.app.internal.InternalSubRecord record=backend.acknowledged();
+        PersonSnapshot before=backend.loadPresentation(context,record);
+        long oldRevision=backend.presentationRevisionHint();
+        backend.ownerData().submitTask(record.generation,access->access.assessTaskFailure(
+                "ui_owned_ack_fixture",com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
+                .get(10,java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals(record,backend.acknowledged());
+        assertTrue(backend.presentationRevisionHint()>oldRevision);
+        instrumentation.runOnMainSync(()->assertNull(backend.peekPresentation()));
+        PersonSnapshot after=backend.loadPresentation(context,record);
+        assertNotSame(before,after);assertTrue(after.can(PersonSnapshot.Capability.VIEW_STATS));
+        assertEquals(PersonSnapshot.Freshness.CURRENT,after.sync.stats);
+        assertEquals(PersonSnapshot.Freshness.UNKNOWN,after.sync.runtime);
+        instrumentation.runOnMainSync(()->assertSame(after,backend.peekPresentation()));
+        assertFalse(DummySubPreview.toggle(context));
+        instrumentation.runOnMainSync(()->assertNull(backend.peekPresentation()));
+        assertThrows(SecurityException.class,()->backend.loadPresentation(context,record));
+    }
+
+    @Test public void signedInternalStatisticsRouteUsesOnlyInternalSourceAcrossRecreation() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));
+        Intent profile=authorizedProfileIntent();
+        Map<String,Map<String,?>> before=realPreferences();Map<String,List<String>> rows=endpoint.snapshot();history.capture(true);
+        AtomicReference<Intent> route=new AtomicReference<>();
+        try(ActivityScenario<PersonActivity> scenario=ActivityScenario.launch(profile)){
+            AtomicReference<PersonActivity> host=new AtomicReference<>();scenario.onActivity(host::set);
+            await(()->resumed(host.get())&&host.get().hasWindowFocus());
+            await(()->tagged(host.get(),"person_tab:stats")!=null);
+            Instrumentation.ActivityMonitor monitor=instrumentation.addMonitor(com.subhub.app.stats.StatsActivity.class.getName(),null,false);
+            try{
+                tapTag("person_tab:stats");
+                com.subhub.app.stats.StatsActivity stats=(com.subhub.app.stats.StatsActivity)instrumentation.waitForMonitorWithTimeout(monitor,5000);
+                assertNotNull(stats);await(()->resumed(stats)&&stats.hasWindowFocus());
+                assertTrue(DummySubPreview.isAllowed(stats));assertNotNull(tagged(stats,"internal_statistics"));
+                route.set(new Intent(stats.getIntent()));nativeBack(stats);await(()->resumed(host.get())&&host.get().hasWindowFocus());
+            }finally{instrumentation.removeMonitor(monitor);}
+        }
+        try(ActivityScenario<com.subhub.app.stats.StatsActivity> scenario=ActivityScenario.launch(route.get())){
+            AtomicReference<com.subhub.app.stats.StatsActivity> stats=new AtomicReference<>();scenario.onActivity(stats::set);
+            await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
+            scenario.recreate();scenario.onActivity(stats::set);await(()->resumed(stats.get())&&stats.get().hasWindowFocus());
+            assertTrue(DummySubPreview.isAllowed(stats.get()));assertNotNull(tagged(stats.get(),"internal_statistics"));
+            for(String field:new String[]{"remote","localFacts"}){
+                java.lang.reflect.Field value=com.subhub.app.stats.StatsActivity.class.getDeclaredField(field);value.setAccessible(true);
+                assertNull("Internal Stats must not acquire physical or remote facts",value.get(stats.get()));
+            }
+        }
+        assertRejected(new Intent(context,com.subhub.app.stats.StatsActivity.class).putExtra(PersonRoutes.EXTRA_PERSON_ID,DummySubPreview.ID.value()));
+        assertRealState(before,rows);
+    }
+
+    @Test public void internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration() throws Exception {
+        assertTrue(DummySubPreview.toggle(context));String generation=internalFixture.data.acknowledged().generation;
+        Intent original=DummySubPreview.taskNotificationIntent(context,generation);
+        try(ActivityScenario<com.subhub.app.tasks.TasksActivity> scenario=ActivityScenario.launch(original)){
+            AtomicReference<com.subhub.app.tasks.TasksActivity> page=new AtomicReference<>();scenario.onActivity(page::set);
+            await(()->resumed(page.get())&&page.get().hasWindowFocus());assertTrue(DummySubPreview.isAllowed(page.get()));
+        }
+        ControllerPinManager.enterSubMode();
+        assertRejected(original);
+        assertRejected(DummySubPreview.taskNotificationIntent(context,generation));
+        assertTrue(ControllerPinManager.verify(context,"2468"));
+        assertRejected(original); // Unlocking again does not renew a route from the old controller epoch.
+        Intent current=DummySubPreview.taskNotificationIntent(context,generation);
+        assertFalse(DummySubPreview.toggle(context));assertTrue(DummySubPreview.toggle(context));
+        assertRejected(current);
+        assertThrows(SecurityException.class,()->DummySubPreview.taskNotificationIntent(context,generation));
+    }
+
     private Intent authorizedProfileIntent() {
         try (ActivityScenario<PeopleActivity> scenario = ActivityScenario.launch(PeopleActivity.class)) {
             AtomicReference<PeopleActivity> host = new AtomicReference<>(); scenario.onActivity(host::set);

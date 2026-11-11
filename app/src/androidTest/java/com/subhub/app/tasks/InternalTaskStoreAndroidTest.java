@@ -134,4 +134,109 @@ public final class InternalTaskStoreAndroidTest {
         assertEquals("ready", evidence.getString(InternalTaskDatabase.evidenceKey(file), ""));
         assertEquals(1, admissions.get());
     }
+    @Test public void legacyIndexUpgradePreservesEveryRowAndReopenDoesNotWrite() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();
+        db.execSQL("UPDATE effects SET done=1");
+        db.execSQL("DROP INDEX "+InternalTaskDatabase.FAILURE_INDEX);db.execSQL("DROP INDEX "+InternalTaskDatabase.NOTICE_INDEX);db.setVersion(1);
+        Map<String,List<String>> before=rows(db);opened.close();opened=null;
+        opened=open();db=opened.getReadableDatabase();assertEquals(2,db.getVersion());assertEquals(before,rows(db));
+        assertEquals("Upgrade checks admission before and after its durable transaction",3,admissions.get());
+        assertSeekPlan(db,true,false,0);assertSeekPlan(db,true,true,Long.MAX_VALUE);
+        assertSeekPlan(db,false,false,0);assertSeekPlan(db,false,true,Long.MAX_VALUE);
+        opened.close();opened=null;byte[] acknowledged=Files.readAllBytes(file.toPath());
+        opened=open();assertEquals(before,rows(opened.getReadableDatabase()));assertEquals(3,admissions.get());
+        opened.close();opened=null;assertArrayEquals(acknowledged,Files.readAllBytes(file.toPath()));
+    }
+    @Test public void partialLegacyIndexUpgradeIsIdempotent() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();
+        db.execSQL("DROP INDEX "+InternalTaskDatabase.NOTICE_INDEX);db.setVersion(1);
+        Map<String,List<String>> before=rows(db);String existing=android.database.DatabaseUtils.stringForQuery(db,
+                "SELECT sql FROM sqlite_master WHERE name=?",new String[]{InternalTaskDatabase.FAILURE_INDEX});
+        opened.close();opened=null;opened=open();db=opened.getReadableDatabase();
+        assertEquals(2,db.getVersion());assertEquals(before,rows(db));assertEquals(existing,android.database.DatabaseUtils.stringForQuery(db,
+                "SELECT sql FROM sqlite_master WHERE name=?",new String[]{InternalTaskDatabase.FAILURE_INDEX}));
+        assertEquals(2,android.database.DatabaseUtils.longForQuery(db,"SELECT COUNT(*) FROM sqlite_master WHERE name IN (?,?)",
+                new String[]{InternalTaskDatabase.FAILURE_INDEX,InternalTaskDatabase.NOTICE_INDEX}));
+        opened.close();opened=null;opened=open();assertEquals(before,rows(opened.getReadableDatabase()));assertEquals(3,admissions.get());
+    }
+    @Test public void missingCurrentIndexRefusesQueryAndReopenWithoutFallback() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();
+        db.execSQL("DROP INDEX "+InternalTaskDatabase.FAILURE_INDEX);
+        assertThrows(android.database.sqlite.SQLiteException.class,()->opened.pendingEffects("internal_sub",true,0,32,()->{}));
+        opened.close();opened=null;byte[] before=Files.readAllBytes(file.toPath());
+        assertThrows(Exception.class,()->opened=open());assertArrayEquals(before,Files.readAllBytes(file.toPath()));
+        assertEquals(1,admissions.get());
+    }
+    @Test public void mismatchedLegacyIndexIsRejectedWithoutRewritingHistory() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();
+        db.execSQL("DROP INDEX "+InternalTaskDatabase.FAILURE_INDEX);
+        db.execSQL("CREATE INDEX "+InternalTaskDatabase.FAILURE_INDEX+" ON effects(scope) WHERE done=1");db.setVersion(1);
+        opened.close();opened=null;byte[] before=Files.readAllBytes(file.toPath());
+        assertThrows(Exception.class,()->opened=open());assertArrayEquals(before,Files.readAllBytes(file.toPath()));
+        assertEquals("ready",evidence.getString(InternalTaskDatabase.evidenceKey(file),""));
+    }
+    @Test public void refusedUpgradeAdmissionDoesNotInstallIndexes() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();
+        db.execSQL("DROP INDEX "+InternalTaskDatabase.FAILURE_INDEX);db.execSQL("DROP INDEX "+InternalTaskDatabase.NOTICE_INDEX);db.setVersion(1);
+        opened.close();opened=null;byte[] before=Files.readAllBytes(file.toPath());
+        assertThrows(SecurityException.class,()->opened=new TaskStore(context,scope,evidence,()->{throw new SecurityException("Retired command");}));
+        assertArrayEquals(before,Files.readAllBytes(file.toPath()));assertEquals(1,admissions.get());
+        opened=open();assertEquals(2,opened.getReadableDatabase().getVersion());
+    }
+    @Test public void indexedPlansCoverEmptySparseAndLargePendingLanes() throws Exception {
+        seed();opened=open();android.database.sqlite.SQLiteDatabase db=opened.getWritableDatabase();db.execSQL("UPDATE effects SET done=1");
+        String body=new TaskAction("index-effect","owned_db_task",TaskAction.Kind.TIMEOUT,LocalDate.now(),System.currentTimeMillis(),"","",List.of(),null).json().toString();
+        db.beginTransaction();try {
+            for(int i=0;i<40_000;i++)db.execSQL("INSERT INTO effects(scope,id,kind,body,done) VALUES(?,?,?,?,1)",
+                    new Object[]{"internal_sub","completed"+i,i%2==0?"failure":"notification",body});
+            for(int i=0;i<2_000;i++)db.execSQL("INSERT INTO effects(scope,id,kind,body,done) VALUES(?,?,?,?,0)",
+                    new Object[]{"foreign-owned-fixture","foreign"+i,"failure",body});
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        for(boolean lane:new boolean[]{false,true})for(boolean wrap:new boolean[]{false,true}) {
+            assertSeekPlan(db,lane,wrap,wrap?Long.MAX_VALUE:0);
+            assertTrue(opened.pendingEffects("internal_sub",lane,wrap?Long.MAX_VALUE:0,32,()->{}).isEmpty());
+        }
+        for(boolean lane:new boolean[]{false,true})db.execSQL("INSERT INTO effects(scope,id,kind,body,done) VALUES(?,?,?,?,0)",
+                new Object[]{"internal_sub","sparse"+lane,lane?"failure":"notification",body});
+        for(boolean lane:new boolean[]{false,true})assertEquals(1,opened.pendingEffects("internal_sub",lane,0,32,()->{}).size());
+        db.beginTransaction();try {
+            for(int i=0;i<2_000;i++)db.execSQL("INSERT INTO effects(scope,id,kind,body,done) VALUES(?,?,?,?,0)",
+                    new Object[]{"internal_sub","pending"+i,i%2==0?"failure":"notification",body});
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        for(boolean lane:new boolean[]{false,true})for(boolean wrap:new boolean[]{false,true}) {
+            assertSeekPlan(db,lane,wrap,wrap?Long.MAX_VALUE:0);
+            assertEquals(32,opened.pendingEffects("internal_sub",lane,wrap?Long.MAX_VALUE:0,32,()->{}).size());
+        }
+        assertEquals(40_000,android.database.DatabaseUtils.longForQuery(db,"SELECT COUNT(*) FROM effects WHERE id LIKE 'completed%'",null));
+    }
+    private static void assertSeekPlan(android.database.sqlite.SQLiteDatabase db,boolean failure,boolean wrap,long after) {
+        String index=failure?InternalTaskDatabase.FAILURE_INDEX:InternalTaskDatabase.NOTICE_INDEX;
+        String query="EXPLAIN QUERY PLAN SELECT rowid,id,kind,body FROM effects INDEXED BY "+index
+                +" WHERE scope=? AND done=0 AND kind "+(failure?"=":"<>")+" 'failure' AND rowid "+(wrap?"<=":">")+" ? ORDER BY rowid LIMIT ?";
+        boolean selected=false;
+        try(android.database.Cursor plan=db.rawQuery(query,new String[]{"internal_sub",Long.toString(after),"32"})) {
+            while(plan.moveToNext()) {
+                String detail=plan.getString(3);assertFalse(detail,detail.contains("TEMP B-TREE"));
+                if(detail.contains(index)&&detail.contains("rowid"))selected=true;
+            }
+        }
+        assertTrue("Partial lane index and rowid seek must be selected",selected);
+    }
+    private static Map<String,List<String>> rows(android.database.sqlite.SQLiteDatabase db) {
+        Map<String,List<String>> values=new TreeMap<>();
+        for(String table:new String[]{"projections","journal","receipts","cursors","effects"}) {
+            List<String> rows=new ArrayList<>();
+            try(android.database.Cursor cursor=db.rawQuery("SELECT rowid,* FROM "+table+" ORDER BY rowid",null)) {
+                while(cursor.moveToNext()) {
+                    List<String> fields=new ArrayList<>();for(int i=0;i<cursor.getColumnCount();i++)fields.add(cursor.isNull(i)?null:cursor.getString(i));
+                    rows.add(new org.json.JSONArray(fields).toString());
+                }
+            }
+            values.put(table,rows);
+        }
+        return values;
+    }
+
 }

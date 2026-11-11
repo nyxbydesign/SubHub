@@ -22,6 +22,47 @@ import static org.junit.Assert.*;
 /** Real Android/file adapter coverage. These fixtures own all bytes and registry preferences. */
 @RunWith(AndroidJUnit4.class)
 public final class InternalOwnerDataBrokerAndroidTest {
+    @Test public void immutableProjectionAndRevisionHintWaitForOuterAck() throws Exception {
+        try (Fixture f = new Fixture()) {
+            assertEquals(-1L, f.broker.acknowledgedRevisionHint(f.data.acknowledged().generation));
+            f.broker.initialize().get(10, TimeUnit.SECONDS); f.visible(true);
+            String generation = f.data.acknowledged().generation;
+            long before = f.broker.acknowledgedRevisionHint(generation); assertEquals(0L, before);
+            Field opened = InternalOwnerDataBroker.class.getDeclaredField("observedHandle"); opened.setAccessible(true);
+            Object handle = opened.get(f.broker); Field prefs = handle.getClass().getDeclaredField("preferences"); prefs.setAccessible(true);
+            InternalRuntimePreferences preferences = (InternalRuntimePreferences) prefs.get(handle);
+            java.util.concurrent.atomic.AtomicLong duringPublication = new java.util.concurrent.atomic.AtomicLong(-2);
+            preferences.preferences("task_notices").registerOnSharedPreferenceChangeListener((ignored, key) ->
+                    duringPublication.set(f.broker.acknowledgedRevisionHint(generation)));
+            TaskNoticeLedger.Receipt notice = new TaskNoticeLedger.Receipt(generation,
+                    TaskNoticeLedger.Audience.SUB_TASKS, "projection:receipt", System.currentTimeMillis());
+            f.broker.submitTask(generation, access -> access.admitNotice(notice)).get(10, TimeUnit.SECONDS);
+            assertEquals(before, duringPublication.get());
+            assertEquals(before + 1, f.broker.acknowledgedRevisionHint(generation));
+            OwnerObservation observed = OwnerObservation.capture(System.currentTimeMillis());
+            Set<String> packages = new HashSet<>(Set.of("example.package"));
+            CountDownLatch release = new CountDownLatch(1);
+            f.data.execute(() -> { try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } });
+            CompletableFuture<com.subhub.app.people.InternalRuntimePresentationSnapshot> pending;
+            try {
+                pending = f.broker.readProjection(generation, observed, packages);
+                packages.clear(); packages.add("different.package");
+            } finally { release.countDown(); }
+            com.subhub.app.people.InternalRuntimePresentationSnapshot projection = pending.get(10, TimeUnit.SECONDS);
+            assertSame(observed, projection.observed); assertEquals(f.data.acknowledged(), projection.record);
+            assertEquals(before + 1, projection.runtime.revision); assertEquals(projection.runtime.revision, projection.accounting.revision);
+            assertEquals(1, projection.runtime.namespaces().get("task_notices").size());
+            assertTrue(projection.usage.containsKey("example.package"));
+            assertThrows(UnsupportedOperationException.class, () -> projection.usage.clear());
+            assertThrows(UnsupportedOperationException.class, () -> projection.runtime.namespaces().get("task_notices").clear());
+            String differentZone = observed.zone.equals("UTC") ? "Europe/Berlin" : "UTC";
+            assertThrows(ExecutionException.class, () -> f.broker.readProjection(generation,
+                    new OwnerObservation(observed.at, differentZone), Set.of()).get(10, TimeUnit.SECONDS));
+            assertEquals(before + 1, f.broker.acknowledgedRevisionHint(generation));
+            f.visible(false); assertEquals(-1L, f.broker.acknowledgedRevisionHint(generation));
+            assertThrows(ExecutionException.class, () -> f.broker.readProjection(generation, observed, Set.of()).get(10, TimeUnit.SECONDS));
+        }
+    }
     @Test public void explicitHiddenProvisionAndOneBrokerPreserveSingleAcknowledgedNoticeRecord() throws Exception {
         try (Fixture f = new Fixture()) {
             assertFalse(f.data.acknowledged().visible);

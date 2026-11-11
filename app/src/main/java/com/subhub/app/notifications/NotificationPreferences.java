@@ -25,6 +25,12 @@ public final class NotificationPreferences {
         }
         return choices.getBoolean(key(role, event), fallback);
     }
+    /** Internal task audiences reuse the saved choices, not the physical device's role capability. */
+    public static boolean internalTaskEnabled(Context context, Role role, Event event) {
+        if (!(role == Role.SUB && event == Event.TASKS || role == Role.DOM && event == Event.TASK_REVIEW))
+            return false;
+        return preferences(context).getBoolean(key(role, event), true);
+    }
     public static boolean set(Context context, Role role, Event event, boolean enabled) {
         return setWithCancellation(context, role, event, enabled, () -> cancel(context, role, event));
     }

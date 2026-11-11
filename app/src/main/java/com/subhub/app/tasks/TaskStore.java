@@ -226,6 +226,37 @@ public final class TaskStore extends SQLiteOpenHelper {
     }
     public List<Effect> pending(String scope) throws JSONException { return pending(scope, false); }
     public List<Effect> pendingNotices(String scope) throws JSONException { return pending(scope, true); }
+    /** Internal-only bounded pagination. The callback is borrowed from the current admitted command,
+     * never stored. A rowid is only a cursor, never an authority or effect-completion receipt. */
+    List<InternalTaskEffectDrain.Pending<Effect>> pendingEffects(String scope, boolean failures,
+            long afterRowId, int limit, Runnable currentAdmission) throws JSONException {
+        if(internalDatabase==null||!"internal_sub".equals(scope))throw new SecurityException("Not the internal task scope");
+        if(afterRowId<0||limit<=0||limit>InternalTaskEffectDrain.MAX_PER_PASS)
+            throw new IllegalArgumentException("Invalid internal effect page");
+        Objects.requireNonNull(currentAdmission).run();
+        List<InternalTaskEffectDrain.Pending<Effect>> result=new ArrayList<>();
+        effectPage(scope,failures,afterRowId,false,limit,result);
+        currentAdmission.run(); // No authorization callback is invoked while holding SQL/store locks.
+        if(result.size()<limit&&afterRowId>0) {
+            effectPage(scope,failures,afterRowId,true,limit-result.size(),result);
+            currentAdmission.run();
+        }
+        return Collections.unmodifiableList(result);
+    }
+    private void effectPage(String scope,boolean failures,long after,boolean wrap,int limit,
+            List<InternalTaskEffectDrain.Pending<Effect>> result) throws JSONException {
+        synchronized(lock) {
+            // Never fall back to scanning completed history if an owned index is unavailable.
+            String sql="SELECT rowid,id,kind,body FROM effects INDEXED BY "
+                    +(failures?InternalTaskDatabase.FAILURE_INDEX:InternalTaskDatabase.NOTICE_INDEX)
+                    +" WHERE scope=? AND done=0 AND kind "
+                    +(failures?"=":"<>")+" 'failure' AND rowid "+(wrap?"<=":">")+" ? ORDER BY rowid LIMIT ?";
+            try(Cursor rows=getReadableDatabase().rawQuery(sql,new String[]{scope,Long.toString(after),Integer.toString(limit)})) {
+                while(rows.moveToNext())result.add(new InternalTaskEffectDrain.Pending<>(rows.getLong(0),
+                        new Effect(rows.getString(1),rows.getString(2),TaskAction.parse(new JSONObject(rows.getString(3))))));
+            }
+        }
+    }
     private List<Effect> pending(String scope, boolean notices) throws JSONException {
         synchronized (lock) {
             List<Effect> result = new ArrayList<>();

@@ -24,6 +24,8 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private int statisticsScroll, catalogScroll, profileScroll;
     private DailyStatsPanel daily;
     private RemoteStatsSource remote;
+    private InternalStatsSource internalSource;
+    private InternalStatsPane internalPane;
     private AutoCloseable appIconObserver;
     private long appIconEpoch;
     private AchievementRole workspace;
@@ -31,12 +33,13 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     private final android.os.Handler remoteClock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refreshRemote = new Runnable() {
         @Override public void run() {
-            if (!resumed || catalogSelected || remote == null && !domOverview || isFinishing()) return;
+            if (!resumed || catalogSelected || remote == null && internalSource == null && !domOverview || isFinishing()) return;
             try {
                 if (remote != null) remote.requireAccess();
+                if (internalSource != null) internalSource.requireAccess();
                 if (!workspace.accessible(StatsActivity.this)) { finish(); return; }
                 bindTotals();
-                daily.refreshIfNeeded();
+                if (daily != null) daily.refreshIfNeeded();
             }
             catch (RuntimeException unavailable) { finish(); return; }
             remoteClock.postDelayed(this, domOverview ? 5000 : 2000);
@@ -63,7 +66,11 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         if (!workspaceReadable()) { finish(); return; }
         domOverview = workspace == AchievementRole.DOM
                 && !getIntent().hasExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID);
-        if (!domOverview && !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
+        if (com.subhub.app.people.DummySubPreview.isRequested(getIntent())) {
+            if (!com.subhub.app.people.DummySubPreview.isAllowed(this)) { finish(); return; }
+            try { internalSource = new InternalStatsSource(this); }
+            catch (RuntimeException unavailable) { finish(); return; }
+        } else if (!domOverview && !com.subhub.app.people.PersonRoutes.isLocalTarget(getIntent())) {
             try { remote = new RemoteStatsSource(this, com.subhub.app.people.PersonRoutes.requireId(getIntent())); }
             catch (RuntimeException unavailable) { finish(); return; }
         }
@@ -94,6 +101,11 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         if (statisticsBuilt) return;
         if (!workspace.accessible(this)) throw new SecurityException("Statistics unavailable");
         statisticsBuilt = true;
+        if (internalSource != null) {
+            internalPane = new InternalStatsPane(this, internalSource, statisticsState, sessionLimit);
+            page.addView(internalPane, new LinearLayout.LayoutParams(-1, -2));
+            return;
+        }
         currentSession = card(page);
         currentSession.setId(R.id.profile_stats_current);
         currentSessionDetails = com.subhub.app.people.PersonUi.column(this);
@@ -266,6 +278,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
 
     private void pauseSection() {
         if (catalog != null) catalog.pause();
+        if (internalPane != null) internalPane.pause();
         if (data != null) {
             data.cancel("dom-statistics");
             data.cancel("local-statistics");
@@ -278,8 +291,8 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         if (profileSelected) profile.refresh();
         if (catalogSelected) { catalog.resume(); return; }
         if (!workspace.accessible(this)) return;
-        if (remote != null || domOverview) remoteClock.post(refreshRemote);
-        bindTotals(); bindSessions(); bindAllowances(); daily.refreshIfNeeded();
+        if (remote != null || internalSource != null || domOverview) remoteClock.post(refreshRemote);
+        bindTotals(); bindSessions(); bindAllowances(); if (daily != null) daily.refreshIfNeeded();
     }
 
     @Override
@@ -297,8 +310,9 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         resumed = true;
         observeAppIcons();
         renderSection();
-        if (!catalogSelected && workspace.accessible(this) && (remote != null || domOverview)) {
-            try { if (remote != null) remote.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
+        if (!catalogSelected && workspace.accessible(this) && (remote != null || internalSource != null || domOverview)) {
+            try { if (remote != null) remote.requireAccess();
+                if (internalSource != null) internalSource.requireAccess(); } catch (RuntimeException unavailable) { finish(); return; }
             remoteClock.removeCallbacks(refreshRemote); remoteClock.post(refreshRemote);
         }
         if (isFinishing()) return;
@@ -329,6 +343,8 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
                 com.subhub.app.util.PrimaryHeader.subtitle(root).setVisibility(android.view.View.VISIBLE);
                 android.view.View nav = root.findViewById(R.id.bottom_navigation); if (nav != null) nav.setVisibility(android.view.View.GONE);
             } catch (Exception unavailable) { finish(); return; }
+        } else if (internalSource != null) {
+            android.view.View nav=root.findViewById(R.id.bottom_navigation); if(nav!=null)nav.setVisibility(android.view.View.GONE);
         } else if (dom) com.subhub.app.util.PrimaryHeader.subtitle(root).setText(com.subhub.app.people.ProfileNames.get(this, false));
         if (profileSelected) profile.refresh();
         if (!workspace.accessible(this)) { return; }
@@ -336,7 +352,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         bindTotals();
         bindSessions();
         bindAllowances();
-        daily.refreshIfNeeded();
+        if (daily != null) daily.refreshIfNeeded();
     }
 
     @Override
@@ -348,6 +364,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
         state.putInt("stats_scroll", statisticsScroll);
         state.putInt("catalog_scroll", catalogScroll);
         if (daily != null) daily.save(statisticsState);
+        if (internalPane != null) { internalPane.save(statisticsState); sessionLimit=internalPane.sessionLimit(); }
         state.putBundle("profile_statistics_state", new Bundle(statisticsState));
         state.putInt("stats_session_limit", sessionLimit);
         super.onSaveInstanceState(state);
@@ -410,6 +427,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     }
 
     private void bindTotals() {
+        if (internalSource != null) { internalPane.refresh(); return; }
         if (domOverview) { bindDomTotals(); return; }
         if (remote != null) { bindRemoteTotals(); return; }
         if (localFacts != null && (localFactsIdentity == null || !localFactsIdentity.current())) clearLocalStatistics();
@@ -615,6 +633,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     }
 
     private void bindAllowances() {
+        if (internalSource != null) return;
         if (domOverview) { allowances.setVisibility(android.view.View.GONE); updateCurrentSessionVisibility(); return; }
         if (remote != null) {
             RemoteStatsSource expected = remote;
@@ -659,6 +678,7 @@ public class StatsActivity extends PreferencePage implements com.subhub.app.util
     }
 
     private void bindSessions() {
+        if (internalSource != null) return;
         sessionList.removeAllViews();
         heading(sessionList, R.string.stats_recent_sessions);
         if (remote != null || domOverview) { text(sessionList,getString(R.string.stats_remote_history_private),13,true);return; }

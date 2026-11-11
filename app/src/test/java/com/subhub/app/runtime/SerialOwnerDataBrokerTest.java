@@ -10,6 +10,14 @@ import static org.junit.Assert.*;
 
 /** Real serial broker, queue, registry and lease contracts; no Android or backend substitutes. */
 public final class SerialOwnerDataBrokerTest {
+    @Test public void hintHealthDoesNotOpenOrAdmitAndStopsAtCloseOrFailure() {
+        Fixture healthy = new Fixture(); assertTrue(healthy.broker.acceptsDataHint());
+        assertEquals(0, healthy.opens.get()); assertTrue(healthy.worker.work.isEmpty());
+        healthy.broker.closeAfterDrain(); assertFalse(healthy.broker.acceptsDataHint()); healthy.worker.all();
+        Fixture failed = new Fixture(); failed.openFailure = true;
+        CompletableFuture<Void> opening = failed.broker.initialize(); failed.worker.all(); rejected(opening);
+        assertFalse(failed.broker.acceptsDataHint()); assertEquals(1, failed.opens.get());
+    }
     @Test public void oneHandleServesTaskEditorReadAndSuccessiveSessions() {
         Fixture f = new Fixture();
         CompletableFuture<Integer> task = f.broker.submitTask("one", h -> h.add(2));

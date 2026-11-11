@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import com.subhub.app.people.InternalEditorAuthority;
 import com.subhub.app.people.InternalSubData;
 import com.subhub.app.people.InternalVisibilityBarrier;
+import com.subhub.app.people.InternalRuntimePresentationSnapshot;
 import com.subhub.app.penance.InternalPenanceRules;
 import com.subhub.app.penance.OwnerPenanceLedger;
 import com.subhub.app.penance.PenanceManager;
@@ -35,6 +36,7 @@ public final class InternalOwnerDataBroker {
     private final Context physical;
     private final Predicate<InternalSubRecord> taskPolicy;
     private final SerialOwnerDataBroker<Handle> broker;
+    private volatile Handle observedHandle;
     private final ThreadLocal<TaskAccess> taskCommand = new ThreadLocal<>();
     private final ThreadLocal<EditorAccess> editorCommand = new ThreadLocal<>();
     private final ThreadLocal<RetiredTaskNotices> noticeCleanup = new ThreadLocal<>();
@@ -99,7 +101,7 @@ public final class InternalOwnerDataBroker {
                 });
                 Handle handle = new Handle(preferences, new OwnerStatisticsStore(preferences, guards::requireData, guards::requireSession, guards::dataUnavailable),
                         new TaskNoticeLedger(preferences.preferences("task_notices"), guards::requireData), guards);
-                return handle;
+                observedHandle = handle; return handle;
             } catch (RuntimeException | Error failed) { backend.close(); throw failed; }
         });
     }
@@ -108,12 +110,19 @@ public final class InternalOwnerDataBroker {
         final OwnerStatisticsStore statistics;
         final TaskNoticeLedger notices;
         final SerialOwnerDataBroker.Guards guards;
+        private volatile long acknowledgedRevision;
         Handle(InternalRuntimePreferences preferences, OwnerStatisticsStore statistics, TaskNoticeLedger notices,
                 SerialOwnerDataBroker.Guards guards) {
             this.preferences = preferences; this.statistics = statistics; this.notices = notices; this.guards = guards;
+            acknowledgedRevision = preferences.revision();
+        }
+        // Read revision only after the outer transaction returned, never from a post-ACK callback
+        // which can still fail its enclosing guard. During IO observers retain the previous hint.
+        <T> T observeAck(java.util.function.Supplier<T> operation) {
+            T result = operation.get(); acknowledgedRevision = preferences.revision(); return result;
         }
         <T> T atomic(java.util.function.Supplier<T> operation) {
-            try { return preferences.transaction(operation); }
+            try { return observeAck(() -> preferences.transaction(operation)); }
             catch (RuntimeException | Error failure) {
                 if (failure instanceof Error || !preferences.isAvailable()) { statistics.fence(); guards.dataUnavailable(failure); }
                 throw failure;
@@ -199,10 +208,50 @@ public final class InternalOwnerDataBroker {
     public CompletableFuture<OwnerStatisticsStore.Snapshot> snapshot(String generation, long now) {
         return broker.submitRead(generation, handle -> handle.statistics.snapshot(now));
     }
+    /**
+     * One immutable profile/accounting/usage observation on the sole serial owner worker. The
+     * caller captures its clock/calendar before queueing. No write or achievement reconciliation
+     * occurs, and neither session history nor this result establishes runtime service readiness.
+     */
+    public CompletableFuture<InternalRuntimePresentationSnapshot> readProjection(String generation,
+            OwnerObservation observed, java.util.Set<String> packages) {
+        Objects.requireNonNull(observed);
+        java.util.Set<String> capturedPackages = java.util.Set.copyOf(packages);
+        return broker.submitRead(generation, handle -> {
+            InternalSubRecord record = currentOnWorker(generation);
+            requireObservationZone(observed);
+            InternalRuntimeRecord runtime = handle.preferences.snapshot();
+            OwnerStatisticsStore.Snapshot accounting = handle.statistics.snapshot(observed.at);
+            requireObservationZone(observed);
+            InternalPenanceRules rules = new InternalPenanceRules(
+                    host.configuration.snapshotPreferences(record, PenanceManager.PREFS_NAME));
+            return new InternalRuntimePresentationSnapshot(record, runtime, accounting, observed,
+                    handle.statistics.appUsage().snapshots(capturedPackages, observed),
+                    handle.statistics.ledger(() -> rules, () -> false).retainedEvents());
+        });
+    }
+    private static void requireObservationZone(OwnerObservation observed) {
+        // The existing accounting projection has system-zone fallbacks. Do not silently label
+        // that projection with a different calendar captured before this command was queued.
+        if (!observed.zone.equals(java.time.ZoneId.systemDefault().getId()))
+            throw new IllegalStateException("Owner observation calendar changed; capture a new observation");
+    }
+    /**
+     * Memory-only cache invalidation hint, not authority or readiness. -1 means no usable hint.
+     * A write in flight returns its previous acknowledged revision, never a staged/new revision.
+     * Recheck visibility/generation through readProjection before displaying a refreshed result.
+     */
+    public long acknowledgedRevisionHint(String generation) {
+        Handle handle = observedHandle;
+        if (handle == null || !broker.acceptsDataHint() || !handle.preferences.isAvailable()) return -1;
+        try { current(generation); }
+        catch (SecurityException | IllegalStateException unavailable) { return -1; }
+        return handle.acknowledgedRevision;
+    }
     /** Explicit bounded data repair. This neither resumes enforcement nor clears a runtime journal. */
     public CompletableFuture<Void> reconcileInterruptedSession(String generation, long controllerRevision, String session) {
         return broker.submitRecovery(generation, controllerRevision, handle -> {
-            handle.statistics.reconcileInterruptedSession(session); return null;
+            return handle.observeAck(() -> { handle.statistics.reconcileInterruptedSession(session); return null; });
         });
     }
     public final class TaskAccess {
@@ -225,9 +274,9 @@ public final class InternalOwnerDataBroker {
             requireCurrent();
             InternalSubRecord observed = host.acknowledged();
             InternalPenanceRules rules = new InternalPenanceRules(host.configuration.snapshotPreferences(observed, PenanceManager.PREFS_NAME));
-            return handle.statistics.ledger(() -> rules, () -> false).recordTaskFailure(occurrence, Objects.requireNonNull(observation), () -> {
+            return handle.observeAck(() -> handle.statistics.ledger(() -> rules, () -> false).recordTaskFailure(occurrence, Objects.requireNonNull(observation), () -> {
                 requireCurrent(); return true;
-            });
+            }));
         }
         public java.util.List<TaskNoticeLedger.Receipt> notices() {
             requireCurrent(); java.util.List<TaskNoticeLedger.Receipt> current = new java.util.ArrayList<>();
@@ -340,7 +389,7 @@ public final class InternalOwnerDataBroker {
             if (!binding.identity().session.equals(session.identity)) throw new SecurityException("Different owner session");
             return binding.held(OwnedResourceRegistry.Effect.STARTUP, handle -> {
                 if (started != null || ended) throw new IllegalStateException("Session start already acknowledged");
-                handle.statistics.beginSession(session);
+                handle.observeAck(() -> { handle.statistics.beginSession(session); return null; });
                 StatsRepository.SessionStamp stamp = handle.statistics.repository().observedSessionStamp();
                 if (stamp == null || stamp.isDeviceSession() || !stamp.isCurrent()
                         || !handle.statistics.repository().ownsSessionStamp(stamp))
@@ -354,7 +403,7 @@ public final class InternalOwnerDataBroker {
                 if (expected == null || expected != acknowledgedSessionStamp()
                         || handle.statistics.repository().observedSessionStamp() != expected)
                     throw new SecurityException("Different or stale acknowledged session");
-                return operation.apply(handle);
+                return handle.observeAck(() -> operation.apply(handle));
             });
         }
         public StatsRepository.EvidenceRecord recordEvidence(StatsRepository.SessionStamp expected,
@@ -416,7 +465,8 @@ public final class InternalOwnerDataBroker {
         public CompletableFuture<Void> finishAndRelease(long now, Runnable afterDrained) {
             return binding.stop(handle -> {
                 if (ended || started == null) throw new IllegalStateException("Own session start was not acknowledged");
-                handle.statistics.finishSession(binding.identity().session, now); ended = true; return null;
+                handle.observeAck(() -> { handle.statistics.finishSession(binding.identity().session, now); return null; });
+                ended = true; return null;
             }, afterDrained);
         }
     }

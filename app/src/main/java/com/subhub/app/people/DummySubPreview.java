@@ -83,7 +83,8 @@ public final class DummySubPreview {
 
     private static String sectionFor(Class<?> destination) {
         if (destination == PersonActivity.class || destination == ProfileEditorActivity.class
-                || destination == com.subhub.app.tasks.TasksActivity.class) return "";
+                || destination == com.subhub.app.tasks.TasksActivity.class
+                || destination == com.subhub.app.stats.StatsActivity.class) return "";
         if (destination == com.subhub.app.settings.CensorPresetsActivity.class) return "censor";
         if (destination == com.subhub.app.subliminal.SubliminalSettingsActivity.class) return "subliminal";
         if (destination == com.subhub.app.popup.PopupStormActivity.class) return "popup";
@@ -106,6 +107,18 @@ public final class DummySubPreview {
                 .putExtra(AUTHORITY, authorityFor(destination, section)).putExtra("section", section)
                 .putExtra(REVISION, ControllerPinManager.domWorkspaceRevision())
                 .putExtra(GENERATION, InternalSubData.get(activity).acknowledged().generation);
+    }
+
+    /** Route identity only, not an unlock or write grant. A later tap rechecks the normal page guard. */
+    public static Intent taskNotificationIntent(Context physical, String generation) {
+        InternalSubData data=InternalSubData.peek(physical);
+        com.subhub.app.internal.InternalSubRecord record=data==null?null:data.acknowledged();
+        if(record==null||!record.visible||record.tasksResumeAfterMillis<=0||!record.generation.equals(generation))
+            throw new SecurityException("Internal notice target changed");
+        Class<?> destination=com.subhub.app.tasks.TasksActivity.class;
+        return new Intent(physical,destination).putExtra(PersonRoutes.EXTRA_PERSON_ID,ID.value())
+                .putExtra(AUTHORITY,authorityFor(destination,""))
+                .putExtra(REVISION,ControllerPinManager.domWorkspaceRevision()).putExtra(GENERATION,generation);
     }
 
     public static Intent childIntent(Activity activity, Class<?> destination) {

@@ -159,14 +159,22 @@ public final class OptionalNotificationDispatch {
             catch (RuntimeException unavailable) { return false; }
         }
     }
-    /** Caller checks normal Android permission/channel availability; this preserves the existing role/event policy. */
+    /** Internal-only choices and exact owner authority; platform permission/channel checks are repeated at posting. */
     public static boolean postInternalTask(Context context, Role role, Event event, InternalTaskOwner owner,
             String effectKey, Notification notification) {
         synchronized (DELIVERY_LOCK) {
-            if (!enabled(context, role, event) || !owner.current()) return false;
+            if (!owner.current() || !internalTaskEnabled(context, role, event)) return false;
+            if (android.os.Build.VERSION.SDK_INT >= 33
+                    && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                            != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
             NotificationManager manager = context.getSystemService(NotificationManager.class);
             if (manager == null) return false;
-            try { return admitted.postInternal(role, event, owner, effectKey, notification, system(manager)); }
+            try {
+                if (!manager.areNotificationsEnabled() || notification == null || !"tasks".equals(notification.getChannelId())) return false;
+                android.app.NotificationChannel channel = manager.getNotificationChannel("tasks");
+                if (channel == null || channel.getImportance() == NotificationManager.IMPORTANCE_NONE) return false;
+                return admitted.postInternal(role, event, owner, effectKey, notification, system(manager));
+            }
             catch (RuntimeException unavailable) { return false; }
         }
     }

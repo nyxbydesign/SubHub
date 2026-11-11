@@ -67,6 +67,10 @@ public final class SerialOwnerDataBroker<H extends AutoCloseable> {
         worker = Objects.requireNonNull(serialWorker); this.policy = Objects.requireNonNull(policy);
         this.factory = Objects.requireNonNull(factory);
     }
+    /** Memory-only cache hint health. This grants no data or runtime admission. */
+    public boolean acceptsDataHint() {
+        synchronized (state) { return !closing && unavailable == null; }
+    }
     /** Trusted host setup only; does not require the initially hidden profile to be visible. */
     public CompletableFuture<Void> initialize() { return submit(() -> { }, ignored -> null); }
     public <T> CompletableFuture<T> submitTask(String generation, Function<H, T> command) {

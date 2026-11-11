@@ -47,16 +47,21 @@ public final class DailyStatsPanel extends LinearLayout {
     public interface Source {
         DailyData load(String first, String last) throws Exception;
         default boolean accessible() { return true; }
+        /** Immutable observation identity, or the stable source itself for existing adapters. */
+        default Object observationKey() { return this; }
+        /** Calendar for that exact observation; existing sources retain their local-calendar behavior. */
+        default LocalDate observationDay(Object observation) { return LocalDate.now(); }
         default boolean combined() { return false; }
     }
     private final Source source;
     private final String[] metrics;
     private final int[] labels;
     private final boolean compact;
-    private int range = 30, metric, month = LocalDate.now().getMonthValue();
-    private int year = LocalDate.now().getYear();
-    private LocalDate selected = LocalDate.now();
+    private int range = 30, metric, month, year;
+    private LocalDate selected;
+    private Bundle pendingCalendarState;
     private long rendered;
+    private final DailyStatsObservationGate observations = new DailyStatsObservationGate();
     private Map<String, Map<String, Long>> data = Collections.emptyMap();
     private String since;
     private List<Object> renderedInput;
@@ -94,9 +99,15 @@ public final class DailyStatsPanel extends LinearLayout {
     public void save(Bundle state) {
         state.putInt("daily_range", range);
         state.putInt("daily_metric", metric);
-        state.putInt("daily_month", month);
-        state.putInt("daily_year", year);
-        state.putString("daily_selected", selected.toString());
+        if(selected!=null){
+            state.putInt("daily_month", month);
+            state.putInt("daily_year", year);
+            state.putString("daily_selected", selected.toString());
+        }else if(pendingCalendarState!=null){
+            for(String key:new String[]{"daily_month","daily_year"})
+                if(pendingCalendarState.containsKey(key))state.putInt(key,pendingCalendarState.getInt(key));
+            if(pendingCalendarState.containsKey("daily_selected"))state.putString("daily_selected",pendingCalendarState.getString("daily_selected"));
+        }
     }
 
     public void restore(Bundle state) {
@@ -105,44 +116,67 @@ public final class DailyStatsPanel extends LinearLayout {
     }
 
     private void restoreState(Bundle state) {
+        pendingCalendarState=state==null?null:new Bundle(state);
+        selected=null;
         if (state == null) return;
         int requested = state.getInt("daily_range", compact ? 7 : 30);
         range = requested == 7 || requested == 30 || requested == 365 ? requested : 30;
         metric = Math.max(0, Math.min(metrics.length - 1, state.getInt("daily_metric", 0)));
-        year = Math.max(1, Math.min(LocalDate.now().getYear(), state.getInt("daily_year", year)));
+    }
+
+    private void initializeCalendar(LocalDate today) {
+        if(selected!=null)return;
+        year=today.getYear();month=today.getMonthValue();selected=today;
+        Bundle state=pendingCalendarState;pendingCalendarState=null;
+        if(state==null)return;
+        year = Math.max(1, Math.min(today.getYear(), state.getInt("daily_year", year)));
         month =
                 Math.max(
                         1,
                         Math.min(
-                                year == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12,
+                                year == today.getYear() ? today.getMonthValue() : 12,
                                 state.getInt("daily_month", month)));
         try {
             selected =
-                    LocalDate.parse(state.getString("daily_selected", LocalDate.now().toString()));
+                    LocalDate.parse(state.getString("daily_selected", today.toString()));
         } catch (RuntimeException ignored) {
-            selected = LocalDate.now();
+            selected = today;
         }
     }
 
     public void refreshIfNeeded() {
-        if (android.os.SystemClock.elapsedRealtime() - rendered >= 15000) refresh();
+        if (observations.changed(source.observationKey())
+                || android.os.SystemClock.elapsedRealtime() - rendered >= 15000) refresh();
     }
 
     public void refresh() {
         rendered = android.os.SystemClock.elapsedRealtime();
-        LocalDate today = LocalDate.now();
+        Object observation = source.observationKey();
+        observations.requested(observation);
+        final LocalDate today;
+        try {
+            if(!source.accessible())throw new IllegalStateException("Daily observation unavailable");
+            today=java.util.Objects.requireNonNull(source.observationDay(observation));
+        }catch(RuntimeException unavailable){
+            uiData.cancel(taskKey);renderedInput=null;data=Collections.emptyMap();since=null;removeAllViews();
+            label(this,getContext().getString(R.string.daily_unavailable),14,true);return;
+        }
+        initializeCalendar(today);
         LocalDate first = range == 365 ? LocalDate.of(year, 1, 1) : today.minusDays(range - 1);
         LocalDate end = range == 365 && year < today.getYear() ? LocalDate.of(year, 12, 31) : today;
         uiData.load(
                 taskKey,
                 () -> source.load(first.toString(), end.toString()),
                 loaded -> {
-                    if (!source.accessible()) { renderedInput = null; removeAllViews(); return; }
+                    if (!observations.accepts(observation, source.observationKey(), source.accessible())) {
+                        renderedInput = null; removeAllViews(); return;
+                    }
                     since = loaded.since;
                     data = loaded.days;
                     render(today, first, end);
                 },
                 failure -> {
+                    if (!java.util.Objects.equals(observation, source.observationKey())) return;
                     renderedInput = null;
                     removeAllViews();
                     label(this, getContext().getString(R.string.daily_unavailable), 14, true);
@@ -160,7 +194,7 @@ public final class DailyStatsPanel extends LinearLayout {
         if (compact) {
             label(this, getContext().getString(R.string.daily_today), 18, false)
                     .setTypeface(null, Typeface.BOLD);
-            calendar(first, today, today, true);
+            calendar(first, today, today, true, today);
             TextView summary =
                     label(
                             this,
@@ -334,7 +368,7 @@ public final class DailyStatsPanel extends LinearLayout {
         if (calendarStart.isBefore(recorded)) calendarStart = recorded;
         if (selected.isBefore(calendarStart) || selected.isAfter(calendarEnd))
             selected = calendarEnd;
-        calendar(calendarStart, calendarEnd, selected, false);
+        calendar(calendarStart, calendarEnd, selected, false, today);
         TextView detail =
                 label(
                         this,
@@ -347,7 +381,7 @@ public final class DailyStatsPanel extends LinearLayout {
         detail.setId(R.id.daily_day_summary);
     }
 
-    private void calendar(LocalDate first, LocalDate last, LocalDate selection, boolean week) {
+    private void calendar(LocalDate first, LocalDate last, LocalDate selection, boolean week, LocalDate today) {
         GridLayout grid = new GridLayout(getContext());
         grid.setColumnCount(7);
         LayoutParams gp = new LayoutParams(-1, -2);
@@ -381,7 +415,7 @@ public final class DailyStatsPanel extends LinearLayout {
         for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
             final LocalDate chosen = d;
             long amount = value(d, metrics[metric]);
-            boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(LocalDate.now())
+            boolean known = d.toString().compareTo(since) >= 0 && !d.isAfter(today)
                     && data.containsKey(d.toString()) && amount >= 0;
             TextView day = new TextView(getContext());
             day.setText(Integer.toString(d.getDayOfMonth()));

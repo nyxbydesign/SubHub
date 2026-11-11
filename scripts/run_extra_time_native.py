@@ -450,6 +450,9 @@ DUMMY_PREVIEW_NATIVE = {
         "heldAckRotationSharesOneDrainAndAcceptsLaterEdits",
         "failedEndpointCloseStillRestoresInternalGlobalsAndDisposesOwnedHandles",
         "failedFirstRegistryRestoreStillRestoresOtherRegistriesAndOwnedHandles",
+        "ownerDataAckRefreshesInternalPresentationWithoutProfileMutation",
+        "signedInternalStatisticsRouteUsesOnlyInternalSourceAcrossRecreation",
+        "internalTaskNoticeRouteRejectsLockedControllerAndRetiredGeneration"
     ],
     "com.subhub.app.people.InternalSubRegistryAndroidTest": [
         "enabledLegacyMigratesVisibilityAndFirstToggleRemovesIt",
@@ -461,7 +464,7 @@ DUMMY_PREVIEW_NATIVE = {
         "concurrentReadyOpenPublishesOnlyOneInitializedBroker",
         "readyProfileWithoutOwnerEvidenceStaysReadableAndNeverProvisionsRuntimeData",
         "unavailableVisibilityProofLeavesEstablishedRecordUnchanged",
-        "delayedVisibilityProofCannotHideAfterControllerRevocation",
+        "delayedVisibilityProofCannotHideAfterControllerRevocation"
     ],
     "com.subhub.app.tasks.InternalTaskStoreAndroidTest": [
         "firstProvisionAcknowledgesOnceAndReopenRetainsTaskJournal",
@@ -469,6 +472,12 @@ DUMMY_PREVIEW_NATIVE = {
         "missingEstablishedDatabaseNeverRecreatesAnEmptyHistory",
         "corruptEstablishedDatabaseHasNoDeletingRecoveryHandler",
         "missingEstablishedProjectionPreservesJournalAndRejectsNewCreate",
+        "legacyIndexUpgradePreservesEveryRowAndReopenDoesNotWrite",
+        "partialLegacyIndexUpgradeIsIdempotent",
+        "missingCurrentIndexRefusesQueryAndReopenWithoutFallback",
+        "mismatchedLegacyIndexIsRejectedWithoutRewritingHistory",
+        "refusedUpgradeAdmissionDoesNotInstallIndexes",
+        "indexedPlansCoverEmptySparseAndLargePendingLanes"
     ],
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
         "sharedNativeFeaturePagesUseRemoteDraftsAndPreserveDomDeviceState",
@@ -476,23 +485,23 @@ DUMMY_PREVIEW_NATIVE = {
         "sharedWhispersEnableIsQueuedWithoutChangingTheDomModule",
         "sharedPopupEnableDoesNotStartOrConfigureTheDomRuntime",
         "sharedTributeRuleSavesWithoutOpeningOrChangingPaymentCredentials",
-        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets",
+        "editorDerivedFilesSurviveRecreationAndCloseWithoutDeletingPeerAssets"
     ],
     "com.subhub.app.people.PersonRefreshAndroidTest": [
         "telemetryAndDeferredRefreshKeepTheProfileDraftAndDeliveryTimeScroll",
         "changedIdentityRecreationAndBackRetainPositionButRoleRevocationClosesPage",
-        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft",
+        "retainedLocalDurationRefreshesOnReturnWithoutLosingAnIncompleteDraft"
     ],
     "com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest": [
         "constructorFailureRestoresRealAdaptersAndDeletesOwnedStore",
-        "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore",
+        "failedCloseWitnessStillRestoresRealAdaptersAndDeletesOwnedStore"
     ],
     "com.subhub.app.notifications.InternalNotificationAdmissionAndroidTest": [
         "hideCancelsAcceptedInvisiblePostsWithoutTouchingRealNotices",
         "preferenceDisableCancelsBothBucketsBeforePostsBecomeVisible",
         "internalCapEvictsOnlyItsOwnOldestAndDoesNotConsumeRealCapacity",
         "staleGenerationCannotPostAndRetiringOldOwnerCannotCancelNewOwner",
-        "internalOwnerCountIsBoundedWithoutEvictingAnyOtherOwner",
+        "internalOwnerCountIsBoundedWithoutEvictingAnyOtherOwner"
     ],
     "com.subhub.app.internal.OwnerAccountingAndroidTest": [
         "countersLedgerAndUsageStayInExactOwnerAndNeverTouchDeviceLane",
@@ -527,16 +536,16 @@ DUMMY_PREVIEW_NATIVE = {
         "genericTaskCapacityRejectionPreservesExactActiveStampAndCleanStop",
         "cleanRuntimeAndEditorRollbackRestoresDedupMemoryWithoutInventingNewStamp",
         "genericPersistenceFailureExplicitlySignalsActiveRuntimeAndCannotClaimCleanDrain",
-        "postAckPublicationFailureNeverRestoresAStaleMemorySnapshot",
+        "postAckPublicationFailureNeverRestoresAStaleMemorySnapshot"
     ],
     "com.subhub.app.stats.OwnerStatsRepositoryAndroidTest": [
         "ownedCountersAndTokensNeverEnterTheDeviceOrAnotherLane",
         "persistentRowsCannotRecreateRuntimeAuthorityAndDeviceLifecycleIsRejected",
         "deniedWriteCannotConsumeTrackIdsOrChangeObservedCounters",
-        "editorCountersRemainOwnedWhenNoSessionRuns",
+        "editorCountersRemainOwnedWhenNoSessionRuns"
     ],
     "com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest": [
-        "recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot",
+        "recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot"
     ],
     "com.subhub.app.service.RuntimeCaptureHostAndroidTest": [
         "connectionIsExactAndNeverRestoredByGeneration",
@@ -552,7 +561,7 @@ DUMMY_PREVIEW_NATIVE = {
         "lateDisconnectSealsUnusedProjectionResult",
         "permissionPayloadIsCapturedInsteadOfMutableIntentAlias",
         "connectionRetainsExactSelectionUntilVerifiedDrain",
-        "disconnectDoesNotPretendOccupiedAttachmentDrained",
+        "disconnectDoesNotPretendOccupiedAttachmentDrained"
     ],
     "com.subhub.app.internal.InternalOwnerDataBrokerAndroidTest": [
         "explicitHiddenProvisionAndOneBrokerPreserveSingleAcknowledgedNoticeRecord",
@@ -562,6 +571,7 @@ DUMMY_PREVIEW_NATIVE = {
         "retainedSessionFacadeCannotEscapeIntoTaskCleanupOrBorrowAnotherStart",
         "cleanTaskCapacityRejectionPreservesExactLiveStampAndStillDrains",
         "genericUncertainPersistenceFencesProviderAndExactBoundRuntimeImmediately",
+        "immutableProjectionAndRevisionHintWaitForOuterAck"
     ],
     "com.subhub.app.internal.InternalStorageAndroidTest": [
         "acknowledgedConfigurationAndProfileSurviveReopen",
@@ -569,7 +579,7 @@ DUMMY_PREVIEW_NATIVE = {
         "ownerJournalAndPlatformEffectsCannotUseEditorContext",
         "hidingAndReenablingPreserveFilesTasksAndHistory",
         "missingOrCorruptEstablishedEvidenceNeverBecomesDefaults",
-        "trustedParentAliasAndConcurrentOwnedDirectoryCreationRemainIsolated",
+        "trustedParentAliasAndConcurrentOwnedDirectoryCreationRemainIsolated"
     ],
     "com.subhub.app.runtime.RuntimeOwnerDatabaseAndroidTest": [
         "ordinaryOpenNeverProvisionsAnAbsentJournal",
@@ -590,21 +600,34 @@ DUMMY_PREVIEW_NATIVE = {
         "scopedApplicationContextCannotCreateAnotherPhysicalJournal",
         "platformLocaleMigrationPreservesExactOwnerEvidence",
         "platformMetadataNameDoesNotHideMalformedOrExtraSchema",
-        "directoryAcknowledgementChecksTheOpenedDescriptor",
+        "directoryAcknowledgementChecksTheOpenedDescriptor"
     ],
     "com.subhub.app.popup.OwnedPopupArtworkAndroidTest": [
         "emptyAndFullyDisabledManifestUseOnlyTheNormalBundledGuardian",
         "missingOrCorruptEnabledBlobFailsWithoutGuardianFallback",
         "enabledOwnedImageDecodesAndReleasesOnlyItsOwnBitmap",
-        "canceledDecodeCannotPublishEvenTheBuiltinFallback",
+        "canceledDecodeCannotPublishEvenTheBuiltinFallback"
     ],
     "com.subhub.app.subliminal.WhisperOverlayControllerAndroidTest": [
         "partialAddWithActualViewParentCannotEscapeTeardown",
         "silentDetachFailureWithActualParentDoesNotProduceDrainReceipt",
         "oneForegroundEventDuringBusyGateEventuallyAttaches",
         "busyUpdateIsNotAcknowledgedAndAppliesLatestTextSizeOnRetry",
-        "noLongerEligibleWhileBusyCannotBeReopenedByRetainedRequest",
+        "noLongerEligibleWhileBusyCannotBeReopenedByRetainedRequest"
     ],
+    "com.subhub.app.tasks.InternalTaskNotificationPolicyAndroidTest": [
+        "domOnlyDeviceCanPrepareInternalSubNoticesWithoutChangingPhysicalPolicy",
+        "internalAudiencesKeepIndependentSavedOptOutsAndRejectUnrelatedEvents",
+        "deniedOsPermissionStopsBothPreparationAndPostBeforeServiceAccess",
+        "revokedGenerationCannotReadChoicesOrEnterPlatformDispatch"
+    ],
+    "com.subhub.app.tasks.InternalTaskEffectsAndroidTest": [
+        "protectionIndependentSweepAssessesOnceInOwnedLedgerWithoutPhysicalReads",
+        "hiddenDeadlineIsSkippedOnReaddAndOldGenerationCannotRun",
+        "boundedEffectPagesWrapAndExcludeOtherScopesAcrossInsertDeleteAndRowidReuse",
+        "retainedTaskAdmissionCannotReadEffectPagesAfterCommandReturns",
+        "unavailableReviewBacklogCannotStarveNativeFailureLedgerReceipt"
+    ]
 }
 DUMMY_PREVIEW_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteEditorAndroidTest": [
@@ -669,7 +692,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 57, "dummy-preview": 145}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 57, "dummy-preview": 164}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"

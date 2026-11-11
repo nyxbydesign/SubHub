@@ -19,10 +19,20 @@ owner, before changing generation. The default provider refuses because runtime 
 not connected yet. Session Start also remains unavailable. These fail-closed paths are deliberate
 incomplete integration boundaries, not evidence of functioning enforcement.
 
-Tasks use an owned SQLite projection and journal through the same serial broker. Current progression
-is page-driven; the pure scheduler and bounded notification receipt adapters do not yet install a
-background worker, deliver notices or apply task-failure assessments. Background effects must use
-explicit owner admission and acknowledged receipts, never physical TaskRuntime or payment managers.
+Tasks use an owned SQLite projection and journal through the same serial broker. The installed host
+runs a generation-bound 30-second foreground ticker and unique 15-minute background sweep independently
+of protection and controller unlock. Explicit visibility and its acknowledged resume boundary govern
+admission. Notices persist exact owned receipts before posting; capacity reuse requires exact OS
+cancellation followed by durable receipt removal. Failed/uncertain cancellation remains retryable.
+Task-failure assessments use only the isolated, nonfinancial ledger and acknowledge there before SQL
+effect completion. Physical TaskRuntime, payment managers and remote commands are not used.
+
+Internal profile and Stats views consume one immutable, cross-namespace broker observation containing
+the captured clock, zone and acknowledged owner-data revision. Profile/configuration and owner-data
+freshness remain distinct; failed or stale observations are unavailable, not replacement zeroes.
+Session occupancy stays unknown until the runtime gateway supplies an authoritative target-specific
+view. These Tasks/presentation follow-ups still require independent combined, full Android and native
+qualification; they do not remove any gateway, visibility or Start limitation above.
 
 ## Entry and persistence
 

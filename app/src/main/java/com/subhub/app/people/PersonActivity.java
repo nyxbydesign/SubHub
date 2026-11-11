@@ -17,6 +17,7 @@ public final class PersonActivity extends RolePage {
     private PersonId personId;
     private boolean internal;
     private long renderedInternalRevision = -1;
+    private InternalPresentationStamp renderedInternalStamp;
     private String section = "profile";
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private String renderedSection;
@@ -195,9 +196,13 @@ public final class PersonActivity extends RolePage {
         if (!guardTarget()) return;
         InternalSubData backend=InternalSubData.get(this);
         com.subhub.app.internal.InternalSubRecord record=backend.acknowledged();
-        if(!force&&renderedInternalRevision==record.revision){refreshLocalDuration();return;}
+        long ownerRevision=backend.presentationRevisionHint();
+        if(!force&&renderedInternalStamp!=null&&renderedInternalStamp.current(record,ownerRevision,ControllerPinManager.domWorkspaceRevision())){refreshLocalDuration();return;}
         PersonSnapshot cached=backend.peekPresentation();
-        if(cached!=null){renderedInternalRevision=record.revision;render(cached);return;}
+        if(cached!=null){
+            InternalPresentationStamp stamp=backend.presentationStamp(cached);
+            if(stamp!=null){renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(cached);return;}
+        }
         if(data.isPending("person"))return;
         if(renderedInternalRevision<0)loading();
         android.content.Context app=getApplicationContext();
@@ -208,11 +213,13 @@ public final class PersonActivity extends RolePage {
             return backend.loadPresentation(app,record);
         },person->{
             if(!guardTarget()||!DummySubPreview.current(app,record.generation,controller))return;
-            if(backend.acknowledged().revision!=record.revision){refreshInternal(true);return;}
-            renderedInternalRevision=record.revision;render(person);
+            if(backend.acknowledged().revision!=record.revision||backend.peekPresentation()!=person){refreshInternal(true);return;}
+            InternalPresentationStamp stamp=backend.presentationStamp(person);
+            if(stamp==null){refreshInternal(true);return;}
+            renderedInternalRevision=record.revision;renderedInternalStamp=stamp;render(person);
         },failure->{
             if(guardTarget()&&DummySubPreview.current(app,record.generation,controller)
-                    &&backend.acknowledged().revision==record.revision){renderedSection=null;unavailable();}
+                    &&backend.acknowledged().revision==record.revision){renderedInternalRevision=-1;renderedInternalStamp=null;renderedSection=null;unavailable();}
         });
     }
 
@@ -504,7 +511,8 @@ public final class PersonActivity extends RolePage {
 
     private void openStats(PersonSnapshot person) {
         if (!guardTarget() || !personId.equals(person.id) || !person.can(PersonSnapshot.Capability.VIEW_STATS)) return;
-        if (person.id.isLocal()) startActivity(new Intent(this, StatsActivity.class)
+        if (internal) startActivity(DummySubPreview.childIntent(this, StatsActivity.class));
+        else if (person.id.isLocal()) startActivity(new Intent(this, StatsActivity.class)
                 .putExtra(PersonRoutes.EXTRA_PERSON_ID, person.id.value()));
         else {
             ConnectionUi ui = People.connectionUi();

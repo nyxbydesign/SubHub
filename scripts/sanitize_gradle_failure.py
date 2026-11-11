@@ -429,6 +429,10 @@ JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/runtime/RuntimeInstallationBarrierTest.java": "unit_runtime_installation_barrier",
     b"app/src/test/java/com/subhub/app/runtime/DeviceRuntimeEffectsTest.java": "unit_device_runtime_effects",
     b"app/src/test/java/com/subhub/app/runtime/RuntimeFenceObservationTest.java": "unit_runtime_fence_observation",
+    b"app/src/test/java/com/subhub/app/people/InternalPresentationStampTest.java": "unit_internal_presentation_stamp",
+    b"app/src/test/java/com/subhub/app/stats/DailyStatsObservationGateTest.java": "unit_daily_stats_observation_gate",
+    b"app/src/test/java/com/subhub/app/tasks/InternalTaskEffectDrainTest.java": "unit_internal_task_effect_drain",
+    b"app/src/test/java/com/subhub/app/tasks/InternalTaskWorkOrderTest.java": "unit_internal_task_work_order",
 }
 # Match only an English javac error header. Multiline source excerpts, carets,
 # symbol/location/required/found details and arbitrary messages are never emitted.

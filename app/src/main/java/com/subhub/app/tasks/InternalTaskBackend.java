@@ -11,6 +11,7 @@ final class InternalTaskBackend {
     private static final Map<InternalSubData, InternalTaskBackend> OPEN = new IdentityHashMap<>();
     static final String DATA_SCOPE = "internal_sub";
     private volatile TaskStore store;
+    private final InternalTaskEffectDrain<TaskStore.Effect> effects = new InternalTaskEffectDrain<>();
     private RemoteAssets assets;
     private final java.util.concurrent.CopyOnWriteArrayList<Runnable> observers = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final InternalSubData data;
@@ -64,8 +65,7 @@ final class InternalTaskBackend {
         edit(generation,controller,access->{
             access.requireCurrent();store.append(DATA_SCOPE,action,dom,!dom);return null;
         });
-        // Background wake/effect host is integrated separately before enabling internal runtime start.
-        // Page refreshes continue through the same broker and retained SQL effects remain pending.
+        InternalTaskRuntime.changed(physical, data, generation);
     }
     void sweep(String generation,long controller,long now){
         current(generation,controller);
@@ -74,6 +74,57 @@ final class InternalTaskBackend {
             catch(RuntimeException problem){throw problem;}
             catch(Exception problem){throw new IllegalStateException("Internal Tasks update failed",problem);}
         }));
+    }
+    void effectsAdmitted(InternalOwnerDataBroker.TaskAccess access, com.subhub.app.stats.OwnerObservation observed,
+            com.subhub.app.notifications.OptionalNotificationDispatch.InternalTaskOwner owner,
+            InternalTaskNotifications notifications) throws Exception {
+        TaskStore owned = admittedStore(access);
+        TaskEngine engine = owned.load(DATA_SCOPE);
+        effects.run(access.record().generation, observed.at,
+                new InternalTaskEffectDrain.Access<TaskStore.Effect>() {
+            public void requireCurrent() { access.requireCurrent(); }
+            public List<InternalTaskEffectDrain.Pending<TaskStore.Effect>> pending(boolean failures,long after,int limit) throws Exception {
+                access.requireCurrent();
+                return owned.pendingEffects(DATA_SCOPE,failures,after,limit,access::requireCurrent);
+            }
+            public boolean discard(TaskStore.Effect effect) {
+                return effect.action.at <= access.resumeAfterMillis()
+                        || "sub_started".equals(effect.kind) && (engine.occurrence(effect.action.taskId,effect.action.date,observed.at).status != TaskEngine.Status.ACTIVE
+                                || engine.occurrence(effect.action.taskId,effect.action.date,observed.at).task.end(effect.action.date).toEpochMilli() <= observed.at)
+                        || engine.cancelled(effect.action.taskId, effect.action.date) && !effect.action.cancellation();
+            }
+            public boolean failure(TaskStore.Effect effect) { return "failure".equals(effect.kind); }
+            public void assess(TaskStore.Effect effect) {
+                TaskEngine.Occurrence row = engine.occurrence(effect.action.taskId, effect.action.date, observed.at);
+                if (row.failed() && row.task.failureTribute) {
+                    com.subhub.app.penance.OwnerPenanceLedger.Result result = access.assessTaskFailure(DATA_SCOPE + ":" + effect.id, observed);
+                    if (result.status != com.subhub.app.penance.OwnerPenanceLedger.Status.ACKNOWLEDGED)
+                        throw new IllegalStateException("Internal task assessment was not acknowledged");
+                }
+            }
+            public void done(TaskStore.Effect effect) { access.requireCurrent(); owned.done(DATA_SCOPE, effect); }
+            public String key(TaskStore.Effect effect) {
+                return InternalTaskNoticeKey.create(effect.action.taskId, effect.action.date, effect.action.cancellation(), effect.kind, effect.id);
+            }
+            public TaskNoticeLedger.Audience audience(TaskStore.Effect effect) {
+                if ("notification".equals(effect.kind)) return TaskNoticeLedger.Audience.DOM_REVIEW;
+                if ("sub_started".equals(effect.kind) || "sub_notification".equals(effect.kind)) return TaskNoticeLedger.Audience.SUB_TASKS;
+                throw new IllegalStateException("Unknown internal task effect");
+            }
+            public InternalTaskEffectDrain.Notice prepare(TaskStore.Effect effect) { return notifications.prepare(audience(effect)); }
+            public List<TaskNoticeLedger.Receipt> receipts() { return access.notices(); }
+            public boolean obsolete(TaskNoticeLedger.Receipt receipt) {
+                InternalTaskNoticeKey key = InternalTaskNoticeKey.parse(receipt.effectKey);
+                return !key.cancellation && engine.cancelled(key.task, key.date);
+            }
+            public void cancel(TaskNoticeLedger.Receipt receipt) { notifications.cancel(receipt); }
+            public void removeAfterCancellation(TaskNoticeLedger.Receipt receipt) { access.removeNoticeAfterCancellation(receipt); }
+            public TaskNoticeLedger.Receipt admit(TaskNoticeLedger.Receipt receipt) { return access.admitNotice(receipt); }
+            public boolean post(TaskStore.Effect effect, TaskNoticeLedger.Receipt receipt) {
+                return notifications.post(owner, effect, engine, receipt);
+            }
+        });
+        owned.changed();
     }
     TaskStore admittedStore(InternalOwnerDataBroker.TaskAccess access){
         requireBoundary(access.record());open(access.storage(),access::requireCurrent);return store;

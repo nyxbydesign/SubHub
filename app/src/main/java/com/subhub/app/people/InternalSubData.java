@@ -48,33 +48,76 @@ public final class InternalSubData {
     public final InternalStorageScope storage;
     private volatile InternalSubRecord acknowledged;
     private volatile Presentation presentation;
+    private static final java.util.concurrent.ExecutorService PRESENTATIONS = java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "subhub-internal-presentation"));
     private final java.util.concurrent.atomic.AtomicBoolean presentationPending = new java.util.concurrent.atomic.AtomicBoolean();
     private static final class Presentation {
-        final InternalSubRecord record; final PersonSnapshot value; final long controller;
-        Presentation(InternalSubRecord record, PersonSnapshot value, long controller) { this.record=record; this.value=value; this.controller=controller; }
+        final PersonSnapshot value;
+        final InternalPresentationStamp stamp;
+        Presentation(InternalSubRecord record, PersonSnapshot value, long controller, long dataRevision,
+                com.subhub.app.stats.OwnerObservation observed) {
+            this.value=value;
+            stamp=new InternalPresentationStamp(record,dataRevision,controller,observed);
+        }
+    }
+    /** Invalidation hint only. It grants neither profile authority nor owner-data readiness. */
+    public long presentationRevisionHint() {
+        if (!ownerDataReady) return -1;
+        return ownerData().acknowledgedRevisionHint(acknowledged.generation);
     }
     public PersonSnapshot peekPresentation() {
         Presentation cached=presentation; InternalSubRecord record=acknowledged;
-        return cached!=null&&cached.controller==ControllerPinManager.domWorkspaceRevision()
-                &&cached.record.revision==record.revision&&cached.record.generation.equals(record.generation)?cached.value:null;
+        return cached!=null&&cached.stamp.current(record,presentationRevisionHint(),ControllerPinManager.domWorkspaceRevision())?cached.value:null;
+    }
+    InternalPresentationStamp presentationStamp(PersonSnapshot value) {
+        Presentation cached=presentation;
+        return cached!=null&&cached.value==value&&peekPresentation()==value?cached.stamp:null;
+    }
+    public InternalRuntimePresentationSnapshot loadRuntimePresentation(Context physical, InternalSubRecord record) {
+        if (isOwnerThread() || android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Load internal observations from a separate page worker");
+        long controller=ControllerPinManager.domWorkspaceRevision();
+        if (!DummySubPreview.current(physical,record.generation,controller)) throw new SecurityException("Internal presentation authority changed");
+        java.util.Set<String> packages=new java.util.LinkedHashSet<>();
+        Map<String,Object> apps=record.configuration().get("apps");
+        @SuppressWarnings("unchecked") java.util.Set<String> selected=(java.util.Set<String>)apps.get("app_included_packages_v1");
+        packages.addAll(selected);
+        if(Boolean.TRUE.equals(apps.get("app_include_all_v1"))) {
+            @SuppressWarnings("unchecked") java.util.Set<String> catalog=(java.util.Set<String>)apps.get("app_include_all_packages_v1");
+            packages.addAll(catalog);
+        }
+        InternalRuntimePresentationSnapshot observed=await(ownerData().readProjection(record.generation,
+                com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis()), packages));
+        if(!DummySubPreview.current(physical,record.generation,controller)||!observed.record.equals(record)
+                ||!InternalPresentationCalendar.current(observed.observed,com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
+            throw new SecurityException("Internal presentation changed during observation");
+        return observed;
     }
     public PersonSnapshot loadPresentation(Context physical, InternalSubRecord record) {
-        if (android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
-            throw new IllegalStateException("Build internal presentation on a page worker");
+        if (isOwnerThread() || android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Build internal presentation on a separate page worker");
         long controller=ControllerPinManager.domWorkspaceRevision();
         if(!DummySubPreview.current(physical,record.generation,controller))throw new SecurityException("Internal presentation authority changed");
-        Presentation cached=presentation;
-        if(cached!=null&&cached.controller==controller&&cached.record.revision==record.revision&&cached.record.generation.equals(record.generation))return cached.value;
-        PersonSnapshot value=InternalPersonPresentation.snapshot(physical,record);
+        // Preserve the page's stale-result contract without mixing old profile data with newer statistics.
+        // This result is deliberately never installed in the current presentation cache.
+        if (!record.equals(acknowledged)) return InternalPersonPresentation.snapshot(physical,record);
+        long revision=presentationRevisionHint(); Presentation cached=presentation;
+        if(cached!=null&&cached.stamp.current(record,revision,controller))return cached.value;
+        InternalRuntimePresentationSnapshot observed=revision<0?null:loadRuntimePresentation(physical,record);
+        com.subhub.app.stats.OwnerObservation calendar=observed==null
+                ?com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis()):observed.observed;
+        PersonSnapshot value=InternalPersonPresentation.snapshot(physical,record,observed);
+        long observedRevision=observed==null?-1:observed.revision();
         boolean current=DummySubPreview.current(physical,record.generation,controller);
-        synchronized(this){if(current&&acknowledged.revision==record.revision&&acknowledged.generation.equals(record.generation))
-            presentation=new Presentation(record,value,controller);}
+        synchronized(this){if(current&&acknowledged.revision==record.revision&&acknowledged.generation.equals(record.generation)
+                &&presentationRevisionHint()==observedRevision
+                &&InternalPresentationCalendar.current(calendar,com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis())))
+                    presentation=new Presentation(record,value,controller,observedRevision,calendar);}
         return value;
     }
     public void requestPresentation(Context physical) {
         if(peekPresentation()!=null||!presentationPending.compareAndSet(false,true))return;
         Context app=physical.getApplicationContext();
-        execute(()->{try{loadPresentation(app,acknowledged);}
+        PRESENTATIONS.execute(()->{try{loadPresentation(app,acknowledged);}
             catch(RuntimeException unavailable){/* Keep presentation unknown; page-owned loads report the failure. */}
             finally{presentationPending.set(false);}});
     }
@@ -129,6 +172,7 @@ public final class InternalSubData {
                     if (FAILED.contains(app)) throw new IllegalStateException("Internal Sub provisioning needs recovery");
                     OPEN.put(app, opened); OPENING.remove(app);
                 }
+                com.subhub.app.tasks.InternalTaskRuntime.ownerReady(app, opened);
                 pending.complete(opened);
             } catch (Throwable unavailable) {
                 synchronized (InternalSubData.class) { FAILED.add(app); OPENING.remove(app); }
@@ -207,7 +251,9 @@ public final class InternalSubData {
             if (!registry.edit().putString(STATE, "ready").commit()) {
                 throw new IllegalStateException("Internal Sub provisioning was not acknowledged");
             }
-            synchronized (InternalSubData.class) { OPEN.put(app, value); FAILED.remove(app); } return value;
+            synchronized (InternalSubData.class) { OPEN.put(app, value); FAILED.remove(app); }
+            com.subhub.app.tasks.InternalTaskRuntime.ownerReady(app, value);
+            return value;
         } catch (java.io.IOException | RuntimeException unavailable) {
             if (value != null) value.disposeUnpublished();
             throw new IllegalStateException("Internal Sub provisioning failed", unavailable);

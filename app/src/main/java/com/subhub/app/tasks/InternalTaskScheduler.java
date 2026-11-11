@@ -68,13 +68,14 @@ public final class InternalTaskScheduler implements AutoCloseable {
             cancelForeground();
         }
         if (foreground != null && foregroundGeneration == null) cancelForeground();
-        clearRetiredNotices();
         Activation current = active;
         if (current == null) scheduling.cancelBackground(UNIQUE_WORK_NAME);
         else {
             scheduling.background(UNIQUE_WORK_NAME, current.generation, BACKGROUND_INTERVAL_MINUTES);
             startForeground(current);
         }
+        // Optional OS cleanup may fail; successor scheduling and old callback fencing are independent.
+        clearRetiredNotices();
     }
     public void activityStarted() {
         requireSerialOwner.run();
@@ -117,6 +118,6 @@ public final class InternalTaskScheduler implements AutoCloseable {
         requireSerialOwner.run();
         Activation previous = active; active = null; closed = true;
         if (previous != null) retiredNotices.add(previous.generation);
-        cancelForeground(); clearRetiredNotices(); scheduling.cancelBackground(UNIQUE_WORK_NAME);
+        cancelForeground(); scheduling.cancelBackground(UNIQUE_WORK_NAME); clearRetiredNotices();
     }
 }

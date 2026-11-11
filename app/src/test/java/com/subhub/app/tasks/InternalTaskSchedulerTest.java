@@ -58,9 +58,9 @@ public final class InternalTaskSchedulerTest {
     @Test public void failedNoticeCleanupIsRetriedWithoutRevivingOldWork() {
         Host h = new Host(); h.scheduler.activityStarted(); h.scheduler.reconcile(A); h.failNotices = true;
         assertThrows(IllegalStateException.class, () -> h.scheduler.reconcile(null));
-        h.callbacks.get(0).run(); assertTrue(h.requested.isEmpty());
+        h.callbacks.get(0).run(); assertTrue(h.requested.isEmpty()); assertEquals(1,h.cancelledWork);
         h.failNotices = false; h.scheduler.reconcile(null);
-        assertEquals(List.of(A), h.cancelledNotices); assertEquals(1, h.cancelledWork);
+        assertEquals(List.of(A), h.cancelledNotices); assertEquals(2, h.cancelledWork);
     }
     @Test public void failedTimerCancellationRetriesExactTicketOnSameGenerationReconcile() {
         Host h = new Host(); h.scheduler.activityStarted(); h.scheduler.reconcile(A); h.failTimerCancel = true;
@@ -78,4 +78,18 @@ public final class InternalTaskSchedulerTest {
         assertTrue(h.requested.isEmpty()); assertEquals(List.of(A), h.cancelledNotices); assertEquals(1, h.cancelledWork);
         assertThrows(IllegalStateException.class, () -> h.scheduler.reconcile(B));
     }
+    @Test public void retiredNoticeOutageDoesNotBlockSuccessorForegroundOrBackground(){
+        Host h=new Host();h.scheduler.activityStarted();h.scheduler.reconcile(A);h.failNotices=true;
+        assertThrows(IllegalStateException.class,()->h.scheduler.reconcile(B));
+        assertEquals(List.of(A,B),h.background);assertEquals(2,h.callbacks.size());
+        h.callbacks.get(0).run();h.callbacks.get(1).run();assertEquals(List.of(B),h.requested);
+        h.failNotices=false;h.scheduler.reconcile(B);assertEquals(List.of(A),h.cancelledNotices);
+    }
+    @Test public void closeCancelsBackgroundEvenWhenRetiredNoticeCancellationFails(){
+        Host h=new Host();h.scheduler.reconcile(A);h.failNotices=true;
+        assertThrows(IllegalStateException.class,h.scheduler::close);assertEquals(1,h.cancelledWork);
+        h.scheduler.changed(A);assertTrue(h.requested.isEmpty());
+        h.failNotices=false;h.scheduler.close();assertEquals(List.of(A),h.cancelledNotices);
+    }
+
 }
