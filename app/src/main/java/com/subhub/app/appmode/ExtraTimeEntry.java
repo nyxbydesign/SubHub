@@ -64,14 +64,14 @@ public final class ExtraTimeEntry {
         PersonUi.text(card, context.getString(R.string.extra_time_requested_at,
                 java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
                         .format(new java.util.Date(request.requestedAt))), false);
-        int label;
+        String message;
         switch (request.status) {
-            case PENDING: label = R.string.extra_time_pending; break;
-            case APPROVED: label = R.string.extra_time_approved; break;
-            case DECLINED: label = R.string.extra_time_declined; break;
-            default: label = R.string.extra_time_expired; break;
+            case PENDING: message = context.getString(R.string.extra_time_pending); break;
+            case APPROVED: message = context.getString(R.string.extra_time_approved, request.approvedMinutes); break;
+            case DECLINED: message = context.getString(R.string.extra_time_declined); break;
+            default: message = context.getString(R.string.extra_time_expired); break;
         }
-        status(card, context.getString(label, request.approvedMinutes),
+        status(card, message,
                 latest ? "extra_time_inline_status:" + request.packageName : null,
                 request.status == ExtraTimeRequests.Status.APPROVED);
         if (request.status == ExtraTimeRequests.Status.PENDING) {

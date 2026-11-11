@@ -153,7 +153,10 @@ public final class ExtraTimeUiAndroidTest {
                 AtomicReference<com.subhub.app.MainActivity> original = new AtomicReference<>();
                 home.onActivity(a -> {
                     original.set(a);
-                    ExtraTimeActivity.open(a, PersonId.LOCAL, fixture.secondPackage); // Warm notification route.
+                    // A notification posted before the update still targets the legacy Activity.
+                    a.startActivity(new android.content.Intent(a, ExtraTimeActivity.class)
+                            .putExtra(com.subhub.app.people.PersonRoutes.EXTRA_PERSON_ID, PersonId.LOCAL.value())
+                            .putExtra(ExtraTimeActivity.EXTRA_PACKAGE, fixture.secondPackage));
                 });
                 await(home, a -> tagged(a, "extra_time_inline_submit:" + fixture.secondPackage) != null);
                 home.onActivity(a -> {
