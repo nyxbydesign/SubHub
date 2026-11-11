@@ -14,14 +14,24 @@ public final class ActivitySources {
         public int unreadCount() { throw new IllegalStateException("Activity unavailable"); }
         public void markRead(List<String> keys) { throw new IllegalStateException("Activity unavailable"); }
     };
+    private static final java.util.concurrent.atomic.AtomicLong authorityRevision = new java.util.concurrent.atomic.AtomicLong();
     private static final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     private ActivitySources() {}
     public static ActivityRepository repository() { return repository; }
-    public static void install(ActivityRepository source) { repository = Objects.requireNonNull(source); changed(); }
+    public static void install(ActivityRepository source) { repository = Objects.requireNonNull(source); authorityChanged(); }
     public static AutoCloseable observe(Runnable listener) {
         listeners.add(Objects.requireNonNull(listener));
         return () -> listeners.remove(listener);
     }
+    /** Presentation invalidation only. It never grants repository or relationship access. */
+    public static long authorityRevision() { return authorityRevision.get(); }
+
+    /** Invalidate retained private facts before a relationship transition can be redisplayed. */
+    public static void authorityChanged() {
+        authorityRevision.incrementAndGet();
+        changed();
+    }
+
     public static void changed() { for (Runnable listener : listeners) listener.run(); }
 }

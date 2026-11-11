@@ -47,11 +47,11 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private final ActivityResultLauncher<String> permission;
     private List<ActivityGroup> groups = Collections.emptyList();
     private ListView list;
-    private TextView status, unread, retry, older, latest, notifications;
+    private TextView status, unread, retry, older, latest, notifications, markAll;
     private final FeedAdapter adapter = new FeedAdapter();
     private AutoCloseable observer;
-    private boolean resumed, reading;
-    private long readSequence, renderGeneration;
+    private boolean resumed, reading, markingAll, refreshQueued;
+    private long readSequence, renderGeneration, positionGeneration;
     public DomActivityPane(androidx.appcompat.app.AppCompatActivity host, Bundle saved) {
         super(host);
         this.host = host;
@@ -68,6 +68,10 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             state.cursor = saved.getString("activity_cursor");
             state.position = saved.getInt("activity_position");
             state.offset = saved.getInt("activity_offset");
+            state.resetOnLoad = saved.getBoolean("activity_reset_on_load");
+            state.anchorKey = saved.getString("activity_anchor");
+            state.entryOffset = saved.getInt("activity_entry_offset");
+            state.entryAnchor = saved.getBoolean("activity_entry_anchor");
             ArrayList<String> expanded = saved.getStringArrayList("activity_expanded");
             if (expanded != null) state.expanded.addAll(expanded);
         }
@@ -84,6 +88,8 @@ public final class DomActivityPane extends android.content.ContextWrapper {
         retry = root.findViewById(R.id.dom_activity_retry_action);
         latest = root.findViewById(R.id.dom_activity_latest_action);
         notifications = root.findViewById(R.id.dom_activity_notification_action);
+        markAll = root.findViewById(R.id.dom_activity_mark_all_read_action);
+        markAll.setOnClickListener(view -> markAllRead());
         retry.setOnClickListener(view -> refresh(false));
         latest.setOnClickListener(view -> { state.cursor = state.local ? "local:MAX" : null; refresh(true); });
         notifications.setOnClickListener(view -> {
@@ -111,7 +117,10 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             PersonRoutes.open(host, groups.get(position).latest().personId);
         });
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
-            public void onScrollStateChanged(AbsListView view, int scrollState) { markVisibleRead(); }
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+                if (scrollState != SCROLL_STATE_IDLE) ++positionGeneration;
+                markVisibleRead();
+            }
             public void onScroll(AbsListView view, int first, int visible, int total) { list.post(DomActivityPane.this::markVisibleRead); }
         });
         View nav = host.findViewById(R.id.bottom_navigation);
@@ -135,16 +144,22 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             if (resumed && mayRead()) refresh(false);
         }));
         updateNotificationAction();
+        // A paused page may have missed same-provider relationship changes. Keep its
+        // memory snapshot, but revalidate membership before making private rows visible.
+        if (retainedSourceCurrent()) rebuildGroups();
         refresh(false);
     }
 
     public void pause() {
         ++renderGeneration;
-        rememberPosition();
+        ++positionGeneration;
+        if (!state.resetOnLoad) rememberPosition();
         resumed = false;
         work.cancel("activity-page");
+        refreshQueued = false;
         list.setVisibility(View.INVISIBLE);
         unread.setVisibility(View.GONE);
+        markAll.setVisibility(View.GONE);
         if (observer != null) {
             try { observer.close(); }
             catch (Exception failure) { throw new IllegalStateException("Activity observer did not close", failure); }
@@ -159,16 +174,21 @@ public final class DomActivityPane extends android.content.ContextWrapper {
                 || intent.getBooleanExtra(EXTRA_LOCAL_HISTORY, false)
                 || state.focusKey != null && state.focusKey.startsWith("local:");
         state.cursor = state.local ? "local:MAX" : null;
+        clearStoredPage();
         if (resumed && mayRead()) refresh(true);
     }
 
     public void save(Bundle output) {
-        rememberPosition();
+        if (!state.resetOnLoad) rememberPosition();
         output.putBoolean("activity_local", state.local);
         output.putString("activity_cursor", state.cursor);
         output.putString("activity_focus", state.focusKey);
         output.putInt("activity_position", state.position);
         output.putInt("activity_offset", state.offset);
+        output.putBoolean("activity_reset_on_load", state.resetOnLoad);
+        output.putString("activity_anchor", state.anchorKey);
+        output.putInt("activity_entry_offset", state.entryOffset);
+        output.putBoolean("activity_entry_anchor", state.entryAnchor);
         output.putStringArrayList("activity_expanded", new ArrayList<>(state.expanded));
     }
 
@@ -186,72 +206,188 @@ public final class DomActivityPane extends android.content.ContextWrapper {
 
     private boolean atLatest() { return state.cursor == null || "local:MAX".equals(state.cursor); }
 
+    private boolean retainedSourceCurrent() {
+        return state.loaded && state.source == ActivitySources.repository()
+                && state.workspaceRevision == ControllerPinManager.domWorkspaceRevision()
+                && state.authorityRevision == ActivitySources.authorityRevision()
+                && state.relationshipProvider == com.subhub.app.relationships.RelationshipUi.provider()
+                && state.keyholder == com.subhub.app.people.People.keyholder();
+    }
+
+    private void clearStoredPage() {
+        state.entries = Collections.emptyList();
+        state.loaded = false;
+        state.unread = 0;
+        state.anchorKey = null;
+        state.entryAnchor = false;
+        state.nextCursor = null;
+        rebuildGroups();
+        list.setVisibility(View.INVISIBLE);
+        unread.setVisibility(View.GONE);
+        markAll.setVisibility(View.GONE);
+        older.setVisibility(View.GONE);
+    }
+
+    private void renderStoredPage() {
+        list.setVisibility(View.VISIBLE);
+        unread.setText(state.unread > 0 ? getString(R.string.dom_activity_unread_count, state.unread) : "");
+        unread.setVisibility(state.unread > 0 ? View.VISIBLE : View.GONE);
+        markAll.setVisibility(!state.local && ActivitySources.repository().supportsMarkAllRead()
+                && state.unread > 0 ? View.VISIBLE : View.GONE);
+        markAll.setEnabled(!markingAll);
+        older.setVisibility(state.nextCursor == null ? View.GONE : View.VISIBLE);
+        latest.setVisibility(atLatest() ? View.GONE : View.VISIBLE);
+        status.setVisibility(state.entries.isEmpty() ? View.VISIBLE : View.GONE);
+        if (state.entries.isEmpty()) status.setText(R.string.dom_activity_empty);
+    }
+
     private void refresh(boolean reset) {
         if (!resumed || !mayRead()) return;
-        long generation = ++renderGeneration;
-        if (!ActivitySources.repository().supports(null)) {
-            state.entries = Collections.emptyList();
-            rebuildGroups();
-            list.setVisibility(View.INVISIBLE);
-            unread.setVisibility(View.GONE);
+        ActivityRepository repository = ActivitySources.repository();
+        if (!retainedSourceCurrent()) clearStoredPage();
+        if (!repository.supports(null)) {
+            clearStoredPage();
             retry.setVisibility(View.GONE);
-            older.setVisibility(View.GONE);
             latest.setVisibility(View.GONE);
             notifications.setVisibility(View.GONE);
             status.setText(R.string.dom_activity_not_shared);
             status.setVisibility(View.VISIBLE);
             return;
         }
-        if (!reset) rememberPosition();
-        else { state.position = 0; state.offset = 0; }
-        ActivityRepository repository = ActivitySources.repository();
+        // Coalesce change notifications instead of cancelling a useful in-flight snapshot.
+        if (!reset && work.isPending("activity-page")) { refreshQueued = true; return; }
+        long generation = ++renderGeneration;
+        refreshQueued = false;
+        if (reset) state.resetOnLoad = true;
+        boolean resetPosition = state.resetOnLoad;
+        if (resetPosition) { state.position = 0; state.offset = 0; state.anchorKey = null; state.entryAnchor = false; }
         boolean local = state.local;
         String cursor = state.cursor;
         String requestedFocus = state.focusKey;
-        list.setVisibility(View.INVISIBLE);
-        status.setText(R.string.role_loading);
-        status.setVisibility(View.VISIBLE);
+        long workspaceRevision = ControllerPinManager.domWorkspaceRevision();
+        long authorityRevision = ActivitySources.authorityRevision();
+        Object relationshipProvider = com.subhub.app.relationships.RelationshipUi.provider();
+        Object keyholder = com.subhub.app.people.People.keyholder();
+        if (!state.loaded) status.setVisibility(View.GONE);
         retry.setVisibility(View.GONE);
-        latest.setVisibility(atLatest() ? View.GONE : View.VISIBLE);
-        work.load("activity-page", () -> new PageResult(requestedFocus == null ? repository.load(cursor, PAGE_SIZE) : repository.locate(requestedFocus, PAGE_SIZE), local ? 0 : repository.unreadCount()), result -> {
-            if (!resumed || !mayRead()) return;
-            if (repository != ActivitySources.repository()) { refresh(false); return; }
+        retry.setText(R.string.role_retry);
+        work.load("activity-page", () -> new PageResult(requestedFocus == null ? repository.load(cursor, PAGE_SIZE)
+                : repository.locate(requestedFocus, PAGE_SIZE), local ? 0 : repository.unreadCount()), result -> {
+            if (!resumed || !mayRead() || generation != renderGeneration) return;
+            if (repository != ActivitySources.repository()
+                    || workspaceRevision != ControllerPinManager.domWorkspaceRevision()
+                    || authorityRevision != ActivitySources.authorityRevision()
+                    || relationshipProvider != com.subhub.app.relationships.RelationshipUi.provider()
+                    || keyholder != com.subhub.app.people.People.keyholder()) { refresh(false); return; }
+            // Capture the user's current position at delivery, not where the request began.
+            boolean revealing = !list.isShown();
+            if (!resetPosition) rememberPosition();
+            boolean changed = !ActivityFeedSnapshot.same(state.entries, result.page.entries);
             state.entries = result.page.entries;
+            state.source = repository;
+            state.workspaceRevision = workspaceRevision;
+            state.authorityRevision = authorityRevision;
+            state.relationshipProvider = relationshipProvider;
+            state.keyholder = keyholder;
+            state.loaded = true;
+            state.resetOnLoad = false;
+            state.unread = result.unread;
             if (requestedFocus != null) state.cursor = result.page.cursor;
+            state.pageCursor = state.cursor;
             state.nextCursor = result.page.nextCursor;
-            rebuildGroups();
-            older.setVisibility(state.nextCursor == null ? View.GONE : View.VISIBLE);
-            unread.setText(result.unread > 0 ? getString(R.string.dom_activity_unread_count, result.unread) : "");
-            unread.setVisibility(result.unread > 0 ? View.VISIBLE : View.GONE);
-            status.setText(requestedFocus != null && state.entries.isEmpty()
-                    ? R.string.dom_activity_entry_unavailable : R.string.dom_activity_empty);
-            status.setVisibility(state.entries.isEmpty() ? View.VISIBLE : View.GONE);
-            list.setVisibility(View.VISIBLE);
-            int position = state.position;
+            if (changed) rebuildGroups();
             String focused = state.focusKey;
             if (focused != null) {
                 for (int i = 0; i < groups.size(); i++) if (groups.get(i).contains(focused)) {
-                    position = i;
+                    state.position = i;
+                    state.anchorKey = null;
+                    state.entryAnchor = false;
                     state.expanded.add(groups.get(i).key);
                     adapter.notifyDataSetChanged();
                     break;
                 }
                 state.focusKey = null;
             }
-            latest.setVisibility(atLatest() ? View.GONE : View.VISIBLE);
-            list.setSelectionFromTop(position, state.offset);
+            renderStoredPage();
+            if (requestedFocus != null && state.entries.isEmpty()) status.setText(R.string.dom_activity_entry_unavailable);
+            if (changed || revealing || resetPosition || focused != null) restorePosition();
             reserveNavigation();
             if (focused == null) list.post(this::markVisibleRead);
-            else revealFocusedEntry(focused, position, generation);
+            else revealFocusedEntry(focused, state.position, generation);
+            if (refreshQueued) refresh(false);
         }, failure -> {
-            if (!resumed || !mayRead()) return;
-            state.entries = Collections.emptyList();
-            rebuildGroups();
-            list.setVisibility(View.INVISIBLE);
-            unread.setVisibility(View.GONE);
-            status.setText(R.string.dom_activity_unavailable);
-            status.setVisibility(View.VISIBLE);
+            if (!resumed || !mayRead() || generation != renderGeneration) return;
+            // Authority failures must never fall back to private cached facts.
+            if (!list.isShown() || !retainedSourceCurrent() || authorityObservationFailed(failure)) clearStoredPage();
+            state.resetOnLoad = false;
+            if (state.loaded) { state.cursor = state.pageCursor; rememberPosition(); }
+            status.setText(state.loaded ? R.string.dom_activity_refresh_failed : R.string.dom_activity_unavailable);
+            // Keep failures out of the list viewport when saved content is still available.
+            status.setVisibility(state.loaded && !state.entries.isEmpty() ? View.GONE : View.VISIBLE);
+            retry.setText(state.loaded ? R.string.dom_activity_refresh_failed : R.string.role_retry);
             retry.setVisibility(View.VISIBLE);
+            refreshQueued = false;
+        });
+    }
+
+    static boolean authorityObservationFailed(Throwable failure) {
+        // Snapshot timeouts and failed futures are unknown authority, never offline-data evidence.
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SecurityException || cause instanceof IllegalStateException
+                    || cause instanceof java.util.concurrent.ExecutionException
+                    || cause instanceof java.util.concurrent.TimeoutException
+                    || cause instanceof java.util.concurrent.CompletionException) return true;
+            if (cause.getCause() == cause) break;
+        }
+        return false;
+    }
+
+    private void restorePosition() {
+        if (state.anchorKey != null) for (int index = 0; index < groups.size(); index++) {
+            if (groups.get(index).contains(state.anchorKey)) { state.position = index; break; }
+        }
+        list.setSelectionFromTop(state.position, state.offset);
+        if (!state.entryAnchor || state.anchorKey == null) return;
+        String key = state.anchorKey;
+        int targetOffset = state.entryOffset, position = state.position;
+        long generation = ++positionGeneration;
+        list.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                list.getViewTreeObserver().removeOnPreDrawListener(this);
+                if (!resumed || !mayRead() || generation != positionGeneration || !retainedSourceCurrent()) return true;
+                View target = list.findViewWithTag("activity_entry:" + key);
+                int child = position - list.getFirstVisiblePosition();
+                if (target == null || child < 0 || child >= list.getChildCount()) return true;
+                Rect bounds = new Rect(0, 0, target.getWidth(), target.getHeight());
+                list.offsetDescendantRectToMyCoords(target, bounds);
+                int adjusted = list.getChildAt(child).getTop() + targetOffset - bounds.top - list.getPaddingTop();
+                if (adjusted == list.getChildAt(child).getTop() - list.getPaddingTop()) return true;
+                state.offset = adjusted;
+                list.setSelectionFromTop(position, adjusted);
+                list.post(DomActivityPane.this::markVisibleRead);
+                return false;
+            }
+        });
+        list.invalidate();
+    }
+
+    private void markAllRead() {
+        if (!resumed || !mayRead() || markingAll || state.local) return;
+        ActivityRepository repository = ActivitySources.repository();
+        if (!repository.supportsMarkAllRead()) return;
+        markingAll = true;
+        markAll.setEnabled(false);
+        work.loadSerial("activity-mark-all-read", () -> { repository.markAllRead(); return Boolean.TRUE; }, complete -> {
+            markingAll = false;
+            if (repository != ActivitySources.repository() || !resumed || !mayRead()) return;
+            markAll.setEnabled(true);
+            refresh(false);
+        }, failure -> {
+            markingAll = false;
+            if (!resumed || !mayRead()) return;
+            markAll.setEnabled(true);
+            com.google.android.material.snackbar.Snackbar.make(root, R.string.dom_activity_read_failed,
+                    com.google.android.material.snackbar.Snackbar.LENGTH_LONG).show();
         });
     }
 
@@ -278,11 +414,28 @@ public final class DomActivityPane extends android.content.ContextWrapper {
     private void rememberPosition() {
         if (list == null || !list.isShown() || list.getChildCount() == 0) return;
         state.position = list.getFirstVisiblePosition();
-        state.offset = list.getChildAt(0).getTop();
+        state.offset = list.getChildAt(0).getTop() - list.getPaddingTop();
+        state.anchorKey = state.position < groups.size() ? groups.get(state.position).latest().key : null;
+        state.entryAnchor = false;
+        if (state.position >= groups.size()) return;
+        // An expanded group may span multiple viewports. Anchor the visible fact rather than
+        // its group's old top, which changes when newer facts are inserted into that group.
+        for (ActivityEntry entry : groups.get(state.position).entries) {
+            View row = list.findViewWithTag("activity_entry:" + entry.key);
+            if (row == null) continue;
+            Rect bounds = new Rect(0, 0, row.getWidth(), row.getHeight());
+            list.offsetDescendantRectToMyCoords(row, bounds);
+            if (bounds.bottom > list.getPaddingTop() && bounds.top < list.getHeight()) {
+                state.anchorKey = entry.key;
+                state.entryOffset = bounds.top;
+                state.entryAnchor = true;
+                break;
+            }
+        }
     }
 
     private void markVisibleRead() {
-        if (!resumed || reading || !mayRead() || !list.isShown()) return;
+        if (!resumed || reading || markingAll || !mayRead() || !list.isShown() || !retainedSourceCurrent()) return;
         List<ActivityEntry> visible = new ArrayList<>();
         for (ActivityEntry entry : state.entries) {
             View row = list.findViewWithTag("activity_entry:" + entry.key);
@@ -304,7 +457,11 @@ public final class DomActivityPane extends android.content.ContextWrapper {
             List<ActivityEntry> updated = new ArrayList<>();
             for (ActivityEntry entry : state.entries) updated.add(keys.contains(entry.key) ? entry.read() : entry);
             state.entries = Collections.unmodifiableList(updated);
-            if (resumed && mayRead()) rebuildGroups();
+            if (resumed && mayRead()) {
+                rememberPosition();
+                rebuildGroups();
+                restorePosition();
+            }
             for (ActivityEntry entry : visible) ActivityNotifications.cancel(getApplicationContext(), entry);
             ActivitySources.changed();
         }, failure -> { reading = false; });

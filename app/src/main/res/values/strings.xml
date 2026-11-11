@@ -1176,4 +1176,7 @@
     <string name="stats_remote_history_private">Session history stays on the Sub device.</string>
     <string name="home_subs_total">Subs</string>
     <string name="home_local_sub_count">%1$d local</string>
+    <string name="dom_activity_mark_all_read">Mark all activities as read</string>
+    <string name="dom_activity_read_failed">Could not mark activities as read. Try again.</string>
+    <string name="dom_activity_refresh_failed">Could not update activity. Showing saved entries.</string>
 </resources>

@@ -7,6 +7,18 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class ActivitySourcesTest {
+    @Test public void authorityInvalidationAdvancesBeforeObserversButOrdinaryRefreshDoesNot() throws Exception {
+        long before = ActivitySources.authorityRevision();
+        java.util.concurrent.atomic.AtomicLong observed = new java.util.concurrent.atomic.AtomicLong(before);
+        try (AutoCloseable observer = ActivitySources.observe(() -> observed.set(ActivitySources.authorityRevision()))) {
+            ActivitySources.changed();
+            assertEquals(before, observed.get());
+            ActivitySources.authorityChanged();
+            assertEquals(before + 1, observed.get());
+            assertEquals(before + 1, ActivitySources.authorityRevision());
+        }
+    }
+
     @Test public void observerReceivesPublisherThreadAndCloseStopsDelivery() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         AtomicReference<Thread> delivered = new AtomicReference<>();

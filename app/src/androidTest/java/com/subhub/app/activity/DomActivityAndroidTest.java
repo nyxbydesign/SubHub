@@ -77,6 +77,7 @@ public final class DomActivityAndroidTest {
     }
     @After public void restore() {
         repository.releaseRead.countDown();
+        repository.releaseLoad.countDown();
         ActivitySources.install(original);
     }
 
@@ -419,6 +420,205 @@ public final class DomActivityAndroidTest {
         }
     }
 
+    @Test public void backgroundRefreshKeepsRowsAndCurrentAnchorIncludingScrollingWhilePending() throws Exception {
+        List<ActivityEntry> facts = new ArrayList<>();
+        for (int index = 0; index < 30; index++) {
+            ActivityEntry entry = entry("stable-" + index, ActivityEvent.Kind.APP_OPENED, false);
+            facts.add(new ActivityEntry(entry.key, new PersonId("peer:stable-" + index), entry.personName,
+                    entry.device, entry.event, entry.receivedAt, false, entry.appLabel));
+        }
+        repository.latest = facts;
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            scrollRow(page, 8, "stable-8", 20);
+            repository.blockLoad = true;
+            ActivitySources.changed();
+            assertTrue(repository.loadStarted.await(8, TimeUnit.SECONDS));
+            page.onActivity(a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                assertTrue(list.isShown());
+                assertNotNull(list.findViewWithTag("activity_entry:stable-8"));
+                assertEquals(View.GONE, a.findViewById(R.id.dom_activity_status).getVisibility());
+                list.setSelectionFromTop(12, -15);
+            });
+            awaitUi(page, a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                return list.getFirstVisiblePosition() == 12 && !list.isLayoutRequested();
+            });
+            List<ActivityEntry> newer = new ArrayList<>();
+            newer.add(entry("new-at-top", ActivityEvent.Kind.TRIBUTE_TRIGGERED, false));
+            newer.addAll(facts);
+            repository.latest = newer;
+            repository.releaseLoad.countDown();
+            awaitUi(page, a -> ready(a) && ((ListView) a.findViewById(R.id.dom_activity_list)).getFirstVisiblePosition() == 13);
+            page.onActivity(a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                assertNotNull(list.findViewWithTag("activity_entry:stable-12"));
+                assertEquals(-15, list.getChildAt(0).getTop() - list.getPaddingTop());
+            });
+        }
+    }
+
+    @Test public void transientRefreshFailureRetainsFactsButAuthorityFailureClearsThem() throws Exception {
+        repository.latest = fourKinds(false);
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            repository.loadFailure = new java.io.IOException("Synthetic temporary read failure");
+            ActivitySources.changed();
+            awaitUi(page, a -> a.findViewById(R.id.dom_activity_retry_action).isShown());
+            page.onActivity(a -> assertTrue(text(a.findViewById(R.id.dom_activity_list)).contains("Synthetic Alex")));
+            repository.loadFailure = new SecurityException("Synthetic authority changed");
+            onView(withId(R.id.dom_activity_retry_action)).perform(click());
+            awaitUi(page, a -> a.findViewById(R.id.dom_activity_status).isShown());
+            page.onActivity(a -> assertFalse(a.findViewById(R.id.dom_activity_list).isShown()));
+        }
+    }
+
+    @Test public void markAllReadIncludesCollapsedAndOlderFactsAndDisappearsAfterSuccess() throws Exception {
+        repository.latest = List.of(entry("all-visible", ActivityEvent.Kind.APP_OPENED, true),
+                entry("all-collapsed", ActivityEvent.Kind.APP_OPENED, true));
+        repository.history = List.of(entry("all-older", ActivityEvent.Kind.TRIBUTE_TRIGGERED, true));
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, a -> ready(a) && repository.read.contains("all-visible"));
+            assertFalse(repository.read.contains("all-collapsed"));
+            assertFalse(repository.read.contains("all-older"));
+            onView(withId(R.id.dom_activity_mark_all_read_action)).perform(click());
+            awaitUi(page, a -> ready(a) && repository.unreadCount() == 0
+                    && a.findViewById(R.id.dom_activity_mark_all_read_action).getVisibility() == View.GONE);
+            assertEquals(1, repository.markAllCalls);
+            assertTrue(repository.read.containsAll(List.of("all-visible", "all-collapsed", "all-older")));
+        }
+    }
+
+
+    @Test public void sameProviderAuthorityInvalidationHidesRowsWhileReplacementSnapshotIsPending() throws Exception {
+        repository.latest = fourKinds(false);
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            repository.blockLoad = true;
+            ActivitySources.authorityChanged();
+            assertTrue(repository.loadStarted.await(8, TimeUnit.SECONDS));
+            page.onActivity(a -> {
+                assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
+                assertFalse(a.findViewById(R.id.dom_activity_unread_count).isShown());
+                assertFalse(text(a.findViewById(android.R.id.content)).contains("Synthetic Alex"));
+            });
+            repository.latest = List.of();
+            repository.releaseLoad.countDown();
+            awaitUi(page, a -> a.findViewById(R.id.dom_activity_status).isShown()
+                    && !AsyncUiScope.forPage(a).isPending("activity-page"));
+            page.onActivity(a -> assertFalse(text(a.findViewById(android.R.id.content)).contains("Synthetic Alex")));
+        }
+    }
+
+    @Test public void authoritySnapshotFutureFailureAndTimeoutNeverKeepPrivateFacts() throws Exception {
+        for (Exception failure : List.of(new java.util.concurrent.ExecutionException(new java.io.IOException("Synthetic scope failure")),
+                new java.util.concurrent.TimeoutException("Synthetic scope timeout"))) {
+            repository.loadFailure = null;
+            repository.latest = fourKinds(false);
+            try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+                awaitUi(page, DomActivityAndroidTest::ready);
+                repository.loadFailure = failure;
+                ActivitySources.changed();
+                awaitUi(page, a -> a.findViewById(R.id.dom_activity_retry_action).isShown());
+                page.onActivity(a -> {
+                    assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
+                    assertFalse(text(a.findViewById(android.R.id.content)).contains("Synthetic Alex"));
+                });
+            }
+        }
+    }
+
+    @Test public void resumeRevalidatesSameProviderMembershipBeforeShowingRetainedRows() throws Exception {
+        repository.latest = fourKinds(false);
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            page.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            repository.blockLoad = true;
+            repository.latest = List.of();
+            page.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            assertTrue(repository.loadStarted.await(8, TimeUnit.SECONDS));
+            page.onActivity(a -> assertFalse(a.findViewById(R.id.dom_activity_list).isShown()));
+            repository.releaseLoad.countDown();
+            awaitUi(page, a -> a.findViewById(R.id.dom_activity_status).isShown()
+                    && !AsyncUiScope.forPage(a).isPending("activity-page"));
+            page.onActivity(a -> assertFalse(text(a.findViewById(android.R.id.content)).contains("Synthetic Alex")));
+        }
+    }
+
+    @Test public void expandedGroupKeepsTheVisibleFactWhenNewFactsAreInsertedBeforeIt() throws Exception {
+        List<ActivityEntry> facts = new ArrayList<>();
+        for (int index = 0; index < 12; index++) facts.add(entry("expanded-" + index, ActivityEvent.Kind.APP_OPENED, false));
+        repository.latest = facts;
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            onView(withTagValue(org.hamcrest.Matchers.is((Object) "activity_group:expanded-0"))).perform(click());
+            awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:expanded-4") != null);
+            page.onActivity(a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                View target = list.findViewWithTag("activity_entry:expanded-4");
+                Rect bounds = new Rect(0, 0, target.getWidth(), target.getHeight());
+                list.offsetDescendantRectToMyCoords(target, bounds);
+                list.setSelectionFromTop(0, list.getChildAt(0).getTop() - bounds.top + 20);
+            });
+            awaitUi(page, a -> ready(a) && !a.findViewById(R.id.dom_activity_list).isLayoutRequested());
+            final int[] before = new int[2];
+            page.onActivity(a -> a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:expanded-4").getLocationOnScreen(before));
+            repository.blockLoad = true;
+            ActivitySources.changed();
+            assertTrue(repository.loadStarted.await(8, TimeUnit.SECONDS));
+            List<ActivityEntry> updated = new ArrayList<>();
+            updated.add(entry("expanded-new", ActivityEvent.Kind.APP_OPENED, false));
+            updated.addAll(facts);
+            repository.latest = updated;
+            repository.releaseLoad.countDown();
+            awaitUi(page, a -> {
+                if (!ready(a)) return false;
+                View target = a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:expanded-4");
+                if (target == null) return false;
+                int[] after = new int[2]; target.getLocationOnScreen(after);
+                return after[1] == before[1];
+            });
+            page.recreate();
+            awaitUi(page, a -> {
+                if (!ready(a)) return false;
+                View target = a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:expanded-4");
+                if (target == null) return false;
+                int[] after = new int[2]; target.getLocationOnScreen(after);
+                return after[1] == before[1];
+            });
+        }
+    }
+
+    @Test public void recreationDuringPendingPaginationKeepsRequestedPageAndResetsItsAnchor() throws Exception {
+        repository.latest = fourKinds(false);
+        repository.history = List.of(entry("older-first", ActivityEvent.Kind.APP_OPENED, false),
+                entry("older-next", ActivityEvent.Kind.TRIBUTE_TRIGGERED, false));
+        try (ActivityScenario<DomActivityActivity> page = ActivityScenario.launch(intent(null))) {
+            awaitUi(page, DomActivityAndroidTest::ready);
+            scrollRow(page, 2, "fixture-app-limit", 10);
+            repository.blockLoad = true;
+            // The contract under test is in-flight recreation, independent of footer hit testing.
+            page.onActivity(a -> assertTrue(a.findViewById(R.id.dom_activity_older_action).performClick()));
+            assertTrue(repository.loadStarted.await(8, TimeUnit.SECONDS));
+            page.recreate();
+            page.onActivity(a -> {
+                DomActivityActivity.FeedState state = new androidx.lifecycle.ViewModelProvider(a).get(DomActivityActivity.FeedState.class);
+                assertEquals("history-page", state.cursor);
+                assertTrue(state.resetOnLoad);
+                assertFalse(a.findViewById(R.id.dom_activity_list).isShown());
+            });
+            repository.releaseLoad.countDown();
+            awaitUi(page, a -> ready(a) && a.findViewById(R.id.dom_activity_list).findViewWithTag("activity_entry:older-first") != null);
+            page.onActivity(a -> {
+                ListView list = a.findViewById(R.id.dom_activity_list);
+                assertEquals(0, list.getFirstVisiblePosition());
+                assertEquals(list.getPaddingTop(), list.getChildAt(0).getTop());
+                assertFalse(new androidx.lifecycle.ViewModelProvider(a).get(DomActivityActivity.FeedState.class).resetOnLoad);
+            });
+        }
+    }
+
     private Intent intent(String focus) {
         Intent intent = new Intent(context, DomActivityActivity.class);
         if (focus != null) intent.putExtra(DomActivityActivity.EXTRA_ENTRY_KEY, focus);
@@ -614,10 +814,18 @@ public final class DomActivityAndroidTest {
         final List<String> locations = Collections.synchronizedList(new ArrayList<>());
         final Set<String> read = Collections.synchronizedSet(new LinkedHashSet<>());
         volatile List<String> submitted = List.of();
-        volatile boolean blockRead;
+        volatile boolean blockRead, blockLoad;
+        volatile Exception loadFailure;
+        volatile int markAllCalls;
+        final CountDownLatch loadStarted = new CountDownLatch(1), releaseLoad = new CountDownLatch(1);
         final CountDownLatch readStarted = new CountDownLatch(1), releaseRead = new CountDownLatch(1);
-        public Page load(String cursor, int limit) {
+        public Page load(String cursor, int limit) throws Exception {
             loads.add(cursor);
+            if (blockLoad) {
+                loadStarted.countDown();
+                if (!releaseLoad.await(8, TimeUnit.SECONDS)) throw new AssertionError("Load witness was not released");
+            }
+            if (loadFailure != null) throw loadFailure;
             if ("local:MAX".equals(cursor)) return new Page(localLatest, "local:42", cursor);
             if ("local:42".equals(cursor)) return new Page(localHistory, null, cursor);
             return page("history-page".equals(cursor) ? history : latest, cursor);
@@ -645,6 +853,12 @@ public final class DomActivityAndroidTest {
             for (ActivityEntry entry : latest) if (entry.unread && !read.contains(entry.key)) count++;
             for (ActivityEntry entry : history) if (entry.unread && !read.contains(entry.key)) count++;
             return count;
+        }
+        public boolean supportsMarkAllRead() { return true; }
+        public void markAllRead() {
+            markAllCalls++;
+            for (ActivityEntry entry : latest) read.add(entry.key);
+            for (ActivityEntry entry : history) read.add(entry.key);
         }
         public void markRead(List<String> keys) throws Exception {
             submitted = Collections.unmodifiableList(new ArrayList<>(keys));
