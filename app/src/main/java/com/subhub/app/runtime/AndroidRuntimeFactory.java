@@ -483,7 +483,8 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         requireUsable(); retireTerminalRouting();
         if(visibility!=null)throw new SecurityException("Visibility mutation owns admission");
         Set<String> required=Set.copyOf(components);
-        if(!required.containsAll(Set.of(InternalRuntimeOwner.ACCOUNTING_COMPONENT,"internal_session_clock",
+        if(!required.containsAll(Set.of(InternalRuntimeOwner.ACCOUNTING_COMPONENT,
+                com.subhub.app.service.InternalRuntimeSession.COMPONENT,"internal_session_clock",
                 "internal_accessibility_modules","internal_foreground","internal_whispers","internal_popups")))
             throw new IllegalArgumentException("Incomplete INTERNAL component plan");
         return starts.reserve(internalAuthority.observe(data,expected),required).thenApply(admitted->{

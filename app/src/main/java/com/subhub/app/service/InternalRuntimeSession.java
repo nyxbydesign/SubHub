@@ -1,8 +1,14 @@
 package com.subhub.app.service;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.view.accessibility.AccessibilityEvent;
+import androidx.core.content.ContextCompat;
 import com.subhub.app.internal.InternalRuntimePreferences;
 import com.subhub.app.runtime.ActiveRuntimeCoordinator;
 import com.subhub.app.runtime.InternalSessionClock;
@@ -34,6 +40,7 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
     }
     public interface CaptureFactory { Capture prepare(InternalRuntimeSession session); }
     private final RuntimeCaptureHost.InternalRequest request;
+    private final Context signalContext;
     private final RuntimeExecution<RuntimeConfiguration>.Component component;
     private final OwnedCaptureLifetime work = new OwnedCaptureLifetime();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -48,6 +55,7 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
     private final AtomicReference<Capture> projectionCapture = new AtomicReference<>();
     private volatile boolean constructionFailed, cleanupFailed, drained;
     private boolean activated, activationQueued;
+    private BroadcastReceiver screenAndPower;
     private Runnable afterCoreDrain;
     private final AtomicReference<Runnable> hostStop = new AtomicReference<>();
     private final AtomicBoolean hostStopSent = new AtomicBoolean();
@@ -61,6 +69,8 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
         this.request = Objects.requireNonNull(request);
         if (request.connection.kind != RuntimeCaptureHost.Kind.ACCESSIBILITY || !request.connection.isConnected())
             throw new SecurityException("Session modules require a connected Accessibility host");
+        // Keep the registration alive across service loss until the exact runtime retires it.
+        signalContext = Objects.requireNonNull(request.connection.accessibility().service().getApplicationContext());
         boolean modulesOnly = request.plan.mode == RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES;
         if (modulesOnly != (selectedCapture == null))
             throw new IllegalArgumentException("Module-only and selected capture routes must remain distinct");
@@ -135,6 +145,8 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
         if (attachment == null) throw new SecurityException("Session attachment sealed");
         try {
             if (capture != null) capture.attach(null);
+            if (!request.runtime.runStartupEffect(this::registerScreenAndPower))
+                throw new SecurityException("Screen and power observation startup admission unavailable");
             OwnedCaptureLifetime.Ticket preparation = work.begin();
             if (preparation == null) throw new SecurityException("Session preparation sealed");
             CompletableFuture.allOf(clock.prepared(), modules.prepared()).whenComplete((ignored, failure) -> {
@@ -205,6 +217,24 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
         modules.sourceChanged(); if (capture != null) capture.powerChanged();
         Capture projection = projectionCapture.get(); if (projection != null) projection.powerChanged();
     }); }
+    private void registerScreenAndPower() {
+        requireMain();
+        if (sealed.get() || !request.connection.isConnected()) throw new SecurityException("Session host retired");
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+        screenAndPower = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (!activated || screenAndPower != this) return;
+                String action = intent.getAction();
+                if (PowerManager.ACTION_POWER_SAVE_MODE_CHANGED.equals(action)) powerChanged();
+                else if (Intent.ACTION_SCREEN_OFF.equals(action) || Intent.ACTION_SCREEN_ON.equals(action)
+                        || Intent.ACTION_USER_PRESENT.equals(action)) screenChanged(action);
+            }
+        };
+        ContextCompat.registerReceiver(signalContext, screenAndPower, filter, null, main, ContextCompat.RECEIVER_NOT_EXPORTED);
+    }
     private void eligibilityChanged() { source(() -> modules.sourceChanged()); }
     private void captureChanged() { source(() -> {
         if (capture != null) capture.sourceChanged();
@@ -240,6 +270,11 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
         Runnable observe = () -> {
             boolean complete = false;
             try {
+                if (screenAndPower != null) {
+                    BroadcastReceiver retiring = screenAndPower;
+                    screenAndPower = null;
+                    signalContext.unregisterReceiver(retiring);
+                }
                 if (constructionFailed) { cleanupFailed = true; component.cleanupFailed(); return; }
                 Capture projection = projectionCapture.get();
                 complete = hostStopRunning.get() == 0 && work.drained() && clock != null && clock.managedResourcesDrained()
