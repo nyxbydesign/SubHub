@@ -413,6 +413,20 @@ public final class InternalOwnerDataBroker {
             java.util.Set<String> capturedCategories = java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(categories));
             return normal(expected, handle -> handle.statistics.recordEvidence(expected, claim, capturedCategories, observed));
         }
+        /** The renderer captures these tracker IDs/category facts before queueing the exact NORMAL event. */
+        public int recordLegacyTrackIds(StatsRepository.SessionStamp expected, java.util.List<Integer> trackIds,
+                java.util.Set<String> categories, OwnerObservation observed) {
+            Objects.requireNonNull(observed);
+            java.util.List<Integer> capturedIds = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(Objects.requireNonNull(trackIds)));
+            java.util.Set<String> capturedCategories = java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(Objects.requireNonNull(categories)));
+            return normal(expected, handle -> handle.statistics.recordLegacyTrackIds(expected, capturedIds, capturedCategories, observed));
+        }
+        public OwnerPenanceLedger.Result assessCensoredTap(StatsRepository.SessionStamp expected,
+                com.subhub.app.penance.PenanceRuleSettings capturedRules, boolean censorEnabled, OwnerObservation observed) {
+            Objects.requireNonNull(capturedRules); Objects.requireNonNull(observed);
+            return normal(expected, handle -> handle.statistics.ledger(() -> capturedRules, () -> censorEnabled)
+                    .recordSourceCensoredTapResult(observed, expected));
+        }
         public OwnerPenanceLedger.Result assessDetection(StatsRepository.SessionStamp expected, int count,
                 com.subhub.app.penance.PenanceRuleSettings capturedRules, boolean censorEnabled, OwnerObservation observed) {
             Objects.requireNonNull(capturedRules); Objects.requireNonNull(observed);

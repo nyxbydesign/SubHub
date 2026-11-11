@@ -14,7 +14,13 @@ public final class People {
         public com.subhub.app.security.ControllerAuthenticator.Result verifyCode(String code){return com.subhub.app.security.ControllerAuthenticator.Result.UNAVAILABLE;}
     };
     public static com.subhub.app.security.KeyholderProvider keyholder(){return keyholder;}
-    public static void installKeyholder(com.subhub.app.security.KeyholderProvider provider){keyholder=java.util.Objects.requireNonNull(provider);}
+    public static void installKeyholder(com.subhub.app.security.KeyholderProvider provider) {
+        java.util.Objects.requireNonNull(provider);
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            com.subhub.app.security.ControllerPinManager.invalidateInternalStartAuthority();
+            keyholder = provider;
+        }
+    }
     private People() {}
 
     public static PersonRepository repository(Context context) {

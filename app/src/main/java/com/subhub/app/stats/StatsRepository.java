@@ -563,6 +563,39 @@ public final class StatsRepository {
         return recordTrackIds(trackIds, enabledCategories, 0);
     }
 
+    /** Owned legacy tracker delivery. This is not modern scene evidence and cannot target DEVICE. */
+    public int recordLegacyTrackIds(SessionStamp expected, List<Integer> trackIds,
+            Set<String> enabledCategories, OwnerObservation observation) {
+        if (owner == null) throw new SecurityException("Legacy owner delivery requires owned statistics");
+        java.util.Objects.requireNonNull(observation);
+        List<Integer> capturedIds = new ArrayList<>(java.util.Objects.requireNonNull(trackIds));
+        Set<String> capturedCategories = new HashSet<>(java.util.Objects.requireNonNull(enabledCategories));
+        requireOwnerSessionWrite();
+        synchronized (state.lock) {
+            restoreActiveSession();
+            if (expected == null || expected.isDeviceSession() || expected != state.stamp
+                    || !expected.isCurrent() || state.startedAt == 0
+                    || preferences.getLong(KEY_ACTIVE_SESSION_START, 0) != state.startedAt)
+                throw new SecurityException("Different or stale legacy owner session");
+            int added = 0;
+            for (Integer id : capturedIds) if (id != null && state.seen.add(id)) added++;
+            if (added == 0) return 0;
+            int nextBlocks = Math.addExact(state.blocks, added);
+            SharedPreferences.Editor edit = edit()
+                    .putInt(KEY_ACTIVE_SESSION_BLOCKS, nextBlocks)
+                    .putLong(KEY_TOTAL_BLOCKS, Math.addExact(preferences.getLong(KEY_TOTAL_BLOCKS, 0), added));
+            if (nextBlocks > preferences.getInt(KEY_PEAK_SESSION_BLOCKS, 0))
+                edit.putInt(KEY_PEAK_SESSION_BLOCKS, nextBlocks);
+            recordActivityDate(edit, observation.at, java.time.ZoneId.of(observation.zone));
+            if (capturedCategories.containsAll(ALL_CATEGORIES))
+                edit.putLong(KEY_ALL_CATEGORIES_CENSORS,
+                        Math.addExact(preferences.getLong(KEY_ALL_CATEGORIES_CENSORS, 0), added));
+            state.blocks = nextBlocks;
+            writeDaily(edit, observation);
+            return added;
+        }
+    }
+
     /** The production path samples once; the explicit clock also permits exact civil-day regressions. */
     int recordTrackIds(List<Integer> trackIds, Set<String> enabledCategories, long observedAt) {
         requireOwnerSessionWrite();

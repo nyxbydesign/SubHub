@@ -62,6 +62,10 @@ public final class OwnerPenanceLedger {
     public Result recordSourceDwellResult(int count, OwnerObservation observed, StatsRepository.SessionStamp expected) {
         return record(PenanceInfraction.CENSORED_DWELL, count, Objects.requireNonNull(observed), expected);
     }
+    /** One real admitted censored tap. Geometry, event debounce and configuration fencing belong to the renderer. */
+    public Result recordSourceCensoredTapResult(OwnerObservation observed, StatsRepository.SessionStamp expected) {
+        return record(PenanceInfraction.CENSORED_TAP, 1, Objects.requireNonNull(observed), expected);
+    }
     /** Task data authority is separate from protection. The Store guard admits this owned task worker. */
     public Result recordTaskFailure(String occurrence, long now, BooleanSupplier tasksEnabled) {
         return recordTaskFailure(occurrence, OwnerObservation.capture(now), tasksEnabled);
@@ -201,7 +205,7 @@ public final class OwnerPenanceLedger {
                 PenanceInfraction kind = PenanceInfraction.valueOf(fields[5]);
                 if (at <= 0 || mercy < at || cents <= 0 || cents > PenancePolicy.MAX_DAILY_CENTS || strikes <= 0
                         || !(kind == PenanceInfraction.NEW_DETECTION || kind == PenanceInfraction.CENSORED_DWELL
-                                || kind == PenanceInfraction.TASK_FAILURE))
+                                || kind == PenanceInfraction.CENSORED_TAP || kind == PenanceInfraction.TASK_FAILURE))
                     throw new IllegalArgumentException("Invalid internal assessment");
                 events.add(new PenanceEvent(fields[0], at, mercy, cents, strikes, kind, PenanceEvent.Status.OPEN, "", fields[6]));
                 if (events.size() > MAX_EVENTS) throw new IllegalArgumentException("Oversized internal ledger");

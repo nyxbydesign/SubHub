@@ -64,14 +64,30 @@ public final class RuntimeAdmissionAuthority {
     }
 
     public boolean completeAuthorization(AuthorizationPublication publication, long revision, boolean allowed) {
+        return completeAuthorization(publication, revision, allowed, null);
+    }
+
+    /** A monotonic source retirement signal, never an independent grant of start authority. */
+    public static final class Revocation {
+        private volatile boolean revoked;
+        public void revoke() { revoked = true; }
+        public boolean isRevoked() { return revoked; }
+    }
+
+    /** INTERNAL factories may bind the real controller's synchronous cached revocation witness. */
+    public boolean completeAuthorization(AuthorizationPublication publication, long revision, boolean allowed,
+            Revocation sourceRevocation) {
+        if (sourceRevocation != null && (publication == null || publication.key.target.kind != RuntimeTarget.Kind.INTERNAL))
+            throw new IllegalArgumentException("External controller retirement is INTERNAL-only");
         return mutex.runtime(() -> {
             if (publication == null || publication.source != this || publication.completed
                     || authorizationPublications.get(publication.key) != publication) return false;
             publication.completed = true;
+            if (sourceRevocation != null && sourceRevocation.isRevoked()) return false;
             Availability observed = publication.availability;
             if (observed == null || !observed.enabled || availability.get(publication.key.target) != observed)
                 return false;
-            authorizations.put(publication.key, new Authorization(revision, allowed, observed));
+            authorizations.put(publication.key, new Authorization(revision, allowed, observed, sourceRevocation));
             return true;
         });
     }
@@ -84,7 +100,7 @@ public final class RuntimeAdmissionAuthority {
         mutex.requireHeld();
         return witness != null && witness.source == this && witness.authorization != null
                 && witness.authorization == authorizations.get(new AuthorizationKey(witness.target, witness.origin))
-                && witness.authorization.allowed && witness.availability != null && witness.availability.enabled
+                && witness.authorization.allowed && witness.authorization.sourceCurrent() && witness.availability != null && witness.availability.enabled
                 && witness.authorization.availability == witness.availability
                 && witness.availability == availability.get(witness.target);
     }
@@ -127,7 +143,7 @@ public final class RuntimeAdmissionAuthority {
         boolean permitsLaunch() {
             return availability != null && authorization != null && availability.enabled
                     && authorization.allowed && authorization.availability == availability
-                    && !availability.revoked && !authorization.revoked;
+                    && !availability.revoked && !authorization.revoked && authorization.sourceCurrent();
         }
         public String profileGeneration() { return availability == null ? "" : availability.generation; }
         public long configurationRevision() { return availability == null ? -1 : availability.configurationRevision; }
@@ -160,9 +176,12 @@ public final class RuntimeAdmissionAuthority {
         final long revision;
         final boolean allowed;
         final Availability availability;
-        Authorization(long revision, boolean allowed, Availability availability) {
+        final Revocation sourceRevocation;
+        Authorization(long revision, boolean allowed, Availability availability, Revocation sourceRevocation) {
             this.revision = revision; this.allowed = allowed; this.availability = availability;
+            this.sourceRevocation = sourceRevocation;
         }
+        boolean sourceCurrent() { return sourceRevocation == null || !sourceRevocation.revoked; }
     }
     private static final class Availability {
         volatile boolean revoked;

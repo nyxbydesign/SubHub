@@ -826,6 +826,142 @@ public final class OwnerAccountingAndroidTest {
         assertFalse(a.data.isAvailable());
     }
 
+    @Test public void legacyIdsUseExactOwnerDedupAndCapturedCalendarWithoutDeviceWrites() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Map<String, ?> physical = app.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE).getAll();
+        StatsRepository.SessionStamp device = StatsRepository.currentSessionStamp();
+        Fixture a = fresh(), b = fresh(); long at = Instant.parse("2024-04-09T12:00:00Z").toEpochMilli();
+        StatsRepository.NativeSession origin = session(at, "UTC"); a.begin(origin); b.begin(origin);
+        StatsRepository.SessionStamp stamp = a.stats().observedSessionStamp();
+        OwnerObservation observed = new OwnerObservation(at + 1000, "Pacific/Kiritimati");
+        Set<String> all = Set.of("genitals_female", "genitals_male", "breasts", "buttocks", "anus", "face", "belly",
+                "male_chest", "feet", "armpits", "genitals_covered", "breasts_covered", "buttocks_covered",
+                "anus_covered", "belly_covered", "feet_covered", "armpits_covered");
+        assertThrows(SecurityException.class, () -> b.call(() -> b.owner.recordLegacyTrackIds(stamp, List.of(1), all, observed)));
+        assertEquals(2, (int) a.call(() -> a.owner.recordLegacyTrackIds(stamp, java.util.Arrays.asList(1, 1, null, 2), all, observed)));
+        long revision = a.data.revision();
+        assertEquals(0, (int) a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(1, 2), all, observed)));
+        assertEquals(revision, a.data.revision());
+        assertEquals(1, (int) a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(2, 3), Set.of("face"), observed)));
+        assertEquals(3, a.stats().load().getTotalBlocks()); assertEquals(0, b.stats().load().getTotalBlocks());
+        assertEquals(2, a.data.preferences("statistics").getLong("all_categories_censors", 0));
+        assertTrue(a.data.preferences("statistics").getStringSet("active_date_clocks_v1", Set.of())
+                .contains("Pacific/Kiritimati;2024-04-10"));
+        assertEquals(Long.valueOf(3), a.snapshot(at + TimeUnit.DAYS.toMillis(1)).days().get(observed.day()).get("censors"));
+        a.sessionAllowed = false;
+        assertThrows(SecurityException.class, () -> a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(4), all, observed)));
+        a.sessionAllowed = true; a.run(() -> a.owner.finishSession(origin.identity, at + 2000));
+        assertThrows(SecurityException.class, () -> a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(4), all, observed)));
+        a.begin(session(at + 3000, "UTC")); StatsRepository.SessionStamp next = a.stats().observedSessionStamp();
+        assertThrows(SecurityException.class, () -> a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(4), all, observed)));
+        assertEquals(1, (int) a.call(() -> a.owner.recordLegacyTrackIds(next, List.of(1), all, new OwnerObservation(at + 4000, "UTC"))));
+        assertSame(device, StatsRepository.currentSessionStamp());
+        assertEquals(physical, app.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE).getAll());
+    }
+
+    @Test public void legacyIdsRollbackExactDedupAndReturnOnlyAfterOuterAck() throws Exception {
+        Fixture a = fresh(); long at = System.currentTimeMillis(); a.begin(session(at, "UTC"));
+        StatsRepository.SessionStamp stamp = a.stats().observedSessionStamp(); OwnerObservation observed = new OwnerObservation(at + 1, "UTC");
+        InternalRuntimeRecord before = a.data.snapshot();
+        assertThrows(IllegalArgumentException.class, () -> a.run(() -> a.owner.transaction(() -> {
+            assertEquals(1, a.stats().recordLegacyTrackIds(stamp, List.of(41), Set.of(), observed));
+            throw new IllegalArgumentException("clean pre-CAS failure");
+        })));
+        assertEquals(before, a.data.snapshot()); assertSame(stamp, a.stats().observedSessionStamp()); assertTrue(stamp.isCurrent());
+        assertThrows(IllegalStateException.class, () -> a.run(() -> a.owner.transaction(
+                () -> a.owner.recordLegacyTrackIds(stamp, List.of(41), Set.of(), observed))));
+        AtomicBoolean returned = new AtomicBoolean(), checked = new AtomicBoolean();
+        a.backend.beforeWrite = () -> {
+            assertFalse(returned.get());
+            try { assertEquals(before, a.backend.actual.read()); }
+            catch (Exception failure) { throw new AssertionError(failure); }
+            checked.set(true);
+        };
+        assertEquals(1, (int) a.call(() -> a.owner.recordLegacyTrackIds(stamp, List.of(41), Set.of(), observed)));
+        returned.set(true); a.backend.beforeWrite = () -> { }; assertTrue(checked.get());
+        assertEquals(1, a.stats().load().getTotalBlocks()); assertTrue(a.persistenceFailures.isEmpty());
+    }
+
+    @Test public void legacyIdsUnacknowledgedWriteCannotReturnCountOrBorrowStamp() throws Exception {
+        for (InternalRuntimePreferences.Outcome outcome : List.of(InternalRuntimePreferences.Outcome.NOT_COMMITTED, InternalRuntimePreferences.Outcome.UNCERTAIN)) {
+            Fixture a = fresh(); long at = System.currentTimeMillis(); a.begin(session(at, "UTC"));
+            StatsRepository.SessionStamp stamp = a.stats().observedSessionStamp(); InternalRuntimeRecord before = a.backend.read();
+            a.backend.outcome = outcome;
+            assertThrows(InternalRuntimePreferences.PersistenceException.class, () -> a.call(
+                    () -> a.owner.recordLegacyTrackIds(stamp, List.of(1), Set.of(), new OwnerObservation(at + 1, "UTC"))));
+            assertEquals(before, a.backend.read()); assertFalse(stamp.isCurrent()); assertEquals(1, a.persistenceFailures.size());
+        }
+    }
+
+    @Test public void censoredTapUsesPinnedRulesCurrencyAndEventDateWithNoDeviceEffects() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Map<String, ?> physical = app.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE).getAll();
+        StatsRepository.SessionStamp device = StatsRepository.currentSessionStamp();
+        Fixture a = fresh(), b = fresh(); long at = Instant.parse("2024-04-09T12:00:00Z").toEpochMilli();
+        StatsRepository.NativeSession origin = session(at, "UTC"); a.begin(origin); b.begin(origin);
+        StatsRepository.SessionStamp stamp = a.stats().observedSessionStamp(); OwnerObservation observed = new OwnerObservation(at + 1, "Pacific/Kiritimati");
+        a.run(() -> a.owner.transaction(() -> a.data.preferences("assessed_ledger").edit().putInt("detection_remainder_v1", 3).commit()));
+        com.subhub.app.penance.PenanceRuleSettings pinned = capturedTapRules("EUR", 75);
+        OwnerPenanceLedger ledger = a.owner.ledger(() -> pinned, a.censorEnabled::get);
+        a.configure("USD", 400, 500, 1000, 2000, 5); // New mutable configuration cannot replace the captured event rules.
+        assertEquals(OwnerPenanceLedger.Status.REJECTED, b.call(() -> b.ledger.recordSourceCensoredTapResult(observed, stamp)).status);
+        a.censorEnabled.set(false);
+        assertEquals(OwnerPenanceLedger.Status.REJECTED, a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)).status);
+        a.censorEnabled.set(true);
+        assertEquals(OwnerPenanceLedger.Status.REJECTED, a.call(() -> a.ledger.recordSourceCensoredTapResult(observed, stamp)).status); // Tap rule disabled.
+        OwnerPenanceLedger.Result receipt = a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp));
+        assertEquals(OwnerPenanceLedger.Status.ACKNOWLEDGED, receipt.status); assertEquals(75, receipt.chargedCents); assertEquals(3, receipt.batchRemainder);
+        assertEquals(30, a.call(() -> a.owner.ledger(() -> capturedTapRules("USD", 30), () -> true)
+                .recordSourceCensoredTapResult(observed, stamp)).chargedCents);
+        assertEquals(75, a.stats().tributeCents("EUR", false)); assertEquals(30, a.stats().tributeCents("USD", false));
+        assertEquals(Long.valueOf(75), a.snapshot(at + TimeUnit.DAYS.toMillis(1)).days().get(observed.day()).get("assessed_EUR"));
+        assertEquals(PenanceInfraction.CENSORED_TAP, ledger.retainedEvents().get(0).getInfraction());
+        assertEquals(observed.at, ledger.retainedEvents().get(0).getCreatedAtMillis());
+        a.sessionAllowed = false;
+        assertThrows(SecurityException.class, () -> a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)));
+        a.sessionAllowed = true; a.run(() -> a.owner.finishSession(origin.identity, at + 1000));
+        assertEquals(OwnerPenanceLedger.Status.REJECTED, a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)).status);
+        a.close(); Fixture reopened = reopen(a.scope);
+        assertEquals(2, reopened.ledger.retainedEvents().size());
+        assertEquals(75, reopened.stats().tributeCents("EUR", false)); assertEquals(30, reopened.stats().tributeCents("USD", false));
+        assertEquals(0, b.stats().tributeCents("EUR", false)); assertSame(device, StatsRepository.currentSessionStamp());
+        assertEquals(physical, app.getSharedPreferences(StatsRepository.PREFS_NAME, Context.MODE_PRIVATE).getAll());
+    }
+
+    @Test public void censoredTapLedgerAndStatsRollbackTogetherAndUncertainAckFences() throws Exception {
+        Fixture a = fresh(); long at = System.currentTimeMillis(); a.begin(session(at, "UTC"));
+        StatsRepository.SessionStamp stamp = a.stats().observedSessionStamp(); OwnerObservation observed = new OwnerObservation(at + 1, "UTC");
+        OwnerPenanceLedger ledger = a.owner.ledger(() -> capturedTapRules("EUR", 75), () -> true);
+        InternalRuntimeRecord before = a.data.snapshot(); a.failAfterLedgerStage = true;
+        assertThrows(SecurityException.class, () -> a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)));
+        assertTrue(a.sawStagedLedger); a.failAfterLedgerStage = false;
+        assertEquals(before, a.data.snapshot()); assertSame(stamp, a.stats().observedSessionStamp()); assertTrue(stamp.isCurrent());
+        assertTrue(a.persistenceFailures.isEmpty());
+        assertEquals(75, a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)).chargedCents);
+        before = a.backend.read(); a.backend.outcome = InternalRuntimePreferences.Outcome.UNCERTAIN;
+        assertThrows(InternalRuntimePreferences.PersistenceException.class, () -> a.call(() -> ledger.recordSourceCensoredTapResult(observed, stamp)));
+        assertEquals(before, a.backend.read()); assertFalse(stamp.isCurrent()); assertEquals(1, a.persistenceFailures.size());
+    }
+
+    private static com.subhub.app.penance.PenanceRuleSettings capturedTapRules(String currency, int cents) {
+        return new com.subhub.app.penance.PenanceRuleSettings() {
+            @Override public String getCurrency() { return currency; }
+            @Override public String money(long amount) { throw new UnsupportedOperationException(); }
+            @Override public boolean isEnabled() { return true; }
+            @Override public boolean isInfractionEnabled(PenanceInfraction rule) { return rule == PenanceInfraction.CENSORED_TAP; }
+            @Override public int getInfractionCents(PenanceInfraction rule) { return cents; }
+            @Override public int getDailyCapCents() { return 1000; }
+            @Override public int getWeeklyCapCents() { return 2000; }
+            @Override public int getMercyMinutes() { return 10; }
+            @Override public int getDwellSeconds() { return 7; }
+            @Override public int getDetectionBatch() { return 5; }
+            @Override public int getTamperCooldownMinutes() { return 30; }
+            @Override public void disableInfraction(PenanceInfraction rule) { throw new UnsupportedOperationException(); }
+            @Override public void configure(boolean enabled, Map<PenanceInfraction, Integer> costs,
+                    int daily, int weekly, int mercy, int dwell, int batch, int cooldown) { throw new UnsupportedOperationException(); }
+        };
+    }
+
     private Fixture fresh() throws Exception {
         Path parent = Files.createTempDirectory(root, "owner-");
         InternalStorageScope scope = new InternalStorageScope(Files.createDirectory(parent.resolve(InternalStorageScope.TARGET_ID)));

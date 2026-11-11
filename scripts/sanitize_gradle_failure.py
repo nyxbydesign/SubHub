@@ -426,6 +426,7 @@ JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/service/OwnedLegacyAccessibilityBindingTest.java": "unit_owned_legacy_accessibility_binding",
     b"app/src/test/java/com/subhub/app/service/OwnedProjectionBindingTest.java": "unit_owned_projection_binding",
     b"app/src/test/java/com/subhub/app/service/RuntimeCaptureHostTest.java": "unit_runtime_capture_host",
+    b"app/src/test/java/com/subhub/app/runtime/RuntimeSourceRevocationTest.java": "unit_runtime_source_revocation",
     b"app/src/test/java/com/subhub/app/runtime/RuntimeInstallationBarrierTest.java": "unit_runtime_installation_barrier",
     b"app/src/test/java/com/subhub/app/runtime/DeviceRuntimeEffectsTest.java": "unit_device_runtime_effects",
     b"app/src/test/java/com/subhub/app/runtime/RuntimeFenceObservationTest.java": "unit_runtime_fence_observation",

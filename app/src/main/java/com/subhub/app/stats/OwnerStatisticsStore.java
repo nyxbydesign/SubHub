@@ -86,6 +86,15 @@ public final class OwnerStatisticsStore implements StatsRepository.OwnerStorage,
             OwnerObservation observation) {
         return transaction(() -> repository.recordEvidence(expected, claim, categories, Objects.requireNonNull(observation)));
     }
+    /** Exact newly seen legacy IDs, returned only after this operation's outer durable ACK. */
+    public int recordLegacyTrackIds(StatsRepository.SessionStamp expected, java.util.List<Integer> trackIds,
+            java.util.Set<String> categories, OwnerObservation observation) {
+        if (writing.get()) throw new IllegalStateException("Legacy delivery requires its outer ACK");
+        java.util.List<Integer> capturedIds = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(Objects.requireNonNull(trackIds)));
+        java.util.Set<String> capturedCategories = java.util.Collections.unmodifiableSet(new java.util.HashSet<>(Objects.requireNonNull(categories)));
+        Objects.requireNonNull(observation);
+        return transaction(() -> repository.recordLegacyTrackIds(expected, capturedIds, capturedCategories, observation));
+    }
     public void beginSession(StatsRepository.NativeSession session) {
         sessionAdmission.run();
         transaction(() -> {

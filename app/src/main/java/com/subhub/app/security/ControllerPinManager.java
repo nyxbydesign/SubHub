@@ -38,6 +38,98 @@ public final class ControllerPinManager {
     private static volatile Context application;
     private static WorkspaceProof localWorkspace;
     private static long workspaceRevision;
+    private static com.subhub.app.runtime.RuntimeAdmissionAuthority.Revocation internalStartEpoch =
+            new com.subhub.app.runtime.RuntimeAdmissionAuthority.Revocation();
+    private static final MutationDomain pinMutations = new MutationDomain();
+    private static final MutationDomain authenticatorMutations = new MutationDomain();
+    private static final MutationDomain roleMutations = new MutationDomain();
+    private static final java.util.Map<Long, MutationOperation> mutations = new java.util.HashMap<>();
+    private static long credentialMutation;
+    private static final class MutationDomain {
+        int outstanding;
+        boolean uncertain;
+        Object failureEpoch = new Object();
+        boolean blocked() { return uncertain || outstanding != 0; }
+    }
+    private static final class MutationOperation {
+        final MutationDomain domain;
+        final Object failuresAtStart;
+        MutationOperation(MutationDomain domain) { this.domain = domain; failuresAtStart = domain.failureEpoch; }
+    }
+
+    /** Start-only evidence. Retiring it never ends an admitted INTERNAL protection session. */
+    public static final class InternalStartWitness {
+        public final long revision;
+        public final com.subhub.app.runtime.RuntimeAdmissionAuthority.Revocation revocation;
+        private InternalStartWitness(long revision,
+                com.subhub.app.runtime.RuntimeAdmissionAuthority.Revocation revocation) {
+            this.revision = revision; this.revocation = revocation;
+        }
+    }
+    /** Owner worker only; actual launch later reads the token's one volatile bit without this lock. */
+    public static InternalStartWitness captureInternalStartWitness(Context source) {
+        Context physical = java.util.Objects.requireNonNull(source).getApplicationContext();
+        if (!(physical instanceof android.app.Application)) throw new SecurityException("Physical application required");
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            if (pinMutations.blocked() || authenticatorMutations.blocked() || roleMutations.blocked()
+                    || !isDomWorkspaceUnlocked()
+                    || !DeviceRolePreferences.supportsDom(physical))
+                throw new SecurityException("Internal start requires current acknowledged controller authority");
+            return new InternalStartWitness(workspaceRevision, internalStartEpoch);
+        }
+    }
+    /** Replaces only the cached start epoch; no callbacks, IO or runtime/session operation. */
+    public static void invalidateInternalStartAuthority() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) { retireInternalStarts(); }
+    }
+    private static void retireInternalStarts() {
+        internalStartEpoch.revoke();
+        internalStartEpoch = new com.subhub.app.runtime.RuntimeAdmissionAuthority.Revocation();
+    }
+    private static long beginCredentialMutation() {
+        return beginMutation(pinMutations);
+    }
+    private static long beginMutation(MutationDomain domain) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            long ticket = Math.incrementExact(credentialMutation);
+            int outstanding = Math.incrementExact(domain.outstanding);
+            retireInternalStarts(); credentialMutation = ticket; domain.outstanding = outstanding;
+            mutations.put(ticket, new MutationOperation(domain));
+            return ticket;
+        }
+    }
+    private static void credentialMutationReturned(long mutation, boolean acknowledged) {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            MutationOperation operation = mutations.remove(mutation);
+            if (operation == null) throw new IllegalStateException("Unknown credential mutation return");
+            MutationDomain domain = operation.domain;
+            domain.outstanding--;
+            if (!acknowledged) {
+                domain.uncertain = true; domain.failureEpoch = new Object();
+                retireInternalStarts();
+            } else if (domain.outstanding == 0 && operation.failuresAtStart == domain.failureEpoch) {
+                // Only a store/domain ACK begun after all known failures can reconcile them.
+                // An overlapping late failure is never hidden by a newer successful operation.
+                domain.uncertain = false;
+            }
+        }
+    }
+    /** Call inside the existing local-authority guard, before changing an authenticator credential. */
+    static boolean mutateRuntimeCredential(java.util.function.BooleanSupplier mutation) {
+        long ticket = beginMutation(authenticatorMutations);
+        boolean acknowledged = false;
+        try { acknowledged = mutation.getAsBoolean(); return acknowledged; }
+        finally { credentialMutationReturned(ticket, acknowledged); }
+    }
+    static long beginRuntimeRoleMutation() { return beginMutation(roleMutations); }
+    static void runtimeRoleMutationReturned(long mutation, boolean acknowledged) {
+        credentialMutationReturned(mutation, acknowledged);
+    }
+    static boolean runtimeRoleNeedsAcknowledgment() {
+        synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
+            return roleMutations.blocked();
+        }
+    }
     private static final class WorkspaceProof {
         final SharedPreferences preferences;
         final String salt, hash;
@@ -82,16 +174,24 @@ public final class ControllerPinManager {
         return !hasCredentials(context) && preferences(context).getBoolean("controller_keyholder_optional", false);
     }
     static boolean allowUnkeyedAccess(Context context) {
-        return withLocalAuthority(() -> preferences(context).edit()
-                .putBoolean("controller_keyholder_optional", true).commit());
+        return withLocalAuthority(() -> {
+            long mutation = beginCredentialMutation(); boolean saved = false;
+            try { saved = preferences(context).edit().putBoolean("controller_keyholder_optional", true).commit(); return saved; }
+            finally { credentialMutationReturned(mutation, saved); }
+        });
     }
     public static boolean useWithoutKeyholder(Context context) {
         return !hasCredentials(context) && allowUnkeyedAccess(context);
     }
     public static boolean removePin(Context context) {
         if (!isDomModeActive() || remoteKeyholderState() != KeyholderProvider.State.NONE) return false;
-        return withLocalAuthority(() -> isDomModeActive() && preferences(context).edit()
-                .remove(KEY_SALT).remove(KEY_HASH).putBoolean("controller_keyholder_optional", true).commit());
+        return withLocalAuthority(() -> {
+            if (!isDomModeActive()) return false;
+            long mutation = beginCredentialMutation(); boolean saved = false;
+            try { saved = preferences(context).edit().remove(KEY_SALT).remove(KEY_HASH)
+                    .putBoolean("controller_keyholder_optional", true).commit(); return saved; }
+            finally { credentialMutationReturned(mutation, saved); }
+        });
     }
 
     public static boolean setPin(Context context, String pin) {
@@ -103,11 +203,13 @@ public final class ControllerPinManager {
         try {
             byte[] hash = derive(value, salt);
             return withLocalAuthority(() -> {
-                boolean saved = preferences(context).edit()
-                        .putBoolean("controller_keyholder_optional", false)
-                        .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
-                        .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
-                        .commit();
+                long mutation = beginCredentialMutation(); boolean saved = false;
+                try {
+                    saved = preferences(context).edit()
+                            .putBoolean("controller_keyholder_optional", false)
+                            .putString(KEY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
+                            .putString(KEY_HASH, Base64.encodeToString(hash, Base64.NO_WRAP)).commit();
+                } finally { credentialMutationReturned(mutation, saved); }
                 if (!saved) return false;
                 enterDomMode();
                 return true;
@@ -164,7 +266,7 @@ public final class ControllerPinManager {
             synchronized (com.subhub.app.appmode.RuntimeSessionIdentity.LOCK) {
                 if (revision != workspaceRevision || !proof.current()) return false;
                 localWorkspace = proof;
-                workspaceRevision++;
+                workspaceRevision++; retireInternalStarts();
                 sessionChanged();
                 return true;
             }
@@ -193,7 +295,7 @@ public final class ControllerPinManager {
 
     private static void invalidateWorkspace() {
         localWorkspace = null;
-        workspaceRevision++;
+        workspaceRevision++; retireInternalStarts();
         sessionChanged();
     }
 
@@ -218,7 +320,7 @@ public final class ControllerPinManager {
     }
 
     public static void enterDomMode() {
-        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=!domModeActive;domModeActive = true;workspaceRevision++;if(changed)sessionChanged();}
+        synchronized(com.subhub.app.appmode.RuntimeSessionIdentity.LOCK){boolean changed=!domModeActive;domModeActive = true;workspaceRevision++;retireInternalStarts();if(changed)sessionChanged();}
     }
 
     public static void enterSubMode() {

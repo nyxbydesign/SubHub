@@ -17,8 +17,8 @@ class DummyPreviewInventoryTest(unittest.TestCase):
     def test_preview_and_real_editor_methods_are_explicit_and_present(self):
         with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "", "GITHUB_EVENT_PATH": ""}):
             selected = native.selectors("", "dummy-preview")
-            self.assertEqual(171, len(selected))
-            self.assertEqual(171, len(set(selected)))
+            self.assertEqual(177, len(selected))
+            self.assertEqual(177, len(set(selected)))
             inventory = native.source_inventory("dummy-preview")
             self.assertEqual(19, len(inventory))
             self.assertEqual(7, len(inventory["com.subhub.app.runtime.DeviceStartResultRegistryAndroidTest"]["selectedMethods"]))
@@ -37,7 +37,7 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             ], inventory["com.subhub.app.remote.DummyPreviewEndpointFixtureAndroidTest"]["selectedMethods"])
             self.assertEqual({"com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest#recordedUsageAndStatsWakeButRejectedUsageAndTelemetryReadsDoNot"},
                     set(selected) & set(native.DEVICE_PASS_SELECTORS))
-            self.assertEqual(33, len(inventory["com.subhub.app.internal.OwnerAccountingAndroidTest"]["selectedMethods"]))
+            self.assertEqual(38, len(inventory["com.subhub.app.internal.OwnerAccountingAndroidTest"]["selectedMethods"]))
             self.assertNotIn("com.subhub.app.censor.android.InternalCensorAndroidTest", inventory)
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
             self.assertEqual(57, len(native.suite_selectors("device-pass")))

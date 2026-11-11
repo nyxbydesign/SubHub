@@ -28,14 +28,17 @@ public final class DeviceRolePreferences {
     /** Established devices require controller authentication; pairing and active protection stay authoritative. */
     public static boolean set(Context context, Mode mode) {
         Objects.requireNonNull(mode);
-        if (get(context) == mode) return true;
+        if (get(context) == mode && !ControllerPinManager.runtimeRoleNeedsAcknowledgment()) return true;
         return ControllerPinManager.withLocalAuthority(() -> {
             synchronized (RuntimeSessionIdentity.LOCK) {
                 if (!People.isLocalConfigurationAllowed()) return false;
                 if (!OnboardingState.isPristine(context)
                         && (!ControllerPinManager.hasCredentials(context) || !ControllerPinManager.isDomModeActive())) return false;
                 if (mode == Mode.DOM_ONLY && hasSubProtection(context)) return false;
-                return preferences(context).edit().putString(KEY_MODE, mode.name()).commit();
+                long mutation = ControllerPinManager.beginRuntimeRoleMutation();
+                boolean saved = false;
+                try { saved = preferences(context).edit().putString(KEY_MODE, mode.name()).commit(); return saved; }
+                finally { ControllerPinManager.runtimeRoleMutationReturned(mutation, saved); }
             }
         });
     }

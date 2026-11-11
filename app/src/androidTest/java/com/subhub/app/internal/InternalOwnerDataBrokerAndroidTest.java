@@ -188,6 +188,40 @@ public final class InternalOwnerDataBrokerAndroidTest {
             next.seal(); later.finishAndRelease(now + 6, next.component::close).get(10, TimeUnit.SECONDS);
         }
     }
+    @Test public void legacyTrackerAndTapFacadesRequireExactNormalOwnerAndDrainAfterStop() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.broker.initialize().get(10, TimeUnit.SECONDS); f.visible(true);
+            RuntimeFixture runtime = new RuntimeFixture(f.data.acknowledged().generation, f.broker.runtimeWorker());
+            InternalOwnerDataBroker.Session session = f.broker.bindRuntime(runtime.lease.identity, runtime.queue);
+            long now = System.currentTimeMillis(); OwnerObservation observed = new OwnerObservation(now + 1, "Pacific/Kiritimati");
+            InternalPenanceRules capturedRules = new InternalPenanceRules(f.data.configuration.snapshotPreferences(
+                    f.data.acknowledged(), com.subhub.app.penance.PenanceManager.PREFS_NAME));
+            runtime.queue.submitStartup(runtime.lease.identity, () -> {
+                StatsRepository.SessionStamp stamp = session.beginSession(new StatsRepository.NativeSession(runtime.lease.identity.session, now, "UTC")).stamp;
+                assertThrows(SecurityException.class, () -> session.recordLegacyTrackIds(stamp, List.of(7), Set.of(), observed));
+                assertThrows(SecurityException.class, () -> session.assessCensoredTap(stamp, capturedRules, false, observed));
+            }).get(10, TimeUnit.SECONDS);
+            runtime.activate(); StatsRepository.SessionStamp stamp = session.acknowledgedSessionStamp();
+            session.executeNormal(() -> {
+                assertThrows(SecurityException.class, () -> session.recordLegacyTrackIds(null, List.of(7), Set.of(), observed));
+                assertThrows(SecurityException.class, () -> session.assessCensoredTap(null, capturedRules, false, observed));
+                assertEquals(2, session.recordLegacyTrackIds(stamp, List.of(7, 7, 8), Set.of("face"), observed));
+                assertEquals(0, session.recordLegacyTrackIds(stamp, List.of(7, 8), Set.of("face"), observed));
+                assertEquals(com.subhub.app.penance.OwnerPenanceLedger.Status.REJECTED,
+                        session.assessCensoredTap(stamp, capturedRules, false, observed).status);
+            }).get(10, TimeUnit.SECONDS);
+            assertEquals(2, f.broker.snapshot(f.data.acknowledged().generation, now + 2).get(10, TimeUnit.SECONDS).statistics.getTotalBlocks());
+            assertThrows(SecurityException.class, () -> session.recordLegacyTrackIds(stamp, List.of(9), Set.of(), observed));
+            assertThrows(SecurityException.class, () -> session.assessCensoredTap(stamp, capturedRules, false, observed));
+            runtime.seal();
+            assertThrows(OwnerWriteQueue.AdmissionRejected.class, () -> session.executeNormal(
+                    () -> session.recordLegacyTrackIds(stamp, List.of(9), Set.of(), observed)));
+            session.finishAndRelease(now + 2, runtime.component::close).get(10, TimeUnit.SECONDS);
+            assertFalse(stamp.isCurrent()); assertNotNull(runtime.registry.drained(runtime.lease));
+            assertEquals(0, f.context.unrelatedPreferenceRequests.get());
+        }
+    }
+
     @Test public void cleanTaskCapacityRejectionPreservesExactLiveStampAndStillDrains() throws Exception {
         Composition fixture = new Composition(true); fixture.start();
         StatsRepository.SessionStamp stamp = fixture.handle.statistics.repository().observedSessionStamp();
