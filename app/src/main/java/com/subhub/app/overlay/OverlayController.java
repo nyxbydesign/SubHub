@@ -19,7 +19,9 @@ public final class OverlayController implements AutoCloseable {
     private final WindowManager windowManager;
     private final CensorOverlayView view;
     private final int windowType;
-    private boolean attached;
+    private boolean attached, windowAttempted;
+    private volatile boolean closureStarted, closureFailed, windowClosed;
+    private final LegacyRenderDependencies dependencies;
 
     public OverlayController(Context context) {
         this(context, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
@@ -27,38 +29,80 @@ public final class OverlayController implements AutoCloseable {
 
     public OverlayController(Context context, int windowType) {
         windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-        view = new CensorOverlayView(context);
+        dependencies = LegacyRenderDependencies.device(context);
+        view = new CensorOverlayView(context, dependencies);
         this.windowType = windowType;
     }
 
+    private OverlayController(Context context, int windowType, LegacyRenderDependencies dependencies) {
+        dependencies.requireHost(context);
+        this.dependencies = dependencies;
+        windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        view = new CensorOverlayView(context, dependencies);
+        this.windowType = windowType;
+        // STARTUP construction, not a NORMAL command or a new adoption/ACK transaction.
+        // Install before this controller can escape. CUSTOM only records artwork demand here.
+        try {
+            com.subhub.app.settings.SettingsRepository initial = com.subhub.app.settings.SettingsRepository
+                    .forPreferences(dependencies.initialConfiguration().main);
+            view.setAppearance(initial.loadAppearance());
+            view.setMaxExtrapolationMs(initial.loadDetectorConfig().getMaxExtrapolationMs());
+        } catch (RuntimeException | Error failure) {
+            // The pre-registered attachment still owns dependencies/executor even if new fails.
+            // Partial View/platform work cannot become a successful cleanup receipt by retry.
+            try { dependencies.cleanupUncertain(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            try { view.release(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    /** Hidden until exact NORMAL admission. Constructor belongs under the attachment's STARTUP gate. */
+    public static OverlayController owned(Context physicalHost, int windowType, LegacyRenderDependencies dependencies) {
+        return new OverlayController(physicalHost, windowType, dependencies);
+    }
+
     public void show() {
-        ensureShown();
+        dependencies.command(() -> {
+            ensureShown();
+        });
     }
 
     /** Cache-identified snapshots retained for rendering; not compositor-visible pixel counts. */
     public int admittedCachedRegionCount(List<Detection> candidates) {
-        return view.admittedCachedRegionCount(candidates);
+        return dependencies.value(() -> {
+            return view.admittedCachedRegionCount(candidates);
+        });
     }
 
     public void dumpRenderLayout(java.io.PrintWriter writer) {
-        view.dumpRenderLayout(writer);
+        dependencies.command(() -> {
+            view.dumpRenderLayout(writer);
+        });
     }
 
     /** Render-only optional coverage; publish raw tracks first. Main-thread calls only. */
     public long beginPersonCoverage(List<Detection> selected, List<Detection> support,
             long capturedAt, long cameraX, long cameraY, int viewportWidth, int viewportHeight,
             RenderSourceReference reference) {
-        return view.beginPersonCoverage(selected, support, capturedAt, cameraX, cameraY,
-                viewportWidth, viewportHeight, reference);
+        return dependencies.value(() -> {
+            return view.beginPersonCoverage(selected, support, capturedAt, cameraX, cameraY,
+                    viewportWidth, viewportHeight, reference);
+        });
     }
 
     public boolean refinePersonCoverage(long token,
             List<com.subhub.app.detection.PersonBox> people) {
-        return view.refinePersonCoverage(token, people);
+        return dependencies.value(() -> {
+            return view.refinePersonCoverage(token, people);
+        });
     }
 
     public void clearPersonCoverage() {
-        view.clearPersonCoverage();
+        dependencies.command(() -> {
+            view.clearPersonCoverage();
+        });
     }
 
     /**
@@ -71,19 +115,26 @@ public final class OverlayController implements AutoCloseable {
      * @return true when a new WindowManager attachment was created.
      */
     public boolean ensureShown() {
-        if (attached && view.isAttachedToWindow()) return false;
-        if (attached) {
-            try {
-                windowManager.removeViewImmediate(view);
-            } catch (IllegalArgumentException ignored) {
-                // WindowManager already forgot this root; addView below is the recovery path.
+        return dependencies.value(() -> {
+            if (attached && view.isAttachedToWindow()) return false;
+            if (attached) {
+                try {
+                    windowManager.removeViewImmediate(view);
+                } catch (IllegalArgumentException ignored) {
+                    // WindowManager already forgot this root; addView below is the recovery path.
+                }
+                attached = false;
             }
-            attached = false;
-        }
-        WindowManager.LayoutParams params = createLayoutParams(windowType);
-        windowManager.addView(view, params);
-        attached = true;
-        return true;
+            WindowManager.LayoutParams params = createLayoutParams(windowType);
+            windowAttempted = true;
+            try { windowManager.addView(view, params); }
+            catch (RuntimeException | Error uncertain) {
+                if (dependencies.internal()) { closureFailed = true; dependencies.fail(); }
+                throw uncertain;
+            }
+            attached = true;
+            return true;
+        });
     }
 
     static WindowManager.LayoutParams createLayoutParams(int windowType) {
@@ -114,7 +165,9 @@ public final class OverlayController implements AutoCloseable {
             int captureWidth,
             int captureHeight,
             Bitmap frame) {
-        update(tracks, captureWidth, captureHeight, frame, 0, 0);
+        dependencies.command(() -> {
+            update(tracks, captureWidth, captureHeight, frame, 0, 0);
+        });
     }
 
     /**
@@ -128,7 +181,9 @@ public final class OverlayController implements AutoCloseable {
             Bitmap frame,
             int motionX,
             int motionY) {
-        view.setTracks(tracks, captureWidth, captureHeight, frame, motionX, motionY);
+        dependencies.command(() -> {
+            view.setTracks(tracks, captureWidth, captureHeight, frame, motionX, motionY);
+        });
     }
 
     /**
@@ -144,8 +199,10 @@ public final class OverlayController implements AutoCloseable {
             int motionY,
             int sourceMotionX,
             int sourceMotionY) {
-        view.setTracks(tracks, captureWidth, captureHeight, frame,
-                motionX, motionY, sourceMotionX, sourceMotionY);
+        dependencies.command(() -> {
+            view.setTracks(tracks, captureWidth, captureHeight, frame,
+                    motionX, motionY, sourceMotionX, sourceMotionY);
+        });
     }
 
     /** Publishes Accessibility geometry in stable content coordinates. */
@@ -160,9 +217,11 @@ public final class OverlayController implements AutoCloseable {
             long sourceCameraY,
             int viewportWidth,
             int viewportHeight) {
-        view.setWorldTracks(tracks, captureWidth, captureHeight, frame,
-                trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
-                viewportWidth, viewportHeight, null);
+        dependencies.command(() -> {
+            view.setWorldTracks(tracks, captureWidth, captureHeight, frame,
+                    trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
+                    viewportWidth, viewportHeight, null);
+        });
     }
 
     /** Publishes live tracks plus render-only cached regions as one immutable display scene. */
@@ -178,19 +237,23 @@ public final class OverlayController implements AutoCloseable {
             long sourceCameraY,
             int viewportWidth,
             int viewportHeight) {
-        updateWorldWithCache(tracks, cachedRegions, captureWidth, captureHeight, frame,
-                trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
-                viewportWidth, viewportHeight, RenderSourceReference.UNKNOWN);
+        dependencies.command(() -> {
+            updateWorldWithCache(tracks, cachedRegions, captureWidth, captureHeight, frame,
+                    trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
+                    viewportWidth, viewportHeight, RenderSourceReference.UNKNOWN);
+        });
     }
 
     public void updateWorldWithCache(List<TrackedObject> tracks, List<Detection> cachedRegions,
             int captureWidth, int captureHeight, Bitmap frame,
             long trackCameraX, long trackCameraY, long sourceCameraX, long sourceCameraY,
             int viewportWidth, int viewportHeight, RenderSourceReference bitmapReference) {
-        view.setWorldTracksAndCache(tracks, cachedRegions,
-                captureWidth, captureHeight, frame,
-                trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
-                viewportWidth, viewportHeight, null, bitmapReference);
+        dependencies.command(() -> {
+            view.setWorldTracksAndCache(tracks, cachedRegions,
+                    captureWidth, captureHeight, frame,
+                    trackCameraX, trackCameraY, sourceCameraX, sourceCameraY,
+                    viewportWidth, viewportHeight, null, bitmapReference);
+        });
     }
 
     /** Re-queries scroll memory while preserving live geometry and the current source frame. */
@@ -202,8 +265,10 @@ public final class OverlayController implements AutoCloseable {
             long cacheCameraY,
             int viewportWidth,
             int viewportHeight) {
-        view.setWorldCacheRegions(cachedRegions, captureWidth, captureHeight,
-                cacheCameraX, cacheCameraY, viewportWidth, viewportHeight);
+        dependencies.command(() -> {
+            view.setWorldCacheRegions(cachedRegions, captureWidth, captureHeight,
+                    cacheCameraX, cacheCameraY, viewportWidth, viewportHeight);
+        });
     }
 
     /** Applies one motion observation and its cache re-entry before the next display draw. */
@@ -219,9 +284,11 @@ public final class OverlayController implements AutoCloseable {
             long cacheCameraY,
             int viewportWidth,
             int viewportHeight) {
-        view.offsetContent(deltaX, deltaY, authoritative, effectiveUptimeMillis);
-        view.setWorldCacheRegions(cachedRegions, captureWidth, captureHeight,
-                cacheCameraX, cacheCameraY, viewportWidth, viewportHeight);
+        dependencies.command(() -> {
+            view.offsetContent(deltaX, deltaY, authoritative, effectiveUptimeMillis);
+            view.setWorldCacheRegions(cachedRegions, captureWidth, captureHeight,
+                    cacheCameraX, cacheCameraY, viewportWidth, viewportHeight);
+        });
     }
 
     /** Publishes a pooled source frame whose release returns it to capture instead of recycling. */
@@ -231,8 +298,10 @@ public final class OverlayController implements AutoCloseable {
             int captureHeight,
             Bitmap frame,
             Runnable frameRelease) {
-        view.setTracks(tracks, captureWidth, captureHeight, frame,
-                0, 0, 0, 0, frameRelease);
+        dependencies.command(() -> {
+            view.setTracks(tracks, captureWidth, captureHeight, frame,
+                    0, 0, 0, 0, frameRelease);
+        });
     }
 
     /** Publishes confirmed settled coverage while preserving any retained effect bitmap. */
@@ -242,8 +311,10 @@ public final class OverlayController implements AutoCloseable {
             int captureHeight,
             int motionX,
             int motionY) {
-        view.setTracksPreservingFrame(
-                tracks, captureWidth, captureHeight, motionX, motionY);
+        dependencies.command(() -> {
+            view.setTracksPreservingFrame(
+                    tracks, captureWidth, captureHeight, motionX, motionY);
+        });
     }
 
     /** Publishes settled Accessibility coverage without changing the canonical camera. */
@@ -255,22 +326,30 @@ public final class OverlayController implements AutoCloseable {
             long trackCameraY,
             int viewportWidth,
             int viewportHeight) {
-        view.setWorldTracksPreservingFrame(tracks, captureWidth, captureHeight,
-                trackCameraX, trackCameraY, viewportWidth, viewportHeight);
+        dependencies.command(() -> {
+            view.setWorldTracksPreservingFrame(tracks, captureWidth, captureHeight,
+                    trackCameraX, trackCameraY, viewportWidth, viewportHeight);
+        });
     }
 
     /** Moves the current lightweight overlay immediately while the next inference is pending. */
     public void setNativeScrollSpline(boolean enabled) {
-        view.setNativeScrollSpline(enabled);
+        dependencies.command(() -> {
+            view.setNativeScrollSpline(enabled);
+        });
     }
 
     public void offsetContent(int deltaX, int deltaY) {
-        offsetContent(deltaX, deltaY, true);
+        dependencies.command(() -> {
+            offsetContent(deltaX, deltaY, true);
+        });
     }
 
     /** Moves content, presenting trustworthy viewport observations without interpolation lag. */
     public void offsetContent(int deltaX, int deltaY, boolean authoritative) {
-        view.offsetContent(deltaX, deltaY, authoritative);
+        dependencies.command(() -> {
+            view.offsetContent(deltaX, deltaY, authoritative);
+        });
     }
 
     /**
@@ -282,24 +361,36 @@ public final class OverlayController implements AutoCloseable {
             int deltaY,
             boolean authoritative,
             long effectiveUptimeMillis) {
-        view.offsetContent(deltaX, deltaY, authoritative, effectiveUptimeMillis);
+        dependencies.command(() -> {
+            view.offsetContent(deltaX, deltaY, authoritative, effectiveUptimeMillis);
+        });
     }
 
     /** Applies presentation-only motion sampled from a refreshable Accessibility node. */
     public void offsetPresentation(int deltaX, int deltaY) {
-        view.offsetPresentation(deltaX, deltaY);
+        dependencies.command(() -> {
+            view.offsetPresentation(deltaX, deltaY);
+        });
     }
 
     public boolean measureViewport(float screenOffsetX, float screenOffsetY, long readStart, long sourceMillis) {
-        return view.measureViewport(screenOffsetX, screenOffsetY, readStart, sourceMillis);
+        return dependencies.value(() -> {
+            return view.measureViewport(screenOffsetX, screenOffsetY, readStart, sourceMillis);
+        });
     }
 
     public boolean measureViewport(float screenOffsetX, float screenOffsetY,
             long readStart, long sourceMillis, RenderSourceReference.Origin origin) {
-        return view.measureViewport(screenOffsetX, screenOffsetY, readStart, sourceMillis, origin);
+        return dependencies.value(() -> {
+            return view.measureViewport(screenOffsetX, screenOffsetY, readStart, sourceMillis, origin);
+        });
     }
 
-    public void clearMeasuredViewport() { view.clearMeasuredViewport(); }
+    public void clearMeasuredViewport() {
+        dependencies.command(() -> {
+            view.clearMeasuredViewport();
+        });
+    }
 
     /** Publishes stabilized Accessibility/OCR geometry without waiting behind visual inference. */
     public void updateText(
@@ -308,7 +399,9 @@ public final class OverlayController implements AutoCloseable {
             int captureHeight,
             int motionX,
             int motionY) {
-        view.setTextDetections(detections, captureWidth, captureHeight, motionX, motionY);
+        dependencies.command(() -> {
+            view.setTextDetections(detections, captureWidth, captureHeight, motionX, motionY);
+        });
     }
 
     /** Publishes Accessibility/OCR text in the same world space as visual tracks. */
@@ -320,43 +413,111 @@ public final class OverlayController implements AutoCloseable {
             long cameraY,
             int viewportWidth,
             int viewportHeight) {
-        view.setWorldTextDetections(detections, captureWidth, captureHeight,
-                cameraX, cameraY, viewportWidth, viewportHeight);
+        dependencies.command(() -> {
+            view.setWorldTextDetections(detections, captureWidth, captureHeight,
+                    cameraX, cameraY, viewportWidth, viewportHeight);
+        });
     }
 
     /** Immediately removes rendered content while keeping the lightweight window ready. */
     public void clear() {
-        view.clearContent();
+        dependencies.command(() -> {
+            view.clearContent();
+        });
     }
 
     public void setAppearance(CensorAppearance appearance) {
-        view.setAppearance(appearance);
+        dependencies.command(() -> {
+            if (dependencies.internal()) throw new IllegalStateException("Use exact owned configuration adoption");
+            view.setAppearance(appearance);
+        });
     }
 
     /** Retains packet provenance independently of whether a Lab recording is still active. */
-    public void setTapSourceLabOwned(boolean labOwned) { view.setTapSourceLabOwned(labOwned); }
+    public void setTapSourceLabOwned(boolean labOwned) {
+        dependencies.command(() -> {
+            view.setTapSourceLabOwned(labOwned);
+        });
+    }
 
     /** A source packet accepted before a scope change cannot rearm billing when drawn late. */
-    public void setTapSource(boolean labOwned, long sourceScope) { view.setTapSource(labOwned, sourceScope); }
+    public void setTapSource(boolean labOwned, long sourceScope) {
+        dependencies.command(() -> {
+            view.setTapSource(labOwned, sourceScope);
+        });
+    }
 
     public void setDiagnostics(String text) {
-        view.setDiagnostics(text);
+        dependencies.command(() -> {
+            view.setDiagnostics(text);
+        });
     }
 
     /** Caps display-rate motion prediction after the most recent detector observation. */
     public void setMaxExtrapolationMs(float value) {
-        view.setMaxExtrapolationMs(value);
+        dependencies.command(() -> {
+            view.setMaxExtrapolationMs(value);
+        });
     }
+
+    /** Main, under the registered adoption receiver. Old output is fenced before ACK/reconcile. */
+    public void adoptOwnedConfiguration(com.subhub.app.runtime.RuntimeConfiguration configuration) {
+        dependencies.adopt(configuration);
+        view.clearContent();
+        com.subhub.app.settings.SettingsRepository settings =
+                com.subhub.app.settings.SettingsRepository.forPreferences(configuration.main);
+        view.setAppearance(settings.loadAppearance());
+        view.setMaxExtrapolationMs(settings.loadDetectorConfig().getMaxExtrapolationMs());
+    }
+    public void acknowledgedConfiguration(com.subhub.app.runtime.RuntimeConfiguration configuration) {
+        dependencies.acknowledged(configuration);
+    }
+    public boolean reconcileArtwork() { return dependencies.reconcileArtwork(view::postInvalidate); }
+    /** Caller retains its exact-owner wake while false, including ordinary gate contention. */
+    public boolean reconcileRendering() {
+        dependencies.requireMain();
+        return dependencies.tryNormal(() -> {
+            if (dependencies.takeRenderDemand()) view.reconcileRendering();
+        }) && !dependencies.needsRenderReconciliation();
+    }
+    public void seal() { dependencies.seal(); }
+    /**
+     * Managed CPU/work/window bookkeeping only. The containing attachment must independently
+     * qualify and drain native/frame consumers before it can release the sole runtime owner.
+     */
+    public boolean managedResourcesDrained() {
+        return closureStarted && !closureFailed && windowClosed && dependencies.managedResourcesDrained();
+    }
+    public boolean cleanupFailed() { return closureFailed || dependencies.cleanupFailed(); }
 
     @Override
     public void close() {
-        if (attached) {
-            try {
-                windowManager.removeViewImmediate(view);
-            } catch (IllegalArgumentException ignored) {
-                view.release();
+        dependencies.requireMain();
+        if (closureStarted) return;
+        closureStarted = true;
+        dependencies.seal();
+        try {
+            if (attached || dependencies.internal() && windowAttempted) {
+                try {
+                    windowManager.removeViewImmediate(view);
+                    attached = false;
+                } catch (IllegalArgumentException missing) {
+                    if (dependencies.internal()) closureFailed = true;
+                    else attached = false; // Existing DEVICE missing-window behavior.
+                } catch (RuntimeException | Error uncertain) {
+                    closureFailed = true;
+                }
             }
-        } else view.release();
-        attached = false;
+        } finally {
+            // Independent cleanup, even if native window removal failed. No failure is a receipt.
+            try { view.release(); }
+            catch (RuntimeException | Error uncertain) { closureFailed = true; }
+            finally {
+                try { dependencies.close(); }
+                catch (RuntimeException | Error uncertain) { closureFailed = true; }
+            }
+            windowClosed = !attached && !view.isAttachedToWindow();
+        }
+        if (closureFailed) throw new IllegalStateException("Legacy renderer closure is uncertain");
     }
 }
