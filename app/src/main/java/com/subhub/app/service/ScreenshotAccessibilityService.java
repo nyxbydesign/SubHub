@@ -137,6 +137,16 @@ public final class ScreenshotAccessibilityService extends AccessibilityService {
 
     public static boolean isCensorRuntimeActive() { return AccessibilityLegacyPipeline.isCensorRuntimeActive(); }
 
+    public boolean legacyCensorRuntimeAbsentForQualification() {
+        AccessibilityLegacyPipeline exact = pipeline;
+        return exact != null && exact.legacyCensorRuntimeAbsentForQualification();
+    }
+
+    public int qualificationBoundPid() {
+        AccessibilityLegacyPipeline exact = pipeline;
+        return exact == null ? -1 : exact.qualificationBoundPid();
+    }
+
     static String observedCensorForeground() { return AccessibilityLegacyPipeline.observedCensorForeground(); }
 
     static SceneTransactionCoordinator.Mode scenePresentationMode(boolean motionSettled) { return AccessibilityLegacyPipeline.scenePresentationMode(motionSettled); }

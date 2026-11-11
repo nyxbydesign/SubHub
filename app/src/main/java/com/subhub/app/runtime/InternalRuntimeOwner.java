@@ -31,6 +31,14 @@ final class InternalRuntimeOwner {
     private final CompletableFuture<InternalOwnerDataBroker.SessionObservation> prepared = new CompletableFuture<>();
     private final CompletableFuture<Void> initializationReturned = new CompletableFuture<>();
     private final RuntimeExecution<RuntimeConfiguration>.Component accounting;
+    private boolean sourceResourcesRetired;
+
+    /** Owner worker, after the factory observes durable IDLE and all component receipts. */
+    void retireSourceResources() {
+        if (sourceResourcesRetired) return;
+        sourceResources.providers.close();
+        sourceResourcesRetired = true;
+    }
 
     /** Owner lifecycle worker only. The immutable start clock was captured at admitted start. */
     InternalRuntimeOwner(ActiveRuntimeCoordinator coordinator, RuntimeLease lease,

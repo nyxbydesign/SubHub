@@ -9,6 +9,35 @@ import java.util.function.Consumer;
 import org.junit.Test;
 
 public final class DeviceCaptureSupervisorTest {
+    @Test public void replacementReadinessCallbackMustReturnBeforeParentIdle() {
+        F f = new F(); f.activate(); f.retire();
+        var next = f.control.replacement(f.control.retired(f.child), f.plan());
+        Object connection = new Object(); var release = next.selection.bind(connection);
+        next.child.installRetirement(c -> c.afterWorkReturned(c::resourcesDrained));
+        assertTrue(next.child.ready(result -> {
+            assertEquals(ActiveRuntimeCoordinator.Result.OK, result);
+            f.runtime.requestStop(); release.returned(connection);
+            assertNull(f.control.retired(next.child));
+            assertTrue(f.coordinator.anyOccupied());
+        }));
+        assertFalse(f.coordinator.anyOccupied());
+    }
+    @Test public void initialReadinessReturnsThroughFactoryObserverBeforeChildRetires() {
+        java.util.ArrayDeque<Runnable> queue = new java.util.ArrayDeque<>();
+        F f = new F(true, true, queue::addLast);
+        f.readiness = result -> {
+            assertEquals(ActiveRuntimeCoordinator.Result.OK, result);
+            f.runtime.requestStop(); f.release.returned(f.connection);
+            while (!queue.isEmpty()) queue.removeFirst().run();
+            assertNull(f.control.retired(f.child));
+            assertTrue(f.coordinator.anyOccupied());
+        };
+        assertTrue(f.child.ready(result -> assertEquals(ActiveRuntimeCoordinator.Result.OK, result)));
+        assertFalse(f.control.captureAvailable());
+        while (!queue.isEmpty()) queue.removeFirst().run();
+        assertNotNull(f.control.retired(f.child));
+        assertFalse(f.coordinator.anyOccupied());
+    }
     @Test public void captureLossKeepsSameParentUntilActualConnectionReturn() {
         F f=new F();f.activate();var owner=f.lease.identity;f.child.retire();assertNull(f.control.retired(f.child));
         assertTrue(f.runtime.runEffect(()->{}));f.release.returned(f.connection);var proof=f.control.retired(f.child);assertNotNull(proof);
@@ -123,7 +152,9 @@ public final class DeviceCaptureSupervisorTest {
         final RuntimeLease lease;final RuntimeExecution<String> runtime;final DeviceRuntimeEffects effects;final DeviceCaptureSupervisor control;final DeviceCaptureSupervisor.Admission admission;final DeviceCaptureSupervisor.Child child;
         final Object connection=new Object();final DeviceCaptureSupervisor.ConnectionRelease release;final AtomicBoolean active=new AtomicBoolean(),current=new AtomicBoolean(true);
         Consumer<DeviceCaptureSupervisor.Child> retiring=c->{};Consumer<DeviceCaptureSupervisor.RetiredReceipt> retired=p->{};
-        F(){this(true,true);}F(boolean closer,boolean bind){authority.completeAvailability(authority.beginAvailability(RuntimeTarget.DEVICE),"generation",1,true);authority.completeAuthorization(authority.beginAuthorization(RuntimeTarget.DEVICE,RuntimeOrigin.LOCAL_UI),1,true);assertEquals(ActiveRuntimeCoordinator.Result.OK,coordinator.reconcileStartup());lease=coordinator.reserve(authority.capture(RuntimeTarget.DEVICE,RuntimeOrigin.LOCAL_UI),Set.of("capture")).lease;assertEquals(ActiveRuntimeCoordinator.Result.OK,coordinator.beginStarting(lease,o->true));runtime=new RuntimeExecution<>(coordinator,lease,"plan");effects=new DeviceRuntimeEffects(coordinator,runtime,lease);control=new DeviceCaptureSupervisor(effects,"capture",active::get,c->retiring.accept(c),p->retired.accept(p));admission=control.initial(plan());assertNotNull(admission);child=admission.child;if(closer)child.installRetirement(c->c.afterWorkReturned(c::resourcesDrained));release=bind?admission.selection.bind(connection):null;}
+        Consumer<ActiveRuntimeCoordinator.Result> readiness = ignored -> {};
+        F(){this(true,true);}F(boolean closer,boolean bind){this(closer,bind,Runnable::run);}
+        F(boolean closer,boolean bind,java.util.concurrent.Executor lifecycle){authority.completeAvailability(authority.beginAvailability(RuntimeTarget.DEVICE),"generation",1,true);authority.completeAuthorization(authority.beginAuthorization(RuntimeTarget.DEVICE,RuntimeOrigin.LOCAL_UI),1,true);assertEquals(ActiveRuntimeCoordinator.Result.OK,coordinator.reconcileStartup());lease=coordinator.reserve(authority.capture(RuntimeTarget.DEVICE,RuntimeOrigin.LOCAL_UI),Set.of("capture")).lease;assertEquals(ActiveRuntimeCoordinator.Result.OK,coordinator.beginStarting(lease,o->true));runtime=new RuntimeExecution<>(coordinator,lease,"plan",lifecycle);effects=new DeviceRuntimeEffects(coordinator,runtime,lease,()->{},result->readiness.accept(result));control=new DeviceCaptureSupervisor(effects,"capture",active::get,c->retiring.accept(c),p->retired.accept(p));admission=control.initial(plan());assertNotNull(admission);child=admission.child;if(closer)child.installRetirement(c->c.afterWorkReturned(c::resourcesDrained));release=bind?admission.selection.bind(connection):null;}
         DeviceCaptureSupervisor.Preparation plan(){return new DeviceCaptureSupervisor.Preparation(1,1,current::get);}
         void activate(){assertTrue(child.ready(r->assertEquals(ActiveRuntimeCoordinator.Result.OK,r)));assertEquals(ActiveRuntimeCoordinator.Result.OK,coordinator.activate(lease));active.set(true);}
         void retire(){child.retire();release.returned(connection);}

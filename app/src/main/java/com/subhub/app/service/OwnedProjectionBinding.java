@@ -156,7 +156,8 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
     /** Immediate admission seal. Previously accepted work/borrowed frames remain owned. */
     @Override public void close() {
         if (!closing.compareAndSet(false, true)) return;
-        try { seal(); } finally { runtime.requestStop(); }
+        try { seal(); }
+        catch (RuntimeException | Error uncertain) { /* Already retained by failCleanup. */ }
         work.seal(() -> {
             try {
                 producer.execute(() -> {
@@ -166,6 +167,7 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
                 });
             } catch (RuntimeException | Error uncertain) { failCleanup(); }
         });
+        runtime.requestStop();
     }
     public boolean managedResourcesDrained() {
         return closing.get() && work.drained() && !cleanupFailed && producer.isTerminated() && endpoint.drained();
@@ -396,12 +398,13 @@ public final class OwnedProjectionBinding<P> implements AutoCloseable {
                 return;
             }
             closeStarted = true;
-            seal();
+            Throwable failure = null;
+            try { seal(); } catch (RuntimeException | Error error) { failure = error; }
             // Retire before any fallible OS operation. Already admitted owner callbacks remain
             // counted; records not yet admitted lose all paths to this endpoint/binding/runtime.
             if (callback != null) callback.retire();
-            Throwable failure = null;
-            try { if (source != null) source.close(); } catch (RuntimeException | Error error) { failure = error; }
+            try { if (source != null) source.close(); }
+            catch (RuntimeException | Error error) { if (failure == null) failure = error; else if (failure != error) failure.addSuppressed(error); }
             try { if (callback != null) projection.unregisterCallback(callback); }
             catch (RuntimeException | Error error) { if (failure == null) failure = error; else failure.addSuppressed(error); }
             try { if (projection != null) projection.stop(); }

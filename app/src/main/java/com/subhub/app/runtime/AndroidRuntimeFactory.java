@@ -937,6 +937,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
                 rejectedBeforeDelivery.remove(selected);return true;
             });
             Binding terminal=current;
+            if(terminal!=null&&terminal.internal!=null)terminal.internal.retireSourceResources();
             if(terminal!=null&&terminal.device!=null&&!terminal.device.activation.isDone())terminal.device.activation.complete(
                     new AppRuntimeGateway.StartResult(AppRuntimeGateway.StartState.CANCELLED,null));
             // Every launched projection has registry obligations. IDLE with an unresolved token

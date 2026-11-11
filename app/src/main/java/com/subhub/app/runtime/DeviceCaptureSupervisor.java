@@ -93,13 +93,18 @@ public final class DeviceCaptureSupervisor {
         }
     }
     boolean captureAvailable() {
+        if (!parentActiveAcknowledged.getAsBoolean()) return false;
         Child child;
         synchronized (lock) {
             child = current;
-            if (sealed || failed || child == null || !child.ready || child.retiring || child.failed
-                    || !child.connectionAssigned || child.connectionReturned) return false;
+            if (!availableLocked(child)) return false;
         }
-        return valid(child.preparation);
+        if (!valid(child.preparation)) return false;
+        synchronized (lock) { return current == child && availableLocked(child); }
+    }
+    private boolean availableLocked(Child child) {
+        return !sealed && !failed && child != null && child.ready && !child.retiring && !child.failed
+                && child.connectionAssigned && !child.connectionReturned;
     }
     /** One wake after original observer return; its dispatch-call return is counted across children. */
     void afterReturned(RetiredReceipt proof, Runnable wakeup) {
@@ -299,26 +304,26 @@ public final class DeviceCaptureSupervisor {
         }
         public boolean ready(Consumer<ActiveRuntimeCoordinator.Result> completion) {
             Objects.requireNonNull(completion);
+            ReadinessDelivery exact = new ReadinessDelivery(completion);
             AtomicReference<ReadinessDelivery> delivery = new AtomicReference<>();
-            boolean admitted;
             try {
-                admitted = effect(true, () -> {
+                effect(true, () -> {
                     synchronized (lock) {
+                        if (readyRequested || retiring || sealed || DeviceCaptureSupervisor.this.failed
+                                || current != this || connectionReturned) return;
                         // Reserve BOTH returns before publication or leaving the admitted effect.
                         observers += 2; notifications += 2;
-                        delivery.set(new ReadinessDelivery(completion));
+                        delivery.set(exact);
                         readyRequested = true;
-                        if (!initial) ready = true;
                     }
                 });
             } catch (RuntimeException | Error uncertain) {
                 fail();
-                ReadinessDelivery exact = delivery.get();
-                if (exact != null) exact.notDispatched();
+                if (delivery.get() != null) exact.notDispatched();
                 throw uncertain;
             }
-            if (!admitted) return false;
-            delivery.get().dispatch();
+            if (delivery.get() == null) return false;
+            exact.dispatch();
             return true;
         }
         /** A callback result is not its actual return, nor the scheduling call's actual return. */
@@ -328,21 +333,33 @@ public final class DeviceCaptureSupervisor {
             private ReadinessDelivery(Consumer<ActiveRuntimeCoordinator.Result> completion) { this.completion = completion; }
             private void dispatch() {
                 try {
-                    if (initial) component.readyAsync(this::invoke);
-                    else invoke(ActiveRuntimeCoordinator.Result.OK);
+                    if (initial) component.readyAsync(this::invoke, this::observerReturned);
+                    else {
+                        boolean success = false;
+                        try { invoke(ActiveRuntimeCoordinator.Result.OK); success = true; }
+                        finally { observerReturned(success); }
+                    }
                 } catch (RuntimeException | Error uncertain) {
                     // A throwing dispatcher may have accepted work. Do not retire its callback.
                     fail(); throw uncertain;
                 } finally { returned(false); }
             }
             private void invoke(ActiveRuntimeCoordinator.Result result) {
+                boolean stillCurrent = result == ActiveRuntimeCoordinator.Result.OK && valid(preparation);
                 synchronized (lock) {
                     if (callbackEntered || callbackReturned) throw new SecurityException("Repeated readiness delivery");
                     callbackEntered = true;
-                    if (initial && result == ActiveRuntimeCoordinator.Result.OK && !retiring && !sealed) ready = true;
+                    if (result == ActiveRuntimeCoordinator.Result.OK) {
+                        if (retiring || sealed || DeviceCaptureSupervisor.this.failed || current != Child.this
+                                || !connectionAssigned || connectionReturned) result = ActiveRuntimeCoordinator.Result.STALE_LEASE;
+                        else if (!stillCurrent) result = ActiveRuntimeCoordinator.Result.CONFIGURATION_CHANGED;
+                        else ready = true;
+                    }
                 }
-                try { completion.accept(result); }
-                catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
+                completion.accept(result);
+            }
+            private void observerReturned(boolean success) {
+                try { if (!success) fail(); }
                 finally { returned(true); }
             }
             private void notDispatched() {
@@ -397,16 +414,37 @@ public final class DeviceCaptureSupervisor {
                 }
             }
             if (close != null) {
-                try { close.accept(retirement); } catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
-                finally { synchronized (lock) { closerReturned = true; } progress(); }
+                try {
+                    close.accept(retirement);
+                } catch (RuntimeException | Error uncertain) {
+                    fail();
+                    throw uncertain;
+                } finally {
+                    synchronized (lock) { closerReturned = true; }
+                    progress();
+                }
             }
             if (afterWork != null) {
-                try { afterWork.run(); } catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
-                finally { synchronized (lock) { disposal--; } progress(); }
+                try {
+                    afterWork.run();
+                } catch (RuntimeException | Error uncertain) {
+                    fail();
+                    throw uncertain;
+                } finally {
+                    synchronized (lock) { disposal--; }
+                    progress();
+                }
             }
             if (resourcesObserver != null) {
-                try { resourcesObserver.accept(resourceProof); } catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
-                finally { synchronized (lock) { disposal--; } progress(); }
+                try {
+                    resourcesObserver.accept(resourceProof);
+                } catch (RuntimeException | Error uncertain) {
+                    fail();
+                    throw uncertain;
+                } finally {
+                    synchronized (lock) { disposal--; }
+                    progress();
+                }
             }
             if (published != null) {
                 boolean returned = false, dispatch = false;
@@ -422,7 +460,9 @@ public final class DeviceCaptureSupervisor {
                         pendingReceipt = null;
                     }
                 }
-                if (dispatch) wake(published);
+                if (dispatch) {
+                    wake(published);
+                }
             }
             drainParent();
         }
@@ -432,11 +472,23 @@ public final class DeviceCaptureSupervisor {
             private Consumer<ChildDrainReceipt> resourcesObserver;
             private Retirement() { }
             public void afterWorkReturned(Runnable observer) {
-                synchronized (lock) { requireOpen(); if (afterWork != null) throw new SecurityException("Observer already installed"); afterWork = Objects.requireNonNull(observer); }
+                synchronized (lock) {
+                    requireOpen();
+                    if (afterWork != null) {
+                        throw new SecurityException("Observer already installed");
+                    }
+                    afterWork = Objects.requireNonNull(observer);
+                }
                 progress();
             }
             public void afterResourcesDrained(Consumer<ChildDrainReceipt> observer) {
-                synchronized (lock) { requireOpen(); if (resourcesObserver != null) throw new SecurityException("Observer already installed"); resourcesObserver = Objects.requireNonNull(observer); }
+                synchronized (lock) {
+                    requireOpen();
+                    if (resourcesObserver != null) {
+                        throw new SecurityException("Observer already installed");
+                    }
+                    resourcesObserver = Objects.requireNonNull(observer);
+                }
                 progress();
             }
             /** Disposal only, never physical mutation authority. Async dispatch/body need separate tickets. */
@@ -451,7 +503,16 @@ public final class DeviceCaptureSupervisor {
             public final class DisposalTicket implements AutoCloseable {
                 private boolean returned;
                 private DisposalTicket() { }
-                @Override public void close() { synchronized (lock) { if (returned) return; returned = true; disposal--; } progress(); }
+                @Override public void close() {
+                    synchronized (lock) {
+                        if (returned) {
+                            return;
+                        }
+                        returned = true;
+                        disposal--;
+                    }
+                    progress();
+                }
             }
         }
     }

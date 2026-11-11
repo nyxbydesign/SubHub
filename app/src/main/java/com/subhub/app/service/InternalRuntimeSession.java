@@ -263,15 +263,21 @@ public final class InternalRuntimeSession implements AccessibilityServiceConnect
         }
     }
     private void completeClose() {
-        List<Runnable> observers;
-        synchronized (closeObservers) {
-            if (drained || cleanupFailed) return;
-            observers = new ArrayList<>(closeObservers); closeObservers.clear();
-        }
         try {
-            for (Runnable observer : observers) observer.run();
+            while (true) {
+                List<Runnable> observers;
+                synchronized (closeObservers) {
+                    if (drained || cleanupFailed) return;
+                    if (closeObservers.isEmpty()) {
+                        drained = true;
+                        break;
+                    }
+                    observers = new ArrayList<>(closeObservers);
+                    closeObservers.clear();
+                }
+                for (Runnable observer : observers) observer.run();
+            }
             afterCoreDrain.run();
-            drained = true;
         } catch (RuntimeException | Error uncertain) { cleanupFailed = true; component.cleanupFailed(); }
     }
     @Override public boolean physicalOccupancy() { return !managedResourcesDrained(); }

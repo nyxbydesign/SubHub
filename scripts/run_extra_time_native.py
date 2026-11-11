@@ -951,8 +951,8 @@ def preprovisioned_host_report(sdk=None):
                     "AndroidVersion.ApiLevel": str(API), "SystemImage.Abi": "x86_64", "SystemImage.TagId": "google_apis"}}
     try:
         command_bin = installed_command_tools(sdk)
-        files += [str((command_bin / name).relative_to(sdk)) for name in ("sdkmanager", "avdmanager")]
-        metadata[str((command_bin.parent / "source.properties").relative_to(sdk))] = {}
+        files += [(command_bin / name).relative_to(sdk).as_posix() for name in ("sdkmanager", "avdmanager")]
+        metadata[(command_bin.parent / "source.properties").relative_to(sdk).as_posix()] = {}
     except RuntimeError:
         missing.append("installed-command-line-tools")
     for relative in files:

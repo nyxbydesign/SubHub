@@ -135,12 +135,20 @@ public final class DeviceRuntimeEffects {
         }
         public void usesNoConfiguration() { registration.usesNoConfiguration(); }
         public void readyAsync(Consumer<ActiveRuntimeCoordinator.Result> completion) {
+            readyAsync(completion, ignored -> { });
+        }
+        /** Supervisor retains the callback through the factory observer's actual return as well. */
+        void readyAsync(Consumer<ActiveRuntimeCoordinator.Result> completion, Consumer<Boolean> afterReturn) {
             Objects.requireNonNull(completion);
+            Objects.requireNonNull(afterReturn);
             registration.readyAsync(result -> {
+                boolean returned = false;
                 try {
                     completion.accept(result);
                     readinessAcknowledged.accept(result);
+                    returned = true;
                 } catch (RuntimeException | Error unavailable) { runtime.requestStop(); throw unavailable; }
+                finally { afterReturn.accept(returned); }
             });
         }
         public void failed() { registration.failed(); }
@@ -191,16 +199,22 @@ public final class DeviceRuntimeEffects {
                         registration.cleanupFailed(); throw uncertain;
                     } finally {
                         synchronized (this) { inFlight--; receipt = takeReceipt(); }
-                        if (receipt != null) receipt.run();
+                        if (receipt != null) {
+                            receipt.run();
+                        }
                         runtime.nativeWorkReturned();
                     }
-                } else if (receipt != null) receipt.run();
+                } else if (receipt != null) {
+                    receipt.run();
+                }
             }
             /** Actual synchronous cleanup body, counted through return. No START/rearm authority. */
             public void run(Runnable action) {
                 Objects.requireNonNull(action);
                 synchronized (this) {
-                    if (drainRequested || failed || acknowledged) throw new SecurityException("DEVICE cleanup retired");
+                    if (drainRequested || failed || acknowledged) {
+                        throw new SecurityException("DEVICE cleanup retired");
+                    }
                     inFlight++;
                 }
                 try { mutations.cleanup(action); }

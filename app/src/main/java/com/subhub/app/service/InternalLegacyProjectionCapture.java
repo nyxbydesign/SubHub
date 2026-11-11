@@ -275,7 +275,9 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
                 new NativeFacts(detector, adopted, sourceEpoch, evidence));
         if (pixels == null) {
             if (sealed.get() || candidate.snapshot != adopted || candidate.epoch != sourceEpoch) completion.complete(() -> {});
-            else post(() -> dispatch(inference, () -> process(candidate, completion)), 16);
+            else normal(() -> {
+                if (!dispatch(inference, () -> process(candidate, completion))) completion.complete(() -> {});
+            }, () -> completion.complete(() -> {}), 16);
             return;
         }
         candidate.pixels = pixels; candidate.frame.close();
@@ -368,19 +370,23 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
         try { if (!work.dispatch(callback -> main.postDelayed(callback, delay), action) && !sealed.get()) fail(); }
         catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
     }
-    private void dispatch(ExecutorService executor, Runnable action) {
-        try { if (!work.dispatch(callback -> { executor.execute(callback); return true; }, action) && !sealed.get()) fail(); }
+    private boolean dispatch(ExecutorService executor, Runnable action) {
+        try {
+            boolean accepted = work.dispatch(callback -> { executor.execute(callback); return true; }, action);
+            if (!accepted && !sealed.get()) fail();
+            return accepted;
+        }
         catch (RuntimeException | Error uncertain) { fail(); throw uncertain; }
     }
     private void fail() { request.runtime.requestStop(); }
     @Override public void seal() {
         if (!sealed.compareAndSet(false, true)) return;
         sourceEligible = false;
-        source.seal(); // BEFORE any late View/source-frame release.
-        if (rendering != null) rendering.seal();
-        if (governor != null) governor.sealOwned();
-        request.resources.taps.clear(); popupHints = Collections.emptyList();
-        if (hints != null) hints.close();
+        cleanup(source::seal); // BEFORE any late View/source-frame release.
+        if (rendering != null) cleanup(rendering::seal);
+        if (governor != null) cleanup(governor::sealOwned);
+        cleanup(request.resources.taps::clear); popupHints = Collections.emptyList();
+        if (hints != null) cleanup(hints::close);
         request.runtime.requestStop();
     }
     @Override public void beginClose(Runnable afterActualDrain) {
@@ -391,8 +397,11 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
     private void closeFromRuntime(Runnable afterDrained) {
         afterCoreDrain = Objects.requireNonNull(afterDrained);
         if (!closing.compareAndSet(false, true)) throw new IllegalStateException("Projection close repeated");
-        seal(); data.close(); source.close(); frames.close();
-        work.seal(() -> {
+        cleanup(this::seal);
+        cleanup(data::close);
+        cleanup(source::close);
+        cleanup(frames::close);
+        cleanup(() -> work.seal(() -> {
             try {
                 inference.execute(() -> {
                     try { if (detector != null) detector.close(); nativeClosed = true; }
@@ -400,15 +409,16 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
                     finally { inference.shutdown(); }
                 });
             } catch (RuntimeException | Error uncertain) { cleanupFailed(); }
+        }));
+        cleanup(() -> {
+            if (!main.post(() -> {
+                if (governor != null) cleanup(governor::close);
+                if (overlay != null) cleanup(overlay::closeFromFreshMainQueue);
+                else if (rendering != null) cleanup(rendering::close);
+                else cleanup(artwork::shutdown);
+                pollDrain();
+            })) cleanupFailed();
         });
-        if (!main.post(() -> {
-            try {
-                if (governor != null) governor.close();
-                if (overlay != null) overlay.closeFromFreshMainQueue();
-                else if (rendering != null) rendering.close(); else artwork.shutdown();
-            } catch (RuntimeException | Error uncertain) { cleanupFailed(); }
-            pollDrain();
-        })) cleanupFailed();
     }
     private void pollDrain() {
         if (failed || drained) return;
@@ -419,13 +429,16 @@ public final class InternalLegacyProjectionCapture implements InternalRuntimeSes
                 && (overlay == null || overlay.managedResourcesDrained() && overlay.nativeResourcesRetired());
         if (!complete) { if (!main.postDelayed(this::pollDrain, 16)) cleanupFailed(); return; }
         try {
-            request.resources.providers.close();
             drained = true;
             List<Runnable> callbacks;
             synchronized (observers) { callbacks = new ArrayList<>(observers); observers.clear(); }
             for (Runnable callback : callbacks) callback.run();
             afterCoreDrain.run();
         } catch (RuntimeException | Error uncertain) { drained = false; cleanupFailed(); }
+    }
+    private void cleanup(Runnable action) {
+        try { action.run(); }
+        catch (RuntimeException | Error uncertain) { cleanupFailed(); }
     }
     private void cleanupFailed() { failed = true; component.cleanupFailed(); }
     @Override public boolean physicalOccupancy() { return !drained; }
