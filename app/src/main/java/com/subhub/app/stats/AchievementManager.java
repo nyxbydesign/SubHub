@@ -80,6 +80,14 @@ public final class AchievementManager {
 
     /** Captured configuration facts for an exact INTERNAL session using visual projection. */
     public static OwnerFacts forInternalProjection(RuntimeConfiguration image) {
+        return forInternalCensor(image, false);
+    }
+
+    public static OwnerFacts forInternalWindow(RuntimeConfiguration image) {
+        return forInternalCensor(image, true);
+    }
+
+    private static OwnerFacts forInternalCensor(RuntimeConfiguration image, boolean windowCapture) {
         java.util.Objects.requireNonNull(image);
         SharedPreferences settings = image.main;
         Set<String> selected = settings.getStringSet(AppModeManager.KEY_INCLUDED_PACKAGES, Collections.emptySet());
@@ -93,6 +101,12 @@ public final class AchievementManager {
             if (rule != PenanceInfraction.PAID_PAUSE && rules.isInfractionEnabled(rule)) enabledRules++;
         }
         final int ledgerRules = enabledRules;
+        TextSmutConfig text = SettingsRepository.forPreferences(settings).loadTextSmutConfig();
+        boolean explicitText = windowCapture && settings.contains(SettingsRepository.KEY_TEXT_SMUT_ENABLED)
+                && text.isEnabled();
+        int textCatalog = windowCapture && settings.contains(SettingsRepository.KEY_TEXT_SMUT_CATEGORIES)
+                && text.isEnabled() && text.getEnabledCategories().containsAll(TextSmutConfig.DEFAULT_CATEGORIES)
+                ? text.getEnabledCategories().size() : 0;
         return new OwnerFacts() {
             @Override public boolean isAccessible() { return true; }
             @Override public long current(String id) {
@@ -102,8 +116,10 @@ public final class AchievementManager {
                     case "limits_dual_guard" -> perApp && total ? 1 : 0;
                     case "wallet_keeper" -> ledgerRules > 0 ? 1 : 0;
                     case "tribute_rulesmith" -> ledgerRules;
+                    case "text_filter_enabled" -> explicitText ? 1 : 0;
+                    case "text_filter_catalog" -> textCatalog;
                     case "app_mode_guardian", "pact_sealed", "pact_long_haul", "hardcore_guardian",
-                            "text_filter_enabled", "text_filter_catalog", "paypal_vault", "paid_pause",
+                            "paypal_vault", "paid_pause",
                             "wallet_paid_10", "wallet_paid_100", "wallet_paid_500", "wallet_paid_1000" -> 0;
                     default -> throw new IllegalArgumentException("Unknown INTERNAL achievement fact");
                 };

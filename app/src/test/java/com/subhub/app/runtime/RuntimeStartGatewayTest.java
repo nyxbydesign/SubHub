@@ -29,7 +29,11 @@ public final class RuntimeStartGatewayTest {
     }
     @Test public void internalPlanNeverSubstitutesModuleOnlyForAnUnreadyPixelSource() {
         assertThrows(IllegalStateException.class, () -> AndroidRuntimeFactory.InternalStartPlan.select(
-                true, com.subhub.app.settings.CaptureMethod.APP_MODE, 35));
+                true, com.subhub.app.settings.CaptureMethod.APP_MODE, 33));
+        AndroidRuntimeFactory.InternalStartPlan window = AndroidRuntimeFactory.InternalStartPlan.select(
+                true, com.subhub.app.settings.CaptureMethod.APP_MODE, 34);
+        assertEquals(com.subhub.app.service.RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW, window.source.mode);
+        assertTrue(window.components.contains(com.subhub.app.censor.android.CensorRuntimeBinding.COMPONENT));
         AndroidRuntimeFactory.InternalStartPlan modules = AndroidRuntimeFactory.InternalStartPlan.select(
                 false, com.subhub.app.settings.CaptureMethod.SCREEN_RECORDING, 26);
         assertEquals(com.subhub.app.service.RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES, modules.source.mode);

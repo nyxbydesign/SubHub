@@ -132,6 +132,20 @@ final class OwnedCensorProductData implements CensorProductData {
         return popupHints.bind(hints);
     }
     @Override public void accountingFailed() { runtime.requestStop(); }
+
+    void recordTap(RuntimeConfiguration configuration, OwnerObservation observed, BooleanSupplier stillCurrent) {
+        EventFacts captured = accounting;
+        if (closed || captured.configuration != configuration) return;
+        queue.submit(() -> {
+            requireSource(stamp);
+            OwnerPenanceLedger.Result result = session.assessCensoredTap(stamp, captured.rules,
+                    captured.censorEnabled, observed);
+            if (result.status != OwnerPenanceLedger.Status.ACKNOWLEDGED)
+                throw new IllegalStateException("Demo tap assessment was not acknowledged");
+            if (result.chargedCents > 0)
+                captured.notifyCharge(PenanceInfraction.CENSORED_TAP, result.chargedCents, observed.at, observed, stillCurrent);
+        });
+    }
     private void requireSource(StatsRepository.SessionStamp source) {
         if (source != stamp || !session.isCurrentStamp(source))
             throw new SecurityException("Different Censor statistics source");

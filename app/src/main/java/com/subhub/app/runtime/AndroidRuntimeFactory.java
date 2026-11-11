@@ -540,7 +540,7 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
         boolean requiresProjection() { return source.mode == RuntimeCaptureHost.Mode.PROJECTION; }
         static InternalStartPlan select(boolean censor, CaptureMethod selected, int sdkInt) {
             Objects.requireNonNull(selected);
-            if (censor && selected != CaptureMethod.SCREEN_RECORDING)
+            if (censor && selected == CaptureMethod.APP_MODE && sdkInt < 34)
                 throw new IllegalStateException("The selected Demo Censor source is not ready");
             boolean projection = censor && selected == CaptureMethod.SCREEN_RECORDING;
             Set<String> required = new java.util.LinkedHashSet<>(Set.of(
@@ -554,9 +554,12 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             if (projection) {
                 required.add(com.subhub.app.service.InternalLegacyProjectionCapture.COMPONENT);
                 required.add(com.subhub.app.service.OwnedProjectionBinding.COMPONENT);
+            } else if (censor) {
+                required.add(com.subhub.app.censor.android.CensorRuntimeBinding.COMPONENT);
             }
             RuntimeCaptureHost.Mode mode = projection
-                    ? RuntimeCaptureHost.Mode.PROJECTION : RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES;
+                    ? RuntimeCaptureHost.Mode.PROJECTION
+                    : censor ? RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW : RuntimeCaptureHost.Mode.ACCESSIBILITY_MODULES;
             return new InternalStartPlan(new RuntimeCaptureHost.CapturePlan(mode, sdkInt), required);
         }
     }
@@ -680,9 +683,19 @@ final class AndroidRuntimeFactory implements RuntimeCaptureHost.Gateway, Interna
             return begin(admitted.attempt, owner -> owner.equals(admitted.attempt.identity())).thenApply(started -> {
                 InternalRuntimeOwner owner = assembleInternal(started, admitted.configuration);
                 try {
-                    return admitted.plan.requiresProjection()
-                            ? awaitInternalProjection(owner, limitsNotice, assessmentNotice)
-                            : awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice, null);
+                    if (admitted.plan.requiresProjection())
+                        return awaitInternalProjection(owner, limitsNotice, assessmentNotice);
+                    if (admitted.plan.source.mode == RuntimeCaptureHost.Mode.ACCESSIBILITY_WINDOW) {
+                        if (android.os.Build.VERSION.SDK_INT < 34)
+                            throw new IllegalStateException("Window capture requires Android 14");
+                        return awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice,
+                                session -> com.subhub.app.censor.android.CensorRuntimeBinding.forDemo(session,
+                                        (identity, kind, cents, currency, observed, stillCurrent) -> {
+                                            if (identity.equals(owner.runtime.identity()) && stillCurrent.getAsBoolean())
+                                                assessmentNotice.assessed(kind, cents, currency, observed);
+                                        }));
+                    }
+                    return awaitInternalAccessibility(owner, admitted.plan.source, limitsNotice, null);
                 } catch (RuntimeException | Error failed) {
                     owner.runtime.requestStop();
                     throw failed;

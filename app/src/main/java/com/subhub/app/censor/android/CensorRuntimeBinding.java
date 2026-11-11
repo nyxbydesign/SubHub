@@ -3,12 +3,14 @@ package com.subhub.app.censor.android;
 import android.accessibilityservice.AccessibilityService;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.accessibility.AccessibilityEvent;
 import androidx.annotation.RequiresApi;
 import com.subhub.app.censor.engine.SceneEngine;
 import com.subhub.app.runtime.ActiveRuntimeCoordinator;
 import com.subhub.app.runtime.RuntimeConfiguration;
 import com.subhub.app.runtime.RuntimeExecution;
 import com.subhub.app.runtime.RuntimeLease;
+import com.subhub.app.service.InternalRuntimeSession;
 import com.subhub.app.service.RuntimeCaptureHost;
 import com.subhub.app.stats.AchievementManager;
 import java.util.ArrayList;
@@ -25,7 +27,10 @@ import java.util.function.Supplier;
  * singleton, telemetry or payment path. API26–33 use separate legacy bindings, never this guard.
  */
 @RequiresApi(34)
-public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment {
+public final class CensorRuntimeBinding implements InternalRuntimeSession.Capture {
+    public static final String COMPONENT = "internal_window_censor";
+    private static final SceneEngine.Policy DEMO_SCENE_POLICY =
+            new SceneEngine.Policy(16, 96, 48, 256, 750, 2_500, .5);
     public interface ForegroundAdmission {
         /**
          * Main-thread cached, exact-owner decision only. False withdraws Censor immediately while
@@ -69,7 +74,26 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
     private volatile Runnable registrationClosed;
     private CensorProductSession product; // Main only, retained through actual native drain.
     private RuntimeConfiguration wanted; // Main only; exact acknowledged demand.
+    private volatile AccessibilityWindowReader.Window approvedForeground;
+    private boolean activated;
+    private long lastTapEvent, lastTapUptime;
     private CensorBindingWork.Ticket wakeTicket; // Main only.
+
+    public static CensorRuntimeBinding forDemo(InternalRuntimeSession session, LocalNotice notices) {
+        RuntimeCaptureHost.InternalRequest exact = session.request();
+        return new CensorRuntimeBinding(exact, COMPONENT, DEMO_SCENE_POLICY, () -> {
+            String ime = android.provider.Settings.Secure.getString(
+                    exact.connection.accessibility().service().getContentResolver(),
+                    android.provider.Settings.Secure.DEFAULT_INPUT_METHOD);
+            int separator = ime == null ? -1 : ime.indexOf('/');
+            return separator > 0 ? ime.substring(0, separator) : "";
+        }, session::protectionEligible, AchievementManager::forInternalWindow, (owner, configuration, window) -> {
+            var evidence = session.modules().evidence();
+            return window != null && evidence != null && evidence.owner.equals(owner)
+                    && evidence.configuration == configuration && evidence.windowId == window.id
+                    && evidence.packageName.equals(window.packageName) && session.modules().eligible(evidence);
+        }, notices);
+    }
 
     /** The factory is called on the same serial owner worker, after the statistics STARTUP ACK. */
     public CensorRuntimeBinding(RuntimeCaptureHost.InternalRequest request, String componentName,
@@ -124,7 +148,8 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
                         (context, lane, configured, partition, fallback) -> VisualDetectorWorker.initializeOwned(
                                 context, lane, configured, partition, fallback, request.resources.providers, request.owner()),
                         () -> {}, () -> data, () -> {},
-                        effect -> !sealed.get() && request.runtime.runEffect(effect), artwork);
+                        effect -> !sealed.get() && request.connection.isConnected()
+                                && request.runtime.runEffect(effect), artwork);
                 product.adoptOwnedConfiguration(data, artwork, adopted);
             })) throw new SecurityException("Censor startup capability revoked");
             CensorBindingWork.Ticket ready = callbacks.begin();
@@ -142,9 +167,64 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
     }
 
     /** Gateway calls only after ACTIVE journal ACK. This is demand, never an activation capability. */
-    @Override public void activationAcknowledged() { enqueueDemand(request.runtime.configuration()); }
+    @Override public void activationAcknowledged() {
+        requireMain();
+        activated = true;
+        enqueueDemand(request.runtime.configuration());
+    }
     /** Exact-owner foreground/usage acknowledgement or ordinary source demand. */
     public void requestReconciliation() { enqueueDemand(request.runtime.configuration()); }
+
+    @Override public void sourceChanged() {
+        sourceEvent(() -> {
+            if (approvedForeground != null && !foreground.eligible(request.owner(), adopted, approvedForeground)) {
+                approvedForeground = null;
+                product.stop();
+            }
+            product.request();
+        });
+    }
+
+    @Override public void accessibilityEvent(AccessibilityEvent event) {
+        Objects.requireNonNull(event);
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED || type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            foregroundChanged(event.getPackageName() == null ? "" : event.getPackageName().toString(),
+                    event.getClassName() == null ? "" : event.getClassName().toString(),
+                    event.getWindowId(), type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+        } else if (approvedForeground != null && approvedForeground.id == event.getWindowId()
+                && event.getPackageName() != null && approvedForeground.packageName.contentEquals(event.getPackageName())) {
+            if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED) scrolled(event);
+            if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+                contentChanged(event.getWindowId(), event.getContentChangeTypes());
+            if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) recordTap(event);
+        }
+    }
+
+    private void recordTap(AccessibilityEvent event) {
+        sourceEvent(() -> request.runtime.runEffect(() -> {
+            AccessibilityWindowReader.Window window = approvedForeground;
+            RuntimeConfiguration configuration = adopted;
+            if (window == null || !product.isActive() || !foreground.eligible(request.owner(), configuration, window)) return;
+            long eventTime = event.getEventTime(), now = android.os.SystemClock.uptimeMillis();
+            if (eventTime <= lastTapEvent || lastTapUptime > 0 && now - lastTapUptime < 500) return;
+            var node = event.getSource();
+            if (node == null) return;
+            try {
+                if (!node.isVisibleToUser() || node.getPackageName() == null
+                        || !window.packageName.contentEquals(node.getPackageName())) return;
+                android.graphics.Rect bounds = new android.graphics.Rect();
+                node.getBoundsInScreen(bounds);
+                if (!request.resources.taps.matchesClickAt(bounds.left, bounds.top, bounds.right, bounds.bottom, eventTime, now)) return;
+            } finally { node.recycle(); }
+            lastTapEvent = eventTime;
+            lastTapUptime = now;
+            data.recordTap(configuration, com.subhub.app.stats.OwnerObservation.capture(System.currentTimeMillis()),
+                    () -> !sealed.get() && request.connection.isConnected() && adopted == configuration
+                            && approvedForeground == window);
+        }));
+    }
 
     /** Service event forwarding for this exact attachment. Raw events are never retained here. */
     public void foregroundChanged(String packageName, String className, int windowId, boolean windowStateChange) {
@@ -159,13 +239,14 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
         // If admission is busy it owns an ordered gap/retry, not a retained recyclable raw event.
         sourceEvent(() -> product.scrolled(event));
     }
-    public void screenChanged(String action) { sourceEvent(() -> product.screenStateChanged(action)); }
-    public void powerChanged() { sourceEvent(() -> product.powerPolicyChanged()); }
+    @Override public void screenChanged(String action) { sourceEvent(() -> product.screenStateChanged(action)); }
+    @Override public void powerChanged() { sourceEvent(() -> product.powerPolicyChanged()); }
     /** Exact owner pause/eligibility changes withdraw the held selection before a fresh lookup. */
     public void protectionChanged() { sourceEvent(() -> product.ownershipChanged()); }
     private void sourceEvent(Runnable demand) {
         requireMain();
-        if (sealed.get() || product == null) return;
+        if (sealed.get() || product == null || !activated) return;
+        if (!request.connection.isConnected()) { seal(); return; }
         CensorBindingWork.Ticket ticket = callbacks.begin();
         if (ticket == null) return;
         try {
@@ -231,9 +312,10 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
             if (sealed.get()) { if (product != null) product.stop(); return; }
             RuntimeConfiguration image = adopted;
             if (!foreground.eligible(request.owner(), image, window)) {
+                approvedForeground = null;
                 if (product != null) product.stop();
                 status = new Status(image, Stage.PENDING_FOREGROUND);
-            }
+            } else approvedForeground = window;
         }
         @Override public void sessionFailure(Throwable failure) {
             status = new Status(adopted, Stage.FAILED); component.failed();
@@ -285,11 +367,7 @@ public final class CensorRuntimeBinding implements RuntimeCaptureHost.Attachment
         if (cleanupFailed || !nativeDrainProved || closeCallbacks.get() != 0) {
             component.cleanupFailed(); return;
         }
-        // All native/model work has actually drained. Cache retirement is RAM-only. The core's
-        // shutdown receipt schedules its own registration/journal work off main; no extra owner
-        // dispatch is needed here and no arbitrary executor exception becomes closure proof.
-        try { request.resources.providers.close(); }
-        catch (RuntimeException | Error failure) { cleanupFailed = true; component.cleanupFailed(); return; }
+        // The runtime owner retires its shared cache after every attached consumer returns.
         List<Runnable> observers;
         synchronized (drainObservers) {
             drained.set(true); status = new Status(adopted, Stage.DRAINED);
