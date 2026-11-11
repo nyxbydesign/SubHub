@@ -169,6 +169,25 @@ User-facing changes from every tagged SubHub release.
 - **Automatically sync Dom configuration edits with durable coalescing** — Dom feature, contract and duration editors now save valid changes automatically without Apply buttons, retain offline edits, and show save or receipt failures without rebuilding the active form.
 - **Connect device activity sync and refine Tasks and profiles** — Use existing activity and app-time events for timely coalesced sync, remove hidden task and journal polling, add accepted-only Completed counts, and clarify profiles and contract details.
 - **Add an isolated view-only Dummy Sub preview** — Hold Back for five seconds on the Add Sub connection page to add or remove a Dummy Sub, then return normally; its separate settings catalog has no real profile, session, relationship or configuration writes.
+- **Add isolated runtime ownership foundation** — Prepare explicit DEVICE and INTERNAL ownership for the internal demo Sub without enabling new application behavior yet.
+- **Persist runtime ownership without implicit resets** — Keep physical runtime ownership unavailable when existing journal evidence is missing, corrupt or uncertain.
+- **Add isolated internal Sub profile and configuration storage** — Prepare an independent editable profile and normal typed configuration without copying or replacing real device data.
+- **Connect isolated internal Sub editors and Tasks** — Add owner-scoped editable profile, settings, favorite and Tasks pages with durable independent data and serialized accounting boundaries.
+- **Preserve first-stop clocks and counted runtime cleanup** — Add reviewed installation admission and DEVICE cleanup protocols, and retain the first exact-owner fence observation rather than extending accounting through later cleanup.
+- **Connect internal Sub Tasks and coherent statistics** — Use isolated internal task authority, bounded indexed pending-effect lanes, owner-local notifications, and immutable clock-consistent statistics projections.
+- **Bind exact start prompts and owner-local Limits admission** — Add reviewed DEVICE entry adapters with exact prompt routes and bounded recovery, counted preinstallation mutation admission, and the isolated Limits binding.
+- **Bind internal start revocation and legacy owner accounting** — Keep internal session starts tied to acknowledged controller changes and give isolated legacy rendering exact-owner counters and nonfinancial tap assessments.
+- **Add owned legacy renderer boundaries and retain current dev** — Prepare isolated legacy artwork and callback lifetimes without changing the normal renderer entry point.
+- **Guard internal journal creation and managed device rendering** — Bind one-time internal journal creation to acknowledged provenance and an exact bootstrap proof.
+- **Add isolated session clock and owned service lifetime prerequisites** — Prepare internal local duration and nonfinancial pause accounting without changing real sessions or activating the unfinished runtime.
+- **Deliver reviewed activity, achievement and loading improvements** — Use consistent subdued progress meters, keep achievement and Activity views current, and retain authorized screen data while refreshing.
+- **Assemble owned Demo Sub MediaProjection capture** — Connect the approved projection token to the actual same-owner Accessibility modules, capture service, and isolated visual accounting.
+- **Bind Demo Start to the acknowledged capture plan** — Reserve the exact profile and controller revision, check that the Accessibility source is connected, and require the selected projection grant before assembly.
+- **Route Demo Start through exact Android permissions** — Give the Demo editor an internal-only start capability that returns each actual Android permission callback and reports ACTIVE only after the exact owner acknowledges activation.
+- **Bind profile session controls to exact runtime receipts** — Wait for the saved Demo duration before Start and keep permission callbacks tied to their attempt across recreation.
+- **Complete Demo profile visibility and session End controls** — Allow an authorized controller to show or hide a Demo profile before the physical runtime is provisioned.
+- **Connect Demo Censor to owned Android window capture** — Use acknowledged Demo foreground allowances, settings and local ledger for Android 14 window capture.
+- **Connect Demo sessions to the bound Accessibility service** — Demo Start can borrow an idle Accessibility source, and End waits for the source to return before acknowledging completion.
 
 ### Fixed
 
@@ -360,6 +379,38 @@ User-facing changes from every tagged SubHub release.
 - **Keep Completed on Tasks and mirror app-time meters correctly** — Keep accepted-only Completed counts on the Tasks page while restoring the overview's original Active, Pending and Scheduled counters, and render app-time meters from the correct side in RTL layouts.
 - **Preview Dummy Sub through real native screens** — Dummy Sub now opens the normal read-only profile and native contract settings with an isolated synthetic configuration, while preserving the five-second Back toggle.
 - **Preserve the Wallet restoration guard in preview** — Keep Wallet preview read-only through the existing lifecycle override while preserving normal saved-rule restoration.
+- **Unify activity and progress bars with a muted plum theme** — Activity trends, app-time allowances, limits, achievements, export and download progress now share a quieter plum fill and rounded styling.
+- **Update live achievement progress and Dom milestones** — Advance streaks inside continuing sessions, show elapsed timed-lock progress, and refresh the open catalog and details.
+- **Retain timed-lock progress when service ends** — Keep completed timed-lock progress in the same transaction that clears service, so the seven-day badge remains earnable after natural expiry or Stop.
+- **Keep live streak dates in the recorded session zone** — Use the same recorded civil timezone for session-day projection and streak recency, preventing westward travel from clearing an ongoing streak.
+- **Keep Activity history visible during updates and add mark all read** — Activity keeps its retained page and current scroll anchor while refreshed facts arrive, avoids rebuilding unchanged rows, and exposes a scoped mark-all-read action for collapsed and older receipts.
+- **Retain authorized achievement content during refresh** — Keep previously rendered achievements and local statistics during same-authority refreshes, show truthful unknown states before first data, and discard cached presentation when role, authority or membership cannot be revalidated.
+- **Fence retained Activity deliveries to the captured authority** — Ignore pending results when the workspace or relationship authority changes before delivery, and fetch fresh facts for the current context.
+- **Preserve streak calendars and revalidate resumed Dom catalogs** — Keep stopped streaks in their recorded session calendar and withhold retained Dom achievement content until membership has been revalidated after a pause.
+- **Revalidate Activity authority and enter the bulk-read continuity gate** — Activity clears revoked or unverified private facts, validates retained pages before resume, and marks the eligible receipt snapshot read under the existing continuity gate.
+- **Keep retained streak composition on one calendar** — Prevent retained session history from reviving an expired streak after travel by evaluating current and recovered progress against the same captured civil date.
+- **Revalidate queued Journal reads and save stored allowance edits** — Journal polling now checks authority before coalescing pending reads and cancels private reads and playback on access loss.
+- **Bind allowance metadata readiness to the displayed app scope** — Restore the selected allowance rows before reusing any prior pending, failed or successful metadata observation.
+- **Recover current streaks only from dated session evidence** — Prevent eastward travel and unzoned activity history from reviving expired streaks while keeping historical activity dates and earned badge eligibility intact.
+- **Preserve streak provenance when a session changes timezone** — Keep expired streaks from returning when a later session starts in a different timezone, without revoking earned badges.
+- **Preserve Android locale metadata in the isolated owner journal** — Allow the exact Android-maintained locale table while preserving strict owner schema, identity and corruption checks.
+- **Keep historical streak awards in a coherent calendar** — Prevent mixed travel dates and persisted session copies from manufacturing a historical streak.
+- **Preserve censor calendar provenance for streak backfill** — Prevent modern device-day censor copies from acquiring legacy streak authority after travel.
+- **Preserve responsive runtime updates on Android 8** — Apply saved runtime settings through separate module and persistence executors, retaining exact-owner permits until actual module return and durable acknowledgment.
+- **Integrate reviewed Activity refresh authority checks** — Keep Activity rows stable during refresh while revalidating peer membership and bulk-read authority before applying changes.
+- **Bind captured DEVICE statistics inside exact startup authority** — Reuse the acknowledged physical statistics repository instead of reconstructing one after startup, and reject a stopped or foreign source before capture delivery.
+- **Preserve Popup activation binding compatibility**
+- **Keep DEVICE rearm refusal compatible with Android 26**
+- **Request extra app time from Overview** — Subs can request more time from an expanded App time row and see immediate progress, pending status or an explanation when requests are unavailable.
+- **Preserve owned capture retirement and native qualification** — Retain the inactive Demo Sub runtime while fixing retired frame callbacks, cleanup ordering, and access to the exact Accessibility qualification witnesses.
+- **Open extra-time notifications in Overview** — New Sub notifications open the expanded app-time row directly, and notifications issued before the update still reach the same Overview.
+- **Observe screen and power changes for owned Demo sessions** — Tie the screen, lock and power observations to the exact internal Accessibility session and retire their registration through its shutdown receipt.
+- **Preserve Overview and Demo roster behavior on development** — Reconcile the internal roster generation guard with the Overview extra-time request revision while retaining the development CI workflow and selector coverage.
+- **Keep projection rejection local to the selected shell** — An owned token cannot stop an incumbent DEVICE capture, a rejected owned shell cannot fall back to DEVICE, and failed owned projection preparation still attempts cleanup for each returned resource.
+- **Fence display capture when its source disconnects** — Stop a disconnected Accessibility source from dispatching, publishing, or lending a screenshot while preserving actual returns for previously admitted resources.
+- **Count legacy session timer work before runtime handover** — Keep boot, pact expiry, and paid-pause restore from starting during a runtime handover, and retain queued timer deliveries until their work returns.
+- **Wait for Demo accounting before attaching capture** — Start attaches capture after the owner data acknowledges the Demo session and after rechecking the same bound Accessibility service.
+- **Complete Demo Sub capture and repeatable session handoff** — Demo Sub starts with its own settings and capture session, then restores ordinary Accessibility after End so the next Demo session can start cleanly.
 
 ### Faster & smoother
 
@@ -420,6 +471,8 @@ User-facing changes from every tagged SubHub release.
 - **Send compact peer state and keep background sync responsive** — Peer sync now records authenticated contact independently of full completion, avoids retransmitting unchanged runtime state, and prioritizes session controls before historical data.
 - **Reuse acknowledged feature sections during configuration sync** — Configuration updates now send hash references for unchanged feature sections when they produce a smaller compressed transfer, reducing duplicate configuration data without adding idle manifests.
 - **Reduce idle background sync and repeated offline retries** — Check quiet active background peers every five minutes and back off unavailable peers to fifteen minutes, without delaying healthy new data, foreground/network recovery, pairing or revocation.
+- **Preserve stored screen values while metadata refreshes** — Show saved app selections and allowances immediately, enrich metadata in place, and coalesce repeated page reads so ongoing work can finish without loading-copy flashes.
+- **Read lightweight roster projections away from the main thread** — Build Dom roster cards from identity, presence and session totals without formatting unused contracts or app allowances.
 
 ### Improved
 
@@ -445,6 +498,15 @@ User-facing changes from every tagged SubHub release.
 - **Integrate the typed relationship presentation boundary** — Keep relationship eligibility, operation state and connection availability distinct in immutable presentation data.
 - **Group Settings by connection, privacy and app controls** — Settings now separates device role, connections, privacy and safety, notifications, Android access, app preferences, and help so related controls are easy to find.
 - **Retain the daily writer pool for supported isolation checks** — Keep the existing single-worker scheduling contract behind an unconfigurable ExecutorService while retaining its private app-owned pool reference.
+- **Integrate reviewed screen continuity before internal Sub surfaces** — Carry the exact reviewed PR73 loading and summary-projection changes into the isolated internal Sub candidate before extending shared person, task and editor surfaces.
+- **Integrate reviewed achievement history before internal runtime scoping** — Preserve reviewed live progress, role grouping and provenance-aware streak history while preparing separate internal Sub accounting.
+- **Separate runtime effect permits from durable lifecycle work** — Keep future internal session callbacks responsive while retaining exact-owner admission, activation acknowledgement and counted shutdown.
+- **Combine muted progress meters with internal Sub foundations** — Use the shared muted progress-meter style alongside the reviewed loading and achievement updates.
+- **Add isolated capture and session ownership adapters** — Prepare owned Censor configuration, capture, provider cache and exact DEVICE continuation boundaries for the editable internal Sub, retaining real callbacks and resources through shutdown.
+- **Preserve owned DEVICE work and renderer retirement boundaries** — Keep native computation concurrent while retaining its exact owner lifetime; separate local DEVICE start-role observation and client renderer retirement from global state and physical drain claims.
+- **Compile exact owned capture consumers without activating them** — Connect the concrete DEVICE factory, backend and capture-service sources in an inactive candidate while preserving the published development fixes and opt-in preprovisioned native qualification.
+- **Preserve inactive Accessibility extraction for code handoff** — Preserve the reviewed full-policy pipeline extraction and its lifecycle fixture updates without enabling the internal runtime.
+- **Carry screenshot source ownership through quality inference** — Keep the existing display and window screenshot algorithms while transferring the exact release action with the retained quality frame.
 
 ### Restored
 
@@ -588,6 +650,14 @@ User-facing changes from every tagged SubHub release.
 - **Expose bounded build failure categories without raw traces** — Keep one complete canonical test, lint and universal APK build while streaming future Gradle failure diagnostics through a fixed-label sanitizer.
 - **Contain parent Bash notifications without losing build status** — Keep version-dependent parent-shell pipeline notices inside the same stderr boundary as reporter failures, while capturing PIPESTATUS immediately in the current shell.
 - **Remove feature-specific native workflows from development** — Stop automatic Extra-time and Dummy preview workflow jobs while retaining their native test inventories and runner for explicitly arranged qualification.
+- **Add opt-in native checks on preprovisioned hosts** — Add a manual native suite choice to Android CI while preserving canonical build and exact-source qualification.
+- **Report bounded unit Java failure categories** — Show fixed unit-test source and error labels with bounded line numbers for future compiler failures, without exposing raw messages, symbols, source excerpts or checkout paths.
+- **Register new runtime unit diagnostic labels** — Keep fixed compiler diagnostics current with the fourteen new ownership and capture regression fixtures.
+- **Add optional native checks to Android CI** — Allow an explicitly selected native suite to run after canonical Android CI on a GitHub-hosted runner with the required SDK and KVM already available.
+- **Reconcile Demo Sub with current development CI** — Keep the qualified development CI policy and document the exact selectors available on the inactive Demo Sub branch.
+- **Register Demo Sub diagnostic source labels** — Add fixed names for the tracked Demo Sub runtime and test files so canonical CI can summarize compilation failures without exposing diagnostics.
+- **Report bounded unit test source labels** — Include up to eight allowlisted source labels when Gradle reports failed JVM tests.
+- **Reconcile development changes for 0.7.0** — Bring Demo Sub and the latest development changes into the 0.7.0 draft while retaining the stable dependency baseline and manual native test selection.
 
 ### Quality
 
@@ -670,6 +740,13 @@ User-facing changes from every tagged SubHub release.
 - **Qualify preview editors in separate bounded contracts** — Keep every real preview editor recreation, read-only input, forged route and live revocation assertion in independently restored native cases without increasing the per-method timeout.
 - **Prepare guarded authentication for explicitly unkeyed fixture guests** — Allow endpoint cleanup regressions to prepare a temporary PIN only for an explicitly unkeyed guest with no credentials, retaining existing credentials, guarded verification and exact restoration.
 - **Keep read-only cleanup contracts independent of guest authentication** — Verify owned endpoint failure cleanup without changing credentials or roles that its read-only snapshot never requires, and assert the original settings and session remain unchanged before failure-safe restoration.
+- **Identify compile-stage failures with fixed diagnostic labels** — Canonical verification now identifies bounded Java, Kotlin and resource build stages without exposing compiler messages, source paths or resource values.
+- **Read theme fixtures with Android-compatible file APIs** — Theme contract tests use readAllBytes with explicit UTF-8 instead of Files.readString, which is absent from Android compile stubs.
+- **Use supported Android file APIs in internal storage fixtures** — Keep the owned-storage isolation and concurrency assertions while replacing Files string helpers introduced after compileSdk35 with byte operations and explicit UTF-8.
+- **Use Android-compatible file APIs in owner fixtures** — Keep the provisioning and persistence regression fixtures compiling against the Android API by using explicit UTF-8 byte reads and writes instead of newer Files string helpers.
+- **Run capture host Android fixtures on the native runner** — Keep the two pure API-boundary contracts in JVM tests and move fourteen unchanged Intent-dependent contracts to the explicitly inventoried Android suite.
+- **Fence stale Demo Start after a visibility change** — Verify that hide and re-add retire a permission-approved reservation and that a delayed callback cannot consume the fresh reservation.
+- **Admit the isolated expiry fixture through the legacy barrier** — Bind the exact registered debug fixture to the physical Application for legacy ticket accounting while preserving its isolated preferences.
 
 ### Maintenance
 
@@ -679,6 +756,8 @@ User-facing changes from every tagged SubHub release.
 - **Integrate isolated censor fixes with current UX** — Combine temporary Censor Lab ownership and source-phase identity matching with the current interface while preserving saved service settings and existing censor quality policy.
 - **Deps: Bump com.google.android.material:material** — Bumps [com.google.android.material:material](https://github.com/material-components/material-components-android) from 1.11.0 to 1.14.0.
 - **Deps: Bump com.microsoft.onnxruntime:onnxruntime-android** — Bumps [com.microsoft.onnxruntime:onnxruntime-android](https://github.com/microsoft/onnxruntime) from 1.20.0 to 1.31.1.
+- **Deps: Bump org.jetbrains.kotlin.android from 2.2.21 to 2.4.21** — Bumps [org.jetbrains.kotlin.android](https://github.com/JetBrains/kotlin) from 2.2.21 to 2.4.21.
+- **Preserve unqualified internal Sub code for OPS handoff** — Preserve the stopped owner, session, capture, accounting and lifecycle work as exact source snapshots for implementation handoff.
 
 </details>
 
