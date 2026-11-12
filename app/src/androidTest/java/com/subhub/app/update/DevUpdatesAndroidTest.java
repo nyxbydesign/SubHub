@@ -78,6 +78,18 @@ public final class DevUpdatesAndroidTest {
         assertFalse(state.automaticChecks());
     }
 
+    @Test public void clearingAFailedDownloadKeepsItsAutomaticAttemptHistory() throws Exception {
+        UpdateCandidate selected = candidate("0.6.5", BuildConfig.VERSION_CODE + 2L);
+        UpdateManifest.Asset asset = selected.manifest.selectAsset(android.os.Build.SUPPORTED_ABIS);
+        long now = System.currentTimeMillis();
+        state.setCandidate(selected);
+        assertTrue(state.reserveAutomaticDownload(asset, now));
+        state.clearDownload(true);
+        UpdateStateStore recreated = new UpdateStateStore(context);
+        assertFalse(recreated.reserveAutomaticDownload(asset, now));
+        assertTrue(recreated.reserveAutomaticDownload(asset, now + java.util.concurrent.TimeUnit.HOURS.toMillis(1)));
+    }
+
     @Test public void channelSwitchInvalidatesCacheDownloadAndInflightPublication() throws Exception {
         state.setDevUpdates(true);
         UpdateCandidate candidate = candidate("0.6.5-dev.123", BuildConfig.VERSION_CODE + 2L);
