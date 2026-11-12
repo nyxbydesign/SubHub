@@ -68,10 +68,18 @@ public final class RemotePersonRepository implements PersonRepository {
             long contact,String error) {
         if(state==RemoteStore.State.REVOKED)return PersonSnapshot.Connection.REVOKED;
         if(state==RemoteStore.State.PENDING)return PersonSnapshot.Connection.PENDING;
-        if(presence.online)return PersonSnapshot.Connection.CONNECTED;
-        // A foreground hello can precede the first completed transport checkpoint.
-        return contact==0 && presence.lastOnlineAt==0 && error.isEmpty()
-                ?PersonSnapshot.Connection.PAIRED:PersonSnapshot.Connection.OFFLINE;
+        PersonSnapshot.Connection connection = activePresence(presence);
+        // A presence hello can precede the first completed transport checkpoint.
+        return connection == PersonSnapshot.Connection.OFFLINE && contact == 0 && presence.lastOnlineAt == 0
+                && !presence.backgroundObserved && error.isEmpty() ? PersonSnapshot.Connection.PAIRED : connection;
+    }
+
+    static PersonSnapshot.Connection activePresence(PeerPresence.Observation presence) {
+        return switch (presence.status) {
+            case ONLINE -> PersonSnapshot.Connection.CONNECTED;
+            case IDLE -> PersonSnapshot.Connection.IDLE;
+            case OFFLINE -> PersonSnapshot.Connection.OFFLINE;
+        };
     }
 
     public PersonSnapshot localProjection(PersonSnapshot local) {

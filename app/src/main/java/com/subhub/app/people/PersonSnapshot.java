@@ -10,7 +10,7 @@ import java.util.Set;
 
 /** Immutable, presentation-ready data. Connection and data freshness are separate facts. */
 public final class PersonSnapshot {
-    public enum Connection { LOCAL, UNPAIRED, PENDING, PAIRED, CONNECTED, OFFLINE, REVOKED, ERROR }
+    public enum Connection { LOCAL, UNPAIRED, PENDING, PAIRED, CONNECTED, IDLE, OFFLINE, REVOKED, ERROR }
     public enum Freshness { CURRENT, STALE, UNKNOWN }
     public enum Capability { VIEW_CONTRACT, EDIT_CONTRACT, VIEW_STATS, MANAGE_CONNECTION, END_SESSION, VIEW_BLACKMAIL }
 
@@ -21,7 +21,7 @@ public final class PersonSnapshot {
     public final long lastSyncedAt;
     /** Verified peer contact, which does not imply that every sync phase completed. */
     public final long lastContactAt;
-    /** Last locally observed authenticated foreground presence; background transport never advances it. */
+    /** Last locally observed Online evidence. Explicit background activity never advances it. */
     public final long lastOnlineAt;
     public final Set<Capability> capabilities;
     public final List<Section> sections;
