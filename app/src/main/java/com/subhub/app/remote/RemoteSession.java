@@ -12,7 +12,7 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
-        default JSONObject presence() throws Exception { return null; }
+        default JSONObject presence(Boolean previousForeground) throws Exception { return null; }
         default void presenceReceived(RemoteStore.Peer peer) { }
         default int appIconsVersion() { return 0; }
         default void appIcons(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
@@ -60,15 +60,25 @@ public final class RemoteSession {
     }
     private static final int MAX_ASSET_REQUESTS=16,MAX_ASSET_CHUNKS=64,MAX_BATCHES=64;
     private static final int NEEDS_ASSETS=1,BULK_PENDING=2;
+    private static final String PROFILE_DIGEST = "profileDigestV1";
+    private static final int MIN_PROFILE_REFERENCE_CHARS = 1024;
     private final RemoteStore store;
     private final PeerTransport transport;
     private final Hooks hooks;
+    private Boolean sentForeground;
+    private String presenceLocalIdentity;
 
     public RemoteSession(RemoteStore store,PeerTransport transport,Hooks hooks) {
         this.store=store;this.transport=transport;this.hooks=hooks;
     }
 
     public void outgoing(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadlineNanos) throws Exception {
+        outgoing(connection, peer, deadlineNanos, null);
+    }
+
+    void outgoing(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadlineNanos,
+            Runnable helloAcknowledged) throws Exception {
+        sentForeground = null;
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         // App-time metadata is the last negotiated compatibility for this pairing, not liveness.
@@ -76,11 +86,15 @@ public final class RemoteSession {
         // for a legacy peer, and this exchange uses its own freshly negotiated extraTime flag.
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
-        JSONObject hello = message("hello",peer).put("route",transport.inviteRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
+        JSONObject hello = message("hello",peer).put("route",transport.syncRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
-        if (hooks.profileVersion() == 1) hello.put("profileVersion", 1);
+        String retainedProfile = "";
+        if (hooks.profileVersion() == 1) {
+            hello.put("profileVersion", 1);
+            retainedProfile = advertiseRetainedProfile(hello, peer);
+        }
         if (hooks.profileVersion() == 1 && hooks.profileDetailsVersion() == 1) hello.put("profileDetailsVersion", 1);
         if (hooks.profileVersion() == 1 && hooks.profileRoleVersion() == 1) hello.put("profileRoleVersion", 1);
         if (hooks.journalVersion() == 1) hello.put("journalVersion", 1);
@@ -92,10 +106,11 @@ public final class RemoteSession {
         send(connection,hello,deadlineNanos);
         JSONObject response=read(connection,deadlineNanos);
         if("revoked".equals(response.optString("type")) && peer.generation.equals(response.optString("generation"))) {
-            requireType(connection,response,"revoked",peer);store.revokeAuthenticatedPeer(connection,peer);
+            requireType(response,"revoked",peer);store.revokeAuthenticatedPeer(connection,peer);
             send(connection,message("revoked_ack",peer),deadlineNanos);return;
         }
-        requireType(connection,response,"hello_ack",peer);
+        requireType(response,"hello_ack",peer);
+        if (helloAcknowledged != null) helloAcknowledged.run();
         boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
@@ -105,23 +120,30 @@ public final class RemoteSession {
         store.putMetadata(peer.identity, peer.generation, "journal_version", journal ? "1" : "0");
         store.putMetadata(peer.identity, peer.generation, "journal_titles_version",
                 journal && journalTitlesVersion(response) == 1 && hooks.journalTitlesVersion() == 1 ? "1" : "0");
-        store.putMetadata(peer.identity,peer.generation,"tasks_version",tasksVersion(response)==1 && hooks.tasksVersion()==1 ? "1" : "0");
+        boolean tasks = tasksVersion(response) == 1 && hooks.tasksVersion() == 1;
+        store.putMetadata(peer.identity,peer.generation,"tasks_version",tasks ? "1" : "0");
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",
-                tasksVersion(response)==1 && hooks.tasksVersion()==1 && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
+                tasks && cancelVersion(response)==1 && hooks.taskCancelVersion()==1 ? "1" : "0");
         receiveDisplayName(response, peer);
         boolean details = profileDetailsVersion(response) == 1 && hooks.profileDetailsVersion() == 1;
         boolean roleIdentity = profileRoleVersion(response) == 1 && hooks.profileRoleVersion() == 1;
-        if (profileVersion(response) == 1 && hooks.profileVersion() == 1) {
-            send(connection, message("profile", peer).put("profile", hooks.profile(peer, details, roleIdentity)), deadlineNanos);
-            JSONObject profile = read(connection, deadlineNanos); requireType(connection,profile, "profile", peer);
-            RemoteProfiles.receive(store, peer, profile.getJSONObject("profile"), details, roleIdentity);
+        boolean profileSync = profileVersion(response) == 1 && hooks.profileVersion() == 1;
+        boolean activity = activityVersion(response) == 2;
+        boolean appIcons = appIconsVersion(response) == 1 && localAppIcons == 1;
+        boolean authenticate = response.has("authVersion");
+        if (authenticate && RemoteProtocol.integer(response, "authVersion") != 1)
+            throw new SecurityException("Unsupported keyholder provisioning");
+        receivePresence(connection, response);
+        if (profileSync) {
+            sendProfile(connection, peer, response, details, roleIdentity, deadlineNanos);
+            receiveProfile(connection, peer, retainedProfile, details, roleIdentity, deadlineNanos);
         }
-        if(response.has("authVersion")){if(RemoteProtocol.integer(response,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");hooks.authenticate(connection,peer,deadlineNanos);}
-        exchange(connection,peer,deadlineNanos,activityVersion(response)==2,tasksVersion(response)==1 && hooks.tasksVersion()==1,journal,controls,
-                appIconsVersion(response)==1 && localAppIcons==1,priority,extraTime);
+        if (authenticate) hooks.authenticate(connection, peer, deadlineNanos);
+        exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls,appIcons,priority,extraTime);
     }
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
+        sentForeground = null;
         store.authorityAccess(()->null);
         String identity=RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
         String generation=RemoteProtocol.identifier(hello.getString("generation"));
@@ -130,7 +152,7 @@ public final class RemoteSession {
             send(connection,message("revoked",peer),deadlineNanos);
             terminalDrain(connection,"revoked_ack",peer,deadlineNanos);return;
         }
-        requirePeer(connection,peer);requireType(connection,hello,"hello",peer);
+        requirePeer(connection,peer);requireType(hello,"hello",peer);
         // Preserve last-known app-time compatibility until this hello can be negotiated.
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(hello) == 1 && hooks.sessionControlVersion() == 1;
@@ -155,7 +177,11 @@ public final class RemoteSession {
         boolean titles = journal && journalTitlesVersion(hello) == 1 && hooks.journalTitlesVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "journal_titles_version", titles ? "1" : "0");
         if (titles) ready.put("journalTitlesVersion", 1);
-        if (profile) ready.put("profileVersion", 1);
+        String retainedProfile = "";
+        if (profile) {
+            ready.put("profileVersion", 1);
+            retainedProfile = advertiseRetainedProfile(ready, peer);
+        }
         if (details) ready.put("profileDetailsVersion", 1);
         if (roleIdentity) ready.put("profileRoleVersion", 1);
         if(hello.has("authVersion")){if(RemoteProtocol.integer(hello,"authVersion")!=1)throw new SecurityException("Unsupported keyholder provisioning");ready.put("authVersion",1);}
@@ -167,33 +193,84 @@ public final class RemoteSession {
         boolean cancellation = tasks && cancelVersion(hello)==1 && hooks.taskCancelVersion()==1;
         store.putMetadata(peer.identity,peer.generation,"tasks_cancel_version",cancellation ? "1" : "0");
         if (cancellation) ready.put("taskCancelVersion",1);
+        receivePresence(connection, hello);
         send(connection,ready,deadlineNanos);
         if (profile) {
-            JSONObject received = read(connection, deadlineNanos); requireType(connection,received, "profile", peer);
-            RemoteProfiles.receive(store, peer, received.getJSONObject("profile"), details, roleIdentity);
-            send(connection, message("profile", peer).put("profile", hooks.profile(peer, details, roleIdentity)), deadlineNanos);
+            receiveProfile(connection, peer, retainedProfile, details, roleIdentity, deadlineNanos);
+            sendProfile(connection, peer, hello, details, roleIdentity, deadlineNanos);
         }
         if(hello.has("authVersion"))hooks.authenticate(connection,peer,deadlineNanos);
         exchange(connection,peer,deadlineNanos,activity,tasks,journal,controls,appIcons,priority,extraTime);
     }
 
+    /** A peer advertising this optional digest can accept an exact reference in its normal profile frame. */
+    private String advertiseRetainedProfile(JSONObject frame, RemoteStore.Peer peer) throws JSONException {
+        String digest = retainedProfileDigest(peer);
+        if (!digest.isEmpty()) frame.put(PROFILE_DIGEST, digest);
+        return digest;
+    }
+
+    private String retainedProfileDigest(RemoteStore.Peer peer) {
+        try {
+            String record = store.profile(peer.identity, peer.generation);
+            return record.length() >= MIN_PROFILE_REFERENCE_CHARS ? profileDigest(record) : "";
+        } catch (IllegalArgumentException | IllegalStateException unreadable) {
+            return ""; // A missing or unreadable cache must request the full record.
+        }
+    }
+
+    private static String profileDigest(String record) {
+        return RemoteProtocol.sha256(record.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private void sendProfile(PeerTransport.Connection connection, RemoteStore.Peer peer, JSONObject hello,
+            boolean details, boolean roleIdentity, long deadline) throws Exception {
+        requirePeer(connection, peer);
+        JSONObject profile = hooks.profile(peer, details, roleIdentity);
+        JSONObject frame = message("profile", peer);
+        Object known = hello.opt(PROFILE_DIGEST);
+        if (known instanceof String && ((String) known).matches("[0-9a-f]{64}")
+                && known.equals(profileDigest(RemoteProtocol.canonical(profile)))) {
+            frame.put(PROFILE_DIGEST, known);
+        } else {
+            frame.put("profile", profile);
+        }
+        send(connection, frame, deadline);
+    }
+
+    private void receiveProfile(PeerTransport.Connection connection, RemoteStore.Peer peer, String advertisedDigest,
+            boolean details, boolean roleIdentity, long deadline) throws Exception {
+        JSONObject frame = read(connection, deadline);
+        requireType(frame, "profile", peer);
+        requirePeer(connection, peer);
+        if (frame.has(PROFILE_DIGEST)) {
+            if (frame.has("profile") || advertisedDigest.isEmpty()
+                    || !advertisedDigest.equals(frame.get(PROFILE_DIGEST))
+                    || !advertisedDigest.equals(retainedProfileDigest(peer))) {
+                throw new JSONException("Unexpected profile reference");
+            }
+        } else if (RemoteProfiles.receive(store, peer, frame.getJSONObject("profile"), details, roleIdentity)) {
+            recordDataPresence(peer);
+        }
+    }
+
     public void sendRevocation(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {
         store.authorityAccess(()->{RemoteStore.Peer current=store.peer(peer.identity,peer.generation);if(current==null||current.state!=RemoteStore.State.REVOKED||current.localRole!=peer.localRole)throw new SecurityException("Current revocation required");return null;});
         if(peer.state!=RemoteStore.State.REVOKED || !peer.identity.equals(connection.authenticatedPeerIdentity()))throw new SecurityException("Invalid revocation target");
-        send(connection,message("revoke",peer),deadline);requireType(connection,read(connection,deadline),"revoke_ack",peer);
+        send(connection,message("revoke",peer),deadline);requireType(read(connection,deadline),"revoke_ack",peer);
         store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
         try{send(connection,message("revoke_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Revocation receipt is already durable. */}
     }
     public void receiveRevocation(PeerTransport.Connection connection,JSONObject frame,long deadline) throws Exception {
         RemoteStore.Peer peer=store.peer(connection.authenticatedPeerIdentity(),RemoteProtocol.identifier(frame.getString("generation")));
-        if(peer==null)throw new SecurityException("Unknown relationship");requireType(connection,frame,"revoke",peer);
+        if(peer==null)throw new SecurityException("Unknown relationship");requireType(frame,"revoke",peer);
         store.revokeAuthenticatedPeer(connection,peer);store.putMetadata(peer.identity,peer.generation,"revocation_delivered","true");
         send(connection,message("revoke_ack",peer),deadline);terminalDrain(connection,"revoke_complete",peer,deadline);
     }
 
     private void terminalDrain(PeerTransport.Connection connection,String type,RemoteStore.Peer peer,long deadline)throws Exception {
         // A QUIC connection close can overtake buffered stream bytes. Keep the reply alive until its receipt.
-        try{requireType(connection,read(connection,deadline),type,peer);}catch(IOException closedAfterReply){/* The terminal application state is already committed. */}
+        try{requireType(read(connection,deadline),type,peer);}catch(IOException closedAfterReply){/* The terminal application state is already committed. */}
     }
 
     private void receiveDisplayName(JSONObject frame, RemoteStore.Peer peer) throws JSONException {
@@ -307,7 +384,10 @@ public final class RemoteSession {
             if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
-            send(connection,message("done",peer),deadline);requireType(connection,read(connection,deadline),"done_ack",peer);
+            send(connection,message("done",peer),deadline);
+            JSONObject doneAck = read(connection, deadline);
+            requireType(doneAck, "done_ack", peer);
+            receivePresence(connection, doneAck);
             try{send(connection,message("done_complete",peer),deadline);}catch(IOException closedAfterReceipt){/* Both peers have acknowledged the exchange. */}
         } else {
             if (priority) {
@@ -330,7 +410,11 @@ public final class RemoteSession {
             if (controls && !priority) hooks.sessionControl(connection,peer,deadline);
             if (appIcons) { checkActive(peer); hooks.appIcons(connection,peer,deadline); }
             if (extraTime) { checkActive(peer); hooks.extraTime(connection,peer,deadline); }
-            requireType(connection,read(connection,deadline),"done",peer);send(connection,message("done_ack",peer),deadline);terminalDrain(connection,"done_complete",peer,deadline);
+            JSONObject done = read(connection, deadline);
+            requireType(done, "done", peer);
+            receivePresence(connection, done);
+            send(connection,message("done_ack",peer),deadline);
+            terminalDrain(connection,"done_complete",peer,deadline);
         }
         hooks.complete(peer);store.synced(peer.identity,peer.generation,System.currentTimeMillis());
     }
@@ -372,6 +456,7 @@ public final class RemoteSession {
             if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
             while(batches<limit) {
                 checkActive(peer);
+                if(!store.hasPendingBatch(peer.identity,peer.generation,stream)) break;
                 RemoteProtocol.Batch batch=store.nextBatch(peer.identity,peer.generation,stream);
                 if(batch.changes.isEmpty()) break;
                 boolean sectionCandidate=phase==0&&(stream==RemoteProtocol.Stream.CONFIGURATION||stream==RemoteProtocol.Stream.BASELINE);
@@ -396,7 +481,7 @@ public final class RemoteSession {
         if(phase==0) complete.put("bulkPending",bulk);
         send(connection,complete,deadline);
         if(phase>=0) {
-            JSONObject receipt=read(connection,deadline);requireType(connection,receipt,"state_ack",peer);
+            JSONObject receipt=read(connection,deadline);requireType(receipt,"state_ack",peer);
             if(RemoteProtocol.integer(receipt,"phase")!=phase)throw new IOException("Unmatched state receipt");
             if(phase==0) {
                 Object pending=receipt.get("assetsPending");
@@ -411,7 +496,7 @@ public final class RemoteSession {
         for(RemoteProtocol.Stream stream:RemoteProtocol.Stream.values()) {
             if(stream.writer!=peer.localRole||core(stream)||stream==RemoteProtocol.Stream.CONTRACTS)continue;
             if(stream==RemoteProtocol.Stream.EVENTS&&!activity)continue;
-            if(!store.nextBatch(peer.identity,peer.generation,stream).changes.isEmpty())return true;
+            if(store.hasPendingBatch(peer.identity,peer.generation,stream))return true;
         }
         return false;
     }
@@ -435,7 +520,7 @@ public final class RemoteSession {
     }
 
     private boolean pushAssets(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline,boolean readiness) throws Exception {
-        JSONObject wanted=read(connection,deadline);requireType(connection,wanted,"asset_wants",peer);
+        JSONObject wanted=read(connection,deadline);requireType(wanted,"asset_wants",peer);
         JSONArray rows=wanted.getJSONArray("assets");
         if(rows.length()>MAX_ASSET_REQUESTS) throw new IOException("Too many asset requests");
         int chunks=0;
@@ -453,7 +538,7 @@ public final class RemoteSession {
                 byte[] bytes=source.chunk(need.hash,offset);
                 send(connection,message("asset_chunk",peer).put("hash",need.hash).put("length",need.length)
                         .put("offset",offset).put("data",Base64.getEncoder().encodeToString(bytes)),deadline);
-                JSONObject ack=read(connection,deadline);requireType(connection,ack,"asset_ack",peer);
+                JSONObject ack=read(connection,deadline);requireType(ack,"asset_ack",peer);
                 if(!need.hash.equals(ack.getString("hash")) || RemoteProtocol.integer(ack,"offset")!=offset+bytes.length) {
                     throw new IOException("Unmatched asset acknowledgement");
                 }
@@ -462,7 +547,7 @@ public final class RemoteSession {
             if(chunks>=MAX_ASSET_CHUNKS || remainingMillis(deadline)<=1500) break;
         }
         send(connection,message("assets_complete",peer),deadline);
-        JSONObject receipt=read(connection,deadline);requireType(connection,receipt,"phase_ack",peer);
+        JSONObject receipt=read(connection,deadline);requireType(receipt,"phase_ack",peer);
         if(readiness) {
             Object pending=receipt.get("assetsPending");
             if(!(pending instanceof Boolean))throw new IOException("Invalid asset readiness receipt");
@@ -483,14 +568,16 @@ public final class RemoteSession {
             checkActive(peer);
             JSONObject frame=read(connection,deadline);
             if("state_complete".equals(frame.optString("type"))) {
-                requireType(connection,frame,"state_complete",peer);
+                requireType(frame,"state_complete",peer);
                 if(phase>=0 && RemoteProtocol.integer(frame,"phase")!=phase)throw new IOException("Unexpected state phase");
                 if(phase==0) {
                     Object queued=frame.get("bulkPending");
                     if(!(queued instanceof Boolean))throw new IOException("Invalid bulk checkpoint");
                     bulk=(Boolean)queued;
                 }
-                store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"),activity);break;
+                store.confirmHeads(peer.identity,peer.generation,frame.getJSONObject("heads"),activity);
+                receivePresence(connection, frame);
+                break;
             }
             if(++count>limit) throw new IOException("Too many sync batches");
             RemoteProtocol.Batch batch;
@@ -505,8 +592,10 @@ public final class RemoteSession {
             } else batch=RemoteProtocol.Batch.parse(frame);
             if(phase>=0 && core(batch.stream)!=(phase==0))throw new IOException("Unexpected stream phase");
             if(batch.stream==RemoteProtocol.Stream.EVENTS&&!activity)throw new SecurityException("Activity capability was not negotiated");
-            RemoteProtocol.Ack ack=store.receive(peer.identity,batch);
-            send(connection,ack.json(),deadline);
+            if (!peer.generation.equals(batch.generation)) throw new SecurityException("Sync generation changed");
+            RemoteStore.BatchReceipt receipt = store.receiveBatch(peer.identity, batch);
+            if (receipt.acceptedData) recordDataPresence(peer);
+            send(connection, receipt.ack.json(), deadline);
             hooks.received(peer,batch.stream);
         }
         if(phase>=0) {
@@ -530,11 +619,11 @@ public final class RemoteSession {
             checkActive(peer);
             JSONObject frame=read(connection,deadline);
             String type=frame.getString("type");
-            if("assets_complete".equals(type)) { requireType(connection,frame,"assets_complete",peer);break; }
+            if("assets_complete".equals(type)) { requireType(frame,"assets_complete",peer);break; }
             if("asset_unavailable".equals(type)) {
-                requireType(connection,frame,"asset_unavailable",peer);requireRequested(needs,frame.getString("hash"));continue;
+                requireType(frame,"asset_unavailable",peer);requireRequested(needs,frame.getString("hash"));continue;
             }
-            requireType(connection,frame,"asset_chunk",peer);
+            requireType(frame,"asset_chunk",peer);
             if(++chunks>MAX_ASSET_CHUNKS) throw new IOException("Too many asset chunks");
             AssetNeed need=requireRequested(needs,frame.getString("hash"));
             if(RemoteProtocol.integer(frame,"length")!=need.length) throw new IOException("Conflicting asset length");
@@ -574,19 +663,23 @@ public final class RemoteSession {
     private static JSONObject message(String type,RemoteStore.Peer peer) throws JSONException {
         return new JSONObject().put("version",1).put("type",type).put("generation",peer.generation);
     }
-    private void requireType(PeerTransport.Connection connection,JSONObject message,String type,RemoteStore.Peer peer) throws JSONException,IOException {
+    private static void requireType(JSONObject message,String type,RemoteStore.Peer peer) throws JSONException {
         RemoteProtocol.requireVersion(message);
         if(!type.equals(message.getString("type")) || !peer.generation.equals(message.getString("generation"))) {
             throw new JSONException("Unexpected peer message");
         }
-        receivePresence(connection,message);
     }
     private void send(PeerTransport.Connection connection,JSONObject frame,long deadline) throws IOException {
         String type=frame.optString("type");
         if("hello".equals(type)||"hello_ack".equals(type)||"state_complete".equals(type)
                 ||"done".equals(type)||"done_ack".equals(type)) {
-            try { JSONObject presence=hooks.presence();if(presence!=null)frame.put("presence",presence); }
-            catch(Exception unavailable) { /* Presence failure must not block durable synchronization. */ }
+            try {
+                JSONObject presence = hooks.presence(sentForeground);
+                if (presence != null) {
+                    frame.put("presence", presence);
+                    sentForeground = presence.getBoolean("foreground");
+                }
+            } catch (Exception unavailable) { /* Presence failure must not block durable synchronization. */ }
         }
         connection.setReadTimeoutMillis(Math.min(10_000,remainingMillis(deadline)));
         RemoteProtocol.write(connection.output(),frame);
@@ -600,6 +693,19 @@ public final class RemoteSession {
         JSONObject frame=RemoteProtocol.read(connection.input());
         return frame;
     }
+    private boolean remotePresence(RemoteStore.Peer peer) {
+        if (presenceLocalIdentity == null) presenceLocalIdentity = transport.localIdentity();
+        return !peer.identity.equals(presenceLocalIdentity);
+    }
+
+    private void recordDataPresence(RemoteStore.Peer peer) {
+        try {
+            if (!remotePresence(peer)) return;
+            PeerPresence.receiveData(store, peer);
+            hooks.presenceReceived(peer);
+        } catch (RuntimeException unavailable) { /* Presence is independent of the durable receipt. */ }
+    }
+
     private void receivePresence(PeerTransport.Connection connection,JSONObject frame) throws IOException {
         if(!frame.has("presence"))return;
         try {
@@ -607,6 +713,7 @@ public final class RemoteSession {
             RemoteStore.Peer peer=store.peer(connection.authenticatedPeerIdentity(),
                     RemoteProtocol.identifier(frame.getString("generation")));
             requirePeer(connection,peer);
+            if (!remotePresence(peer)) return;
             if(PeerPresence.receive(store,peer,frame.getJSONObject("presence")))hooks.presenceReceived(peer);
         } catch(JSONException|IllegalArgumentException invalid) { throw new IOException("Invalid peer presence",invalid); }
     }

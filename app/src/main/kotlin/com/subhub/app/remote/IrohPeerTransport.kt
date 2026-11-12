@@ -35,9 +35,11 @@ class IrohPeerTransport private constructor(private val endpoint: Endpoint, priv
             try { timed(10_000) { endpoint.online() } }
             catch (timeout: SocketTimeoutException) { /* A direct LAN invitation can still work offline. */ }
         }
-        return endpoint.addr().use { address ->
-            EndpointTicket.fromAddr(address).use { it.toString() }
-        }
+        return syncRoute()
+    }
+
+    override fun syncRoute(): String = endpoint.addr().use { address ->
+        EndpointTicket.fromAddr(address).use { it.toString() }
     }
 
     @Throws(IOException::class)

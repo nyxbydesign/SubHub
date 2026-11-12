@@ -680,16 +680,23 @@ public final class RemoteStore extends SQLiteOpenHelper {
                 new Object[]{name, identity, generation});
     }
 
-    synchronized void updateProfile(String identity, String generation, JSONObject value, String name)
+    synchronized boolean updateProfile(String identity, String generation, JSONObject value, String name)
             throws JSONException {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try {
             Peer peer = active(db, identity, generation);
             RemoteProfiles.parse(value, peer.remoteRole());
-            db.execSQL("INSERT OR REPLACE INTO remote_metadata(peer,generation,name,value) VALUES(?,?,'profile',?)",
-                    new Object[]{identity, generation, StoredPayloads.bind(RemoteProtocol.canonical(value))});
-            updateDisplayName(identity, generation, name);
+            String encoded = RemoteProtocol.canonical(value);
+            boolean changed;
+            try { changed = !encoded.equals(profile(identity, generation)); }
+            catch (IllegalArgumentException | IllegalStateException unreadable) { changed = true; }
+            if (changed) {
+                db.execSQL("INSERT OR REPLACE INTO remote_metadata(peer,generation,name,value) VALUES(?,?,'profile',?)",
+                        new Object[]{identity, generation, StoredPayloads.bind(encoded)});
+            }
+            if (!name.equals(peer.name)) updateDisplayName(identity, generation, name);
             db.setTransactionSuccessful();
+            return changed;
         } finally { db.endTransaction(); }
     }
 
@@ -1304,6 +1311,18 @@ public final class RemoteStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /** Check for deliverable rows without creating or replacing the outstanding offer. */
+    synchronized boolean hasPendingBatch(String identity, String generation, RemoteProtocol.Stream stream) {
+        SQLiteDatabase db = getReadableDatabase();
+        Peer peer = active(db, identity, generation);
+        if (stream.writer != peer.localRole) throw new SecurityException("Not this stream's authority");
+        try (Cursor cursor = db.rawQuery("SELECT 1 FROM outbox WHERE peer=? AND generation=? AND stream=?"
+                + " AND seq>COALESCE((SELECT acked FROM outgoing WHERE peer=? AND generation=? AND stream=?),0) LIMIT 1",
+                new String[]{identity, generation, stream.name(), identity, generation, stream.name()})) {
+            return cursor.moveToFirst();
+        }
+    }
+
     public synchronized RemoteProtocol.Batch nextBatch(String identity, String generation, RemoteProtocol.Stream stream) {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         try {
@@ -1351,9 +1370,23 @@ public final class RemoteStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    public synchronized RemoteProtocol.Ack receive(String identity, RemoteProtocol.Batch batch) {
+    static final class BatchReceipt {
+        final RemoteProtocol.Ack ack;
+        final boolean acceptedData;
+        BatchReceipt(RemoteProtocol.Ack ack, boolean acceptedData) {
+            this.ack = ack;
+            this.acceptedData = acceptedData;
+        }
+    }
+
+    public RemoteProtocol.Ack receive(String identity, RemoteProtocol.Batch batch) {
+        return receiveBatch(identity, batch).ack;
+    }
+
+    synchronized BatchReceipt receiveBatch(String identity, RemoteProtocol.Batch batch) {
         SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
         RemoteProtocol.Ack ack;Peer receivedPeer=null;
+        boolean acceptedData = false;
         try {
             Peer peer = active(db,identity,batch.generation);
             if (peer.remoteRole() != batch.stream.writer) throw new SecurityException("Peer cannot write this stream");
@@ -1369,6 +1402,7 @@ public final class RemoteStore extends SQLiteOpenHelper {
                         boolean retired=batch.stream==RemoteProtocol.Stream.CONTRACTS
                                 ||batch.stream==RemoteProtocol.Stream.BASELINE&&change.key.startsWith("saved:");
                         RemoteProtocol.Change retained=retired?new RemoteProtocol.Change(change.sequence,change.key,"{}",true,change.observedAt):change;
+                        if (!acceptedData && !retired) acceptedData = changesMirror(db, identity, batch, change);
                         putObject(db,"remote_objects",identity,batch.generation,batch.stream,retained);
                         if(batch.stream==RemoteProtocol.Stream.EVENTS){RemoteActivityStore.accept(db,peer,change,System.currentTimeMillis());receivedPeer=peer;}
                     }
@@ -1380,7 +1414,22 @@ public final class RemoteStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
         if(receivedPeer!=null)activityReceived.accept(receivedPeer);
-        return ack;
+        return new BatchReceipt(ack, acceptedData);
+    }
+
+    /** An old sender can offer the same state under a new sequence. Its receipt still advances. */
+    private static boolean changesMirror(SQLiteDatabase db, String identity, RemoteProtocol.Batch batch,
+            RemoteProtocol.Change change) {
+        try (Cursor row = db.rawQuery("SELECT body,deleted FROM remote_objects WHERE peer=? AND generation=?"
+                + " AND stream=? AND item=?", new String[]{identity, batch.generation, batch.stream.name(), change.key})) {
+            if (!row.moveToFirst()) return !change.deleted;
+            boolean deleted = row.getInt(1) != 0;
+            return deleted != change.deleted || !deleted
+                    && !RemoteSyncContent.same(batch.stream, change.key, change.body, StoredPayloads.read(row, 0));
+        } catch (RuntimeException unavailable) {
+            // Optional presence evidence must not prevent replacement of an unreadable mirror.
+            return false;
+        }
     }
 
     public synchronized List<RemoteProtocol.Change> mirror(String identity, String generation, RemoteProtocol.Stream stream) {

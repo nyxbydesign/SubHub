@@ -69,6 +69,27 @@ public class RemoteStoreAndroidTest {
         assertEquals(2,new JSONObject(next.changes.get(0).body).getInt("count"));
     }
 
+    @Test public void pendingProbeDoesNotReplaceAnOutstandingOffer() throws Exception {
+        RemoteProtocol.Stream stream = RemoteProtocol.Stream.STATS;
+        assertFalse(sub.hasPendingBatch(DOM, generation, stream));
+        sub.publish(DOM, generation, stream, "summary", new JSONObject().put("count", 1), false, 1000);
+        assertTrue(sub.hasPendingBatch(DOM, generation, stream));
+        RemoteProtocol.Batch first = sub.nextBatch(DOM, generation, stream);
+        RemoteProtocol.Ack firstReceipt = dom.receive(SUB, first);
+
+        sub.publish(DOM, generation, stream, "summary", new JSONObject().put("count", 2), false, 1001);
+        assertTrue(sub.hasPendingBatch(DOM, generation, stream));
+        sub.acknowledge(DOM, firstReceipt);
+        assertTrue(sub.hasPendingBatch(DOM, generation, stream));
+        RemoteProtocol.Batch second = sub.nextBatch(DOM, generation, stream);
+        assertEquals(1, second.after);
+        assertEquals(2, second.through);
+        sub.acknowledge(DOM, dom.receive(SUB, second));
+        assertFalse(sub.hasPendingBatch(DOM, generation, stream));
+        assertThrows(SecurityException.class,
+                () -> sub.hasPendingBatch(DOM, generation, RemoteProtocol.Stream.CONFIGURATION));
+    }
+
     @Test public void duplicateAndDeletionSurviveDatabaseReopen() throws Exception {
         sub.publish(DOM,generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",1),false,1000);
         RemoteProtocol.Batch batch = sub.nextBatch(DOM,generation,RemoteProtocol.Stream.STATS);

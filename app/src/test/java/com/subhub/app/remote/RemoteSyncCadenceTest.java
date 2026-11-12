@@ -28,4 +28,15 @@ public final class RemoteSyncCadenceTest {
         assertEquals(900_000,RemoteSyncCadence.delay(true,false,false,Integer.MAX_VALUE));
         assertEquals(900_000,RemoteSyncCadence.delay(true,false,true,6));
     }
+
+    @Test public void crossedDialRetryKeepsTheFirstSlotAtTheNormalFloorAndSeparatesPolling() {
+        long dom = RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.DOM, 1);
+        long sub = RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.SUB, 1);
+        assertEquals(RemoteSyncCadence.delay(false, false, false, 1), dom);
+        assertTrue("Separate the later slot even after one poll and maximum jitter", sub > dom + 2000 + 999);
+        assertEquals(5500, sub);
+        assertEquals(8000, RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.DOM, 3));
+        assertEquals(11500, RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.SUB, 3));
+        assertEquals(60000, RemoteSyncCadence.crossedDialDelay(RemoteProtocol.Role.SUB, 6));
+    }
 }

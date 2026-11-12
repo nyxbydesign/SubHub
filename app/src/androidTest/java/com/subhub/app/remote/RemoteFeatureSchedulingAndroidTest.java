@@ -246,6 +246,61 @@ public final class RemoteFeatureSchedulingAndroidTest {
         invoke("invalidateAttempts",new Class<?>[0]);release.countDown();attempt.get(5,TimeUnit.SECONDS);until(()->busy.isEmpty());
         assertFalse("The pre-mutation exchange cannot consume the dirty wake",((Map<?,?>)field("nextAttempt")).containsKey(key));
     }
+    @Test public void authenticatedCrossedHelloStaggersOnlyTheActiveForegroundRetry() throws Exception {
+        assertCrossedHelloRetry(true, true, 5500);
+    }
+
+    @Test public void malformedCrossedHelloDoesNotChangeTheRetry() throws Exception {
+        assertCrossedHelloRetry(true, false, 2000);
+    }
+
+    @Test public void backgroundCrossedHelloDoesNotChangeTheBoundedWindowRetry() throws Exception {
+        assertCrossedHelloRetry(false, true, 2000);
+    }
+
+    private void assertCrossedHelloRetry(boolean visible, boolean validRoute, long expectedDelay) throws Exception {
+        String identity = identity(87), generation = generation(87), key = identity + ":" + generation;
+        store.getWritableDatabase().execSQL("UPDATE peers SET local_role='SUB' WHERE peer=?", new Object[]{identity});
+        set("foreground", visible);
+        Set<String> busy = (Set<String>)field("busy");
+        assertTrue(busy.add(key));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        RemoteStore.Peer peer = store.peer(identity, generation);
+        Future<?> outbound = (Future<?>)invoke("schedulePeer", new Class<?>[]{RemoteStore.Peer.class, long.class}, peer, deadline);
+        assertNotNull(outbound);
+        assertTrue(transport.activeEntered.await(5, TimeUnit.SECONDS));
+
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        RemoteProtocol.write(encoded, new JSONObject().put("version", 1).put("type", "hello")
+                .put("generation", generation).put("route", validRoute ? "" : JSONObject.NULL));
+        ByteArrayInputStream input = new ByteArrayInputStream(encoded.toByteArray());
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        PeerTransport.Connection inbound = new PeerTransport.Connection() {
+            @Override public String authenticatedPeerIdentity() { return identity; }
+            @Override public InputStream input() { return input; }
+            @Override public OutputStream output() { return output; }
+            @Override public void setReadTimeoutMillis(long timeout) { }
+            @Override public boolean isDirect() { return true; }
+            @Override public void close() { }
+        };
+        invoke("incoming", new Class<?>[]{PeerTransport.class, PeerTransport.Connection.class, long.class},
+                transport, inbound, deadline);
+        assertTrue("The outgoing attempt still owns the reservation", busy.contains(key));
+        assertFalse("A crossed hello never preempts the running attempt", outbound.isDone());
+        assertEquals("Collision handling adds no packet", 0, output.size());
+
+        long before = SystemClock.elapsedRealtime();
+        release.countDown();
+        assertEquals(Boolean.FALSE, outbound.get(5, TimeUnit.SECONDS));
+        long after = SystemClock.elapsedRealtime();
+        Map<?,?> due = (Map<?,?>)field("nextAttempt");
+        long scheduled = (Long)due.get(key);
+        assertTrue(scheduled >= before + expectedDelay);
+        assertTrue(scheduled < after + expectedDelay + 1000);
+        until(() -> busy.isEmpty());
+        assertTrue(((Map<?,?>)field("outboundHellos")).isEmpty());
+    }
+
     @Test public void completionCannotClobberMutationAndFailuresBackOffToABoundedDelay()throws Exception{
         String key=identity(87)+":"+generation(87);Map<String,Long> due=(Map<String,Long>)field("nextAttempt");
         long old=(Long)invoke("attemptGeneration",new Class<?>[0]);

@@ -200,19 +200,23 @@ public final class RemoteProtocol {
     static void write(OutputStream output, JSONObject message, int threshold, int level) throws IOException {
         byte[] plain = canonical(message).getBytes(StandardCharsets.UTF_8);
         if (plain.length > MAX_FRAME_BYTES) throw new IOException("Frame too large");
-        byte[] payload = plain;
-        boolean compressed = false;
+        ByteArrayOutputStream compressed = null;
         if (plain.length >= threshold) {
             ByteArrayOutputStream zipped = new ByteArrayOutputStream();
             try (GZIPOutputStream gzip = new TunedGzip(zipped, level)) { gzip.write(plain); }
-            // Avoid spending a compression flag and CPU for negligible savings.
-            if (zipped.size() <= plain.length - 32) { payload = zipped.toByteArray(); compressed = true; }
+            if (zipped.size() <= plain.length - 32) compressed = zipped;
         }
         DataOutputStream frame = new DataOutputStream(output);
         frame.writeInt(MAGIC);
-        frame.writeByte(compressed ? 1 : 0);
-        frame.writeInt(payload.length);
-        frame.write(payload);
+        if (compressed == null) {
+            frame.writeByte(0);
+            frame.writeInt(plain.length);
+            frame.write(plain);
+        } else {
+            frame.writeByte(1);
+            frame.writeInt(compressed.size());
+            compressed.writeTo(frame);
+        }
         frame.flush();
     }
 
