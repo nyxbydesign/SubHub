@@ -68,6 +68,36 @@ public class RemoteSessionAndroidTest {
         }
     }
 
+    @Test public void activeSyncUsesCurrentRouteWithoutWaitingForInvitation() throws Exception {
+        String route = dt.syncRoute();
+        sub.setRoute(dt.localIdentity(), generation, "retained fixture route");
+        PeerTransport activeSource = new PeerTransport() {
+            @Override public String localIdentity() { return dt.localIdentity(); }
+            @Override public String inviteRoute() { throw new AssertionError("Active sync must not wait for invitation readiness"); }
+            @Override public String syncRoute() { return route; }
+            @Override public Connection connect(String identity, String address, long timeout) throws IOException {
+                return dt.connect(identity, address, timeout);
+            }
+            @Override public Connection accept(long timeout) throws IOException { return dt.accept(timeout); }
+            @Override public void close() { /* The fixture owns the underlying transport. */ }
+        };
+        RemoteSession responder = new RemoteSession(sub, st, sh);
+        Future<Void> served = server.submit(() -> {
+            try (PeerTransport.Connection connection = st.accept(10_000)) {
+                JSONObject hello = RemoteProtocol.read(connection.input());
+                assertEquals(route, hello.getString("route"));
+                responder.incoming(connection, hello, System.nanoTime() + TimeUnit.SECONDS.toNanos(15));
+            }
+            return null;
+        });
+        try (PeerTransport.Connection connection = activeSource.connect(st.localIdentity(), st.inviteRoute(), 10_000)) {
+            new RemoteSession(dom, activeSource, dh).outgoing(connection,
+                    dom.peer(st.localIdentity(), generation), System.nanoTime() + TimeUnit.SECONDS.toNanos(15));
+            served.get(15, TimeUnit.SECONDS);
+        }
+        assertEquals(route, sub.peer(dt.localIdentity(), generation).route);
+    }
+
     @Test public void backgroundSubCanInitiateBidirectionalAcknowledgedExchange() throws Exception {
         dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",new JSONObject().put("revision",1),false,1000);
         sub.publish(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary",new JSONObject().put("count",42),false,1000);
@@ -205,11 +235,13 @@ public class RemoteSessionAndroidTest {
     @Test public void malformedPhasePlanCannotEnterApplicationExchange() throws Exception {
         dh.controls=sh.controls=true;
         dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired",new JSONObject().put("revision",1),false,1);
+        dh.foregroundPresence = true;
         for(Object value:new Object[]{0,"1",true}) {
             phaseOverride=value;
             assertThrows(IOException.class,()->exchange(true,false));
             assertEquals(0,dh.controlCalls);assertEquals(0,sh.controlCalls);
             assertNull(sub.mirrored(dt.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"desired"));
+            assertEquals(0, PeerPresence.read(sub, sub.peer(dt.localIdentity(), generation)).lastOnlineAt);
         }
         phaseOverride=null;
         assertFalse(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
@@ -277,34 +309,76 @@ public class RemoteSessionAndroidTest {
 
     @Test public void foregroundPresenceUsesAuthenticatedWireAndBackgroundKeepsTransportSeparate() throws Exception {
         dh.foregroundPresence=true;sh.foregroundPresence=true;
+        wireTrace = new WireTrace();
         exchange(false,false);
         RemoteStore.Peer domPeer=sub.peer(dt.localIdentity(),generation),subPeer=dom.peer(st.localIdentity(),generation);
         assertTrue(PeerPresence.read(sub,domPeer).online);assertTrue(PeerPresence.read(dom,subPeer).online);
+        assertEquals("One piggybacked observation in each direction", 2, wireTrace.presenceFrames);
         long seen=PeerPresence.read(sub,domPeer).lastOnlineAt;
         dh.foregroundPresence=false;sh.foregroundPresence=false;
         exchange(true,false);
         assertFalse(PeerPresence.read(sub,domPeer).online);assertFalse(PeerPresence.read(dom,subPeer).online);
         assertEquals(seen,PeerPresence.read(sub,domPeer).lastOnlineAt);
         assertTrue(sub.lastContactAt(domPeer)>=seen);
+        assertEquals(4, wireTrace.presenceFrames);
+    }
+
+    @Test public void lateForegroundUsesTheNextExistingCheckpoint() throws Exception {
+        dh.foregroundPresence = false;
+        sh.foregroundPresence = false;
+        dh.onPrepare = () -> dh.foregroundPresence = true;
+        wireTrace = new WireTrace();
+        exchange(true, false);
+        assertTrue(PeerPresence.read(sub, sub.peer(dt.localIdentity(), generation)).online);
+        assertFalse(PeerPresence.read(dom, dom.peer(st.localIdentity(), generation)).online);
+        assertEquals("Two handshake observations and the changed foreground checkpoint", 3,
+                wireTrace.presenceFrames);
     }
 
     @Test public void contractCheckpointStillRecordsContactWhenLaterCompletionFails() throws Exception {
         String identity=dt.localIdentity();long completed=System.currentTimeMillis()-12*60*60_000L;
         sub.synced(identity,generation,completed);
         dom.publish(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION,"active",new JSONObject().put("revision",1),false,1);
+        wireTrace = new WireTrace();
         sh.failComplete=true;long started=System.currentTimeMillis();
+        sh.beforeReceived = () -> {
+            PeerPresence.Observation received = PeerPresence.read(sub, sub.peer(identity, generation));
+            assertTrue("Online before the checkpoint or optional phases", received.online);
+            assertTrue(received.lastOnlineAt >= started);
+        };
         assertThrows(IOException.class,()->exchange(false,false));
         RemoteStore.Peer peer=sub.peer(identity,generation);long contact=sub.lastContactAt(peer);
         assertEquals(completed,peer.lastSyncedAt);assertTrue(contact>=started);
         assertTrue(Long.parseLong(sub.metadata(identity,generation,"confirmed_CONFIGURATION","0"))>=started);
         assertEquals(1,sub.mirrored(identity,generation,RemoteProtocol.Stream.CONFIGURATION,"active").getInt("revision"));
         assertTrue(dom.nextBatch(st.localIdentity(),generation,RemoteProtocol.Stream.CONFIGURATION).changes.isEmpty());
-        assertFalse(PeerPresence.read(sub,peer).online);
-        assertEquals(0,PeerPresence.read(sub,peer).lastOnlineAt);
-        assertFalse(PeerPresence.online(false,contact,contact+90_001));
+        PeerPresence.Observation seen = PeerPresence.read(sub, peer);
+        assertTrue(seen.online);
+        assertTrue(seen.lastOnlineAt >= started);
+        assertEquals(1, sh.presenceReceipts);
+        sh.beforeReceived = () -> {};
         sh.failComplete=false;exchange(false,false);
         assertTrue(sub.peer(identity,generation).lastSyncedAt>=started);
         assertEquals(1,sub.mirror(identity,generation,RemoteProtocol.Stream.CONFIGURATION).size());
+        assertEquals("An empty exchange leaves Last seen alone", seen.lastOnlineAt, PeerPresence.read(sub, peer).lastOnlineAt);
+        assertEquals(1, sh.presenceReceipts);
+        assertEquals("Data presence needs no presence metadata", 0, wireTrace.presenceFrames);
+    }
+
+    @Test public void timestampOnlyLegacyRuntimeSampleStillAcknowledgesWithoutPresence() throws Exception {
+        String identity = st.localIdentity();
+        var stream = RemoteProtocol.Stream.RUNTIME;
+        var original = new RemoteProtocol.Change(1, "current",
+                new JSONObject().put("observedAt", 1000).put("running", true).toString(), false, 1000);
+        var timestampOnly = new RemoteProtocol.Change(2, "current",
+                new JSONObject().put("observedAt", 1001).put("running", true).toString(), false, 1001);
+        var first = new RemoteProtocol.Batch(generation, stream, 0, 1, List.of(original));
+        var second = new RemoteProtocol.Batch(generation, stream, 1, 2, List.of(timestampOnly));
+        assertTrue(dom.receiveBatch(identity, first).acceptedData);
+        var receipt = dom.receiveBatch(identity, second);
+        assertFalse(receipt.acceptedData);
+        assertEquals(2, receipt.ack.through);
+        assertEquals(1001, dom.mirrored(identity, generation, stream, "current").getLong("observedAt"));
     }
 
     @Test public void floatingContractNumbersKeepTheirAcknowledgementDigest() throws Exception {
@@ -320,7 +394,13 @@ public class RemoteSessionAndroidTest {
         assertThrows(IOException.class, () -> exchange(false,true));
         assertEquals(0,sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).after);
         assertEquals(1,dom.mirror(st.localIdentity(),generation,RemoteProtocol.Stream.STATS).size());
+        RemoteStore.Peer peer = dom.peer(st.localIdentity(), generation);
+        long seen = PeerPresence.read(dom, peer).lastOnlineAt;
+        assertTrue(seen > 0);
+        assertEquals(1, dh.presenceReceipts);
         exchange(false,false);
+        assertEquals(seen, PeerPresence.read(dom, peer).lastOnlineAt);
+        assertEquals(1, dh.presenceReceipts);
         assertEquals(1,dom.mirror(st.localIdentity(),generation,RemoteProtocol.Stream.STATS).size());
         assertEquals(7,dom.mirrored(st.localIdentity(),generation,RemoteProtocol.Stream.STATS,"summary").getInt("count"));
         assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
@@ -412,6 +492,56 @@ public class RemoteSessionAndroidTest {
         assertTrue(dom.mirror(st.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).isEmpty());
         assertEquals(1,sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.EVENTS).changes.size());
         assertTrue(sub.nextBatch(dt.localIdentity(),generation,RemoteProtocol.Stream.STATS).changes.isEmpty());
+    }
+
+    @Test public void unchangedProfileReferencesSaveWireBytesWithoutRefreshingPresence() throws Exception {
+        dh.profiles = sh.profiles = true;
+        int edge = com.subhub.app.people.ProfileImages.EDGE;
+        int[] pixels = new int[edge * edge];
+        Random random = new Random(124);
+        for (int i = 0; i < pixels.length; i++) pixels[i] = 0xff000000 | random.nextInt(0x1000000);
+        android.graphics.Bitmap image = android.graphics.Bitmap.createBitmap(pixels, edge, edge,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        String avatar;
+        try { avatar = com.subhub.app.people.ProfileImages.encode(image); }
+        finally { image.recycle(); }
+        dh.profile = new com.subhub.app.people.ProfileData("Fixture Dom", "Retained Dom profile", avatar);
+        sh.profile = new com.subhub.app.people.ProfileData("Fixture Sub", "Retained Sub profile", avatar);
+        RemoteStore.Peer subPeer = dom.peer(st.localIdentity(), generation);
+
+        wireTrace = new WireTrace();
+        exchange(true, false);
+        long initial = wireTrace.bytes;
+        assertEquals(2, wireTrace.fullProfiles);
+        assertEquals(0, wireTrace.profileReferences);
+        assertTrue(PeerPresence.read(dom, subPeer).online);
+        long seen = PeerPresence.read(dom, subPeer).lastOnlineAt;
+        int observations = dh.presenceReceipts;
+
+        wireTrace = new WireTrace();
+        exchange(false, false);
+        long retained = wireTrace.bytes;
+        assertEquals(2, wireTrace.profileReferences);
+        assertEquals(0, wireTrace.fullProfiles);
+        assertTrue("Repeated avatar bytes should disappear from the wire", retained < initial / 3);
+        assertEquals(seen, PeerPresence.read(dom, subPeer).lastOnlineAt);
+        assertEquals(observations, dh.presenceReceipts);
+
+        wireTrace = new WireTrace();
+        wireTrace.legacyProfileOffers = true;
+        exchange(true, false);
+        assertEquals(2, wireTrace.fullProfiles);
+        assertEquals(0, wireTrace.profileReferences);
+        assertEquals(observations, dh.presenceReceipts);
+
+        wireTrace = new WireTrace();
+        sh.profile = new com.subhub.app.people.ProfileData("Fixture Sub", "Changed profile", "");
+        exchange(true, false);
+        assertEquals(1, wireTrace.fullProfiles);
+        assertEquals(1, wireTrace.profileReferences);
+        assertEquals(sh.profile, RemoteProfiles.read(dom, subPeer));
+        assertEquals(observations + 1, dh.presenceReceipts);
+        android.util.Log.i("PeerWireFixture", "profile fixture bytes initial=" + initial + " retained=" + retained);
     }
 
     @Test public void pairedProfilesPersistOfflineAndReconnectWithChangedAndRemovedAvatars() throws Exception {
@@ -583,10 +713,13 @@ public class RemoteSessionAndroidTest {
     private static final class FixtureHooks implements RemoteSession.Hooks {
         Boolean foregroundPresence;
         long presenceSequence;
-        @Override public JSONObject presence() throws Exception {
-            return foregroundPresence==null?null:new JSONObject().put("version",1)
-                    .put("sequence",++presenceSequence).put("foreground",foregroundPresence);
+        int presenceReceipts;
+        @Override public JSONObject presence(Boolean previousForeground) throws Exception {
+            return foregroundPresence == null || foregroundPresence.equals(previousForeground) ? null
+                    : new JSONObject().put("version", 1).put("sequence", ++presenceSequence)
+                            .put("foreground", foregroundPresence);
         }
+        @Override public void presenceReceived(RemoteStore.Peer peer) { presenceReceipts++; }
 
         interface CheckedAction { void run() throws Exception; }
         final RemoteStore store;final RemoteAssets assets;int prepares;
@@ -633,8 +766,13 @@ public class RemoteSessionAndroidTest {
             lastSentFields = value.length();
             return value;
         }
-        public void prepare(RemoteStore.Peer peer){prepares++;}
-        public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream){events.add("received_"+stream.name());}
+        Runnable onPrepare = () -> {};
+        public void prepare(RemoteStore.Peer peer){prepares++;onPrepare.run();}
+        Runnable beforeReceived = () -> {};
+        public void received(RemoteStore.Peer peer,RemoteProtocol.Stream stream) {
+            beforeReceived.run();
+            events.add("received_"+stream.name());
+        }
         public List<RemoteSession.AssetNeed> missingAssets(RemoteStore.Peer peer) throws Exception {
             events.add(priority&&!probed?"asset_probe":"assets");probed=true;
             JSONObject manifest=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"fixture");
@@ -648,14 +786,28 @@ public class RemoteSessionAndroidTest {
     }
     /** Counts actual serialized session frames; virtual delay excludes CPU, bandwidth and route behavior. */
     private static final class WireTrace {
-        long bytes,frames,acks,controlsAt,sectionBatches,sectionFallbacks,dataBatches;
-        synchronized void sent(byte[] encoded)throws IOException {
+        long bytes,frames,acks,controlsAt,sectionBatches,sectionFallbacks,dataBatches,presenceFrames,fullProfiles,profileReferences;
+        boolean legacyProfileOffers;
+        synchronized byte[] sent(byte[] encoded)throws IOException {
             JSONObject frame=RemoteProtocol.read(new ByteArrayInputStream(encoded));
+            String kind = frame.optString("type");
+            if (legacyProfileOffers && ("hello".equals(kind) || "hello_ack".equals(kind))
+                    && frame.remove("profileDigestV1") != null) {
+                ByteArrayOutputStream legacy = new ByteArrayOutputStream();
+                RemoteProtocol.write(legacy, frame);
+                encoded = legacy.toByteArray();
+            }
+            if ("profile".equals(kind)) {
+                if (frame.has("profile")) fullProfiles++;
+                if (frame.has("profileDigestV1")) profileReferences++;
+            }
             bytes+=encoded.length;frames++;
+            if (frame.has("presence")) presenceFrames++;
             String type=frame.optString("type");if(type.equals("ack")||type.endsWith("_ack"))acks++;
             if(type.equals("section_batch"))sectionBatches++;
             if(type.equals("section_full"))sectionFallbacks++;
             if(type.equals("batch")||type.equals("section_batch"))dataBatches++;
+            return encoded;
         }
         synchronized void controlsComplete(){if(controlsAt==0)controlsAt=frames;}
         synchronized JSONObject report(String scenario,int rtt,boolean priority)throws Exception {
@@ -671,7 +823,7 @@ public class RemoteSessionAndroidTest {
                 public void write(int value){pending.write(value);}
                 public void write(byte[] value,int offset,int length){pending.write(value,offset,length);}
                 public void flush()throws IOException{
-                    byte[] encoded=pending.toByteArray();pending.reset();trace.sent(encoded);delegate.output().write(encoded);delegate.output().flush();
+                    byte[] encoded=trace.sent(pending.toByteArray());pending.reset();delegate.output().write(encoded);delegate.output().flush();
                 }
             };
         }

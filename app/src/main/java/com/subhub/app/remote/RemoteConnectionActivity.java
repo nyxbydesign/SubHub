@@ -6,7 +6,7 @@ import com.subhub.app.people.PersonUi;
 
 public final class RemoteConnectionActivity extends RemotePage {
     private boolean resumed;private long codeRequest,codeRevision;
-    private AutoCloseable codeAuthority;
+    private AutoCloseable codeAuthority, presenceObserver;
     private String rendered="";
     private androidx.appcompat.app.AlertDialog codeDialog;
     private final Handler clock=new Handler(Looper.getMainLooper());
@@ -18,9 +18,15 @@ public final class RemoteConnectionActivity extends RemotePage {
             if(codeDialog!=null&&(!com.subhub.app.security.ControllerPinManager.isDomWorkspaceUnlocked()
                     ||codeRevision!=com.subhub.app.security.ControllerPinManager.domWorkspaceRevision()))codeDialog.dismiss();
         });
-        if(peer!=null){feature.requestAutomaticSync();clock.post(poll);}
+        if(peer!=null && !isFinishing()){
+            presenceObserver = RemoteUi.observePresence(() -> {
+                if (resumed && !isFinishing() && !isDestroyed() && body.isAttachedToWindow()) render();
+            });
+            feature.requestAutomaticSync();clock.post(poll);
+        }
     }
     @Override protected void onPause(){resumed=false;codeRequest++;
+        if(presenceObserver!=null)try{presenceObserver.close();}catch(Exception ignored){}finally{presenceObserver=null;}
         if(codeAuthority!=null)try{codeAuthority.close();}catch(Exception ignored){/* Memory-only observer. */}finally{codeAuthority=null;}
         clock.removeCallbacks(poll);if(codeDialog!=null)codeDialog.dismiss();super.onPause();}
     private void render(){

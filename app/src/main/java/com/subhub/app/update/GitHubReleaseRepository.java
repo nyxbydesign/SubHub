@@ -13,14 +13,17 @@ import java.io.ByteArrayOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /** Read-only client for SubHub's public GitHub Releases feed. */
 public final class GitHubReleaseRepository {
-    static final String RELEASES_URL = "https://api.github.com/repos/confiteor48/SubHub/releases?per_page=30";
-    static final String LATEST_STABLE_URL = "https://api.github.com/repos/confiteor48/SubHub/releases/latest";
+    private static final String REPOSITORY_URL = "https://api.github.com/repos/nyxbydesign/SubHub";
+    static final String RELEASES_URL = REPOSITORY_URL + "/releases?per_page=30";
+    static final String LATEST_STABLE_URL = REPOSITORY_URL + "/releases/latest";
     private static final int MAX_RESPONSE = 2 * 1024 * 1024;
     private final Context context;
     private final UpdateStateStore state;
@@ -49,15 +52,17 @@ public final class GitHubReleaseRepository {
         final String body;
         final String htmlUrl;
         final String manifestUrl;
+        final String manifestDigest;
         final String publishedAt;
         final boolean prerelease;
         Release(SemanticVersion version, String tag, String body, String htmlUrl,
-                String manifestUrl, String publishedAt, boolean prerelease) {
+                String manifestUrl, String manifestDigest, String publishedAt, boolean prerelease) {
             this.version = version;
             this.tag = tag;
             this.body = body;
             this.htmlUrl = htmlUrl;
             this.manifestUrl = manifestUrl;
+            this.manifestDigest = manifestDigest;
             this.publishedAt = publishedAt;
             this.prerelease = prerelease;
         }
@@ -75,6 +80,7 @@ public final class GitHubReleaseRepository {
     }
 
     private static final Object CHECK_LOCK = new Object();
+    private static final ManifestCache MANIFESTS = new ManifestCache();
     private static volatile long completedChecks;
     private static Result lastResult;
     private static String lastSource;
@@ -146,11 +152,7 @@ public final class GitHubReleaseRepository {
                     ReleaseHistoryCatalog.fromReleases(candidates),
                     ReleaseHistoryCatalog.bundled(context));
             UpdateCandidate available = selectCandidate(candidates, devUpdates, BuildConfig.VERSION_CODE,
-                    Build.VERSION.SDK_INT, Build.SUPPORTED_ABIS, release -> {
-                HttpResponse manifestResponse = get(release.manifestUrl, "", 1024 * 1024);
-                return manifestResponse.code >= 200 && manifestResponse.code < 300
-                        ? UpdateManifest.parse(manifestResponse.body) : null;
-            });
+                    Build.VERSION.SDK_INT, Build.SUPPORTED_ABIS, MANIFESTS::load);
             history = ReleaseHistoryCatalog.withCandidate(history, available);
             if (!state.saveCheck(revision, response.etag, history, available)) return Result.success(null);
             return Result.success(available);
@@ -162,6 +164,29 @@ public final class GitHubReleaseRepository {
     }
 
     interface ManifestLoader { UpdateManifest load(Release release) throws Exception; }
+
+    /** Only byte-verified, immutable manifests may outlive a check. Access is serialized by CHECK_LOCK. */
+    static final class ManifestCache {
+        private static final int MAX_ENTRIES = 32; // The feed page and its separate stable lookup.
+        private static final int MAX_CACHED_BYTES = 128 * 1024;
+        private final LinkedHashMap<String, UpdateManifest> entries = new LinkedHashMap<>(32, 0.75f, true);
+
+        UpdateManifest load(Release release) throws Exception {
+            String key = release.manifestDigest.isEmpty() ? "" : release.manifestDigest + " " + release.manifestUrl;
+            UpdateManifest cached = entries.get(key);
+            if (cached != null) return cached;
+
+            HttpResponse response = get(release.manifestUrl, "", 1024 * 1024, !key.isEmpty());
+            if (response.code < 200 || response.code >= 300) return null;
+            if (!key.isEmpty() && !release.manifestDigest.equals(response.bodyDigest)) return null;
+            UpdateManifest manifest = UpdateManifest.parse(response.body);
+            if (!key.isEmpty() && response.bodyBytes <= MAX_CACHED_BYTES && release.tag.equals(manifest.tag)) {
+                entries.put(key, manifest);
+                if (entries.size() > MAX_ENTRIES) entries.remove(entries.keySet().iterator().next());
+            }
+            return manifest;
+        }
+    }
 
     static UpdateCandidate selectCandidate(List<Release> releases, boolean devUpdates,
             long installedCode, int sdk, String[] abis, ManifestLoader loader) {
@@ -200,16 +225,21 @@ public final class GitHubReleaseRepository {
             catch (IllegalArgumentException ignored) { continue; }
             String expectedManifest = "SubHub-" + tag.substring(1) + "-update.json";
             String manifestUrl = "";
+            String manifestDigest = "";
             JSONArray assets = release.optJSONArray("assets");
             if (assets != null) for (int assetIndex = 0; assetIndex < assets.length(); assetIndex++) {
                 JSONObject asset = assets.optJSONObject(assetIndex);
                 if (asset != null && expectedManifest.equals(asset.optString("name"))) {
                     manifestUrl = asset.optString("browser_download_url", "");
+                    String digest = asset.optString("digest", "");
+                    if (release.optBoolean("immutable", false) && digest.matches("sha256:[0-9a-f]{64}")) {
+                        manifestDigest = digest;
+                    }
                     break;
                 }
             }
             parsed.add(new Release(version, tag, release.optString("body", ""),
-                    release.optString("html_url", ""), manifestUrl,
+                    release.optString("html_url", ""), manifestUrl, manifestDigest,
                     release.optString("published_at", ""),
                     release.optBoolean("prerelease", false) || version.isPrerelease()));
         }
@@ -226,15 +256,23 @@ public final class GitHubReleaseRepository {
         final String body;
         final String etag;
         final String rateRemaining;
-        HttpResponse(int code, String body, String etag, String rateRemaining) {
+        final int bodyBytes;
+        final String bodyDigest;
+        HttpResponse(int code, String body, String etag, String rateRemaining, int bodyBytes, String bodyDigest) {
             this.code = code;
             this.body = body;
             this.etag = etag;
             this.rateRemaining = rateRemaining;
+            this.bodyBytes = bodyBytes;
+            this.bodyDigest = bodyDigest;
         }
     }
 
     static HttpResponse get(String address, String etag, int limit) throws Exception {
+        return get(address, etag, limit, false);
+    }
+
+    private static HttpResponse get(String address, String etag, int limit, boolean hashBody) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(10_000);
         connection.setReadTimeout(20_000);
@@ -243,26 +281,33 @@ public final class GitHubReleaseRepository {
         connection.setRequestProperty("X-GitHub-Api-Version", "2026-03-10");
         connection.setRequestProperty("User-Agent", "SubHub-Android/" + BuildConfig.VERSION_NAME);
         if (etag != null && !etag.isEmpty()) connection.setRequestProperty("If-None-Match", etag);
-        int code = connection.getResponseCode();
-        String body = "";
-        if (code != HttpURLConnection.HTTP_NOT_MODIFIED) {
-            java.io.InputStream raw = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            if (raw != null) try (BufferedInputStream input = new BufferedInputStream(raw);
-                    ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) >= 0) {
-                    if (output.size() + count > Math.min(limit, MAX_RESPONSE)) {
-                        throw new IllegalStateException("Response too large");
+        try {
+            int code = connection.getResponseCode();
+            String body = "";
+            int bodyBytes = 0;
+            MessageDigest digest = hashBody ? MessageDigest.getInstance("SHA-256") : null;
+            if (code != HttpURLConnection.HTTP_NOT_MODIFIED) {
+                java.io.InputStream raw = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                if (raw != null) try (BufferedInputStream input = new BufferedInputStream(raw);
+                        ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) {
+                        if (output.size() + count > Math.min(limit, MAX_RESPONSE)) {
+                            throw new IllegalStateException("Response too large");
+                        }
+                        output.write(buffer, 0, count);
+                        if (digest != null) digest.update(buffer, 0, count);
                     }
-                    output.write(buffer, 0, count);
+                    bodyBytes = output.size();
+                    body = output.toString(StandardCharsets.UTF_8.name());
                 }
-                body = output.toString(StandardCharsets.UTF_8.name());
             }
+            return new HttpResponse(code, body, connection.getHeaderField("ETag"),
+                    connection.getHeaderField("X-RateLimit-Remaining"), bodyBytes,
+                    digest == null ? "" : "sha256:" + UpdateVerifier.hex(digest.digest()));
+        } finally {
+            connection.disconnect();
         }
-        HttpResponse response = new HttpResponse(code, body, connection.getHeaderField("ETag"),
-                connection.getHeaderField("X-RateLimit-Remaining"));
-        connection.disconnect();
-        return response;
     }
 }

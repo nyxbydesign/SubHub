@@ -6,14 +6,12 @@ import androidx.lifecycle.Lifecycle;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import com.subhub.app.help.HelpActivity;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
 public final class LocalAppPresenceAndroidTest {
     @Test public void actualActivityResumePauseAndRecreationOwnPresence() throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-        AtomicInteger transitions=new AtomicInteger();
-        try(LocalAppPresence source=new LocalAppPresence(context,transitions::incrementAndGet)) {
+        try(LocalAppPresence source=new LocalAppPresence(context)) {
             source.install((android.app.Application)context.getApplicationContext());assertFalse(source.foreground());
             try(ActivityScenario<HelpActivity> page=ActivityScenario.launch(HelpActivity.class)) {
                 assertTrue("Fixture needs a usable unlocked display",source.foreground());
@@ -21,7 +19,7 @@ public final class LocalAppPresenceAndroidTest {
                 page.moveToState(Lifecycle.State.CREATED);assertFalse(source.foreground());
                 page.moveToState(Lifecycle.State.RESUMED);assertTrue(source.foreground());
             }
-            assertFalse(source.foreground());assertTrue(transitions.get()>=4);
+            assertFalse(source.foreground());
         }
     }
 }

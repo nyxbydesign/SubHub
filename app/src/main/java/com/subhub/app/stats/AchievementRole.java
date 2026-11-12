@@ -22,7 +22,9 @@ public enum AchievementRole {
 
     /** Keep legacy persisted IDs and earned dates when configuration badges move to Dom. */
     static boolean isDomConfiguration(String id) {
-        return "first_custom_phrase".equals(id) || "phrase_library".equals(id) || "paypal_vault".equals(id);
+        return "first_custom_phrase".equals(id) || "phrase_library".equals(id) || "paypal_vault".equals(id)
+                || "text_filter_enabled".equals(id) || "text_filter_catalog".equals(id)
+                || "color_picker".equals(id) || "border_artist".equals(id) || "style_explorer".equals(id);
     }
 
     public boolean owns(String id) {

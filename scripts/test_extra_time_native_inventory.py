@@ -74,9 +74,9 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_battery_selects_all_scheduler_methods_real_responder_and_deadline(self):
         selected = native.selectors("", "battery")
-        self.assertEqual(31, len(selected))
-        self.assertEqual(31, len(set(selected)))
-        self.assertEqual({"RemoteFeatureSchedulingAndroidTest": 29,
+        self.assertEqual(34, len(selected))
+        self.assertEqual(34, len(set(selected)))
+        self.assertEqual({"RemoteFeatureSchedulingAndroidTest": 32,
                           "RemoteBackgroundResponderAndroidTest": 1, "PairingLifecycleAndroidTest": 1},
                          {cls.rsplit(".", 1)[1]: len(methods) for cls, methods in native.BATTERY_NATIVE.items()})
         self.assertIn("com.subhub.app.remote.RemoteBackgroundResponderAndroidTest#delayedAuthenticatedInboundExchangesAfterOutgoingHasFinished", selected)
@@ -90,7 +90,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
     def test_battery_missing_or_duplicate_members_fail_closed(self):
         values = native.SUITES["battery"]
         for changed in (values[:-1], values[:-1] + [values[0]]):
-            with mock.patch.dict(native.SUITES, {"battery": changed}), self.assertRaisesRegex(ValueError, "31 unique"):
+            with mock.patch.dict(native.SUITES, {"battery": changed}), self.assertRaisesRegex(ValueError, "34 unique"):
                 native.suite_selectors("battery")
 
     def test_battery_selected_and_source_only_drift_fail_closed(self):
@@ -105,8 +105,8 @@ class NativeSuiteInventoryTest(unittest.TestCase):
 
     def test_device_pass_contains_battery_and_lifecycle_ui_without_duplicates(self):
         selected = native.suite_selectors("device-pass")
-        self.assertEqual(57, len(selected))
-        self.assertEqual(57, len(set(selected)))
+        self.assertEqual(60, len(selected))
+        self.assertEqual(60, len(set(selected)))
         self.assertTrue(set(native.BATTERY_SELECTORS) < set(selected))
         self.assertEqual({"completedCounterTracksAcceptedOnlyAcrossRolesAndRecreation",
                           "domOverviewExcludesCompletedAndRefreshesOriginalCounters",
@@ -119,7 +119,7 @@ class NativeSuiteInventoryTest(unittest.TestCase):
         self.assertIn("com.subhub.app.appmode.LimitsUiAndroidTest#storedRowsSaveOnBlurAndPauseWhileCatalogIsPendingOrFailed", selected)
         self.assertIn("com.subhub.app.appmode.LimitsUiAndroidTest#scopeChurnRestoresSavedRowsDespiteEarlierMetadataSuccessOrFailure", selected)
         values = native.SUITES["device-pass"]
-        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "57 unique"):
+        with mock.patch.dict(native.SUITES, {"device-pass": values[:-1]}), self.assertRaisesRegex(ValueError, "60 unique"):
             native.suite_selectors("device-pass")
 
     def test_profile_screenshots_accept_exact_or_configuration_suffix_but_not_failures(self):

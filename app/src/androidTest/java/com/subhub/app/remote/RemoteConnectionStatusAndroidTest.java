@@ -116,6 +116,65 @@ public final class RemoteConnectionStatusAndroidTest {
         }
     }
 
+    @Test public void openContractRefreshesForPeerPresenceAndConfiguration() throws Exception {
+        ControllerPinManager.enterSubMode();
+        String identity = repeat('a'), generation = UUID.randomUUID().toString();
+        android.database.sqlite.SQLiteDatabase db = store.getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.execSQL("INSERT INTO peers(peer,generation,name,local_role,state) VALUES(?,?,?,'SUB','ACTIVE')",
+                    new Object[]{identity, generation, "Fixture Dom"});
+            FormalRelationshipStore.mapPeer(db, identity, generation, true);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        RemoteStore.Peer peer = store.peer(identity, generation);
+        PersonId id = RemotePersonRepository.id(peer);
+        java.util.concurrent.atomic.AtomicReference<String> profile =
+                new java.util.concurrent.atomic.AtomicReference<>("Fixture Dom");
+        Field projection = People.class.getDeclaredField("localProjection");
+        projection.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.function.UnaryOperator<PersonSnapshot> previousProjection =
+                (java.util.function.UnaryOperator<PersonSnapshot>) projection.get(null);
+        People.installLocalProjection(person -> {
+            PeerPresence.Observation observed = PeerPresence.read(store, peer);
+            PersonSnapshot.Connection state = observed.online
+                    ? PersonSnapshot.Connection.CONNECTED : PersonSnapshot.Connection.OFFLINE;
+            return person.withContractDom(ProfileData.empty(profile.get()), id,
+                    new PersonSnapshot.PeerContact(id, state, observed.lastOnlineAt));
+        });
+        try (ActivityScenario<ContractActivity> page = ActivityScenario.launch(ContractActivity.class)) {
+            await(() -> contractContains(page, "Fixture Dom"));
+            assertFalse(contractContains(page, context.getString(R.string.role_connection_connected)));
+            PeerPresence.receive(store, peer, new org.json.JSONObject().put("version", 1)
+                    .put("sequence", 1).put("foreground", true));
+            RemoteUi.presenceChanged();
+            await(() -> contractContains(page, context.getString(R.string.role_connection_connected)));
+
+            profile.set("Updated fixture Dom");
+            RemoteUi.configurationChanged();
+            await(() -> contractContains(page, "Updated fixture Dom"));
+
+            long seen = PeerPresence.read(store, peer).lastOnlineAt;
+            PeerPresence.receive(store, peer, new org.json.JSONObject().put("version", 1)
+                    .put("sequence", 2).put("foreground", false));
+            RemoteUi.presenceChanged();
+            await(() -> contractContains(page,
+                    context.getString(R.string.role_offline_last_online, ProfileViews.formatLastSeen(seen))));
+        } finally {
+            People.installLocalProjection(previousProjection);
+        }
+    }
+
+    private static boolean contractContains(ActivityScenario<ContractActivity> page, String expected) {
+        AtomicBoolean found = new AtomicBoolean();
+        page.onActivity(activity -> {
+            View contract = activity.findViewById(R.id.role_page_body).findViewWithTag("person_contract_identity");
+            if (contract != null) found.set(find(contract, expected) != null);
+        });
+        return found.get();
+    }
+
     private static String presence(ActivityScenario<RemoteConnectionActivity> page){
         java.util.concurrent.atomic.AtomicReference<String> value=new java.util.concurrent.atomic.AtomicReference<>("");
         page.onActivity(a->{TextView status=a.body.findViewWithTag("connection_presence");if(status!=null)value.set(status.getText().toString());});

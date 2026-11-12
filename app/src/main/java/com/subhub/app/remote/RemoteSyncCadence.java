@@ -14,4 +14,10 @@ final class RemoteSyncCadence {
         long cap = backgroundConnection && !urgent ? BACKGROUND_RETRY_MAX_MILLIS : 60_000L;
         return Math.min(cap, base << Math.max(0, Math.min(5, failures - 1)));
     }
+
+    static long crossedDialDelay(RemoteProtocol.Role localRole, int failures) {
+        long retry = delay(false, false, false, failures);
+        // Prefer the Dom on a crossed retry. The offset exceeds a 2s poll and 1s jitter.
+        return localRole == RemoteProtocol.Role.SUB ? Math.min(60_000L, retry + 3500L) : retry;
+    }
 }

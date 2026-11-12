@@ -47,7 +47,7 @@ public final class RemoteUi implements ConnectionUi {
     }
     private static final java.util.concurrent.CopyOnWriteArrayList<Runnable> presenceObservers=new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final java.util.concurrent.atomic.AtomicBoolean presenceNotification=new java.util.concurrent.atomic.AtomicBoolean();
-    /** Memory-only lifecycle subscription; accepted foreground observations and their expiry invalidate it. */
+    /** Memory-only lifecycle subscription; accepted peer presence and its expiry invalidate it. */
     public static AutoCloseable observePresence(Runnable observer) {
         java.util.Objects.requireNonNull(observer);presenceObservers.addIfAbsent(observer);
         return ()->presenceObservers.remove(observer);

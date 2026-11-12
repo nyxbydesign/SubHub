@@ -41,7 +41,7 @@ final class AchievementsPane extends android.content.ContextWrapper {
     private final TextView membershipUnavailable;
     private boolean active;
     private static final String[] CATEGORY_ORDER = {
-            "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_wallet", "dom_tribute", "dom_hardcore",
+            "dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor", "dom_appearance", "dom_wallet", "dom_hardcore",
             "sessions", "time", "streaks", "app_mode", "limits", "pact", "hardcore",
             "blocks", "peaks", "censor", "appearance", "phrases", "packs", "custom",
             "export", "subliminal", "wallet_setup", "wallet_payments", "wallet",
@@ -272,9 +272,12 @@ final class AchievementsPane extends android.content.ContextWrapper {
     static String displayCategory(AchievementManager.Achievement achievement) {
         switch (achievement.getId()) {
             case "color_picker": case "border_artist": case "style_explorer":
-                return "appearance";
+                return "dom_appearance";
+            case "text_filter_enabled": case "text_filter_catalog": return "dom_censor";
             case "first_custom_phrase": case "phrase_library": return "dom_phrases";
             case "paypal_vault": return "dom_wallet";
+            case "dom_tribute_10": case "dom_tribute_250":
+            case "dom_tribute_1000": case "dom_tribute_10000": return "dom_wallet";
             case "pack_curator": return "packs";
             case "wallet_keeper": case "tribute_rulesmith":
             case "paid_pause": return "wallet_setup";
@@ -603,6 +606,8 @@ final class AchievementsPane extends android.content.ContextWrapper {
         switch (category) {
             case "dom_subs": return R.string.dom_category_subs;
             case "dom_phrases": return R.string.achievement_display_phrases;
+            case "dom_censor": return R.string.achievement_category_text_filter;
+            case "dom_appearance": return R.string.achievement_display_appearance;
             case "dom_wallet": return R.string.achievement_category_wallet;
             case "dom_time": return R.string.dom_category_time;
             case "dom_sessions": return R.string.dom_category_sessions;

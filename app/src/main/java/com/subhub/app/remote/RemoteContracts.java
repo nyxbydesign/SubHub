@@ -140,9 +140,12 @@ public final class RemoteContracts {
         JSONObject desired=store.mirrored(peer.identity,peer.generation,RemoteProtocol.Stream.CONFIGURATION,"desired");if(desired==null)return;
         RemoteStore.Command command=store.stageCommand(peer.identity,peer.generation,desired);
         if(!command.pending())return;
-        try {writer.apply(peer,command,assets(peer),com.subhub.app.settings.InstalledAppCatalog.packageNames(context));}
-        catch(IllegalArgumentException|JSONException invalid) {
+        try {
+            if (writer.apply(peer, command, assets(peer), com.subhub.app.settings.InstalledAppCatalog.packageNames(context)))
+                RemoteUi.configurationChanged();
+        } catch (IllegalArgumentException | JSONException invalid) {
             store.commandResult(peer.identity,peer.generation,command,RemoteStore.CommandState.REJECTED,null,"Invalid contract configuration");
+            RemoteUi.configurationChanged();
         }
     }
 

@@ -32,7 +32,7 @@ public final class PersonActivity extends RolePage {
     private final java.util.Map<String, java.util.List<Object>> signatures = new java.util.HashMap<>();
     private final java.util.Map<String, Integer> positions = new java.util.HashMap<>();
     private boolean observing;
-    private AutoCloseable appIconObserver;
+    private AutoCloseable appIconObserver, presenceObserver;
     private long appIconEpoch;
     private com.subhub.app.relationships.RelationshipUi.Provider appIconProvider;
     private com.subhub.app.security.KeyholderProvider appIconAuthority;
@@ -87,7 +87,7 @@ public final class PersonActivity extends RolePage {
         super.onResume();
         if (!guardTarget()) return;
         observing = true;
-        observeAppIcons();
+        observeRemoteChanges();
         clock.postDelayed(observe, internal ? 250 : 2000);
     }
 
@@ -96,7 +96,7 @@ public final class PersonActivity extends RolePage {
         if (demoStart != null) demoStart.detach(demoUi);
         updateDemoStartAction();
         observing = false;
-        stopAppIcons();
+        stopRemoteChanges();
         clock.removeCallbacks(observe);
         if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
         super.onPause();
@@ -114,7 +114,7 @@ public final class PersonActivity extends RolePage {
     @Override protected void onDestroy() {
         if (demoStart != null) demoStart.detach(demoUi);
         if (demoResults != null) demoResults.close();
-        stopAppIcons();
+        stopRemoteChanges();
         super.onDestroy();
     }
 
@@ -234,33 +234,43 @@ public final class PersonActivity extends RolePage {
         }));
     }
 
-    private void observeAppIcons() {
-        if (internal || personId == null || personId.isLocal() || !observing || body == null || !body.isAttachedToWindow()) return;
+    private void observeRemoteChanges() {
+        if (internal || personId == null || !observing || body == null || !body.isAttachedToWindow()) return;
         com.subhub.app.relationships.RelationshipUi.Provider provider = com.subhub.app.relationships.RelationshipUi.provider();
         com.subhub.app.security.KeyholderProvider authority = People.keyholder();
-        if (appIconObserver != null && provider == appIconProvider && authority == appIconAuthority) return;
-        stopAppIcons(); appIconProvider = provider; appIconAuthority = authority;
+        if (presenceObserver != null && provider == appIconProvider && authority == appIconAuthority) return;
+        stopRemoteChanges(); appIconProvider = provider; appIconAuthority = authority;
         long request = ++appIconEpoch;
         PersonId expected = personId;
-        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
-            if (request != appIconEpoch || !observing || !expected.equals(personId) || isFinishing() || isDestroyed()
-                    || !getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                    || provider != com.subhub.app.relationships.RelationshipUi.provider() || authority != People.keyholder()
-                    || !body.isAttachedToWindow() || !mayRead(this, expected)) return;
-            refresh();
+        presenceObserver = com.subhub.app.remote.RemoteUi.observePresence(() -> {
+            if (canRefreshRemote(request, expected, provider, authority)) observePerson();
+        });
+        if (!expected.isLocal()) appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+            if (canRefreshRemote(request, expected, provider, authority)) refresh();
         });
     }
 
-    private void stopAppIcons() {
+    private boolean canRefreshRemote(long request, PersonId expected,
+            com.subhub.app.relationships.RelationshipUi.Provider provider,
+            com.subhub.app.security.KeyholderProvider authority) {
+        return request == appIconEpoch && observing && expected.equals(personId) && !isFinishing() && !isDestroyed()
+                && getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                && provider == com.subhub.app.relationships.RelationshipUi.provider() && authority == People.keyholder()
+                && body.isAttachedToWindow() && mayRead(this, expected);
+    }
+
+    private void stopRemoteChanges() {
         ++appIconEpoch;
-        AutoCloseable old = appIconObserver; appIconObserver = null;
-        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch also fences queued callbacks. */ }
+        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver})
+            if (observer != null) try { observer.close(); } catch (Exception ignored) { /* The epoch fences callbacks. */ }
+        appIconObserver = null;
+        presenceObserver = null;
     }
 
     private void observePerson() {
         if (!guardTarget()) return;
         if (internal) { observeDemoRuntime(false); refreshInternal(false); return; }
-        observeAppIcons();
+        observeRemoteChanges();
         if (currentCountdown != null && personId != null && personId.isLocal()
                 && com.subhub.app.commitment.CommitmentManager.isActive(this)) {
             currentCountdown.setText(com.subhub.app.commitment.CommitmentManager.countdownLabel(this));
@@ -290,7 +300,7 @@ public final class PersonActivity extends RolePage {
         if (internal ? !DummySubPreview.isAllowed(this) || !DummySubPreview.ID.equals(personId)
                 : DummySubPreview.isRequested(getIntent()) || !mayRead(this, personId)) {
             observing = false;
-            stopAppIcons();
+            stopRemoteChanges();
             clock.removeCallbacks(observe);
             if (data != null) { data.cancel("person"); data.cancel("person-observe"); }
             currentCountdown = null;
@@ -329,8 +339,8 @@ public final class PersonActivity extends RolePage {
             positions.put(key, state.getInt("person_position:" + key));
         page(R.string.role_profile, SubHubNavigation.Screen.PEOPLE, true);
         body.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
-            @Override public void onViewAttachedToWindow(android.view.View view) { observeAppIcons(); }
-            @Override public void onViewDetachedFromWindow(android.view.View view) { stopAppIcons(); }
+            @Override public void onViewAttachedToWindow(android.view.View view) { observeRemoteChanges(); }
+            @Override public void onViewDetachedFromWindow(android.view.View view) { stopRemoteChanges(); }
         });
         secondaryBack(this::backToProfile);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
@@ -367,7 +377,7 @@ public final class PersonActivity extends RolePage {
         if (!guardTarget()) return;
         if (internal) { refreshInternal(true); return; }
         refreshLocalDuration();
-        observeAppIcons();
+        observeRemoteChanges();
         data.cancel("person-observe");
         data.cancel("contract-cover");
         loading();

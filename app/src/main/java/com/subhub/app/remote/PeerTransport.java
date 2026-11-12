@@ -8,6 +8,8 @@ import java.io.OutputStream;
 public interface PeerTransport extends AutoCloseable {
     String localIdentity();
     String inviteRoute() throws IOException;
+    /** Snapshot a route for an established exchange without waiting for invitation readiness. */
+    default String syncRoute() throws IOException { return inviteRoute(); }
     Connection connect(String expectedPeerIdentity, String route, long timeoutMillis) throws IOException;
     Connection accept(long timeoutMillis) throws IOException;
     @Override void close() throws IOException;

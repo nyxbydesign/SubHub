@@ -99,7 +99,7 @@ public final class UpdateVerifier {
         return hex(digest.digest());
     }
 
-    private static String hex(byte[] value) {
+    static String hex(byte[] value) {
         StringBuilder output = new StringBuilder(value.length * 2);
         for (byte element : value) output.append(String.format(Locale.ROOT, "%02x", element & 0xff));
         return output.toString();

@@ -41,7 +41,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     private String internalGeneration = "";
     private long homeControllerRevision;
     private boolean displayedDom, sessionPage, refreshQueued;
-    private AutoCloseable appIconObserver;
+    private AutoCloseable appIconObserver, presenceObserver;
     private long appIconEpoch;
     private DeviceRolePreferences.Mode iconRole;
     private boolean iconUnlocked;
@@ -95,9 +95,9 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         });
     }
 
-    private void observeAppIcons() {
+    private void observeRemoteChanges() {
         if (sessionPage || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()) { stopAppIcons(); return; }
+                || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()) { stopRemoteChanges(); return; }
         DeviceRolePreferences.Mode role = DeviceRolePreferences.get(activity);
         boolean unlocked = ControllerPinManager.isDomWorkspaceUnlocked();
         KeyholderProvider authority = People.keyholder();
@@ -105,9 +105,9 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
         PersonSnapshot person = subPerson;
         if (appIconObserver != null && iconRole == role && iconUnlocked == unlocked && iconAuthority == authority
                 && iconProvider == provider && iconPerson == person) return;
-        stopAppIcons(); iconRole = role; iconUnlocked = unlocked; iconAuthority = authority; iconProvider = provider; iconPerson = person;
+        stopRemoteChanges(); iconRole = role; iconUnlocked = unlocked; iconAuthority = authority; iconProvider = provider; iconPerson = person;
         long request = ++appIconEpoch;
-        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(() -> {
+        Runnable update = () -> {
             if (request != appIconEpoch || sessionPage || activity.isFinishing() || activity.isDestroyed()
                     || !activity.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
                     || !(domWorkspace() ? domBody : subBody).isAttachedToWindow()
@@ -115,20 +115,25 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                     || authority != People.keyholder() || provider != com.subhub.app.relationships.RelationshipUi.provider()
                     || person != subPerson) return;
             refresh(true);
-        });
+        };
+        appIconObserver = com.subhub.app.remote.RemoteUi.observeAppIcons(update);
+        presenceObserver = com.subhub.app.remote.RemoteUi.observePresence(update);
     }
-    private void stopAppIcons() {
-        ++appIconEpoch; AutoCloseable old = appIconObserver; appIconObserver = null;
-        if (old != null) try { old.close(); } catch (Exception ignored) { /* The epoch fences queued callbacks. */ }
+    private void stopRemoteChanges() {
+        ++appIconEpoch;
+        for (AutoCloseable observer : new AutoCloseable[]{appIconObserver, presenceObserver})
+            if (observer != null) try { observer.close(); } catch (Exception ignored) { /* The epoch fences callbacks. */ }
+        appIconObserver = null;
+        presenceObserver = null;
     }
-    @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeAppIcons(); }
-    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopAppIcons(); refreshQueued = false; data.cancel("role-home"); }
+    @Override public void onResume(androidx.lifecycle.LifecycleOwner owner) { observeRemoteChanges(); }
+    @Override public void onPause(androidx.lifecycle.LifecycleOwner owner) { stopRemoteChanges(); refreshQueued = false; data.cancel("role-home"); }
     @Override public void onDestroy(androidx.lifecycle.LifecycleOwner owner) {
-        stopAppIcons(); domBody.removeOnAttachStateChangeListener(this); subBody.removeOnAttachStateChangeListener(this);
+        stopRemoteChanges(); domBody.removeOnAttachStateChangeListener(this); subBody.removeOnAttachStateChangeListener(this);
         activity.getLifecycle().removeObserver(this);
     }
-    @Override public void onViewAttachedToWindow(View view) { observeAppIcons(); }
-    @Override public void onViewDetachedFromWindow(View view) { stopAppIcons(); }
+    @Override public void onViewAttachedToWindow(View view) { observeRemoteChanges(); }
+    @Override public void onViewDetachedFromWindow(View view) { stopRemoteChanges(); }
 
     private void reparent(View child) {
         ((android.view.ViewGroup) child.getParent()).removeView(child);
@@ -142,7 +147,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     public void renderOverviewSession(boolean active, boolean paused) { session.state(active, paused); }
 
     public void refresh(boolean force) {
-        observeAppIcons();
+        observeRemoteChanges();
         boolean dom = domWorkspace();
         session.bind(overviewSession());
         domBody.setVisibility(dom && !sessionPage ? View.VISIBLE : View.GONE);
@@ -583,7 +588,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             renderedUsage = usageSignature; subUsage.removeAllViews(); usage(person);
         }
         subAchievements.load(data, "home-achievement-preview");
-        observeAppIcons();
+        observeRemoteChanges();
     }
 
     private void ensureSubSections() {

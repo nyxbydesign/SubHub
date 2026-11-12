@@ -38,12 +38,12 @@ public final class AchievementGroupOrderTest {
         assertEquals("legend", displayed.get(displayed.size() - 1).getId());
         assertEquals("sessions", categories.get(0));
         assertEquals("first_session", displayed.get(0).getId());
-        assertEquals(List.of("color_picker", "border_artist", "style_explorer"),
-                ids(groups.get("appearance")));
+        assertFalse(groups.containsKey("appearance"));
+        assertFalse(groups.containsKey("dom_appearance"));
+        assertFalse(groups.containsKey("censor"));
         assertFalse(groups.containsKey("phrases"));
         assertFalse(groups.containsKey("dom_phrases"));
         assertFalse(groups.containsKey("packs"));
-        assertTrue(categories.indexOf("appearance") < categories.indexOf("export"));
         assertTrue(categories.indexOf("wallet_setup") < categories.indexOf("wallet_payments"));
         for (AchievementManager.Achievement achievement : catalog) {
             assertTrue(groups.get(AchievementsActivity.displayCategory(achievement))
@@ -57,10 +57,13 @@ public final class AchievementGroupOrderTest {
     @Test public void domGroupsPutSessionsBeforeTimeAndPhrasesBeforeWalletAndTributes() {
         Map<String, List<AchievementManager.Achievement>> groups =
                 AchievementsActivity.orderedGroups(DomAchievementCatalog.all());
-        assertEquals(List.of("dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_wallet",
-                "dom_tribute", "dom_hardcore"), new ArrayList<>(groups.keySet()));
+        assertEquals(List.of("dom_subs", "dom_sessions", "dom_time", "dom_phrases", "dom_censor",
+                "dom_appearance", "dom_wallet", "dom_hardcore"), new ArrayList<>(groups.keySet()));
         assertEquals(List.of("first_custom_phrase", "phrase_library"), ids(groups.get("dom_phrases")));
-        assertEquals(List.of("paypal_vault"), ids(groups.get("dom_wallet")));
+        assertEquals(List.of("paypal_vault", "dom_tribute_10", "dom_tribute_250",
+                "dom_tribute_1000", "dom_tribute_10000"), ids(groups.get("dom_wallet")));
+        assertEquals(List.of("text_filter_enabled", "text_filter_catalog"), ids(groups.get("dom_censor")));
+        assertEquals(List.of("color_picker", "border_artist", "style_explorer"), ids(groups.get("dom_appearance")));
     }
 
     @Test public void progressionUsesRequirementsRatherThanCatalogAppendOrder() {
@@ -71,7 +74,7 @@ public final class AchievementGroupOrderTest {
         Map<String, List<AchievementManager.Achievement>> groups =
                 AchievementsActivity.orderedGroups(reversed);
         for (String category : List.of("sessions", "time", "streaks", "app_mode", "blocks",
-                "peaks", "censor", "appearance", "export", "subliminal",
+                "peaks", "export", "subliminal",
                 "wallet_payments")) {
             long previous = 0;
             for (AchievementManager.Achievement achievement : groups.get(category)) {
@@ -80,8 +83,7 @@ public final class AchievementGroupOrderTest {
                 previous = requirement;
             }
         }
-        assertEquals(List.of("color_picker", "border_artist", "style_explorer"),
-                ids(groups.get("appearance")));
+        assertFalse(groups.containsKey("appearance"));
         // Equal/non-comparable milestones keep their existing order instead of arbitrary sorting.
         List<AchievementManager.Achievement> hidden = new ArrayList<>();
         for (AchievementManager.Achievement achievement : reversed) {

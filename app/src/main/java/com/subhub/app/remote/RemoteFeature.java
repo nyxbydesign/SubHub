@@ -47,6 +47,17 @@ public final class RemoteFeature {
     private final ThreadPoolExecutor sessions=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new SynchronousQueue<>(),r->new Thread(r,"subhub-peer-session"),new ThreadPoolExecutor.AbortPolicy());
     private final Semaphore revocations=new Semaphore(1);
     private final Set<String> busy=ConcurrentHashMap.newKeySet();
+    private final Map<String,OutboundHello> outboundHellos=new ConcurrentHashMap<>();
+    private static final class OutboundHello {
+        private static final int WAITING=0, CROSSED=1, FINISHED=2;
+        final PeerTransport endpoint;
+        final RemoteProtocol.Role role;
+        private final AtomicInteger state=new AtomicInteger(WAITING);
+        OutboundHello(PeerTransport endpoint,RemoteProtocol.Role role){this.endpoint=endpoint;this.role=role;}
+        void crossed(){state.compareAndSet(WAITING,CROSSED);}
+        void acknowledged(){state.set(FINISHED);}
+        boolean finish(){return state.getAndSet(FINISHED)==CROSSED;}
+    }
     private final Map<String,Long> nextAttempt=new ConcurrentHashMap<>();
     private final Map<String,Integer> consecutiveFailures=new ConcurrentHashMap<>();
     private final Object attemptClockLock=new Object();
@@ -81,9 +92,12 @@ public final class RemoteFeature {
     private final DeviceDataSyncWake deviceDataWake;
     private AutoCloseable deviceDataObserver;
     private final LocalAppPresence appPresence;
-    private volatile boolean presenceSyncPending;
     private final Map<String,PresenceWake> presenceWakes=new HashMap<>();
-    private static final class PresenceWake { ScheduledFuture<?> task; }
+    private static final class PresenceWake {
+        final long expiresElapsed;
+        ScheduledFuture<?> task;
+        PresenceWake(long expiresElapsed) { this.expiresElapsed = expiresElapsed; }
+    }
     private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean automaticResetPending = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean stableConnectionPending = new java.util.concurrent.atomic.AtomicBoolean();
@@ -110,7 +124,7 @@ public final class RemoteFeature {
             BackgroundScheduling backgroundScheduling) {
         this.backgroundScheduling=Objects.requireNonNull(backgroundScheduling);
         this.context=context.getApplicationContext();
-        appPresence=new LocalAppPresence(this.context,this::presenceChanged);
+        appPresence=new LocalAppPresence(this.context);
         deviceDataWake=new DeviceDataSyncWake((work,delay)->{
             ScheduledFuture<?> future=timer.schedule(work,delay,TimeUnit.MILLISECONDS);
             return ()->future.cancel(false);
@@ -153,10 +167,40 @@ public final class RemoteFeature {
         appPresence.install(app);
         lifecycleCallbacks=new Application.ActivityLifecycleCallbacks() {
             private int started;
-            @Override public void onActivityStarted(Activity activity){synchronized(RemoteFeature.this){if(stopped)return;if(++started==1){foreground=true;refreshForegroundPolling();RemoteFeature.this.activity.dispatchNotifications();requestConnectedServiceStart();requestAutomaticSync();}}}
-            @Override public void onActivityStopped(Activity activity){synchronized(RemoteFeature.this){if(stopped)return;if(--started==0){foreground=false;refreshForegroundPolling();requestAutomaticSync(false);timer.execute(RemoteFeature.this::suspendIfIdle);}}}
+            private boolean syncOnResume;
+
+            @Override public void onActivityStarted(Activity activity) {
+                synchronized (RemoteFeature.this) {
+                    if (stopped || ++started != 1) return;
+                    foreground = true;
+                    syncOnResume = true;
+                    RemoteFeature.this.activity.dispatchNotifications();
+                }
+            }
+
+            @Override public void onActivityResumed(Activity activity) {
+                synchronized (RemoteFeature.this) {
+                    if (stopped || !syncOnResume) return;
+                    syncOnResume = false;
+                    // The ordinary first sync can now carry a resumed Activity observation.
+                    refreshForegroundPolling();
+                    requestConnectedServiceStart();
+                    requestAutomaticSync();
+                }
+            }
+
+            @Override public void onActivityStopped(Activity activity) {
+                synchronized (RemoteFeature.this) {
+                    if (stopped || --started != 0) return;
+                    foreground = false;
+                    syncOnResume = false;
+                    refreshForegroundPolling();
+                    requestAutomaticSync(false);
+                    timer.execute(RemoteFeature.this::suspendIfIdle);
+                }
+            }
             @Override public void onActivityCreated(Activity a,Bundle b){} @Override public void onActivityDestroyed(Activity a){}
-            @Override public void onActivityResumed(Activity a){} @Override public void onActivityPaused(Activity a){}
+            @Override public void onActivityPaused(Activity a){}
             @Override public void onActivitySaveInstanceState(Activity a,Bundle b){}
         };
         app.registerActivityLifecycleCallbacks(lifecycleCallbacks);
@@ -192,34 +236,40 @@ public final class RemoteFeature {
         RemoteUi.presenceChanged();
     }
     private void receivedPresence(RemoteStore.Peer peer) {
-        PeerPresence.Observation observed=PeerPresence.read(store,peer);
-        synchronized(presenceWakes) {
-            PresenceWake old=presenceWakes.remove(key(peer));if(old!=null&&old.task!=null)old.task.cancel(false);
-            if(!stopped && observed.online) {
-                PresenceWake wake=new PresenceWake();presenceWakes.put(key(peer),wake);
-                try { wake.task=timer.schedule(()->{
-                    synchronized(presenceWakes){if(!presenceWakes.remove(key(peer),wake))return;}
-                    RemoteUi.presenceChanged();
-                },observed.expiresInMillis,TimeUnit.MILLISECONDS); }
-                catch(RejectedExecutionException closed){presenceWakes.remove(key(peer),wake);}
+        updatePresenceWake(peer, null);
+    }
+
+    private void updatePresenceWake(RemoteStore.Peer peer, PresenceWake expired) {
+        if (stopped) return;
+        PeerPresence.Observation observed = PeerPresence.read(store, peer);
+        long now = SystemClock.elapsedRealtime();
+        long expires = now + observed.expiresInMillis;
+        boolean changed;
+        String key = key(peer);
+        synchronized (presenceWakes) {
+            PresenceWake old = presenceWakes.get(key);
+            if (expired != null && old != expired) return;
+            // Recheck at an already earlier wake rather than replacing it on every accepted batch.
+            if (expired == null && observed.online && old != null && old.expiresElapsed > now
+                    && old.expiresElapsed <= expires) return;
+            if (old != null) {
+                presenceWakes.remove(key);
+                if (old != expired && old.task != null) old.task.cancel(false);
+            }
+            changed = observed.online
+                    ? expired == null && (old == null || old.expiresElapsed <= now) : old != null;
+            if (!stopped && observed.online) {
+                PresenceWake wake = new PresenceWake(expires);
+                presenceWakes.put(key, wake);
+                try {
+                    wake.task = timer.schedule(() -> updatePresenceWake(peer, wake),
+                            observed.expiresInMillis, TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException closed) {
+                    presenceWakes.remove(key, wake);
+                }
             }
         }
-        RemoteUi.presenceChanged();
-    }
-    private void presenceChanged() {
-        if(stopped)return;
-        // A final false observation is allowed on the existing bounded exchange path even after opt-out.
-        presenceSyncPending=true;
-        try { timer.execute(()->{if(stopped)return;if(appPresence.foreground())invalidateAttempts();else invalidateChangedAttempts(true);flushPresence();}); }
-        catch(RejectedExecutionException closed) { /* Retired endpoint. */ }
-    }
-    private void flushPresence() {
-        if(stopped)return;
-        if(!appPresence.foreground() && endpoint==null){presenceSyncPending=false;return;}
-        // Busy sessions send fresh presence at their checkpoints. Their completion also drains a
-        // transition that arrived just after the last checkpoint; no periodic background owner is created.
-        presenceSyncPending=!busy.isEmpty();
-        tick();
+        if (changed) RemoteUi.presenceChanged();
     }
     /** Coalesce lifecycle/network returns and preserve WorkManager's existing unique-work ownership. */
     void requestAutomaticSync() { requestAutomaticSync(true); }
@@ -625,6 +675,9 @@ public final class RemoteFeature {
     }
     private long attemptGeneration(){synchronized(attemptClockLock){return dirtyGeneration;}}
     private void finishAttempt(String key,long generation,boolean success,boolean pending){
+        finishAttempt(key,generation,success,pending,null);
+    }
+    private void finishAttempt(String key,long generation,boolean success,boolean pending,RemoteProtocol.Role crossedRole){
         synchronized(attemptClockLock){
             // A mutation during this exchange still needs a follow-up, even when its old snapshot completed.
             if(generation!=dirtyGeneration && (success || pending || !backgroundConnection() || generation<retryResetGeneration)){
@@ -632,7 +685,9 @@ public final class RemoteFeature {
             }
             int failures=success?0:Math.min(6,consecutiveFailures.getOrDefault(key,0)+1);
             if(success)consecutiveFailures.remove(key);else consecutiveFailures.put(key,failures);
-            long delay=RemoteSyncCadence.delay(backgroundConnection(),pending,success,failures);
+            long delay=crossedRole!=null && foreground && backgroundWindows.get()==0 && !success && !pending
+                    ? RemoteSyncCadence.crossedDialDelay(crossedRole, failures)
+                    : RemoteSyncCadence.delay(backgroundConnection(),pending,success,failures);
             if(!success)delay+=ThreadLocalRandom.current().nextInt(1000);
             nextAttempt.put(key,SystemClock.elapsedRealtime()+delay);
         }
@@ -735,9 +790,9 @@ public final class RemoteFeature {
         String key=key(peer);boolean revoked=peer.state==RemoteStore.State.REVOKED;
         long generation=attemptGeneration();
         if(revoked&&!revocations.tryAcquire()){deferAdmission(key,generation);busy.remove(key);return null;}
-        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner,generation),()->{
+        boolean foregroundDial=foreground && backgroundWindows.get()==0 && peer.state==RemoteStore.State.ACTIVE;
+        AdmittedTask<Boolean> task=new AdmittedTask<>(()->runPeer(peer,deadline,pairingOwner,generation,foregroundDial),()->{
             if(revoked)revocations.release();busy.remove(key);scheduleConnectedSync(0);
-            if(presenceSyncPending)try{timer.execute(this::flushPresence);}catch(RejectedExecutionException closed){}
             for(Future<?> finished:pairingTasks.keySet())if(finished.isDone()){pairingTasks.remove(finished);pairingTaskDeadlines.remove(finished);}suspendIfIdle();
         });
         if(pairingOwner!=null){pairingTasks.put(task,pairingOwner);pairingTaskDeadlines.put(task,deadline);}
@@ -785,12 +840,17 @@ public final class RemoteFeature {
         catch(RejectedExecutionException stopped){close(connection);}
     }
     private void untrack(PeerTransport.Connection connection){connections.remove(connection);connectionDeadlines.remove(connection);pairingConnections.remove(connection);}
-    private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner,long generation) {
+    private boolean runPeer(RemoteStore.Peer peer,long deadline,String pairingOwner,long generation,boolean foregroundDial) {
         String key=key(peer);boolean success=false;
+        OutboundHello hello=null;
         try (NetworkWake wake=hasConnectedService()?new NetworkWake(context,deadline):null) {
             RemoteStore.Peer requested=peer;
             peer=store.authorityAccess(()->{RemoteStore.Peer current=store.peer(requested.identity,requested.generation);if(current==null||current.localRole!=requested.localRole)throw new SecurityException("Retained peer changed");return current;});
             remaining(deadline);PeerTransport active=transport();PeerTransport.Connection connection;
+            if (foregroundDial && foreground && peer.state==RemoteStore.State.ACTIVE) {
+                hello=new OutboundHello(active,peer.localRole);
+                outboundHellos.put(key,hello);
+            }
             try{connection=active.connect(peer.identity,peer.route,Math.min(8_000,remaining(deadline)));}
             catch(IOException oldRoute){if(peer.route.isEmpty())throw oldRoute;connection=active.connect(peer.identity,"",Math.min(8_000,remaining(deadline)));}
             endpointFailures.set(0);nextEndpointAttempt=0;
@@ -801,14 +861,24 @@ public final class RemoteFeature {
             try(PeerTransport.Connection selected=connection) {
                 if(peer.state==RemoteStore.State.PENDING)success=pairing(active).resume(selected,peer);
                 else if(peer.state==RemoteStore.State.REVOKED){session(active).sendRevocation(selected,peer,deadline);success=true;}
-                else{session(active).outgoing(selected,peer,deadline);success=true;}
+                else {
+                    session(active).outgoing(selected,peer,deadline,hello==null?null:hello::acknowledged);
+                    success=true;
+                }
             } finally{untrack(connection);}
             if(success)store.putMetadata(peer.identity,peer.generation,"connection_error","");
         } catch(Exception unavailable){
             logSessionFailure(peer.state==RemoteStore.State.ACTIVE?"outgoing-active":peer.state==RemoteStore.State.REVOKED?"outgoing-revoked":"outgoing-pending",unavailable);
             store.putMetadata(peer.identity,peer.generation,"connection_error","Unable to sync");
         }
-        finally{finishAttempt(key,generation,success,peer.state!=RemoteStore.State.ACTIVE);}
+        finally {
+            RemoteProtocol.Role crossedRole=null;
+            if (hello!=null) {
+                if (hello.finish()) crossedRole=hello.role;
+                outboundHellos.remove(key,hello);
+            }
+            finishAttempt(key,generation,success,peer.state!=RemoteStore.State.ACTIVE,crossedRole);
+        }
         return success;
     }
     private void accept(PeerTransport active) {
@@ -849,7 +919,19 @@ public final class RemoteFeature {
             }
             String generation=RemoteProtocol.identifier(first.getString("generation"));RemoteStore.Peer peer=store.authorityAccess(()->store.peer(selected.authenticatedPeerIdentity(),generation));
             if(peer==null)throw new SecurityException("Unknown peer");
-            reservation=key(peer);if(!busy.add(reservation)){reservation=null;return;}
+            reservation=key(peer);
+            // Capture the possible owner before checking busy so a late collision cannot mark a successor.
+            OutboundHello outgoing=outboundHellos.get(reservation);
+            if (!busy.add(reservation)) {
+                reservation=null;
+                Object route=first.opt("route");
+                if (foreground && backgroundWindows.get()==0 && outgoing!=null && outgoing.endpoint==active && endpoint==active
+                        && outgoing.role==peer.localRole && peer.state==RemoteStore.State.ACTIVE
+                        && "hello".equals(first.opt("type")) && peer.generation.equals(first.opt("generation"))
+                        && route instanceof String && ((String)route).length()<=4096)
+                    outgoing.crossed();
+                return;
+            }
             connections.put(selected,reservation);
             try(NetworkWake wake=hasConnectedService()?new NetworkWake(context,deadline):null){
                 if("revoke".equals(type))session(active).receiveRevocation(selected,first,deadline);
@@ -864,7 +946,6 @@ public final class RemoteFeature {
                 if(exchanged)finishAttempt(reservation,attempt,true,false);
                 busy.remove(reservation);
             }synchronizeBackground();scheduleConnectedSync(0);
-            if(presenceSyncPending)try{timer.execute(this::flushPresence);}catch(RejectedExecutionException closed){}
             suspendIfIdle();}
     }
     private RemoteSessionControlCoordinator controlCoordinator(PeerTransport active) {
@@ -882,7 +963,9 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
-            @Override public JSONObject presence() throws Exception { return appPresence.snapshot(); }
+            @Override public JSONObject presence(Boolean previousForeground) throws Exception {
+                return appPresence.snapshot(previousForeground);
+            }
             @Override public void presenceReceived(RemoteStore.Peer peer) { receivedPresence(peer); }
             @Override public int appIconsVersion() { return com.subhub.app.remote.icons.AppIconExchange.VERSION; }
             @Override public void appIcons(PeerTransport.Connection connection,RemoteStore.Peer peer,long deadline) throws Exception {

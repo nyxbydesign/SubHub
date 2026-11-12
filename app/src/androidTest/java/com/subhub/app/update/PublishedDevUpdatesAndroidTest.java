@@ -37,7 +37,7 @@ public final class PublishedDevUpdatesAndroidTest {
             UpdateManifest.Asset asset = dev.candidate.manifest.selectAsset(Build.SUPPORTED_ABIS);
             assertNotNull(asset);
             assertTrue(asset.size > 1024 * 1024);
-            assertEquals("https://github.com/confiteor48/SubHub/releases/download/" + expected + "/" + asset.name,
+            assertEquals("https://github.com/nyxbydesign/SubHub/releases/download/" + expected + "/" + asset.name,
                     asset.url);
             assertFalse(dev.candidate.notes.isEmpty());
             state.setDevUpdates(false);

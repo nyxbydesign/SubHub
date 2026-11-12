@@ -202,6 +202,13 @@ public final class AchievementManager {
         switch (id) {
             case "first_custom_phrase": case "phrase_library":
                 return new StatsRepository(context, false).retainedSnapshot().getCustomPhrases();
+            case "style_explorer": case "border_artist": {
+                StatsSnapshot retained = new StatsRepository(context, false).retainedSnapshot();
+                return DomAchievementCatalog.appearanceCurrent(id, "style_explorer".equals(id)
+                        ? retained.getCensorStylesTried() : retained.getBorderEffectsTried());
+            }
+            case "color_picker": case "text_filter_enabled": case "text_filter_catalog":
+                return current(id, new StatsRepository(context, false).retainedSnapshot());
             case "paypal_vault": return new PayPalCredentialStore(context).vaultState().isReady() ? 1 : 0;
             default: return stats == null ? 0 : DomAchievementCatalog.current(id, stats);
         }
@@ -547,11 +554,6 @@ public final class AchievementManager {
                 a("blocks_10000", R.string.achievement_ultimate_blocker, R.string.achievement_desc_blocks_10000, "♚", "blocks", R.drawable.achievement_badge_blocks_10000, false),
                 a("peak_50", R.string.achievement_peak_50, R.string.achievement_desc_peak_50, "▥", "peaks", R.drawable.achievement_badge_peak_50, false),
                 a("peak_500", R.string.achievement_peak_500, R.string.achievement_desc_peak_500, "▥", "peaks", R.drawable.achievement_badge_peak_500, false),
-                a("text_filter_enabled", R.string.achievement_text_filter_enabled, R.string.achievement_desc_text_filter_enabled, "Aa", "censor", R.drawable.achievement_badge_text_filter_enabled, false),
-                a("text_filter_catalog", R.string.achievement_text_filter_catalog, R.string.achievement_desc_text_filter_catalog, "Aa", "censor", R.drawable.achievement_badge_text_filter_catalog, false),
-                a("style_explorer", R.string.achievement_style_explorer, R.string.achievement_desc_style_explorer, "◒", "custom", R.drawable.achievement_badge_style_explorer, false),
-                a("border_artist", R.string.achievement_border_artist, R.string.achievement_desc_border_artist, "▣", "custom", R.drawable.achievement_badge_border_artist, false),
-                a("color_picker", R.string.achievement_color_picker, R.string.achievement_desc_color_picker, "◉", "custom", R.drawable.achievement_badge_color_picker, false),
                 a("export_first", R.string.achievement_export_first, R.string.achievement_desc_export_first, "⇩", "export", R.drawable.achievement_badge_export_first, false),
                 a("export_artist", R.string.achievement_export_artist, R.string.achievement_desc_export_artist, "⇩", "export", R.drawable.achievement_badge_export_artist, false),
                 a("subliminal_1", R.string.achievement_subliminal_1, R.string.achievement_desc_subliminal_1, "◉", "subliminal", R.drawable.achievement_badge_subliminal_1, false),

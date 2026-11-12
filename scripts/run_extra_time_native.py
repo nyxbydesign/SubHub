@@ -232,6 +232,11 @@ RECONNECT_NATIVE = {
         "reconnectDrainRechecksNewConsentBeforePublishingQueuedEdit",
     ],
 }
+CROSSED_DIAL_TESTS = [
+    "authenticatedCrossedHelloStaggersOnlyTheActiveForegroundRetry",
+    "malformedCrossedHelloDoesNotChangeTheRetry",
+    "backgroundCrossedHelloDoesNotChangeTheBoundedWindowRetry",
+]
 RECONNECT_SOURCE_ONLY = {
     "com.subhub.app.remote.RemoteFeatureSchedulingAndroidTest": [
         "retainedRevocationsCannotConsumeForegroundIncomingOrCurrentPeerCapacity",
@@ -243,6 +248,7 @@ RECONNECT_SOURCE_ONLY = {
         "preexistingBusyOwnerCanSatisfyWindowWithAnExactCompletedSync",
         "preexistingBusyOwnerDoesNotHideMutationOrMissingCompletion",
         "dirtyMutationWhileBusyRemainsDueWhenTheOldExchangeExits",
+        *CROSSED_DIAL_TESTS,
         "completionCannotClobberMutationAndFailuresBackOffToABoundedDelay",
         "connectedServiceLeaseIsSeparateFromPairingAndOldCloseCannotRetireANewOwner",
         "connectedServiceRefusesPendingOnlyPeersWithoutBorrowingPairingAuthority",
@@ -736,6 +742,7 @@ DUMMY_PREVIEW_SOURCE_ONLY = {
         "preexistingBusyOwnerCanSatisfyWindowWithAnExactCompletedSync",
         "preexistingBusyOwnerDoesNotHideMutationOrMissingCompletion",
         "dirtyMutationWhileBusyRemainsDueWhenTheOldExchangeExits",
+        *CROSSED_DIAL_TESTS,
         "completionCannotClobberMutationAndFailuresBackOffToABoundedDelay",
         "connectedServiceLeaseIsSeparateFromPairingAndOldCloseCannotRetireANewOwner",
         "connectedServiceRefusesPendingOnlyPeersWithoutBorrowingPairingAuthority",
@@ -771,7 +778,7 @@ BATTERY_SELECTORS = [f"{cls}#{method}" for cls, methods in BATTERY_NATIVE.items(
 DEVICE_PASS_SELECTORS = [f"{cls}#{method}" for cls, methods in DEVICE_PASS_NATIVE.items() for method in methods]
 DUMMY_PREVIEW_SELECTORS = [f"{cls}#{method}" for cls, methods in DUMMY_PREVIEW_NATIVE.items() for method in methods]
 SUITES = {"extra-time": ALL_SELECTORS, "subhub-pass": SUBHUB_PASS_SELECTORS, "reconnect": RECONNECT_SELECTORS, "battery": BATTERY_SELECTORS, "device-pass": DEVICE_PASS_SELECTORS, "dummy-preview": DUMMY_PREVIEW_SELECTORS}
-SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 31, "device-pass": 57, "dummy-preview": 226}
+SUITE_COUNTS = {"extra-time": 21, "subhub-pass": 52, "reconnect": 6, "battery": 34, "device-pass": 60, "dummy-preview": 226}
 PR_SUBSET_LABEL = "native-subset"
 PR_SUBSET_START = "<!-- native-selectors:start -->"
 PR_SUBSET_END = "<!-- native-selectors:end -->"

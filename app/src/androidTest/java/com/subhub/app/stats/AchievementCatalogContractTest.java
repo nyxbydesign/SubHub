@@ -29,7 +29,7 @@ public final class AchievementCatalogContractTest {
         Context context = ApplicationProvider.getApplicationContext();
         AchievementManager manager = new AchievementManager(context);
 
-        assertEquals(54, manager.getTotalCount());
+        assertEquals(49, manager.getTotalCount());
         Set<String> ids = new HashSet<>();
         Set<Integer> badgeResources = new HashSet<>();
         Set<String> badgeDigests = new HashSet<>();
@@ -50,8 +50,8 @@ public final class AchievementCatalogContractTest {
             }
         }
 
-        assertEquals(54, badgeResources.size());
-        assertEquals(54, badgeDigests.size());
+        assertEquals(49, badgeResources.size());
+        assertEquals(49, badgeDigests.size());
         assertFalse(ids.contains("pack_curator"));
         assertFalse(ids.contains("profile_creator"));
         assertFalse(ids.contains("profile_organizer"));
@@ -66,6 +66,8 @@ public final class AchievementCatalogContractTest {
         assertFalse(ids.contains("paypal_vault"));
         assertFalse(ids.contains("first_custom_phrase"));
         assertFalse(ids.contains("phrase_library"));
+        for (String id : java.util.List.of("text_filter_enabled", "text_filter_catalog",
+                "color_picker", "border_artist", "style_explorer")) assertFalse(ids.contains(id));
         assertEquals(R.drawable.achievement_badge_wallet_paid_1000,
                 find(manager, "wallet_paid_1000").getBadgeArtRes());
         assertFalse(find(manager, "app_mode_guardian").getCategory().isEmpty());

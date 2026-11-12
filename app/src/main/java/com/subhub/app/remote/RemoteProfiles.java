@@ -65,10 +65,10 @@ public final class RemoteProfiles {
         receive(store, peer, value, details, false);
     }
 
-    static void receive(RemoteStore store, RemoteStore.Peer peer, JSONObject value, boolean details, boolean roleIdentity) throws JSONException {
+    static boolean receive(RemoteStore store, RemoteStore.Peer peer, JSONObject value, boolean details, boolean roleIdentity) throws JSONException {
         ProfileData profile = parse(value, peer.remoteRole(), details, roleIdentity);
         ProfileImages.requireValid(profile.avatar);
-        store.updateProfile(peer.identity, peer.generation, value, profile.name);
+        return store.updateProfile(peer.identity, peer.generation, value, profile.name);
     }
 
     public static ProfileData read(RemoteStore store, RemoteStore.Peer peer) {
