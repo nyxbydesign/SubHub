@@ -13,8 +13,10 @@ import static org.junit.Assert.assertTrue;
 
 public final class GitHubReleaseRepositoryTest {
     @Test public void updaterTargetsTheMovedCanonicalRepository() {
-        assertEquals("https://api.github.com/repos/confiteor48/SubHub/releases?per_page=30",
+        assertEquals("https://api.github.com/repos/nyxbydesign/SubHub/releases?per_page=30",
                 GitHubReleaseRepository.RELEASES_URL);
+        assertEquals("https://api.github.com/repos/nyxbydesign/SubHub/releases/latest",
+                GitHubReleaseRepository.LATEST_STABLE_URL);
     }
     @Test public void ignoresDraftsButKeepsPublishedPrereleases() throws Exception {
         JSONArray releases = new JSONArray("["
