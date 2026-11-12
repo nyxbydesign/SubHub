@@ -351,7 +351,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
     }
 
     private void homeSummary(List<PersonSnapshot> people) {
-        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, offline = 0, unknownDevices = 0;
+        int sessions = 0, subs = 0, local = 0, paired = 0, unknownSessions = 0, online = 0, idle = 0, offline = 0, unknownDevices = 0;
         java.util.Set<String> counted = new java.util.HashSet<>();
         for (PersonSnapshot person : people) {
             if (DummySubPreview.ID.equals(person.id)) continue;
@@ -366,6 +366,7 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
             if (person.id.isLocal()) { local++; continue; }
             paired++;
             if (person.connection == PersonSnapshot.Connection.CONNECTED) online++;
+            else if (person.connection == PersonSnapshot.Connection.IDLE) idle++;
             else if (person.connection == PersonSnapshot.Connection.OFFLINE) offline++;
             else unknownDevices++;
         }
@@ -385,7 +386,8 @@ public final class RoleHomePresenter implements androidx.lifecycle.DefaultLifecy
                 activity.getString(R.string.overview_confirmed_active, sessions), false).setTextSize(12);
         List<String> status = new ArrayList<>();
         if (local > 0) status.add(activity.getString(R.string.home_local_sub_count, local));
-        if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
+        if (idle > 0) status.add(activity.getString(R.string.home_devices_counts_with_idle, online, idle, offline));
+        else if (paired > 0) status.add(activity.getString(R.string.home_devices_counts, online, offline));
         if (unknownDevices > 0) status.add(activity.getString(R.string.home_status_unknown, unknownDevices));
         LinearLayout pairedSubs = summary(summaries, stacked, R.drawable.ic_nav_people,
                 R.string.home_subs_total, Integer.toString(subs), String.join(" · ", status));

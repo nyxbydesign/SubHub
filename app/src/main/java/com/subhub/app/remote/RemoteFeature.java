@@ -118,9 +118,13 @@ public final class RemoteFeature {
     private final LocalAppPresence appPresence;
     private final Map<String,PresenceWake> presenceWakes=new HashMap<>();
     private static final class PresenceWake {
+        final PeerPresence.Status status;
         final long expiresElapsed;
         ScheduledFuture<?> task;
-        PresenceWake(long expiresElapsed) { this.expiresElapsed = expiresElapsed; }
+        PresenceWake(PeerPresence.Status status, long expiresElapsed) {
+            this.status = status;
+            this.expiresElapsed = expiresElapsed;
+        }
     }
     private final java.util.concurrent.atomic.AtomicBoolean automaticSyncPending = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean automaticResetPending = new java.util.concurrent.atomic.AtomicBoolean();
@@ -274,16 +278,17 @@ public final class RemoteFeature {
             PresenceWake old = presenceWakes.get(key);
             if (expired != null && old != expired) return;
             // Recheck at an already earlier wake rather than replacing it on every accepted batch.
-            if (expired == null && observed.online && old != null && old.expiresElapsed > now
+            if (expired == null && old != null && old.status == observed.status && old.expiresElapsed > now
                     && old.expiresElapsed <= expires) return;
             if (old != null) {
                 presenceWakes.remove(key);
                 if (old != expired && old.task != null) old.task.cancel(false);
             }
-            changed = observed.online
-                    ? expired == null && (old == null || old.expiresElapsed <= now) : old != null;
-            if (!stopped && observed.online) {
-                PresenceWake wake = new PresenceWake(expires);
+            boolean live = observed.status != PeerPresence.Status.OFFLINE;
+            changed = old == null ? live : old.status != observed.status
+                    || expired == null && old.expiresElapsed <= now;
+            if (!stopped && live) {
+                PresenceWake wake = new PresenceWake(observed.status, expires);
                 presenceWakes.put(key, wake);
                 try {
                     wake.task = timer.schedule(() -> updatePresenceWake(peer, wake),
@@ -732,7 +737,10 @@ public final class RemoteFeature {
             }
             synchronizeBackground();
             if(BackgroundSyncPreferences.enabled(context)){requestConnectedServiceStart();requestAutomaticSync();}
-            else deferSuspendIfIdle();
+            else {
+                if (foreground) requestAutomaticSync();
+                deferSuspendIfIdle();
+            }
             return saved;
         }
     }
@@ -1256,8 +1264,8 @@ public final class RemoteFeature {
     }
     private RemoteSession session(PeerTransport active) {
         return new RemoteSession(store,active,new RemoteSession.Hooks() {
-            @Override public JSONObject presence(Boolean previousForeground) throws Exception {
-                return appPresence.snapshot(previousForeground);
+            @Override public JSONObject presence(Boolean previousForeground, Boolean previousBackgroundSync) throws Exception {
+                return appPresence.snapshot(previousForeground, previousBackgroundSync);
             }
             @Override public void presenceReceived(RemoteStore.Peer peer) { receivedPresence(peer); }
             @Override public int appIconsVersion() { return com.subhub.app.remote.icons.AppIconExchange.VERSION; }

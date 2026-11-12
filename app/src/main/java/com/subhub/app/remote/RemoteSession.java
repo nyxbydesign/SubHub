@@ -12,7 +12,7 @@ import java.util.List;
 /** A bounded duplex exchange; receipt, asset completion and configuration application stay distinct. */
 public final class RemoteSession {
     public interface Hooks {
-        default JSONObject presence(Boolean previousForeground) throws Exception { return null; }
+        default JSONObject presence(Boolean previousForeground, Boolean previousBackgroundSync) throws Exception { return null; }
         default void presenceReceived(RemoteStore.Peer peer) { }
         default int appIconsVersion() { return 0; }
         default void appIcons(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadline) throws Exception {
@@ -65,7 +65,7 @@ public final class RemoteSession {
     private final RemoteStore store;
     private final PeerTransport transport;
     private final Hooks hooks;
-    private Boolean sentForeground;
+    private Boolean sentForeground, sentBackgroundSync;
     private String presenceLocalIdentity;
 
     public RemoteSession(RemoteStore store,PeerTransport transport,Hooks hooks) {
@@ -79,6 +79,7 @@ public final class RemoteSession {
     void outgoing(PeerTransport.Connection connection, RemoteStore.Peer peer, long deadlineNanos,
             Runnable helloAcknowledged) throws Exception {
         sentForeground = null;
+        sentBackgroundSync = null;
         requirePeer(connection,peer);
         store.putMetadata(peer.identity, peer.generation, "session_control_version", "0");
         // App-time metadata is the last negotiated compatibility for this pairing, not liveness.
@@ -146,6 +147,7 @@ public final class RemoteSession {
 
     public void incoming(PeerTransport.Connection connection,JSONObject hello,long deadlineNanos) throws Exception {
         sentForeground = null;
+        sentBackgroundSync = null;
         store.authorityAccess(()->null);
         String identity=RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
         String generation=RemoteProtocol.identifier(hello.getString("generation"));
@@ -689,10 +691,12 @@ public final class RemoteSession {
         if("hello".equals(type)||"hello_ack".equals(type)||"state_complete".equals(type)
                 ||"done".equals(type)||"done_ack".equals(type)) {
             try {
-                JSONObject presence = hooks.presence(sentForeground);
+                JSONObject presence = hooks.presence(sentForeground, sentBackgroundSync);
                 if (presence != null) {
                     frame.put("presence", presence);
                     sentForeground = presence.getBoolean("foreground");
+                    Object background = presence.opt("backgroundSync");
+                    sentBackgroundSync = background instanceof Boolean ? (Boolean) background : null;
                 }
             } catch (Exception unavailable) { /* Presence failure must not block durable synchronization. */ }
         }
@@ -716,8 +720,7 @@ public final class RemoteSession {
     private void recordDataPresence(RemoteStore.Peer peer) {
         try {
             if (!remotePresence(peer)) return;
-            PeerPresence.receiveData(store, peer);
-            hooks.presenceReceived(peer);
+            if (PeerPresence.receiveData(store, peer)) hooks.presenceReceived(peer);
         } catch (RuntimeException unavailable) { /* Presence is independent of the durable receipt. */ }
     }
 

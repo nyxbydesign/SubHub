@@ -19,17 +19,24 @@ public final class AvatarPresenceAndroidTest {
     @Test public void badgesStayCircularInsideSmallAndLargeAvatars() throws Exception {
         Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Context context = new androidx.appcompat.view.ContextThemeWrapper(target, R.style.Theme_SubHub);
-        Bitmap sheet = Bitmap.createBitmap(640, 280, Bitmap.Config.ARGB_8888);
+        Bitmap sheet = Bitmap.createBitmap(930, 280, Bitmap.Config.ARGB_8888);
         Canvas witness = new Canvas(sheet); witness.drawColor(Color.WHITE);
         File output = new File(target.getCacheDir(), "avatar-presence-" + java.util.UUID.randomUUID() + ".png");
         try { InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             for (int row = 0; row < 2; row++) {
                 int background = row == 0 ? Color.WHITE : context.getColor(R.color.surface_card);
                 android.graphics.Paint paint = new android.graphics.Paint(); paint.setColor(background);
-                witness.drawRect(0, row * 140, 640, (row + 1) * 140, paint);
-                for (int index = 0; index < 4; index++) {
-                    boolean online = index % 2 == 0;
-                    int edge = index < 2 ? 56 : 72;
+                witness.drawRect(0, row * 140, 930, (row + 1) * 140, paint);
+                PersonSnapshot.Connection[] states = {PersonSnapshot.Connection.CONNECTED,
+                        PersonSnapshot.Connection.IDLE, PersonSnapshot.Connection.OFFLINE};
+                for (int index = 0; index < 6; index++) {
+                    PersonSnapshot.Connection state = states[index % states.length];
+                    int color = switch (state) {
+                        case CONNECTED -> R.color.avatar_presence_online;
+                        case IDLE -> R.color.avatar_presence_idle;
+                        default -> R.color.avatar_presence_offline;
+                    };
+                    int edge = index < states.length ? 56 : 72;
                     ProfileAvatarView avatar = new ProfileAvatarView(context, ProfileData.empty("Alex Quinn"));
                     android.widget.LinearLayout identity = PersonUi.column(context);
                     avatar.setTag("fixture_avatar"); identity.addView(avatar);
@@ -53,7 +60,7 @@ public final class AvatarPresenceAndroidTest {
                     }
                     ProfileViews.presence(identity, "fixture", new PersonId(
                             "remote_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_fixture"),
-                            online ? PersonSnapshot.Connection.CONNECTED : PersonSnapshot.Connection.OFFLINE);
+                            state);
                     assertFalse(avatar.isClickable()); assertFalse(avatar.isFocusable());
                     assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, avatar.getImportantForAccessibility());
                     int exact = View.MeasureSpec.makeMeasureSpec(edge, View.MeasureSpec.EXACTLY);
@@ -62,15 +69,13 @@ public final class AvatarPresenceAndroidTest {
                     Canvas canvas = new Canvas(pixels); canvas.drawColor(background); avatar.draw(canvas);
                     witness.drawBitmap(pixels, index * 155 + 32, row * 140 + 28, null);
                     int center = Math.round(edge * .84f);
-                    assertEquals(context.getColor(online ? R.color.avatar_presence_online
-                            : R.color.avatar_presence_offline), pixels.getPixel(center, center));
+                    assertEquals(context.getColor(color), pixels.getPixel(center, center));
                     assertEquals(context.getColor(R.color.surface_card),
                             pixels.getPixel(Math.round(edge * .97f), center));
                     assertEquals(background, pixels.getPixel(edge - 1, edge - 1));
                     ProfileViews.presence(identity, "fixture", PersonId.LOCAL, PersonSnapshot.Connection.LOCAL);
                     canvas.drawColor(background); avatar.draw(canvas);
-                    assertNotEquals(context.getColor(online ? R.color.avatar_presence_online
-                            : R.color.avatar_presence_offline), pixels.getPixel(center, center));
+                    assertNotEquals(context.getColor(color), pixels.getPixel(center, center));
                     pixels.recycle();
                 }
             }

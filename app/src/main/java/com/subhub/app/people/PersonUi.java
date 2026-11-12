@@ -132,17 +132,19 @@ public final class PersonUi {
         return connection(context, person.connection, person.lastOnlineAt);
     }
 
-    /** Last seen uses verified foreground history; transport contact is not human presence. */
+    /** Last seen uses verified Online history. */
     public static String connection(Context context, PersonSnapshot.Connection state, long lastOnlineAt) {
         switch (state) {
             case LOCAL: return context.getString(R.string.role_local_data);
             case PENDING: return context.getString(R.string.role_connection_pending);
             case PAIRED: return context.getString(R.string.role_connection_paired);
             case CONNECTED: return context.getString(R.string.role_connection_connected);
+            case IDLE:
             case OFFLINE:
+                boolean idle = state == PersonSnapshot.Connection.IDLE;
                 if (lastOnlineAt <= 0 || lastOnlineAt > System.currentTimeMillis())
-                    return context.getString(R.string.role_connection_offline);
-                return context.getString(R.string.role_offline_last_online,
+                    return context.getString(idle ? R.string.role_connection_idle : R.string.role_connection_offline);
+                return context.getString(idle ? R.string.role_idle_last_online : R.string.role_offline_last_online,
                         ProfileViews.formatLastSeen(lastOnlineAt));
             case REVOKED: return context.getString(R.string.role_connection_revoked);
             case ERROR: return context.getString(R.string.role_connection_error);
