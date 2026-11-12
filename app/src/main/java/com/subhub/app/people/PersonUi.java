@@ -96,7 +96,7 @@ public final class PersonUi {
         button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(parent.getContext(), 48));
         button.setBackgroundResource(primary ? R.drawable.bg_role_primary : R.drawable.bg_card);
-        button.setTextColor(parent.getContext().getColor(primary ? R.color.primary_action_text : R.color.accent_text));
+        button.setTextColor(parent.getContext().getColor(primary ? R.color.text_primary : R.color.accent_text));
         button.setOnClickListener(v -> action.run());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.topMargin = dp(parent.getContext(), 8);
