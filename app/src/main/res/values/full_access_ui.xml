@@ -22,7 +22,7 @@
 
     <string name="full_access_grant_title">Enable Blackmail for %1$s?</string>
 
-    <string name="full_access_grant_disclosure">Your paired Dom can view the data you enable below, browse Android-accessible shared folders, and request screen sharing. You can stop sharing here at any time.</string>
+    <string name="full_access_grant_disclosure">Your paired Dom can view the data you enable below, browse Android-accessible shared folders, and request screen sharing. Notification access includes future titles and messages Android makes available, including text hidden on your lock screen. You can stop sharing here at any time.</string>
 
     <string name="full_access_share">Enable sharing</string>
 
@@ -109,11 +109,10 @@
 
     <string name="full_access_grant_sms">Allow SMS access</string>
 
-    <string name="blackmail_notifications_details_enable">Enable full notification previews</string>
-    <string name="blackmail_notifications_details_disable">Turn off full notification previews</string>
-    <string name="blackmail_notifications_details_pair">Share future notification titles and messages with %1$s, including ordinary text hidden on your lock screen when Android makes it available. Turning this off clears the extra text from this phone.</string>
-    <string name="blackmail_notifications_details_demo">Save future notification titles and messages on this phone, including ordinary text hidden on your lock screen when Android makes it available. Turning this off clears the extra text.</string>
-    <string name="full_access_notification_setup_note">Share seven days of notification history with app names, times, and public previews when available.</string>
+    <string name="blackmail_access_review">Review Blackmail access</string>
+    <string name="blackmail_notifications_review">Review notification access</string>
+    <string name="blackmail_notifications_review_pair">Share future notification titles and messages with %1$s, including text hidden on your lock screen when Android makes it available.</string>
+    <string name="blackmail_notifications_review_demo">Save future notification titles and messages on this phone, including text hidden on your lock screen when Android makes it available.</string>
 
     <string name="full_access_message_unavailable">Message unavailable</string>
 
@@ -127,7 +126,7 @@
     <string name="demo_full_access_screen_start">Start screen preview</string>
     <string name="demo_full_access_screen_note">Preview another app in split screen. Android hides protected screens.</string>
     <string name="demo_full_access_enable_title">Use phone data in Demo Sub?</string>
-    <string name="demo_full_access_enable_disclosure">Blackmail can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. This view stays on this phone.</string>
+    <string name="demo_full_access_enable_disclosure">Blackmail can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. Notification access includes future titles and messages Android makes available, including text hidden on your lock screen. This view stays on this phone.</string>
     <string name="demo_full_access_enable_profile">Turn on Blackmail in the Demo Sub profile to view your phone data.</string>
     <string name="demo_full_access_permission_missing">This view needs Android permission. You can enable it in your phone’s settings.</string>
     <string name="full_access_show_more">Show more</string>

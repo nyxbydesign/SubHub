@@ -18,6 +18,15 @@ import static org.junit.Assert.assertTrue;
 public class FullAccessFilesTest {
     @Rule public final TemporaryFolder temporary = new TemporaryFolder();
 
+    @Test public void existingAndroidAndPairedFileGrantsNeedNoSetupAction() {
+        assertEquals(FullAccessFiles.Setup.READY, FullAccessFiles.setupState(true, true, false, 0, 42));
+        assertEquals(FullAccessFiles.Setup.READY, FullAccessFiles.setupState(true, true, false, 42, 42));
+        assertEquals(FullAccessFiles.Setup.READY, FullAccessFiles.setupState(true, true, true, -1, 0));
+        assertEquals(FullAccessFiles.Setup.PAIRED_REVIEW, FullAccessFiles.setupState(true, true, false, -1, 42));
+        assertEquals(FullAccessFiles.Setup.PAIRED_REVIEW, FullAccessFiles.setupState(true, true, false, 41, 42));
+        assertEquals(FullAccessFiles.Setup.ANDROID_PERMISSION, FullAccessFiles.setupState(true, false, false, 42, 42));
+    }
+
     @Test
     public void devicePermissionGrantedForDemoDoesNotExpandPairedAccess() {
         assertTrue(FullAccessFiles.sharedRootsAuthorized(true, true, -1, -1));

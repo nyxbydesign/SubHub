@@ -98,6 +98,19 @@ public final class FullAccessFiles {
 
     static boolean supportsSharedRoots() { return Build.VERSION.SDK_INT != 29; }
 
+    enum Setup { READY, ANDROID_PERMISSION, PAIRED_REVIEW, ANDROID_10 }
+
+    static Setup setupState(Context context, boolean demo, long epoch) {
+        if (!supportsSharedRoots()) return Setup.ANDROID_10;
+        return setupState(Build.VERSION.SDK_INT >= 30, deviceStorageGranted(context), demo, pairedStorageEpoch(context), epoch);
+    }
+
+    static Setup setupState(boolean supportsExistingGrant, boolean granted, boolean demo, long chosen, long epoch) {
+        boolean authorized = sharedRootsAuthorized(demo, supportsExistingGrant, chosen, epoch);
+        if (granted) return authorized ? Setup.READY : Setup.PAIRED_REVIEW;
+        return !demo && chosen != EXISTING_PAIRED_STORAGE && !authorized ? Setup.PAIRED_REVIEW : Setup.ANDROID_PERMISSION;
+    }
+
     static boolean deviceStorageGranted(Context context) {
         if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
         return Build.VERSION.SDK_INT <= 28 && context.checkSelfPermission(
@@ -121,9 +134,12 @@ public final class FullAccessFiles {
     }
 
     static boolean sharedRootsAvailable(Context context, boolean demo, long epoch) {
-        if (!deviceStorageGranted(context)) return false;
-        long chosen = rootsPreferences(context, null).getLong(PAIRED_STORAGE_EPOCH, EXISTING_PAIRED_STORAGE);
-        return sharedRootsAuthorized(demo, Build.VERSION.SDK_INT >= 30, chosen, epoch);
+        return deviceStorageGranted(context)
+                && sharedRootsAuthorized(demo, Build.VERSION.SDK_INT >= 30, pairedStorageEpoch(context), epoch);
+    }
+
+    private static long pairedStorageEpoch(Context context) {
+        return rootsPreferences(context, null).getLong(PAIRED_STORAGE_EPOCH, EXISTING_PAIRED_STORAGE);
     }
 
     static boolean sharedRootsAuthorized(boolean demo, boolean supportsExistingGrant, long chosen, long epoch) {
