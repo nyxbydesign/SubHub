@@ -20,7 +20,9 @@ import androidx.appcompat.widget.AppCompatButton;
 import androidx.core.view.ViewCompat;
 import com.subhub.app.R;
 import com.subhub.app.people.PersonUi;
+import com.subhub.app.util.AppIcons;
 import com.subhub.app.util.UiIdentity;
+import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -136,6 +138,89 @@ final class BlackmailViews {
         }
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         return row;
+    }
+
+    static void notification(LinearLayout parent, JSONObject item, boolean showApp, String localPackage) {
+        Context context = parent.getContext();
+        String app = notificationText(item, "title");
+        String title = notificationText(item, "notificationTitle");
+        String body = notificationText(item, "notificationText");
+        if (title.trim().equalsIgnoreCase(app.trim())) title = "";
+        if (body.trim().equals(title.trim())) body = "";
+
+        LinearLayout row = horizontal(context);
+        row.setGravity(Gravity.TOP);
+        row.setPadding(0, dp(context, 10), 0, dp(context, 10));
+        ViewCompat.setScreenReaderFocusable(row, true);
+        parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        Object notificationIcon = item.opt("notificationIcon");
+        addNotificationIcon(row, notificationIcon instanceof String encoded ? encoded : "", localPackage);
+        LinearLayout details = PersonUi.column(context);
+        row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+        if (showApp && !app.isEmpty())
+            notificationLine(details, app, R.dimen.ui_text_label, R.color.text_secondary, false);
+        if (!title.isEmpty())
+            notificationLine(details, title, R.dimen.ui_text_row_title, R.color.text_primary, true);
+        if (!body.isEmpty())
+            notificationLine(details, body, R.dimen.ui_text_body, R.color.text_primary, false);
+        if (title.isEmpty() && body.isEmpty())
+            notificationLine(details, context.getText(R.string.blackmail_notification_content_unavailable),
+                    R.dimen.ui_text_body, R.color.text_secondary, false);
+        long postedAt = item.optLong("time");
+        if (postedAt > 0)
+            notificationLine(details, DateUtils.formatDateTime(context, postedAt,
+                            DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_TIME),
+                    R.dimen.ui_text_caption, R.color.text_secondary, false);
+    }
+
+    private static void addNotificationIcon(LinearLayout row, String encoded, String localPackage) {
+        Context context = row.getContext();
+        FrameLayout badge = new FrameLayout(context);
+        badge.setBackground(shape(context, R.color.control_checked_surface, 11));
+        badge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(context, 34), dp(context, 34));
+        size.setMarginEnd(dp(context, 10));
+        row.addView(badge, size);
+
+        int fallback = R.drawable.ic_notification_subhub;
+        ImageView icon = icon(context, fallback, R.color.accent_text);
+        icon.setTag("blackmail_notification_icon");
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        badge.addView(icon, new FrameLayout.LayoutParams(dp(context, 22), dp(context, 22), Gravity.CENTER));
+        Bitmap bitmap = decodeNotificationIcon(encoded);
+        if (bitmap != null) {
+            icon.setImageTintList(null);
+            icon.setImageBitmap(bitmap);
+        } else if (localPackage != null) {
+            AppIcons.bind(icon, localPackage, fallback);
+        }
+    }
+
+    private static Bitmap decodeNotificationIcon(String encoded) {
+        if (encoded.isEmpty() || encoded.length() > 2048) return null;
+        try {
+            byte[] png = Base64.decode(encoded, Base64.NO_WRAP);
+            if (png.length < 24 || ByteBuffer.wrap(png).getLong() != 0x89504e470d0a1a0aL) return null;
+            BitmapFactory.Options size = new BitmapFactory.Options();
+            size.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(png, 0, png.length, size);
+            if (size.outWidth < 1 || size.outWidth > 32 || size.outHeight < 1 || size.outHeight > 32) return null;
+            return BitmapFactory.decodeByteArray(png, 0, png.length);
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
+    private static String notificationText(JSONObject item, String key) {
+        Object value = item.opt(key);
+        return value instanceof String text && !text.trim().isEmpty() ? text : "";
+    }
+
+    private static void notificationLine(LinearLayout details, CharSequence text, int size, int color, boolean strong) {
+        Context context = details.getContext();
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
+        if (details.getChildCount() > 0) layout.topMargin = dp(context, 3);
+        details.addView(text(context, text, size, color, strong), layout);
     }
 
     static void separator(LinearLayout parent) {

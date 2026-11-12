@@ -2,7 +2,9 @@ package com.subhub.app.fullaccess;
 
 import static org.junit.Assert.*;
 
+import android.app.Notification;
 import android.content.Context;
+import android.database.sqlite.SQLiteDatabase;
 import android.content.ContextWrapper;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -107,5 +109,109 @@ public final class FullAccessDataPresentationAndroidTest {
             FullAccessNotificationHistory.clear(isolated);
             Files.delete(temporary.toPath());
         }
+    }
+
+    @Test public void extractsExpandedAndCurrentMessagesWithinTheConsentWindow() {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        long now = System.currentTimeMillis();
+        long since = now - 500;
+        Notification.Builder builder = new Notification.Builder(context, "notification-fixture");
+        Notification big = new Notification.BigTextStyle(builder)
+                .setBigContentTitle("Weekend plans").bigText("Tea downstairs\nMeet by the window").build();
+        assertEquals(new FullAccessNotificationListener.Preview("Weekend plans", "Tea downstairs\nMeet by the window"),
+                FullAccessNotificationListener.preview(big, since, now));
+        Notification inbox = new Notification.InboxStyle(new Notification.Builder(context, "notification-fixture"))
+                .setBigContentTitle("Reminders").addLine("Take a coat").addLine("Water the plants").build();
+        assertEquals("Take a coat\nWater the plants", FullAccessNotificationListener.preview(inbox, since, now).text());
+
+        Notification.MessagingStyle chat = new Notification.MessagingStyle("Me").setConversationTitle("Weekend group");
+        chat.addHistoricMessage(new Notification.MessagingStyle.Message("Historical row", now - 100, "Kit"));
+        chat.addMessage("Before consent", since - 1, "Kit");
+        chat.addMessage("First eligible", since, "Kit");
+        chat.addMessage("Most recent", now, "Lee");
+        Notification message = new Notification.Builder(context, "notification-fixture").setStyle(chat).build();
+        assertEquals("Kit: First eligible\nLee: Most recent",
+                FullAccessNotificationListener.preview(message, since, now).text());
+
+        Notification.MessagingStyle crowded = new Notification.MessagingStyle("Me").setConversationTitle("Weekend group");
+        crowded.addMessage(String.join("", java.util.Collections.nCopies(480, "A")), since, "Kit");
+        crowded.addMessage("Keep the latest", now, "Lee");
+        Notification latest = new Notification.Builder(context, "notification-fixture").setStyle(crowded).build();
+        assertEquals("Lee: Keep the latest", FullAccessNotificationListener.preview(latest, since, now).text());
+        assertTrue(FullAccessNotificationListener.publicPreview("Security", "code has arrived").empty());
+        message.visibility = Notification.VISIBILITY_SECRET;
+        assertTrue(FullAccessNotificationListener.preview(message, since, now).empty());
+        message.visibility = Notification.VISIBILITY_PUBLIC;
+        message.flags |= Notification.FLAG_LOCAL_ONLY;
+        assertTrue(FullAccessNotificationListener.preview(message, since, now).empty());
+    }
+
+    @Test public void notificationDetailsMigrationDedupAndRevocationPreservePublicRows() throws Exception {
+        Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File temporary = Files.createTempDirectory(target.getCacheDir().toPath(), "notification-details-").toFile();
+        Context isolated = new ContextWrapper(target) {
+            @Override public File getNoBackupFilesDir() { return temporary; }
+        };
+        long now = System.currentTimeMillis();
+        long since = now - 500;
+        String token = "fixture-choice";
+        var previous = new FullAccessNotificationListener.Choice(7, "", 2, since, token, now - 200);
+        var next = new FullAccessNotificationListener.Choice(7, "", 2, since, "new-choice", now - 100);
+        var revoked = new FullAccessNotificationListener.Choice(7, "", 2, since, "", 0);
+        var replacement = new FullAccessNotificationListener.Choice(8, "", 2, since, token, now - 200);
+        assertEquals("", previous.acceptedDetailsToken(previous, now - 201));
+        assertEquals(token, previous.acceptedDetailsToken(previous, now - 200));
+        assertEquals("", revoked.acceptedDetailsToken(previous, now));
+        assertEquals("", next.acceptedDetailsToken(previous, now));
+        assertFalse(replacement.sameScope(previous));
+
+        try {
+            for (int version : new int[]{1, 2}) {
+                File path = new File(temporary, "full-access-notifications.db");
+                try (SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(path, null)) {
+                    String v2 = version == 2
+                            ? ", public_title TEXT NOT NULL DEFAULT '', public_text TEXT NOT NULL DEFAULT ''" : "";
+                    db.execSQL("CREATE TABLE posted_notifications (_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            + " epoch INTEGER NOT NULL, event_key TEXT NOT NULL, pkg TEXT NOT NULL, category TEXT NOT NULL,"
+                            + " posted_at INTEGER NOT NULL" + v2 + ", UNIQUE(epoch,event_key,posted_at))");
+                    db.execSQL("INSERT INTO posted_notifications (epoch,event_key,pkg,category,posted_at)"
+                            + " VALUES(7,'retained','example.alpha','message',?)", new Object[]{now - 100});
+                    db.setVersion(version);
+                }
+                String id;
+                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, token)) {
+                    id = notificationRow(history, isolated, since, now).getString("id");
+                    var publicPreview = FullAccessNotificationListener.publicPreview("Chat", "A new message");
+                    var details = FullAccessNotificationListener.publicPreview("Kit", "Meet by the window");
+                    history.record(7, "retained", "example.alpha", "message", now - 100, now, publicPreview, details, "raster");
+                    history.record(7, "retained", "example.alpha", "message", now - 100, now,
+                            FullAccessNotificationListener.EMPTY, FullAccessNotificationListener.EMPTY, "");
+                    JSONObject row = notificationRow(history, isolated, since, now);
+                    assertEquals(id, row.getString("id"));
+                    assertEquals("Meet by the window", row.getString("notificationText"));
+                    assertEquals("raster", row.getString("notificationIcon"));
+                }
+                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated)) {
+                    assertEquals("A new message", notificationRow(history, isolated, since, now).getString("notificationText"));
+                    history.clearDetails();
+                }
+                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, token)) {
+                    JSONObject row = notificationRow(history, isolated, since, now);
+                    assertEquals(id, row.getString("id"));
+                    assertEquals("A new message", row.getString("notificationText"));
+                }
+                FullAccessNotificationHistory.clear(isolated);
+            }
+        } finally {
+            FullAccessNotificationHistory.clear(isolated);
+            Files.delete(temporary.toPath());
+        }
+    }
+
+    private static JSONObject notificationRow(FullAccessNotificationHistory history, Context context, long since, long now)
+            throws Exception {
+        var items = history.group(context, 7, "example.alpha", "", since, now, 12).getJSONArray("items");
+        assertEquals(1, items.length());
+        return items.getJSONObject(0);
     }
 }

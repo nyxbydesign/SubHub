@@ -116,7 +116,6 @@ final class FullAccessViewer implements AutoCloseable {
 
         overview = PersonUi.column(activity);
         parent.addView(overview, new LinearLayout.LayoutParams(-1, -2));
-        if (demo != null) PersonUi.text(overview, activity.getText(R.string.demo_full_access_local), false);
         conversationPanel = PersonUi.column(activity);
         conversationPanel.setTag("blackmail_thread");
         conversationPanel.setVisibility(View.GONE);
@@ -439,7 +438,13 @@ final class FullAccessViewer implements AutoCloseable {
         boolean usageMissing = "apps".equals(session.scope) && !page.optBoolean("usageAvailable");
         Continuous pages = session.pages;
         int previousPosition = pages.list == null ? 0 : pages.list.getFirstVisiblePosition();
-        boolean changed = pages.accept(page, cursor, false) || pages.usageMissing != usageMissing;
+        boolean changed = retireObsoleteNotificationPreviews(session, page);
+        if (changed && !cursor.isEmpty()) {
+            showList(session);
+            loadPage(session, "");
+            return;
+        }
+        changed |= pages.accept(page, cursor, false) || pages.usageMissing != usageMissing;
         pages.usageMissing = usageMissing;
         long since = page.optLong("since");
         changed |= pages.since != since;
@@ -452,6 +457,20 @@ final class FullAccessViewer implements AutoCloseable {
         if (changed || pages.list == null) showList(session);
         main.removeCallbacks(session.refresh);
         main.postDelayed(session.refresh, REFRESH_MILLIS);
+    }
+
+    private boolean retireObsoleteNotificationPreviews(Section session, JSONObject page) {
+        if (!"notifications".equals(session.scope)) return false;
+        String revision = page.optString("notificationRevision");
+        if (revision.equals(session.notificationRevision)) return false;
+        boolean hadRows = session.pages.hasHead;
+        session.notificationRevision = revision;
+        session.pages.clearData();
+        if (session.group != null) {
+            session.group.pages.clear();
+            session.group = null;
+        }
+        return hadRows;
     }
 
     private void failList(Section session, String cursor, int label) {
@@ -590,7 +609,7 @@ final class FullAccessViewer implements AutoCloseable {
                 row.setTag("blackmail_contact");
             }
             case "notifications" -> {
-                if (session.legacyRows) notificationRow(card, item);
+                if (session.legacyRows) BlackmailViews.notification(card, item, true, null);
                 else notificationGroup(card, session, item, id, title);
             }
             case "sms" -> {
@@ -661,6 +680,11 @@ final class FullAccessViewer implements AutoCloseable {
                 if (!current(session) || session.group != group) return;
                 group.loading = false;
                 String status = response.optString("status");
+                if ("ok".equals(status) && retireObsoleteNotificationPreviews(session, response)) {
+                    showList(session);
+                    loadPage(session, "");
+                    return;
+                }
                 if ("ok".equals(status)) group.pages.accept(response, cursor, false);
                 else group.pages.fail(cursor, statusLabel(status));
                 showList(session);
@@ -683,7 +707,8 @@ final class FullAccessViewer implements AutoCloseable {
             entries.add(new BlackmailList.Row(key, (row, position) -> {
                 row.setTag("blackmail_notification_entry");
                 row.setPaddingRelative(Math.round(12 * activity.getResources().getDisplayMetrics().density), 0, 0, 0);
-                notificationRow(row, item);
+                BlackmailViews.separator(row);
+                BlackmailViews.notification(row, item, false, demo == null ? null : group.id);
             }));
             group.edgeKey = key;
         }
@@ -692,14 +717,6 @@ final class FullAccessViewer implements AutoCloseable {
         } else {
             addListStatus(entries, pages, () -> loadGroup(session, group, pages.failedCursor), prefix);
         }
-    }
-
-    private void notificationRow(LinearLayout parent, JSONObject item) {
-        String heading = item.optString("notificationTitle");
-        if (heading.isEmpty()) heading = item.optString("title");
-        String detail = item.optString("notificationText");
-        if (detail.isEmpty()) detail = item.optString("detail");
-        BlackmailViews.row(parent, heading, dated(detail, item.optLong("time")), 0, false, null, null);
     }
 
     private void openConversation(Section session, String id, String title) {
@@ -1190,6 +1207,7 @@ final class FullAccessViewer implements AutoCloseable {
         ImageView image;
         LinearLayout previewPanel;
         NotificationGroup group;
+        String notificationRevision = "";
         final AtomicBoolean live = new AtomicBoolean(true);
         volatile FullAccessChannel channel;
         FullAccessFiles.Session localFiles;

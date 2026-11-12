@@ -74,7 +74,6 @@ public final class DemoFullAccessActivity extends PreferencePage {
             restoredScope = null;
             restoredScroll = 0;
             controls.removeAllViews();
-            PersonUi.text(controls, getString(R.string.demo_full_access_local), false);
             LinearLayout card = PersonUi.card(controls);
             PersonUi.text(card, getString(R.string.demo_full_access_enable_profile), false);
             PersonUi.action(card, R.string.profile_edit, () -> {

@@ -22,7 +22,7 @@ public final class FullAccessDataSources {
     private static final String DIRECT_SMS = "direct";
     private static final String EXPORTED_SMS = "export";
     private static final Object LOCAL_HISTORY_LOCK = new Object();
-    private static long scopeChange;
+    private static volatile long scopeChange;
 
     private FullAccessDataSources() { }
 
@@ -82,8 +82,12 @@ public final class FullAccessDataSources {
                 return saved;
             }
             if (chosenAt(context, scope, epoch) > 0) return true;
-            if ("notifications".equals(scope)) FullAccessNotificationHistory.clear(context);
-            return choice(context, scope, epoch).commit();
+            if (!"notifications".equals(scope)) return choice(context, scope, epoch).commit();
+            FullAccessNotificationHistory.clear(context);
+            boolean saved = choice(context, scope, epoch).remove(FullAccessNotificationListener.DETAILS_TOKEN)
+                    .remove(FullAccessNotificationListener.DETAILS_SINCE).commit();
+            if (saved) FullAccessNotificationListener.reconcileIfConnected();
+            return saved;
         }
     }
 
@@ -93,6 +97,8 @@ public final class FullAccessDataSources {
             scopeChange++;
             SharedPreferences.Editor choice = settings(context).edit().remove(scope + "_epoch").remove(scope + "_since");
             if ("sms".equals(scope)) choice.remove(SMS_SOURCE);
+            if ("notifications".equals(scope))
+                choice.remove(FullAccessNotificationListener.DETAILS_TOKEN).remove(FullAccessNotificationListener.DETAILS_SINCE);
             choice.commit();
             if ("notifications".equals(scope)) FullAccessNotificationHistory.clear(context);
             if ("sms".equals(scope)) FullAccessSmsExport.clear(context);
@@ -158,6 +164,8 @@ public final class FullAccessDataSources {
         if (!"ok".equals(permission)) return response(permission, new JSONArray());
         long smsContactsSince = DIRECT_SMS.equals(smsSource) && !"page".equals(operation)
                 ? contactsSharedSince(context, epoch) : 0;
+        String detailsToken = "notifications".equals(scope)
+                ? settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "") : "";
         JSONObject result;
         try {
             long now = System.currentTimeMillis();
@@ -177,10 +185,11 @@ public final class FullAccessDataSources {
                 }
                 case "notifications" -> {
                     synchronized (LOCAL_HISTORY_LOCK) {
-                        if (chosenAt(context, scope, epoch) != enabledAt)
+                        if (chosenAt(context, scope, epoch) != enabledAt
+                                || !detailsToken.equals(settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
                             yield response("unavailable", new JSONArray());
                         long since = Math.max(enabledAt, now - FullAccessNotificationHistory.RETENTION_MILLIS);
-                        try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context)) {
+                        try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, detailsToken)) {
                             yield notifications(history, context, epoch, operation, node, cursor, since, now);
                         }
                     }
@@ -193,6 +202,9 @@ public final class FullAccessDataSources {
             return response("unavailable", new JSONArray());
         }
         if (currentEpoch(context) != epoch || chosenAt(context, scope, epoch) != enabledAt)
+            return response("unavailable", new JSONArray());
+        if ("notifications".equals(scope)
+                && !detailsToken.equals(settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
             return response("unavailable", new JSONArray());
         if ("sms".equals(scope) && !smsSource.equals(smsSource(context)))
             return response("unavailable", new JSONArray());
@@ -230,32 +242,47 @@ public final class FullAccessDataSources {
 
     static JSONObject notifications(FullAccessNotificationHistory history, Context context, long epoch,
             String operation, String node, String cursor, long since, long now) throws JSONException {
-        return switch (operation) {
+        JSONObject page = switch (operation) {
             case "groups" -> history.groups(context, epoch, cursor, since, now, PAGE_SIZE);
             case "group" -> history.group(context, epoch, node, cursor, since, now, PAGE_SIZE);
             default -> history.page(context, epoch, cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), since, now, PAGE_SIZE);
         };
+        return page.put("notificationRevision", history.previewRevision());
     }
 
-    static boolean notificationScopeWasChosen(Context context) {
-        return settings(context).getLong("notifications_since", 0) > 0;
+    static FullAccessNotificationListener.Choice notificationChoice(Context context) {
+        SharedPreferences prefs = settings(context);
+        long observedChange = scopeChange;
+        long epoch = prefs.getLong("notifications_epoch", -1);
+        long since = chosenAt(context, "notifications", epoch);
+        return epoch < 0 || since <= 0 ? null : new FullAccessNotificationListener.Choice(epoch, "", observedChange,
+                since, prefs.getString(FullAccessNotificationListener.DETAILS_TOKEN, ""),
+                prefs.getLong(FullAccessNotificationListener.DETAILS_SINCE, 0));
     }
 
-    static void recordNotification(Context context, String key, String pkg, String category, long timestamp,
-            FullAccessNotificationListener.Preview preview) {
-        long observedChange = scopeChange();
-        long epoch = currentEpoch(context);
-        if (epoch < 0 || !hasNotificationAccess(context)) return;
+    static boolean setNotificationDetails(Context context, FullAccessNotificationListener.Choice expected, boolean enabled) {
+        if (currentEpoch(context) != expected.epoch()) return false;
         synchronized (LOCAL_HISTORY_LOCK) {
-            if (scopeChange != observedChange || !hasNotificationAccess(context)) return;
-            long enabledAt = chosenAt(context, "notifications", epoch);
+            if (!expected.equals(notificationChoice(context)) || enabled && !hasNotificationAccess(context)) return false;
+            return FullAccessNotificationListener.changeDetails(context, settings(context), false, enabled);
+        }
+    }
+
+    static void recordNotification(Context context, FullAccessNotificationListener.Choice expected,
+            String key, String pkg, String category, long timestamp, FullAccessNotificationListener.Preview preview,
+            FullAccessNotificationListener.Preview details, String icon) {
+        if (currentEpoch(context) != expected.epoch() || !hasNotificationAccess(context)) return;
+        synchronized (LOCAL_HISTORY_LOCK) {
+            FullAccessNotificationListener.Choice current = notificationChoice(context);
+            if (current == null || !current.sameScope(expected) || !hasNotificationAccess(context)) return;
             long now = System.currentTimeMillis();
-            if (enabledAt <= 0 || timestamp < enabledAt || timestamp > now
+            if (timestamp < current.since() || timestamp > now
                     || timestamp < now - FullAccessNotificationHistory.RETENTION_MILLIS) return;
-            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context)) {
-                history.record(epoch, key, pkg, category, timestamp, now, preview);
+            String token = current.acceptedDetailsToken(expected, timestamp);
+            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, token)) {
+                history.record(current.epoch(), key, pkg, category, timestamp, now, preview, details, icon);
             } catch (RuntimeException unavailable) {
-                // Collection is optional and must not log private notification data.
+                // Optional collection must never log notification content.
             }
         }
     }

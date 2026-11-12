@@ -11,19 +11,27 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Local-only notification history with bounded public previews. */
+/** Local-only notification history with bounded previews and separately revocable details. */
 final class FullAccessNotificationHistory extends SQLiteOpenHelper {
     static final long RETENTION_MILLIS = 7 * 24 * 60 * 60_000L;
     private static final int MAX_ROWS = 5000;
     private static final String TABLE = "posted_notifications";
     private static final String FILE = "full-access-notifications.db";
-    private static final String[] FIELDS = {"_id", "pkg", "category", "posted_at", "public_title", "public_text"};
+    private static final String[] FIELDS = {"_id", "pkg", "category", "posted_at", "public_title", "public_text",
+            "details_token", "detail_title", "detail_text", "small_icon"};
     private static final Pattern PACKAGE = Pattern.compile("[a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)*");
+
+    private final String detailsToken;
 
     FullAccessNotificationHistory(Context context) { this(context, false); }
 
     FullAccessNotificationHistory(Context context, boolean demo) {
-        super(context, path(context, demo).getAbsolutePath(), null, 2);
+        this(context, demo, "");
+    }
+
+    FullAccessNotificationHistory(Context context, boolean demo, String detailsToken) {
+        super(context, path(context, demo).getAbsolutePath(), null, 3);
+        this.detailsToken = detailsToken;
         setWriteAheadLoggingEnabled(false);
     }
 
@@ -49,19 +57,46 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
                 + "_id INTEGER PRIMARY KEY AUTOINCREMENT, epoch INTEGER NOT NULL, "
                 + "event_key TEXT NOT NULL, pkg TEXT NOT NULL, category TEXT NOT NULL, "
                 + "posted_at INTEGER NOT NULL, public_title TEXT NOT NULL DEFAULT '', "
-                + "public_text TEXT NOT NULL DEFAULT '', UNIQUE(epoch,event_key,posted_at))");
+                + "public_text TEXT NOT NULL DEFAULT '', details_token TEXT NOT NULL DEFAULT '', "
+                + "detail_title TEXT NOT NULL DEFAULT '', detail_text TEXT NOT NULL DEFAULT '', "
+                + "small_icon TEXT NOT NULL DEFAULT '', UNIQUE(epoch,event_key,posted_at))");
         database.execSQL("CREATE INDEX notification_history_time ON " + TABLE + "(posted_at)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase database, int oldVersion, int newVersion) {
-        if (oldVersion != 1 || newVersion != 2)
+        if (oldVersion < 1 || oldVersion > 2 || newVersion != 3)
             throw new IllegalStateException("Unsupported notification-history schema");
-        database.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN public_title TEXT NOT NULL DEFAULT ''");
-        database.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN public_text TEXT NOT NULL DEFAULT ''");
+        if (oldVersion == 1) {
+            addTextColumn(database, "public_title");
+            addTextColumn(database, "public_text");
+        }
+        addTextColumn(database, "details_token");
+        addTextColumn(database, "detail_title");
+        addTextColumn(database, "detail_text");
+        addTextColumn(database, "small_icon");
+    }
+
+    private static void addTextColumn(SQLiteDatabase database, String column) {
+        database.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN " + column + " TEXT NOT NULL DEFAULT ''");
+    }
+
+    String previewRevision() {
+        return detailsToken.isEmpty() ? "public" : FullAccessNotificationListener.keyDigest(detailsToken);
+    }
+
+    void clearDetails() {
+        if (!new File(getDatabaseName()).isFile()) return;
+        getWritableDatabase().execSQL("UPDATE " + TABLE + " SET details_token='', detail_title='', detail_text=''"
+                + " WHERE details_token<>''");
     }
 
     void record(long epoch, String eventKey, String packageName, String category, long time, long now,
             FullAccessNotificationListener.Preview preview) {
+        record(epoch, eventKey, packageName, category, time, now, preview, FullAccessNotificationListener.EMPTY, "");
+    }
+
+    void record(long epoch, String eventKey, String packageName, String category, long time, long now,
+            FullAccessNotificationListener.Preview preview, FullAccessNotificationListener.Preview details, String icon) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -74,7 +109,24 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
             row.put("posted_at", time);
             row.put("public_title", preview.title());
             row.put("public_text", preview.text());
-            db.insertWithOnConflict(TABLE, null, row, SQLiteDatabase.CONFLICT_REPLACE);
+            if (!detailsToken.isEmpty() && !details.empty()) {
+                row.put("details_token", detailsToken);
+                row.put("detail_title", details.title());
+                row.put("detail_text", details.text());
+            }
+            row.put("small_icon", icon);
+            if (db.insertWithOnConflict(TABLE, null, row, SQLiteDatabase.CONFLICT_IGNORE) == -1) {
+                // Retained snapshots can enrich an empty field but cannot replace a captured row or its cursor.
+                db.execSQL("UPDATE " + TABLE + " SET "
+                        + "public_title=COALESCE(NULLIF(public_title,''),?), public_text=COALESCE(NULLIF(public_text,''),?), "
+                        + "detail_title=CASE WHEN details_token='' THEN ? ELSE detail_title END, "
+                        + "detail_text=CASE WHEN details_token='' THEN ? ELSE detail_text END, "
+                        + "details_token=COALESCE(NULLIF(details_token,''),?), small_icon=COALESCE(NULLIF(small_icon,''),?) "
+                        + "WHERE epoch=? AND event_key=? AND posted_at=?",
+                        new Object[]{preview.title(), preview.text(), detailsToken.isEmpty() ? "" : details.title(),
+                                detailsToken.isEmpty() ? "" : details.text(), details.empty() ? "" : detailsToken,
+                                icon, epoch, eventKey, time});
+            }
             db.execSQL("DELETE FROM " + TABLE + " WHERE _id IN (SELECT _id FROM " + TABLE
                     + " ORDER BY _id DESC LIMIT -1 OFFSET " + MAX_ROWS + ")");
             db.setTransactionSuccessful();
@@ -126,7 +178,8 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
                 + "FROM " + TABLE + " WHERE epoch=? AND posted_at>=? GROUP BY pkg "
                 + "HAVING latest<CAST(? AS INTEGER) OR (latest=CAST(? AS INTEGER) AND pkg>?) "
                 + "ORDER BY latest DESC, pkg ASC LIMIT ?) "
-                + "SELECT g.pkg, g.total, g.latest, n.category, n.public_title, n.public_text "
+                + "SELECT g.pkg, g.total, g.latest, n.category, n.public_title, n.public_text, "
+                + "n.details_token, n.detail_title, n.detail_text "
                 + "FROM app_groups g JOIN " + TABLE + " n ON n._id=(SELECT MAX(_id) FROM " + TABLE
                 + " WHERE epoch=? AND pkg=g.pkg AND posted_at=g.latest) ORDER BY g.latest DESC, g.pkg ASC";
         try (Cursor cursor = db.rawQuery(query, new String[]{epochKey, Long.toString(since), beforeKey, beforeKey,
@@ -141,7 +194,7 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
                 JSONObject row = new JSONObject().put("id", packageName)
                         .put("title", FullAccessDataSources.appLabel(context, packageName))
                         .put("count", cursor.getInt(1)).put("time", time).put("detail", cursor.getString(3));
-                addPreview(row, cursor.getString(4), cursor.getString(5));
+                addPreview(row, cursor);
                 rows.put(row);
                 last = time + ":" + packageName;
             }
@@ -189,15 +242,20 @@ final class FullAccessNotificationHistory extends SQLiteOpenHelper {
         return db;
     }
 
-    private static JSONObject item(Context context, Cursor cursor) throws JSONException {
+    private JSONObject item(Context context, Cursor cursor) throws JSONException {
         JSONObject row = new JSONObject().put("id", Long.toString(cursor.getLong(0)))
                 .put("title", FullAccessDataSources.appLabel(context, cursor.getString(1)))
                 .put("detail", cursor.getString(2)).put("time", cursor.getLong(3));
-        addPreview(row, cursor.getString(4), cursor.getString(5));
+        addPreview(row, cursor);
+        String icon = cursor.getString(9);
+        if (!icon.isEmpty()) row.put("notificationIcon", icon);
         return row;
     }
 
-    private static void addPreview(JSONObject row, String title, String text) throws JSONException {
+    private void addPreview(JSONObject row, Cursor cursor) throws JSONException {
+        boolean details = !detailsToken.isEmpty() && detailsToken.equals(cursor.getString(6));
+        String title = cursor.getString(details ? 7 : 4);
+        String text = cursor.getString(details ? 8 : 5);
         if (!title.isEmpty()) row.put("notificationTitle", title);
         if (!text.isEmpty()) row.put("notificationText", text);
     }

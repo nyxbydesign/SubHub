@@ -8,6 +8,7 @@
     <string name="blackmail_older_messages">Older messages</string>
     <string name="blackmail_collapse_notifications">Hide notifications</string>
     <string name="blackmail_older_notifications">Older notifications</string>
+    <string name="blackmail_notification_content_unavailable">Content unavailable</string>
     <string name="blackmail_download_item">Download %1$s</string>
     <string name="blackmail_download_folder_item">Download folder %1$s</string>
     <string name="blackmail_close_preview">Close preview</string>

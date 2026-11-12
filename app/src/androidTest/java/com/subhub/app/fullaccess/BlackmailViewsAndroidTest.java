@@ -7,9 +7,12 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.drawable.BitmapDrawable;
+import android.text.format.DateUtils;
 import android.util.Base64;
 import android.view.ContextThemeWrapper;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -80,6 +83,79 @@ public final class BlackmailViewsAndroidTest {
                 capture(app, thread, "blackmail-thread-synthetic.png");
             }
         });
+    }
+
+    @Test public void notificationsShowMultilineContentAndKeepProtectedRowsReadable() throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        long postedAt = 1762947120000L;
+        String body = "Alex: The rehearsal room is ready for tonight.\n"
+                + "Sam: I left the sheet music on the table beside the door.\n"
+                + "Jordan: I will bring the spare folding stands after work.";
+        JSONObject preview = new JSONObject().put("title", "Calendar")
+                .put("notificationTitle", "Rehearsal updates")
+                .put("notificationText", body).put("detail", "msg").put("time", postedAt)
+                .put("notificationIcon", notificationIcon(24));
+        JSONObject metadata = new JSONObject().put("title", "Calendar")
+                .put("notificationTitle", "Calendar").put("detail", "msg").put("time", postedAt);
+        JSONObject oversized = new JSONObject().put("title", "Calendar").put("notificationIcon", notificationIcon(33));
+        instrumentation.runOnMainSync(() -> {
+            Context app = instrumentation.getTargetContext();
+            Configuration configuration = new Configuration(app.getResources().getConfiguration());
+            configuration.fontScale = 1.6f;
+            Context themed = new ContextThemeWrapper(app.createConfigurationContext(configuration), R.style.Theme_SubHub);
+            String time = DateUtils.formatDateTime(themed, postedAt,
+                    DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_TIME);
+            String unavailable = themed.getString(R.string.blackmail_notification_content_unavailable);
+
+            LinearLayout grouped = panel(themed);
+            BlackmailViews.notification(grouped, preview, false, null);
+            measure(grouped);
+            assertEquals(List.of("Rehearsal updates", body, time), labels(grouped));
+            LinearLayout row = (LinearLayout) grouped.getChildAt(0);
+            LinearLayout details = (LinearLayout) row.getChildAt(1);
+            TextView content = (TextView) details.getChildAt(1);
+            assertTrue(content.getLineCount() > 3);
+            assertEquals(0, content.getLayout().getEllipsisCount(content.getLineCount() - 1));
+            assertTrue(content.getBottom() <= details.getHeight());
+            ImageView actual = grouped.findViewWithTag("blackmail_notification_icon");
+            assertEquals(dp(themed, 22), actual.getWidth());
+            assertNull(actual.getImageTintList());
+            assertTrue(actual.getDrawable() instanceof BitmapDrawable);
+            Bitmap rendered = ((BitmapDrawable) actual.getDrawable()).getBitmap();
+            assertEquals(24, rendered.getWidth());
+            assertEquals(0xffd6b6ff, rendered.getPixel(12, 12));
+
+            LinearLayout protectedGroup = panel(themed);
+            BlackmailViews.notification(protectedGroup, metadata, false, null);
+            assertEquals(List.of(unavailable, time), labels(protectedGroup));
+            assertNeutralIcon(protectedGroup);
+            LinearLayout olderPeer = panel(themed);
+            BlackmailViews.notification(olderPeer, metadata, true, null);
+            assertEquals(List.of("Calendar", unavailable, time), labels(olderPeer));
+            LinearLayout invalid = panel(themed);
+            BlackmailViews.notification(invalid, oversized, false, null);
+            assertNeutralIcon(invalid);
+            if ("true".equals(InstrumentationRegistry.getArguments().getString("blackmail_preview")))
+                capture(app, grouped, "blackmail-notification-content-synthetic.png");
+        });
+    }
+
+    private static void assertNeutralIcon(LinearLayout row) {
+        ImageView icon = row.findViewWithTag("blackmail_notification_icon");
+        assertNotNull(icon.getDrawable());
+        assertNotNull(icon.getImageTintList());
+    }
+
+    private static String notificationIcon(int size) {
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        try {
+            Paint paint = new Paint();
+            paint.setColor(0xffd6b6ff);
+            new Canvas(bitmap).drawRect(2, 2, size - 2, size - 2, paint);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes));
+            return Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
+        } finally { bitmap.recycle(); }
     }
 
     private static LinearLayout panel(Context context) {

@@ -109,6 +109,10 @@
 
     <string name="full_access_grant_sms">Allow SMS access</string>
 
+    <string name="blackmail_notifications_details_enable">Enable full notification previews</string>
+    <string name="blackmail_notifications_details_disable">Turn off full notification previews</string>
+    <string name="blackmail_notifications_details_pair">Share future notification titles and messages with %1$s, including ordinary text hidden on your lock screen when Android makes it available. Turning this off clears the extra text from this phone.</string>
+    <string name="blackmail_notifications_details_demo">Save future notification titles and messages on this phone, including ordinary text hidden on your lock screen when Android makes it available. Turning this off clears the extra text.</string>
     <string name="full_access_notification_setup_note">Share seven days of notification history with app names, times, and public previews when available.</string>
 
     <string name="full_access_message_unavailable">Message unavailable</string>
@@ -119,7 +123,6 @@
 
     <string name="full_access_busy">Blackmail is already open.</string>
 
-    <string name="demo_full_access_local">From this phone · Visible only here</string>
     <string name="demo_full_access_sms_import">Open an SMS export</string>
     <string name="demo_full_access_screen_start">Start screen preview</string>
     <string name="demo_full_access_screen_note">Preview another app in split screen. Android hides protected screens.</string>

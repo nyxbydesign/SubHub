@@ -131,10 +131,11 @@ public final class FullAccessSetup {
         }
         work.load("profile-full-access-state", () -> {
             if (demo != null) return new State(demo.current(), demo.available(), "", "", 0,
-                    FullAccessFiles.sharedRootsAvailable(app, true, 0));
+                    FullAccessFiles.sharedRootsAvailable(app, true, 0), DemoFullAccess.notificationChoice(app));
             long epoch = FullAccessGrant.epoch(app);
             return new State(epoch >= 0, FullAccessGrant.eligible(app), FullAccessGrant.pairedDom(app),
-                    FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.sharedRootsAvailable(app, false, epoch));
+                    FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.sharedRootsAvailable(app, false, epoch),
+                    FullAccessDataSources.notificationChoice(app));
         }, state -> {
             if (!resumed || !allowed.getAsBoolean()) return;
             if (showable()) render(state);
@@ -183,6 +184,12 @@ public final class FullAccessSetup {
         });
         if (!state.enabled && !state.eligible && demo == null)
             PersonUi.text(panel, host.getString(R.string.full_access_pair_needed), false);
+        if (state.enabled && pending == null && remaining.isEmpty() && state.notifications != null) {
+            boolean details = !state.notifications.token().isEmpty();
+            if (details || FullAccessDataSources.hasNotificationAccess(app))
+                PersonUi.action(panel, details ? R.string.blackmail_notifications_details_disable
+                        : R.string.blackmail_notifications_details_enable, () -> notificationDetails(state, !details), false);
+        }
         if (state.enabled && pending == null && remaining.isEmpty() && !state.sharedRoots) {
             if (FullAccessFiles.supportsSharedRoots()) {
                 PersonUi.action(panel, R.string.blackmail_files_enable, () -> {
@@ -208,6 +215,38 @@ public final class FullAccessSetup {
                         }
                     }, false);
         }
+    }
+
+    private void notificationDetails(State state, boolean enable) {
+        if (!resumed || !showable() || !allowed.getAsBoolean()
+                || work.isPending("profile-full-access-notification-details")) return;
+        if (!enable) {
+            saveNotificationDetails(state, false);
+            return;
+        }
+        confirmation = new AlertDialog.Builder(host)
+                .setTitle(R.string.blackmail_notifications_details_enable)
+                .setMessage(demo == null ? host.getString(R.string.blackmail_notifications_details_pair, state.paired)
+                        : host.getString(R.string.blackmail_notifications_details_demo))
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.role_enabled, (dialog, which) -> saveNotificationDetails(state, true))
+                .create();
+        confirmation.setOnDismissListener(dialog -> confirmation = null);
+        confirmation.show();
+    }
+
+    private void saveNotificationDetails(State state, boolean enable) {
+        if (!resumed || !showable() || !allowed.getAsBoolean()) return;
+        work.loadSerial("profile-full-access-notification-details", () -> current(state.epoch) && showable()
+                && (demo == null ? FullAccessDataSources.setNotificationDetails(app, state.notifications, enable)
+                : demo.setNotificationDetails(state.notifications, enable)), saved -> {
+            if (!saved) notice(R.string.full_access_setup_failed);
+            else if (enable) FullAccessNotificationListener.reconcileIfConnected();
+            refresh();
+        }, failure -> {
+            notice(R.string.full_access_setup_failed);
+            refresh();
+        });
     }
 
     private void confirm(State state) {
@@ -367,5 +406,5 @@ public final class FullAccessSetup {
     }
 
     private record State(boolean enabled, boolean eligible, String paired, String pairKey,
-            long epoch, boolean sharedRoots) { }
+            long epoch, boolean sharedRoots, FullAccessNotificationListener.Choice notifications) { }
 }
