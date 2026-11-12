@@ -45,7 +45,7 @@ class DummyPreviewInventoryTest(unittest.TestCase):
             self.assertEqual(38, len(inventory["com.subhub.app.internal.OwnerAccountingAndroidTest"]["selectedMethods"]))
             self.assertNotIn("com.subhub.app.censor.android.InternalCensorAndroidTest", inventory)
             self.assertEqual(21, len(native.suite_selectors("extra-time")))
-            self.assertEqual(57, len(native.suite_selectors("device-pass")))
+            self.assertEqual(60, len(native.suite_selectors("device-pass")))
 
 if __name__ == "__main__":
     unittest.main()
