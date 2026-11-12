@@ -2,8 +2,11 @@ package com.subhub.app.fullaccess;
 
 import static org.junit.Assert.*;
 
+import com.subhub.app.R;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.Test;
 
 public final class FullAccessSmsThreadsTest {
@@ -51,5 +54,48 @@ public final class FullAccessSmsThreadsTest {
         assertEquals(3, FullAccessSmsExport.exportEnd(oldNode, oldNode + "-3", 5));
         assertThrows(IllegalArgumentException.class, () -> FullAccessSmsExport.exportEnd(newNode, oldNode + "-3", 5));
         assertThrows(IllegalArgumentException.class, () -> FullAccessSmsExport.exportEnd(oldNode, oldNode + "-6", 5));
+    }
+
+    @Test public void continuousThreadKeepsLoadedHistoryWhenNewMessagesOverlapItsHead() throws Exception {
+        FullAccessViewer.Continuous pages = new FullAccessViewer.Continuous();
+        pages.accept(page("older", "3", "2"), "", true);
+        pages.accept(page("", "1", "0"), "older", true);
+        pages.accept(page("changed-head", "4", "3"), "", true);
+        assertEquals(List.of("4", "3", "2", "1", "0"), List.copyOf(pages.rows.keySet()));
+        assertFalse(pages.canAdvance());
+    }
+
+    @Test public void continuousListRequiresRetryForTailFailureAfterAHeadRefresh() throws Exception {
+        FullAccessViewer.Continuous pages = new FullAccessViewer.Continuous();
+        pages.accept(page("tail", "first"), "", false);
+        pages.fail("tail", R.string.full_access_unavailable);
+        pages.accept(page("tail", "first"), "", false);
+        assertFalse(pages.canAdvance());
+        assertEquals("tail", pages.failedCursor);
+        pages.accept(page("", "second"), "tail", false);
+        assertEquals(List.of("first", "second"), List.copyOf(pages.rows.keySet()));
+        assertEquals(0, pages.error);
+    }
+
+    @Test public void continuousListStopsCursorCyclesAndNonAdvancingRows() throws Exception {
+        FullAccessViewer.Continuous cycle = new FullAccessViewer.Continuous();
+        cycle.accept(page("a", "first"), "", false);
+        cycle.accept(page("b", "second"), "a", false);
+        cycle.accept(page("a", "third"), "b", false);
+        assertFalse(cycle.canAdvance());
+        assertTrue(cycle.repeated);
+
+        FullAccessViewer.Continuous duplicate = new FullAccessViewer.Continuous();
+        duplicate.accept(page("0", "first"), "", false);
+        for (int step = 0; step < 5 && duplicate.canAdvance(); step++)
+            duplicate.accept(page(Integer.toString(step + 1), "first"), Integer.toString(step), false);
+        assertFalse(duplicate.canAdvance());
+        assertTrue(duplicate.repeated);
+    }
+
+    private static JSONObject page(String next, String... ids) throws Exception {
+        JSONArray rows = new JSONArray();
+        for (String id : ids) rows.put(new JSONObject().put("id", id));
+        return new JSONObject().put("items", rows).put("nextCursor", next);
     }
 }

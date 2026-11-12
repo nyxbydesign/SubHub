@@ -21,6 +21,7 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.ListView;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.filters.SdkSuppress;
@@ -35,6 +36,7 @@ import com.subhub.app.OwnedUiIntegrationFixture;
 import com.subhub.app.R;
 import com.subhub.app.capture.MediaProjectionLeaseRegistry;
 import com.subhub.app.fullaccess.DemoFullAccessActivity;
+import com.subhub.app.fullaccess.FullAccessDataPresentationAndroidTest;
 import com.subhub.app.onboarding.OnboardingState;
 import com.subhub.app.remote.DummyPreviewEndpointFixture;
 import com.subhub.app.security.ControllerPinManager;
@@ -50,6 +52,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -128,6 +131,54 @@ public final class DemoFullAccessAndroidTest {
             assertLanding(restored);
             assertNull(MediaProjectionLeaseRegistry.owner());
         });
+    }
+
+    @Test public void demoSmsThreadLoadsOlderMessagesAutomatically() throws Exception {
+        assertEquals("true", InstrumentationRegistry.getArguments().getString("blackmail_owned_guest"));
+        assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission(Manifest.permission.READ_SMS));
+        UiDevice device = UiDevice.getInstance(instrumentation);
+        withViewer(viewer -> {
+            String[] messages = new String[40];
+            for (int index = 0; index < messages.length; index++)
+                messages[index] = "Synthetic transcript message " + index;
+            String generation = InternalSubData.peek(context).acknowledged().generation;
+            try (AutoCloseable fixture = FullAccessDataPresentationAndroidTest.seedDemoTranscript(
+                    context, generation, messages)) {
+                tapEntry("sms");
+                await(() -> onMain(() -> visible(viewer, "blackmail_conversation") != null));
+                onView(withTagValue(is("blackmail_conversation"))).perform(click());
+                await(() -> onMain(() -> {
+                    View list = visible(viewer, "blackmail_continuous:thread");
+                    return list != null && contains(list, messages[messages.length - 1]);
+                }));
+                AtomicReference<ListView> mounted = new AtomicReference<>();
+                instrumentation.runOnMainSync(() -> mounted.set(viewer.findViewById(android.R.id.content)
+                        .findViewWithTag("blackmail_continuous:thread")));
+                ListView thread = mounted.get();
+                for (int attempt = 0; attempt < 5 && count(thread) < messages.length; attempt++) {
+                    int previous = count(thread);
+                    instrumentation.runOnMainSync(() -> thread.setSelection(0));
+                    await(() -> count(thread) > previous);
+                }
+                assertTrue(count(thread) >= messages.length);
+                instrumentation.runOnMainSync(() -> thread.setSelection(0));
+                await(() -> onMain(() -> contains(thread, messages[0])));
+                assertTrue(onMain(() -> thread.getChildCount() < messages.length));
+                assertFalse(onMain(() -> contains(viewer.findViewById(android.R.id.content),
+                        context.getString(R.string.full_access_more))));
+                assertTrue(device.pressBack());
+                await(() -> onMain(() -> visible(viewer, "blackmail_conversation") != null));
+                assertFalse(onMain(() -> visible(viewer, "blackmail_continuous:thread") != null));
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+    }
+
+    private int count(ListView list) {
+        AtomicInteger count = new AtomicInteger();
+        instrumentation.runOnMainSync(() -> count.set(list.getCount()));
+        return count.get();
     }
 
     private void withViewer(Consumer<DemoFullAccessActivity> exercise) throws Exception {

@@ -110,6 +110,7 @@ LINT_SOURCES = {
 # Fixed tracked production-source labels; messages, paths and symbols remain omitted.
 # New or renamed sources require an explicit literal edit; unknown paths remain unknown.
 JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/fullaccess/BlackmailList.java": "main_blackmail_list",
     b"app/src/main/java/com/subhub/app/fullaccess/BlackmailViews.java": "main_blackmail_views",
     b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccess.java": "main_demo_full_access",
     b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccessActivity.java": "main_demo_full_access_activity",

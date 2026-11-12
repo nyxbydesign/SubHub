@@ -180,22 +180,28 @@ final class BlackmailViews {
     }
 
     static void timeline(LinearLayout parent, List<JSONObject> newestFirst, Function<JSONObject, String> body) {
-        Context context = parent.getContext();
-        LocalDate last = null;
-        ZoneId zone = ZoneId.systemDefault();
         for (int index = newestFirst.size() - 1; index >= 0; index--) {
             JSONObject item = newestFirst.get(index);
-            long time = item.optLong("time");
-            if (time > 0) {
-                LocalDate day = Instant.ofEpochMilli(time).atZone(zone).toLocalDate();
-                if (!day.equals(last)) timestamp(parent, DateUtils.formatDateTime(context, time,
-                        DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_YEAR));
-                last = day;
-            }
-            bubble(parent, body.apply(item),
-                    time > 0 ? DateUtils.formatDateTime(context, time, DateUtils.FORMAT_SHOW_TIME) : "",
-                    item.optBoolean("outgoing"));
+            JSONObject previous = index + 1 < newestFirst.size() ? newestFirst.get(index + 1) : null;
+            timelineRow(parent, item, previous, body);
         }
+    }
+
+    static void timelineRow(LinearLayout parent, JSONObject item, JSONObject previous, Function<JSONObject, String> body) {
+        Context context = parent.getContext();
+        long time = item.optLong("time");
+        long previousTime = previous == null ? 0 : previous.optLong("time");
+        ZoneId zone = ZoneId.systemDefault();
+        if (time > 0 && (previousTime <= 0 || !day(time, zone).equals(day(previousTime, zone))))
+            timestamp(parent, DateUtils.formatDateTime(context, time,
+                    DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_YEAR));
+        bubble(parent, body.apply(item),
+                time > 0 ? DateUtils.formatDateTime(context, time, DateUtils.FORMAT_SHOW_TIME) : "",
+                item.optBoolean("outgoing"));
+    }
+
+    private static LocalDate day(long time, ZoneId zone) {
+        return Instant.ofEpochMilli(time).atZone(zone).toLocalDate();
     }
 
     private static void timestamp(LinearLayout parent, String label) {

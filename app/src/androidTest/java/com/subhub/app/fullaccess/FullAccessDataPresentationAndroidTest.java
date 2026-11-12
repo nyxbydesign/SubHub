@@ -7,10 +7,14 @@ import android.content.ContextWrapper;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import androidx.core.content.FileProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.subhub.app.security.ControllerPinManager;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Base64;
 import org.json.JSONObject;
@@ -19,6 +23,25 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class FullAccessDataPresentationAndroidTest {
+    public static AutoCloseable seedDemoTranscript(Context target, String generation, String[] lines) throws Exception {
+        assertEquals("true", InstrumentationRegistry.getArguments().getString("blackmail_owned_guest"));
+        assertFalse("A synthetic fixture must not replace a prior transcript", FullAccessSmsExport.demoAvailable(target));
+        File directory = new File(target.getFilesDir(), "full-access-downloads");
+        assertTrue(directory.isDirectory() || directory.mkdir());
+        File transcript = File.createTempFile("demo-synthetic-transcript-", ".txt", directory);
+        try {
+            try (FileOutputStream stream = new FileOutputStream(transcript)) {
+                stream.write(String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+            }
+            DemoFullAccess source = new DemoFullAccess(target, generation, ControllerPinManager.domWorkspaceRevision());
+            assertTrue(source.importSms(FileProvider.getUriForFile(target,
+                    target.getPackageName() + ".fullaccess.files", transcript)));
+        } finally {
+            Files.delete(transcript.toPath());
+        }
+        return () -> FullAccessSmsExport.clearDemo(target);
+    }
+
     @Test public void contactPhotosAreReencodedAsSmallSquareJpegs() {
         Bitmap source = Bitmap.createBitmap(640, 320, Bitmap.Config.ARGB_8888);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
