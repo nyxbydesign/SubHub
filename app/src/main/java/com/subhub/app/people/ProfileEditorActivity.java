@@ -118,6 +118,9 @@ public final class ProfileEditorActivity extends PreferencePage {
             LinearLayout controls = PersonUi.column(this);
             choices.addView(controls, new LinearLayout.LayoutParams(-1, -2));
             com.subhub.app.security.SubFeatureControls.bindDraft(this, controls, features);
+            PersonUi.row(controls, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
+                if (mayEdit()) com.subhub.app.fullaccess.FullAccessActivity.openSetup(this);
+            }).setTag("full_access_setup");
         }
         ProfileActionRow formActions = new ProfileActionRow(this);
         formActions.setTag("profile_form_actions");

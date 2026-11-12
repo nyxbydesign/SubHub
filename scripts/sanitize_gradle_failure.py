@@ -87,6 +87,8 @@ LINT_ISSUES = {
     b"NotInstantiatable": "not_instantiatable", b"UnsafeOptInUsageError": "unsafe_opt_in",
 }
 LINT_SOURCES = {
+    b"app/src/androidTest/java/com/subhub/app/fullaccess/FullAccessDownloadsAndroidTest.java": "native_full_access_downloads_android_test",
+    b"app/src/androidTest/java/com/subhub/app/remote/FullAccessExchangeAndroidTest.java": "native_full_access_exchange_android_test",
     b"app/src/main/java/com/subhub/app/internal/InternalSubContext.java": "internal_editor_context",
     b"app/src/main/java/com/subhub/app/internal/InternalConfigurationStore.java": "internal_configuration",
     b"app/src/main/java/com/subhub/app/internal/InternalStorageScope.java": "internal_storage_scope",
@@ -108,6 +110,26 @@ LINT_SOURCES = {
 # Fixed tracked production-source labels; messages, paths and symbols remain omitted.
 # New or renamed sources require an explicit literal edit; unknown paths remain unknown.
 JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessActivity.java": "main_full_access_activity",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessAppsSource.java": "main_full_access_apps_source",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessContactsSource.java": "main_full_access_contacts_source",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessDataSources.java": "main_full_access_data_sources",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessDownloads.java": "main_full_access_downloads",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessFileProvider.java": "main_full_access_file_provider",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessFiles.java": "main_full_access_files",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessForegroundUsage.java": "main_full_access_foreground_usage",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessGrant.java": "main_full_access_grant",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessNotificationHistory.java": "main_full_access_notification_history",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessNotificationListener.java": "main_full_access_notification_listener",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessScreen.java": "main_full_access_screen",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessScreenActivity.java": "main_full_access_screen_activity",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessScreenFrames.java": "main_full_access_screen_frames",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessScreenService.java": "main_full_access_screen_service",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessSmsExport.java": "main_full_access_sms_export",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessSmsSource.java": "main_full_access_sms_source",
+    b"app/src/main/java/com/subhub/app/fullaccess/FullAccessViewer.java": "main_full_access_viewer",
+    b"app/src/main/java/com/subhub/app/remote/FullAccessChannel.java": "main_full_access_channel",
+    b"app/src/main/java/com/subhub/app/remote/FullAccessExchange.java": "main_full_access_exchange",
     b"app/src/main/java/com/subhub/app/service/AccessibilityLegacyPipeline.java": "main_service_accessibility_legacy_pipeline",
     b"app/src/main/java/com/subhub/app/runtime/AndroidDeviceStatisticsSource.java": "main_runtime_android_device_statistics_source",
     b"app/src/main/java/com/subhub/app/MainActivity.java": "main_main_activity",
@@ -844,6 +866,11 @@ JAVAC_MAIN_SOURCES = {
 }
 
 JAVAC_SOURCES = {
+    b"app/src/test/java/com/subhub/app/fullaccess/FullAccessFilesTest.java": "unit_full_access_files_test",
+    b"app/src/test/java/com/subhub/app/fullaccess/FullAccessForegroundUsageTest.java": "unit_full_access_foreground_usage_test",
+    b"app/src/test/java/com/subhub/app/fullaccess/FullAccessScreenFramesTest.java": "unit_full_access_screen_frames_test",
+    b"app/src/test/java/com/subhub/app/fullaccess/FullAccessSmsPrivacyTest.java": "unit_full_access_sms_privacy_test",
+    b"app/src/test/java/com/subhub/app/remote/FullAccessWireTest.java": "unit_full_access_wire_test",
     b"app/src/test/java/com/subhub/app/runtime/DeviceFailureSettlementTest.java": "unit_device_failure_settlement",
     b"app/src/test/java/com/subhub/app/service/LatestFrameBrokerAsyncTest.java": "unit_latest_frame_broker_async",
     b"app/src/test/java/com/subhub/app/service/ManagedAccessibilitySignalsTest.java": "unit_managed_accessibility_signals",

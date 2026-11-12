@@ -479,6 +479,11 @@ public final class PersonActivity extends RolePage {
                     }).setTag("person_tab:tasks");
                     if (person.can(PersonSnapshot.Capability.VIEW_STATS))
                         destination(destinations, person, "stats", R.drawable.ic_nav_stats, R.string.role_stats);
+                    if (!internal && ProfileViews.remoteContactTarget(person.id)) {
+                        PersonUi.row(destinations, R.drawable.ic_ux_lock, getString(R.string.full_access_title), "", () -> {
+                            if (guardTarget()) com.subhub.app.fullaccess.FullAccessActivity.openPeer(this, person.id);
+                        }).setTag("person_tab:full_access");
+                    }
                     destination(destinations, person, "connection", R.drawable.ic_nav_people, R.string.role_connection);
                 });
                 if (!internal) reconcile("activity", java.util.List.of(person.id), parent ->

@@ -6,6 +6,11 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import com.subhub.app.security.ControllerPinManager;
 import com.subhub.app.people.People;
+import com.subhub.app.fullaccess.FullAccessGrant;
+import com.subhub.app.fullaccess.FullAccessFiles;
+import com.subhub.app.security.DeviceRolePreferences;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.SocketTimeoutException;
@@ -46,6 +51,16 @@ public final class RemoteFeature {
     private final ThreadPoolExecutor incomingSessions=new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,new ArrayBlockingQueue<>(4),r->new Thread(r,"subhub-peer-incoming"),new ThreadPoolExecutor.AbortPolicy());
     private final ThreadPoolExecutor sessions=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new SynchronousQueue<>(),r->new Thread(r,"subhub-peer-session"),new ThreadPoolExecutor.AbortPolicy());
     private final Semaphore revocations=new Semaphore(1);
+    private final ThreadPoolExecutor fullAccessIncoming = fullAccessWorkers("subhub-full-access-share");
+    private final ThreadPoolExecutor fullAccessOutgoing = fullAccessWorkers("subhub-full-access-view");
+    private final Map<PeerTransport.Connection, FullAccessShare> fullAccessShares = new ConcurrentHashMap<>();
+    private final Set<FullAccessChannel> fullAccessViews = ConcurrentHashMap.newKeySet();
+
+    private static ThreadPoolExecutor fullAccessWorkers(String name) {
+        return new ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS,
+                new SynchronousQueue<>(), runnable -> new Thread(runnable, name),
+                new ThreadPoolExecutor.AbortPolicy());
+    }
     private final Set<String> busy=ConcurrentHashMap.newKeySet();
     private final Map<String,OutboundHello> outboundHellos=new ConcurrentHashMap<>();
     private static final class OutboundHello {
@@ -141,7 +156,7 @@ public final class RemoteFeature {
             PairingOperationLease lease=pairingDeadlineOwners.get(approved.direction);
             return lease!=null&&lease.matches(approved)?lease.stageApproval(approved,sampled):()->{};
         });
-        store.onRevoked((identity,generation)->{invalidateAttempts();retirePresence(identity+":"+generation);appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));scheduleConnectedSync(0);});
+        store.onRevoked((identity,generation)->{retireFullAccessPairing(identity, generation);invalidateAttempts();retirePresence(identity+":"+generation);appIcons.revoked(identity,generation);cleanupRevokedSecrets(identity,generation);activity.revoked(store.peer(identity,generation));scheduleConnectedSync(0);});
         store.onActivated(peer->{if(peer.localRole==RemoteProtocol.Role.SUB)ControllerPinManager.lockNow();activity.refreshSource();requestConnectedServiceStart();scheduleConnectedSync(0);});
         endCommands=new RemoteEndCommands(this.context,store);
         writer=new RemoteConfigurationWriter(this.context,store);contracts=new RemoteContracts(this.context,store,writer);telemetry=new RemoteTelemetry(this.context,store);
@@ -889,8 +904,20 @@ public final class RemoteFeature {
             endpointFailures.set(0);nextEndpointAttempt=0;
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(55);track(connection,"",deadline);
             leases.incrementAndGet();
-            AdmittedTask<Void> task=new AdmittedTask<>(()->{incoming(active,connection,deadline);return null;},()->{
-                untrack(connection);close(connection);leases.decrementAndGet();suspendIfIdle();
+            AtomicBoolean transferred = new AtomicBoolean();
+            AdmittedTask<Void> task=new AdmittedTask<>(()->{
+                connection.setReadTimeoutMillis(8_000);
+                JSONObject first = RemoteProtocol.read(connection.input());
+                if (FullAccessChannel.OPEN.equals(first.optString("type"))) {
+                    transferred.set(admitFullAccess(active, connection, first));
+                } else {
+                    incoming(active, connection, first, deadline);
+                }
+                return null;
+            },()->{
+                if (!transferred.get()) {
+                    untrack(connection);close(connection);leases.decrementAndGet();suspendIfIdle();
+                }
             });
             try{incomingSessions.execute(task);}catch(RejectedExecutionException full){task.cancel(false);}
         }
@@ -898,14 +925,225 @@ public final class RemoteFeature {
         synchronized(endpointLock){if(endpoint==active){endpoint=null;failed=true;}}
         if(failed){close(active);deferEndpointAttempt();scheduleConnectedSync(Math.max(0,nextEndpointAttempt-SystemClock.elapsedRealtime()));}
     }
+    /** Returns only the current, uniquely paired Dom on the Sub's device. */
+    public RemoteStore.Peer fullAccessSubPeer() {
+        if (stopped || !DeviceRolePreferences.supportsSub(context)) return null;
+        return store.authorityObservation(() -> {
+            RemoteStore.Peer found = null;
+            for (RemoteStore.Peer peer : store.peers(false)) {
+                if (peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.SUB) continue;
+                if (found != null) return null;
+                found = peer;
+            }
+            return found;
+        });
+    }
+
+    public CompletableFuture<JSONObject> requestFullAccess(RemoteStore.Peer peer, String scope, JSONObject request) {
+        if ("files".equals(scope) || "screen".equals(scope))
+            return fullAccessRejected("Open a live view");
+        return openFullAccess(peer, scope).thenApply(channel -> {
+            try (FullAccessChannel selected = channel) { return selected.query(request); }
+            catch (IOException unavailable) { throw new CompletionException(unavailable); }
+        });
+    }
+
+    public CompletableFuture<FullAccessChannel> openFullAccess(RemoteStore.Peer peer, String scope) {
+        if (peer == null || !FullAccessExchange.validScope(scope))
+            return fullAccessRejected("Invalid Full Access view");
+        long workspace = ControllerPinManager.domWorkspaceRevision();
+        CompletableFuture<FullAccessChannel> result = new CompletableFuture<>();
+        leases.incrementAndGet();
+        try {
+            fullAccessOutgoing.execute(() -> openFullAccess(peer, scope, workspace, result));
+        } catch (RejectedExecutionException unavailable) {
+            leases.decrementAndGet();
+            deferSuspendIfIdle();
+            result.complete(FullAccessChannel.denied(scope, "busy"));
+        }
+        return result;
+    }
+
+    private static <T> CompletableFuture<T> fullAccessRejected(String message) {
+        CompletableFuture<T> rejected = new CompletableFuture<>();
+        rejected.completeExceptionally(new IllegalArgumentException(message));
+        return rejected;
+    }
+
+    private void openFullAccess(RemoteStore.Peer peer, String scope, long workspace,
+            CompletableFuture<FullAccessChannel> result) {
+        PeerTransport.Connection connection = null;
+        FullAccessChannel channel = null;
+        try {
+            requireDomWorkspace();
+            if (!currentFullAccessViewer(peer, workspace) || result.isCancelled()) throw new SecurityException();
+            String supported = store.metadata(peer.identity, peer.generation, "full_access_version", "");
+            if (!"1".equals(supported)) {
+                result.complete(FullAccessChannel.denied(scope, "0".equals(supported) ? "update_required" : "unavailable"));
+                return;
+            }
+            RemoteStore.Peer current = withActivePeer(peer, () -> store.peer(peer.identity, peer.generation));
+            connection = transport().connect(current.identity, current.route, 8_000);
+            if (!current.identity.equals(connection.authenticatedPeerIdentity()) || !currentFullAccessViewer(peer, workspace)
+                    || result.isCancelled()) throw new SecurityException();
+            connections.put(connection, key(peer));
+            connection.setReadTimeoutMillis(8_000);
+            RemoteProtocol.write(connection.output(), FullAccessChannel.frame(FullAccessChannel.OPEN)
+                    .put("generation", peer.generation).put("scope", scope));
+            JSONObject response = RemoteProtocol.read(connection.input());
+            FullAccessChannel.require(response, FullAccessChannel.OPENED);
+            String status = response.getString("status");
+            if (!"ready".equals(status)) {
+                result.complete(FullAccessChannel.denied(scope, "disabled".equals(status) || "busy".equals(status)
+                        ? status : "unavailable"));
+                return;
+            }
+            if (!currentFullAccessViewer(peer, workspace) || result.isCancelled()) throw new SecurityException();
+            PeerTransport.Connection owned = connection;
+            AtomicReference<FullAccessChannel> reference = new AtomicReference<>();
+            channel = new FullAccessChannel(connection, scope, response, () -> currentFullAccessViewer(peer, workspace),
+                    () -> {
+                        FullAccessChannel released = reference.get();
+                        if (released != null) fullAccessViews.remove(released);
+                        untrack(owned);
+                        leases.decrementAndGet();
+                        deferSuspendIfIdle();
+                    });
+            reference.set(channel);
+            fullAccessViews.add(channel);
+            if ("files".equals(scope)) channel.keepAlive(timer, fullAccessOutgoing);
+            if (!result.complete(channel)) channel.close();
+        } catch (Exception unavailable) {
+            if (channel != null) channel.close();
+            result.completeExceptionally(new IOException("Full Access unavailable"));
+        } finally {
+            if (channel == null) {
+                if (connection != null) {
+                    untrack(connection);
+                    close(connection);
+                }
+                leases.decrementAndGet();
+                deferSuspendIfIdle();
+            }
+        }
+    }
+
+    private boolean currentFullAccessViewer(RemoteStore.Peer peer, long workspace) {
+        if (stopped || peer.localRole != RemoteProtocol.Role.DOM || !appPresence.foreground()
+                || workspace != ControllerPinManager.domWorkspaceRevision()
+                || !ControllerPinManager.isDomWorkspaceUnlocked() || !DeviceRolePreferences.supportsDom(context))
+            return false;
+        try { requireActive(peer); return true; }
+        catch (RuntimeException unavailable) { return false; }
+    }
+
+    public void closeFullAccessShares() {
+        for (FullAccessShare share : fullAccessShares.values()) share.close();
+    }
+
+    private void retireFullAccessPairing(String identity, String generation) {
+        try {
+            timer.execute(() -> {
+                for (FullAccessShare share : fullAccessShares.values()) {
+                    if (identity.equals(share.peer.identity) && generation.equals(share.peer.generation)) share.close();
+                }
+                FullAccessGrant.relationshipEnded(context, identity, generation);
+            });
+        } catch (RejectedExecutionException ignored) { }
+    }
+
+    private boolean admitFullAccess(PeerTransport active, PeerTransport.Connection connection, JSONObject first) throws Exception {
+        FullAccessChannel.require(first, FullAccessChannel.OPEN);
+        String scope = FullAccessChannel.text(first, "scope");
+        if (!FullAccessExchange.validScope(scope)) return false;
+        String generation = RemoteProtocol.identifier(first.getString("generation"));
+        String identity = RemoteProtocol.peerId(connection.authenticatedPeerIdentity());
+        RemoteStore.Peer peer = store.authorityAccess(() -> store.peer(identity, generation));
+        if (peer == null || peer.state != RemoteStore.State.ACTIVE || peer.localRole != RemoteProtocol.Role.SUB)
+            return false;
+        long epoch = FullAccessGrant.epoch(context, identity, generation);
+        FullAccessShare share = new FullAccessShare(active, connection, peer, epoch);
+        fullAccessShares.put(connection, share);
+        connectionDeadlines.remove(connection);
+        connections.put(connection, key(peer));
+        try {
+            fullAccessIncoming.execute(() -> {
+                try {
+                    if (epoch >= 0) {
+                        ScheduledFuture<?> watch = timer.scheduleWithFixedDelay(() -> {
+                            if (!share.current()) share.close();
+                        }, 750, 750, TimeUnit.MILLISECONDS);
+                        share.watchdog = watch;
+                        if (share.closed.get()) watch.cancel(false);
+                    }
+                    FullAccessExchange.serve(context, connection, scope, share::current, appPresence::foreground,
+                            share::attach);
+                } catch (Exception unavailable) {
+                    // Frames and exception messages can contain private data.
+                } finally {
+                    share.close();
+                    fullAccessShares.remove(connection, share);
+                    untrack(connection);
+                    leases.decrementAndGet();
+                    deferSuspendIfIdle();
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException unavailable) {
+            fullAccessShares.remove(connection, share);
+            return false;
+        }
+    }
+
+    private final class FullAccessShare {
+        final PeerTransport active;
+        final PeerTransport.Connection connection;
+        final RemoteStore.Peer peer;
+        final long epoch;
+        final AtomicBoolean closed = new AtomicBoolean();
+        final AtomicReference<AutoCloseable> source = new AtomicReference<>();
+        volatile ScheduledFuture<?> watchdog;
+
+        FullAccessShare(PeerTransport active, PeerTransport.Connection connection, RemoteStore.Peer peer, long epoch) {
+            this.active = active;
+            this.connection = connection;
+            this.peer = peer;
+            this.epoch = epoch;
+        }
+
+        boolean current() {
+            if (closed.get() || stopped || endpoint != active || epoch < 0
+                    || FullAccessGrant.epoch(context, peer.identity, peer.generation) != epoch) return false;
+            try {
+                requireActive(peer);
+                AutoCloseable selected = source.get();
+                return !closed.get() && (!(selected instanceof FullAccessFiles.Session)
+                        || ((FullAccessFiles.Session) selected).isStorageGrantCurrent());
+            } catch (RuntimeException unavailable) { return false; }
+        }
+
+        void attach(AutoCloseable selected) {
+            source.set(selected);
+            if (closed.get()) RemoteFeature.close(selected);
+        }
+
+        void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            ScheduledFuture<?> watch = watchdog;
+            if (watch != null) watch.cancel(false);
+            RemoteFeature.close(connection);
+            AutoCloseable selected = source.getAndSet(null);
+            if (selected != null) RemoteFeature.close(selected);
+        }
+    }
+
     private void deferEndpointAttempt(){
         int failures=endpointFailures.updateAndGet(previous->Math.min(6,previous+1));
         nextEndpointAttempt=SystemClock.elapsedRealtime()+Math.min(60_000,2_000L<<(failures-1));
     }
-    private void incoming(PeerTransport active,PeerTransport.Connection connection,long deadline) {
+    private void incoming(PeerTransport active,PeerTransport.Connection connection,JSONObject first,long deadline) {
         String reservation=null;long attempt=attemptGeneration();boolean exchanged=false;
         try(PeerTransport.Connection selected=connection) {
-            selected.setReadTimeoutMillis(8000);JSONObject first=RemoteProtocol.read(selected.input());
             store.authorityAccess(()->null);
             String type=first.optString("type");
             if("pair_request".equals(type)||"pair_recover".equals(type)){
@@ -1281,13 +1519,15 @@ public final class RemoteFeature {
         lifecycleApplication=null;lifecycleCallbacks=null;
         pairingDeadlineTimer.shutdownNow();
         appIcons.close();
+        closeFullAccessShares();
+        for (FullAccessChannel view : fullAccessViews) view.close();
         for(PairingOperationLease lease:pairingLeases.values())lease.close();
         foreground=false;timer.shutdownNow();synchronized(endpointLock){PeerTransport previous=endpoint;endpoint=null;if(previous!=null)close(previous);}
         acceptor.shutdownNow();
-        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions}) {
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing}) {
             for(Runnable queued:pool.shutdownNow())if(queued instanceof Future<?>)((Future<?>)queued).cancel(false);
         }
-        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions})
+        for(ThreadPoolExecutor pool:new ThreadPoolExecutor[]{operations,incomingSessions,sessions,fullAccessIncoming,fullAccessOutgoing})
             if(!pool.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Peer work did not stop");
         acceptor.awaitTermination(10,TimeUnit.SECONDS);
         if(!pairingDeadlineTimer.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Pairing deadlines did not stop");
