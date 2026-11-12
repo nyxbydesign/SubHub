@@ -56,6 +56,7 @@ public final class FullAccessSetup {
     private long flow = -1;
     private long exportEpoch = -1;
     private boolean launched;
+    private boolean notificationsDisclosed;
     private CompoundButton featureToggle;
     private AlertDialog confirmation;
 
@@ -95,6 +96,8 @@ public final class FullAccessSetup {
         if (state != null) {
             pending = state.getString("full_access_pending");
             launched = pending != null;
+            // A restored setup may have started before the updated Notifications disclosure.
+            notificationsDisclosed = state.getBoolean("full_access_notifications_disclosed");
             flow = state.getLong("full_access_flow", -1);
             exportEpoch = state.getLong("full_access_export_epoch", -1);
             List<String> steps = state.getStringArrayList("full_access_steps");
@@ -116,6 +119,7 @@ public final class FullAccessSetup {
 
     public void saveState(Bundle state) {
         state.putString("full_access_pending", launched ? pending : null);
+        state.putBoolean("full_access_notifications_disclosed", notificationsDisclosed);
         state.putLong("full_access_flow", flow);
         state.putLong("full_access_export_epoch", exportEpoch);
         var queued = new java.util.ArrayList<>(remaining);
@@ -131,11 +135,10 @@ public final class FullAccessSetup {
         }
         work.load("profile-full-access-state", () -> {
             if (demo != null) return new State(demo.current(), demo.available(), "", "", 0,
-                    FullAccessFiles.sharedRootsAvailable(app, true, 0), DemoFullAccess.notificationChoice(app));
+                    FullAccessFiles.setupState(app, true, 0), DemoFullAccess.notificationChoice(app));
             long epoch = FullAccessGrant.epoch(app);
             return new State(epoch >= 0, FullAccessGrant.eligible(app), FullAccessGrant.pairedDom(app),
-                    FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.sharedRootsAvailable(app, false, epoch),
-                    FullAccessDataSources.notificationChoice(app));
+                    FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.setupState(app, false, epoch), FullAccessDataSources.notificationChoice(app));
         }, state -> {
             if (!resumed || !allowed.getAsBoolean()) return;
             if (showable()) render(state);
@@ -156,6 +159,7 @@ public final class FullAccessSetup {
         remaining.clear();
         pending = null;
         launched = false;
+        notificationsDisclosed = false;
         flow = -1;
         exportEpoch = -1;
     }
@@ -184,24 +188,19 @@ public final class FullAccessSetup {
         });
         if (!state.enabled && !state.eligible && demo == null)
             PersonUi.text(panel, host.getString(R.string.full_access_pair_needed), false);
-        if (state.enabled && pending == null && remaining.isEmpty() && state.notifications != null) {
-            boolean details = !state.notifications.token().isEmpty();
-            if (details || FullAccessDataSources.hasNotificationAccess(app))
-                PersonUi.action(panel, details ? R.string.blackmail_notifications_details_disable
-                        : R.string.blackmail_notifications_details_enable, () -> notificationDetails(state, !details), false);
-        }
-        if (state.enabled && pending == null && remaining.isEmpty() && !state.sharedRoots) {
-            if (FullAccessFiles.supportsSharedRoots()) {
-                PersonUi.action(panel, R.string.blackmail_files_enable, () -> {
-                    if (!resumed || !allowed.getAsBoolean() || pending != null || !remaining.isEmpty()) return;
-                    flow = state.epoch;
-                    remaining.add("files");
-                    advance();
-                    refresh();
-                }, false);
-            } else {
-                PersonUi.text(panel, host.getString(R.string.blackmail_files_android_10), false);
+        if (state.enabled && pending == null && remaining.isEmpty()) {
+            boolean reviewNotifications = state.notifications != null && state.notifications.textSince() == 0
+                    && FullAccessDataSources.hasNotificationAccess(app);
+            boolean reviewFiles = state.files == FullAccessFiles.Setup.PAIRED_REVIEW;
+            if (reviewNotifications || reviewFiles) {
+                int title = reviewNotifications && reviewFiles ? R.string.blackmail_access_review
+                        : reviewNotifications ? R.string.blackmail_notifications_review : R.string.blackmail_files_review;
+                PersonUi.action(panel, title, () -> reviewAccess(state, title, reviewNotifications, reviewFiles), false);
             }
+            if (state.files == FullAccessFiles.Setup.ANDROID_PERMISSION)
+                PersonUi.action(panel, R.string.blackmail_files_android_permission, () -> finishAccessReview(state, false, true), false);
+            if (state.files == FullAccessFiles.Setup.ANDROID_10)
+                PersonUi.text(panel, host.getString(R.string.blackmail_files_android_10), false);
         }
         if (state.enabled && pending == null && remaining.isEmpty() && !FullAccessDataSources.hasSmsAccess(app)) {
             PersonUi.action(panel, demo == null ? R.string.full_access_import_sms : R.string.demo_full_access_sms_import,
@@ -217,34 +216,48 @@ public final class FullAccessSetup {
         }
     }
 
-    private void notificationDetails(State state, boolean enable) {
-        if (!resumed || !showable() || !allowed.getAsBoolean()
-                || work.isPending("profile-full-access-notification-details")) return;
-        if (!enable) {
-            saveNotificationDetails(state, false);
-            return;
+    private void reviewAccess(State state, int title, boolean notifications, boolean files) {
+        if (!resumed || !showable() || !allowed.getAsBoolean() || confirmation != null
+                || work.isPending("profile-full-access-write")) return;
+        String disclosure = notifications ? (demo == null
+                ? host.getString(R.string.blackmail_notifications_review_pair, state.paired)
+                : host.getString(R.string.blackmail_notifications_review_demo)) : "";
+        if (files) {
+            if (notifications) disclosure += "\n\n";
+            disclosure += host.getString(R.string.blackmail_files_review_pair, state.paired);
         }
         confirmation = new AlertDialog.Builder(host)
-                .setTitle(R.string.blackmail_notifications_details_enable)
-                .setMessage(demo == null ? host.getString(R.string.blackmail_notifications_details_pair, state.paired)
-                        : host.getString(R.string.blackmail_notifications_details_demo))
+                .setTitle(title)
+                .setMessage(disclosure)
                 .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.role_enabled, (dialog, which) -> saveNotificationDetails(state, true))
+                .setPositiveButton(demo == null ? R.string.full_access_share : R.string.role_enabled,
+                        (dialog, which) -> finishAccessReview(state, notifications, files))
                 .create();
         confirmation.setOnDismissListener(dialog -> confirmation = null);
         confirmation.show();
     }
 
-    private void saveNotificationDetails(State state, boolean enable) {
-        if (!resumed || !showable() || !allowed.getAsBoolean()) return;
-        work.loadSerial("profile-full-access-notification-details", () -> current(state.epoch) && showable()
-                && (demo == null ? FullAccessDataSources.setNotificationDetails(app, state.notifications, enable)
-                : demo.setNotificationDetails(state.notifications, enable)), saved -> {
+    private void finishAccessReview(State state, boolean notifications, boolean files) {
+        if (!resumed || !showable() || !allowed.getAsBoolean() || pending != null || !remaining.isEmpty()) return;
+        if (files) {
+            flow = state.epoch;
+            remaining.add("files");
+        }
+        if (!notifications) {
+            advance();
+            refresh();
+            return;
+        }
+        work.loadSerial("profile-full-access-write", () -> current(state.epoch)
+                && (demo == null ? FullAccessDataSources.renewNotifications(app, state.notifications)
+                : demo.renewNotifications(state.notifications)), saved -> {
             if (!saved) notice(R.string.full_access_setup_failed);
-            else if (enable) FullAccessNotificationListener.reconcileIfConnected();
+            else FullAccessNotificationListener.reconcileIfConnected();
+            advance();
             refresh();
         }, failure -> {
             notice(R.string.full_access_setup_failed);
+            advance();
             refresh();
         });
     }
@@ -275,6 +288,7 @@ public final class FullAccessSetup {
         }, epoch -> {
             if (epoch < 0) notice(R.string.full_access_setup_failed);
             if (next && epoch >= 0) {
+                notificationsDisclosed = true;
                 flow = epoch;
                 remaining.clear();
                 remaining.addAll(STEPS);
@@ -379,8 +393,9 @@ public final class FullAccessSetup {
             long expected = flow;
             saveScope(() -> FullAccessFiles.approvePairedSharedRoots(app, expected));
         } else if ("apps".equals(step) || granted && ("contacts".equals(step) || "sms".equals(step) || "notifications".equals(step))) {
-            saveScope(() -> demo == null ? FullAccessDataSources.enableScope(app, step)
-                    : !"notifications".equals(step) || demo.enableNotifications());
+            boolean disclosed = notificationsDisclosed;
+            saveScope(() -> demo == null ? FullAccessDataSources.enableScope(app, step, disclosed)
+                    : !"notifications".equals(step) || demo.enableNotifications(disclosed));
         } else finishedStep();
     }
 
@@ -396,7 +411,10 @@ public final class FullAccessSetup {
     }
 
     private void finishedStep() {
-        if (remaining.isEmpty()) flow = -1;
+        if (remaining.isEmpty()) {
+            flow = -1;
+            notificationsDisclosed = false;
+        }
         advance();
         refresh();
     }
@@ -406,5 +424,5 @@ public final class FullAccessSetup {
     }
 
     private record State(boolean enabled, boolean eligible, String paired, String pairKey,
-            long epoch, boolean sharedRoots, FullAccessNotificationListener.Choice notifications) { }
+            long epoch, FullAccessFiles.Setup files, FullAccessNotificationListener.Choice notifications) { }
 }

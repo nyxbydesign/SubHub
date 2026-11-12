@@ -6,6 +6,7 @@ import android.app.Notification;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
 import android.content.ContextWrapper;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -146,40 +147,53 @@ public final class FullAccessDataPresentationAndroidTest {
         assertTrue(FullAccessNotificationListener.preview(message, since, now).empty());
     }
 
-    @Test public void notificationDetailsMigrationDedupAndRevocationPreservePublicRows() throws Exception {
+    @Test public void notificationScopePreservesLegacyApprovalsAndFencesProspectiveText() throws Exception {
         Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        File temporary = Files.createTempDirectory(target.getCacheDir().toPath(), "notification-details-").toFile();
+        File temporary = Files.createTempDirectory(target.getCacheDir().toPath(), "notification-consent-").toFile();
+        String fixturePrefs = temporary.getName();
+        SharedPreferences preferences = target.getSharedPreferences(fixturePrefs, Context.MODE_PRIVATE);
         Context isolated = new ContextWrapper(target) {
             @Override public File getNoBackupFilesDir() { return temporary; }
+            @Override public SharedPreferences getSharedPreferences(String name, int mode) { return preferences; }
         };
         long now = System.currentTimeMillis();
         long since = now - 500;
-        String token = "fixture-choice";
-        var previous = new FullAccessNotificationListener.Choice(7, "", 2, since, token, now - 200);
-        var next = new FullAccessNotificationListener.Choice(7, "", 2, since, "new-choice", now - 100);
-        var revoked = new FullAccessNotificationListener.Choice(7, "", 2, since, "", 0);
-        var replacement = new FullAccessNotificationListener.Choice(8, "", 2, since, token, now - 200);
-        assertEquals("", previous.acceptedDetailsToken(previous, now - 201));
-        assertEquals(token, previous.acceptedDetailsToken(previous, now - 200));
-        assertEquals("", revoked.acceptedDetailsToken(previous, now));
-        assertEquals("", next.acceptedDetailsToken(previous, now));
-        assertFalse(replacement.sameScope(previous));
+        long textSince = now - 200;
+        var publicOnly = new FullAccessNotificationListener.Choice(7, "", 2, since, 0);
+        var renewed = new FullAccessNotificationListener.Choice(7, "", 2, since, textSince);
+        var replacement = new FullAccessNotificationListener.Choice(8, "", 2, since, textSince);
+        assertEquals(0, renewed.acceptedTextSince(renewed, textSince - 1));
+        assertEquals(textSince, renewed.acceptedTextSince(renewed, textSince));
+        assertEquals(0, renewed.acceptedTextSince(publicOnly, now));
+        assertFalse(replacement.sameScope(renewed));
 
         try {
-            for (int version : new int[]{1, 2}) {
+            for (int version : new int[]{1, 2, 3}) {
+                assertTrue(preferences.edit().putString("notifications_details_token", "legacy-approved")
+                        .putLong(FullAccessNotificationListener.TEXT_SINCE, textSince).commit());
                 File path = new File(temporary, "full-access-notifications.db");
                 try (SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(path, null)) {
-                    String v2 = version == 2
+                    String v2 = version >= 2
                             ? ", public_title TEXT NOT NULL DEFAULT '', public_text TEXT NOT NULL DEFAULT ''" : "";
+                    String v3 = version == 3
+                            ? ", details_token TEXT NOT NULL DEFAULT '', detail_title TEXT NOT NULL DEFAULT '',"
+                            + " detail_text TEXT NOT NULL DEFAULT '', small_icon TEXT NOT NULL DEFAULT ''" : "";
                     db.execSQL("CREATE TABLE posted_notifications (_id INTEGER PRIMARY KEY AUTOINCREMENT,"
                             + " epoch INTEGER NOT NULL, event_key TEXT NOT NULL, pkg TEXT NOT NULL, category TEXT NOT NULL,"
-                            + " posted_at INTEGER NOT NULL" + v2 + ", UNIQUE(epoch,event_key,posted_at))");
+                            + " posted_at INTEGER NOT NULL" + v2 + v3 + ", UNIQUE(epoch,event_key,posted_at))");
                     db.execSQL("INSERT INTO posted_notifications (epoch,event_key,pkg,category,posted_at)"
                             + " VALUES(7,'retained','example.alpha','message',?)", new Object[]{now - 100});
+                    if (version == 3) {
+                        db.execSQL("UPDATE posted_notifications SET details_token='legacy-approved',"
+                                + " detail_text='Previously approved', public_text='A new message' WHERE event_key='retained'");
+                        db.execSQL("INSERT INTO posted_notifications (epoch,event_key,pkg,category,posted_at,details_token,"
+                                + "detail_text,public_text) VALUES(7,'stale','example.stale','message',?,"
+                                + "'superseded','Stale private text','Public text')", new Object[]{now - 100});
+                    }
                     db.setVersion(version);
                 }
                 String id;
-                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, token)) {
+                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, textSince)) {
                     id = notificationRow(history, isolated, since, now).getString("id");
                     var publicPreview = FullAccessNotificationListener.publicPreview("Chat", "A new message");
                     var details = FullAccessNotificationListener.publicPreview("Kit", "Meet by the window");
@@ -188,14 +202,18 @@ public final class FullAccessDataPresentationAndroidTest {
                             FullAccessNotificationListener.EMPTY, FullAccessNotificationListener.EMPTY, "");
                     JSONObject row = notificationRow(history, isolated, since, now);
                     assertEquals(id, row.getString("id"));
-                    assertEquals("Meet by the window", row.getString("notificationText"));
+                    assertEquals(version == 3 ? "Previously approved" : "Meet by the window", row.getString("notificationText"));
                     assertEquals("raster", row.getString("notificationIcon"));
+                    if (version == 3) {
+                        JSONObject stale = history.group(isolated, 7, "example.stale", "", since, now, 12)
+                                .getJSONArray("items").getJSONObject(0);
+                        assertEquals("Public text", stale.getString("notificationText"));
+                    }
                 }
                 try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated)) {
                     assertEquals("A new message", notificationRow(history, isolated, since, now).getString("notificationText"));
-                    history.clearDetails();
                 }
-                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, token)) {
+                try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(isolated, false, now - 50)) {
                     JSONObject row = notificationRow(history, isolated, since, now);
                     assertEquals(id, row.getString("id"));
                     assertEquals("A new message", row.getString("notificationText"));
@@ -203,6 +221,7 @@ public final class FullAccessDataPresentationAndroidTest {
                 FullAccessNotificationHistory.clear(isolated);
             }
         } finally {
+            target.deleteSharedPreferences(fixturePrefs);
             FullAccessNotificationHistory.clear(isolated);
             Files.delete(temporary.toPath());
         }

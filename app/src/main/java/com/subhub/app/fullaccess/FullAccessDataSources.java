@@ -67,7 +67,7 @@ public final class FullAccessDataSources {
     }
 
     /** Called only after the Sub takes the explicit setup action for the selected scope. */
-    public static boolean enableScope(Context context, String scope) {
+    public static boolean enableScope(Context context, String scope, boolean notificationsDisclosed) {
         if (!recognized(scope) || !"ok".equals(permissionState(context, scope))) return false;
         long observedChange = scopeChange();
         long epoch = currentEpoch(context);
@@ -84,8 +84,10 @@ public final class FullAccessDataSources {
             if (chosenAt(context, scope, epoch) > 0) return true;
             if (!"notifications".equals(scope)) return choice(context, scope, epoch).commit();
             FullAccessNotificationHistory.clear(context);
-            boolean saved = choice(context, scope, epoch).remove(FullAccessNotificationListener.DETAILS_TOKEN)
-                    .remove(FullAccessNotificationListener.DETAILS_SINCE).commit();
+            SharedPreferences.Editor editor = choice(context, scope, epoch)
+                    .remove(FullAccessNotificationListener.TEXT_SINCE);
+            if (notificationsDisclosed) editor.putLong(FullAccessNotificationListener.TEXT_SINCE, System.currentTimeMillis() + 1);
+            boolean saved = editor.commit();
             if (saved) FullAccessNotificationListener.reconcileIfConnected();
             return saved;
         }
@@ -97,8 +99,7 @@ public final class FullAccessDataSources {
             scopeChange++;
             SharedPreferences.Editor choice = settings(context).edit().remove(scope + "_epoch").remove(scope + "_since");
             if ("sms".equals(scope)) choice.remove(SMS_SOURCE);
-            if ("notifications".equals(scope))
-                choice.remove(FullAccessNotificationListener.DETAILS_TOKEN).remove(FullAccessNotificationListener.DETAILS_SINCE);
+            if ("notifications".equals(scope)) choice.remove(FullAccessNotificationListener.TEXT_SINCE);
             choice.commit();
             if ("notifications".equals(scope)) FullAccessNotificationHistory.clear(context);
             if ("sms".equals(scope)) FullAccessSmsExport.clear(context);
@@ -164,8 +165,7 @@ public final class FullAccessDataSources {
         if (!"ok".equals(permission)) return response(permission, new JSONArray());
         long smsContactsSince = DIRECT_SMS.equals(smsSource) && !"page".equals(operation)
                 ? contactsSharedSince(context, epoch) : 0;
-        String detailsToken = "notifications".equals(scope)
-                ? settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "") : "";
+        long textSince = "notifications".equals(scope) ? notificationTextSince(context) : 0;
         JSONObject result;
         try {
             long now = System.currentTimeMillis();
@@ -186,10 +186,10 @@ public final class FullAccessDataSources {
                 case "notifications" -> {
                     synchronized (LOCAL_HISTORY_LOCK) {
                         if (chosenAt(context, scope, epoch) != enabledAt
-                                || !detailsToken.equals(settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
+                                || textSince != notificationTextSince(context))
                             yield response("unavailable", new JSONArray());
                         long since = Math.max(enabledAt, now - FullAccessNotificationHistory.RETENTION_MILLIS);
-                        try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, detailsToken)) {
+                        try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, textSince)) {
                             yield notifications(history, context, epoch, operation, node, cursor, since, now);
                         }
                     }
@@ -204,7 +204,7 @@ public final class FullAccessDataSources {
         if (currentEpoch(context) != epoch || chosenAt(context, scope, epoch) != enabledAt)
             return response("unavailable", new JSONArray());
         if ("notifications".equals(scope)
-                && !detailsToken.equals(settings(context).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
+                && textSince != notificationTextSince(context))
             return response("unavailable", new JSONArray());
         if ("sms".equals(scope) && !smsSource.equals(smsSource(context)))
             return response("unavailable", new JSONArray());
@@ -256,16 +256,20 @@ public final class FullAccessDataSources {
         long epoch = prefs.getLong("notifications_epoch", -1);
         long since = chosenAt(context, "notifications", epoch);
         return epoch < 0 || since <= 0 ? null : new FullAccessNotificationListener.Choice(epoch, "", observedChange,
-                since, prefs.getString(FullAccessNotificationListener.DETAILS_TOKEN, ""),
-                prefs.getLong(FullAccessNotificationListener.DETAILS_SINCE, 0));
+                since, notificationTextSince(context));
     }
 
-    static boolean setNotificationDetails(Context context, FullAccessNotificationListener.Choice expected, boolean enabled) {
-        if (currentEpoch(context) != expected.epoch()) return false;
+    static boolean renewNotifications(Context context, FullAccessNotificationListener.Choice expected) {
+        if (currentEpoch(context) != expected.epoch() || expected.textSince() > 0) return false;
         synchronized (LOCAL_HISTORY_LOCK) {
-            if (!expected.equals(notificationChoice(context)) || enabled && !hasNotificationAccess(context)) return false;
-            return FullAccessNotificationListener.changeDetails(context, settings(context), false, enabled);
+            if (!expected.equals(notificationChoice(context)) || !hasNotificationAccess(context)) return false;
+            return settings(context).edit().putLong(FullAccessNotificationListener.TEXT_SINCE,
+                    System.currentTimeMillis() + 1).commit();
         }
+    }
+
+    private static long notificationTextSince(Context context) {
+        return settings(context).getLong(FullAccessNotificationListener.TEXT_SINCE, 0);
     }
 
     static void recordNotification(Context context, FullAccessNotificationListener.Choice expected,
@@ -278,8 +282,8 @@ public final class FullAccessDataSources {
             long now = System.currentTimeMillis();
             if (timestamp < current.since() || timestamp > now
                     || timestamp < now - FullAccessNotificationHistory.RETENTION_MILLIS) return;
-            String token = current.acceptedDetailsToken(expected, timestamp);
-            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, token)) {
+            long textSince = current.acceptedTextSince(expected, timestamp);
+            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, false, textSince)) {
                 history.record(current.epoch(), key, pkg, category, timestamp, now, preview, details, icon);
             } catch (RuntimeException unavailable) {
                 // Optional collection must never log notification content.
@@ -303,7 +307,7 @@ public final class FullAccessDataSources {
         return "contacts".equals(scope) || "notifications".equals(scope) || "sms".equals(scope) || "apps".equals(scope);
     }
 
-    private static SharedPreferences settings(Context context) {
+    static SharedPreferences settings(Context context) {
         return context.getSharedPreferences(SETTINGS, Context.MODE_PRIVATE);
     }
 

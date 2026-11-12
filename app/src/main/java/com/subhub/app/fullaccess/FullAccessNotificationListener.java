@@ -1,8 +1,6 @@
 package com.subhub.app.fullaccess;
 
 import android.app.Notification;
-import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
@@ -23,7 +21,6 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.PriorityQueue;
-import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -38,15 +35,15 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
     private static final int RETAINED_LIMIT = 64;
     private static final int ICON_EDGE = 24;
     static final int ICON_ENCODED_LIMIT = 2048;
-    static final String DETAILS_TOKEN = "notifications_details_token";
-    static final String DETAILS_SINCE = "notifications_details_since";
+    // Existing richer-preview approvals use the same prospective timestamp.
+    static final String TEXT_SINCE = "notifications_details_since";
 
     record Preview(String title, String text) {
         boolean empty() { return title.isEmpty() && text.isEmpty(); }
     }
-    record Choice(long epoch, String generation, long revision, long since, String token, long detailsSince) {
-        boolean allowsDetails(long time) {
-            return !token.isEmpty() && detailsSince > 0 && time >= detailsSince;
+    record Choice(long epoch, String generation, long revision, long since, long textSince) {
+        boolean allowsText(long time) {
+            return textSince > 0 && time >= textSince;
         }
 
         boolean sameScope(Choice captured) {
@@ -54,24 +51,9 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
                     && revision == captured.revision && since == captured.since;
         }
 
-        String acceptedDetailsToken(Choice captured, long time) {
-            return sameScope(captured) && allowsDetails(time) && detailsSince == captured.detailsSince
-                    && token.equals(captured.token) ? token : "";
+        long acceptedTextSince(Choice captured, long time) {
+            return sameScope(captured) && textSince == captured.textSince && allowsText(time) ? textSince : 0;
         }
-    }
-
-    static boolean changeDetails(Context context, SharedPreferences prefs, boolean demo, boolean enabled) {
-        if (enabled && !prefs.getString(DETAILS_TOKEN, "").isEmpty()) return true;
-        boolean cleared = enabled || prefs.edit().remove(DETAILS_TOKEN).remove(DETAILS_SINCE).commit();
-        try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, demo)) {
-            history.clearDetails();
-        } catch (RuntimeException unavailable) {
-            // Preserve the closed choice even if the database cannot securely update its old rows.
-            if (!enabled) FullAccessNotificationHistory.clear(context, demo);
-            return false;
-        }
-        return cleared && (!enabled || prefs.edit().putLong(DETAILS_SINCE, System.currentTimeMillis())
-                .putString(DETAILS_TOKEN, UUID.randomUUID().toString()).commit());
     }
 
     static final Preview EMPTY = new Preview("", "");
@@ -167,10 +149,10 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
         String type = category(source.category);
         Preview pairedPreview = capturePaired ? preview(exposed, Math.max(paired.since(), retention), now) : EMPTY;
         Preview demoPreview = captureDemo ? preview(exposed, Math.max(demo.since(), retention), now) : EMPTY;
-        Preview pairedDetails = capturePaired && !rejectedPublicVersion && paired.allowsDetails(postedAt)
-                ? preview(source, Math.max(paired.detailsSince(), retention), now) : EMPTY;
-        Preview demoDetails = captureDemo && !rejectedPublicVersion && demo.allowsDetails(postedAt)
-                ? preview(source, Math.max(demo.detailsSince(), retention), now) : EMPTY;
+        Preview pairedDetails = capturePaired && !rejectedPublicVersion && paired.allowsText(postedAt)
+                ? preview(source, Math.max(paired.textSince(), retention), now) : EMPTY;
+        Preview demoDetails = captureDemo && !rejectedPublicVersion && demo.allowsText(postedAt)
+                ? preview(source, Math.max(demo.textSince(), retention), now) : EMPTY;
         // The original small icon is status-bar metadata. A supplied public version can replace or withhold it.
         Icon selectedIcon = rejectedPublicVersion ? null : (exposed == null ? source : exposed).getSmallIcon();
         writes.execute(() -> {
@@ -327,7 +309,7 @@ public final class FullAccessNotificationListener extends NotificationListenerSe
         }
     }
 
-    static String keyDigest(String key) {
+    private static String keyDigest(String key) {
         if (key == null) return null;
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(key.getBytes(StandardCharsets.UTF_8));

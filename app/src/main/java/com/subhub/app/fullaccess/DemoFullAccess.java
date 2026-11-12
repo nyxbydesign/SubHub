@@ -57,8 +57,7 @@ final class DemoFullAccess {
         int count = FullAccessDataSources.PAGE_SIZE;
         boolean smsContacts = "sms".equals(scope) && !"page".equals(operation) && FullAccessDataSources.hasSmsAccess(app)
                 && "ok".equals(FullAccessDataSources.permissionState(app, "contacts"));
-        String detailsToken = "notifications".equals(scope)
-                ? choices(app).getString(FullAccessNotificationListener.DETAILS_TOKEN, "") : "";
+        long textSince = "notifications".equals(scope) ? notificationTextSince(app) : 0;
         JSONObject result;
         try {
             result = switch (scope) {
@@ -68,7 +67,7 @@ final class DemoFullAccess {
                 case "apps" -> FullAccessAppsSource.page(app,
                         (int) FullAccessDataSources.cursor(cursor, 0, Integer.MAX_VALUE), count, System.currentTimeMillis());
                 case "sms" -> sms(operation, node, cursor, smsContacts);
-                case "notifications" -> notifications(operation, node, cursor, detailsToken);
+                case "notifications" -> notifications(operation, node, cursor, textSince);
                 default -> throw new IllegalArgumentException("Unknown Demo data view");
             };
         } catch (SecurityException denied) {
@@ -76,7 +75,7 @@ final class DemoFullAccess {
         }
         requireCurrent();
         if ("notifications".equals(scope)
-                && !detailsToken.equals(choices(app).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
+                && textSince != notificationTextSince(app))
             return status("unavailable");
         if ("contacts".equals(scope) && !"ok".equals(FullAccessDataSources.permissionState(app, scope))
                 || "notifications".equals(scope) && !FullAccessDataSources.hasNotificationAccess(app)
@@ -112,32 +111,33 @@ final class DemoFullAccess {
         }
     }
 
-    private JSONObject notifications(String operation, String node, String cursor, String detailsToken)
+    private JSONObject notifications(String operation, String node, String cursor, long textSince)
             throws JSONException {
         synchronized (HISTORY_LOCK) {
             long since = choice(app, "notifications", generation);
             if (since <= 0 || !FullAccessDataSources.hasNotificationAccess(app)) return status("permission_required");
-            if (!detailsToken.equals(choices(app).getString(FullAccessNotificationListener.DETAILS_TOKEN, "")))
+            if (textSince != notificationTextSince(app))
                 return status("unavailable");
             long now = System.currentTimeMillis();
-            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(app, true, detailsToken)) {
+            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(app, true, textSince)) {
                 return FullAccessDataSources.notifications(history, app, since, operation, node, cursor,
                         Math.max(since, now - FullAccessNotificationHistory.RETENTION_MILLIS), now);
             }
         }
     }
 
-    boolean enableNotifications() {
+    boolean enableNotifications(boolean notificationsDisclosed) {
         synchronized (HISTORY_LOCK) {
             requireCurrent();
             if (!FullAccessDataSources.hasNotificationAccess(app)) return false;
             if (choice(app, "notifications", generation) > 0) return true;
             FullAccessNotificationHistory.clear(app, true);
             notificationRevision++;
-            boolean saved = choices(app).edit().putString("notifications_generation", generation)
-                    .putLong("notifications_since", System.currentTimeMillis())
-                    .remove(FullAccessNotificationListener.DETAILS_TOKEN).remove(FullAccessNotificationListener.DETAILS_SINCE)
-                    .commit();
+            long now = System.currentTimeMillis();
+            SharedPreferences.Editor editor = choices(app).edit().putString("notifications_generation", generation)
+                    .putLong("notifications_since", now).remove(FullAccessNotificationListener.TEXT_SINCE);
+            if (notificationsDisclosed) editor.putLong(FullAccessNotificationListener.TEXT_SINCE, now + 1);
+            boolean saved = editor.commit();
             if (saved) FullAccessNotificationListener.reconcileIfConnected();
             return saved;
         }
@@ -150,16 +150,20 @@ final class DemoFullAccess {
         long since = choice(context, "notifications", generation);
         return since <= 0 || !enabled(context, generation) ? null : new FullAccessNotificationListener.Choice(
                 observedChange, generation, ControllerPinManager.domWorkspaceRevision(), since,
-                prefs.getString(FullAccessNotificationListener.DETAILS_TOKEN, ""),
-                prefs.getLong(FullAccessNotificationListener.DETAILS_SINCE, 0));
+                notificationTextSince(context));
     }
 
-    boolean setNotificationDetails(FullAccessNotificationListener.Choice expected, boolean enabled) {
+    boolean renewNotifications(FullAccessNotificationListener.Choice expected) {
         synchronized (HISTORY_LOCK) {
-            if (!current() || !expected.equals(notificationChoice(app))
-                    || enabled && !FullAccessDataSources.hasNotificationAccess(app)) return false;
-            return FullAccessNotificationListener.changeDetails(app, choices(app), true, enabled);
+            if (!current() || expected.textSince() > 0 || !expected.equals(notificationChoice(app))
+                    || !FullAccessDataSources.hasNotificationAccess(app)) return false;
+            return choices(app).edit().putLong(FullAccessNotificationListener.TEXT_SINCE,
+                    System.currentTimeMillis() + 1).commit();
         }
+    }
+
+    private static long notificationTextSince(Context context) {
+        return choices(context).getLong(FullAccessNotificationListener.TEXT_SINCE, 0);
     }
 
     static void recordNotification(Context context, FullAccessNotificationListener.Choice expected,
@@ -173,8 +177,8 @@ final class DemoFullAccess {
             long now = System.currentTimeMillis();
             if (timestamp < current.since() || timestamp > now
                     || timestamp < now - FullAccessNotificationHistory.RETENTION_MILLIS) return;
-            String token = current.acceptedDetailsToken(expected, timestamp);
-            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, true, token)) {
+            long textSince = current.acceptedTextSince(expected, timestamp);
+            try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context, true, textSince)) {
                 history.record(current.since(), key, pkg, category, timestamp, now, preview, details, icon);
             } catch (RuntimeException unavailable) {
                 // Optional collection must never log notification content.
@@ -191,7 +195,7 @@ final class DemoFullAccess {
         if (!current()) throw new SecurityException("Demo phone data unavailable");
     }
 
-    private static SharedPreferences choices(Context app) {
+    static SharedPreferences choices(Context app) {
         return app.getSharedPreferences(CHOICES, Context.MODE_PRIVATE);
     }
 
