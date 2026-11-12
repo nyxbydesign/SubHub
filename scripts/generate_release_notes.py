@@ -24,6 +24,9 @@ SUBJECT = re.compile(
     re.IGNORECASE,
 )
 SEMVER_TAG = re.compile(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+GITHUB_RELEASE_BODY_LIMIT = 125_000
+# Match the Java String.length() limit in UpdateManifest.parse.
+UPDATER_RELEASE_NOTES_LIMIT = 64 * 1024
 # The imported source history normalized commit identities, but retained this release's
 # exact tree. Bind the equivalent before using it; never move the published tag.
 SOURCE_HISTORY_EQUIVALENTS = {
@@ -188,7 +191,7 @@ def entries(commits: Iterable[Commit], strict: bool = True) -> list[Entry]:
     return result
 
 
-def changelog_markdown(version: str, values: Iterable[Entry]) -> str:
+def changelog_markdown(version: str, values: Iterable[Entry], *, include_details: bool = True) -> str:
     grouped: dict[str, list[Entry]] = {}
     heading_for = dict(CATEGORIES)
     for value in values:
@@ -203,7 +206,7 @@ def changelog_markdown(version: str, values: Iterable[Entry]) -> str:
         for value in grouped[heading]:
             title = value.title[0].upper() + value.title[1:] if value.title else value.title
             bullet = f"- **{title}**"
-            if value.detail:
+            if include_details and value.detail:
                 bullet += f" — {value.detail}"
             lines.append(bullet)
         lines.append("")
@@ -225,6 +228,40 @@ def release_markdown(version: str, changelog: str, repository: str,
     if base_tag:
         lines.extend(("", f"**Full changelog:** https://github.com/{repository}/compare/{base_tag}...{tag}"))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def compact_changelog(version: str, values: Sequence[Entry], repository: str,
+                      base_tag: str | None, tag: str) -> str:
+    summary = changelog_markdown(version, values, include_details=False)
+    root = f"https://github.com/{repository}"
+    if "-dev." not in tag:
+        return summary + f"\n[Read the detailed changelog]({root}/blob/{tag}/CHANGELOG.md).\n"
+    history = f"compare/{base_tag}...{tag}" if base_tag else f"commits/{tag}"
+    return summary + f"\n[Read the commit history]({root}/{history}).\n"
+
+
+def github_release_markdown(version: str, values: Sequence[Entry], repository: str,
+                            base_tag: str | None, tag: str) -> str:
+    body = release_markdown(version, changelog_markdown(version, values),
+                            repository, base_tag, tag)
+    if len(body.encode("utf-8")) <= GITHUB_RELEASE_BODY_LIMIT:
+        return body
+    summary = compact_changelog(version, values, repository, base_tag, tag)
+    body = release_markdown(version, summary, repository, base_tag, tag)
+    if len(body.encode("utf-8")) > GITHUB_RELEASE_BODY_LIMIT:
+        raise ValueError("Categorized release titles exceed the GitHub release body limit")
+    return body
+
+
+def updater_release_markdown(version: str, values: Sequence[Entry], repository: str,
+                             base_tag: str | None, tag: str) -> str:
+    notes = changelog_markdown(version, values)
+    if len(notes.encode("utf-16-le")) // 2 <= UPDATER_RELEASE_NOTES_LIMIT:
+        return notes
+    notes = compact_changelog(version, values, repository, base_tag, tag)
+    if len(notes.encode("utf-16-le")) // 2 > UPDATER_RELEASE_NOTES_LIMIT:
+        raise ValueError("Categorized release titles exceed the updater release notes limit")
+    return notes
 
 
 def release_history(through_tag: str) -> list[ReleaseRecord]:
@@ -281,6 +318,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repository")
     parser.add_argument("--changelog-output", type=Path)
     parser.add_argument("--release-output", type=Path)
+    parser.add_argument("--updater-notes-output", type=Path)
     parser.add_argument("--history-output", type=Path)
     parser.add_argument("--history-json-output", type=Path)
     parser.add_argument("--base-tag")
@@ -310,11 +348,15 @@ def main() -> int:
         raise SystemExit("Release output requires --repository, --changelog-output, and --release-output")
     version = display_tag[1:]
     changelog = changelog_markdown(version, values)
-    release = release_markdown(version, changelog, args.repository, base, display_tag)
+    release = github_release_markdown(version, values, args.repository, base, display_tag)
     args.changelog_output.parent.mkdir(parents=True, exist_ok=True)
     args.changelog_output.write_text(changelog, encoding="utf-8")
     args.release_output.parent.mkdir(parents=True, exist_ok=True)
     args.release_output.write_text(release, encoding="utf-8")
+    if args.updater_notes_output is not None:
+        updater = updater_release_markdown(version, values, args.repository, base, display_tag)
+        args.updater_notes_output.parent.mkdir(parents=True, exist_ok=True)
+        args.updater_notes_output.write_text(updater, encoding="utf-8")
     if args.history_output is not None or args.history_json_output is not None:
         history = release_history(args.tag)
         if args.history_output is not None:

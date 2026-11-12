@@ -180,13 +180,15 @@ jobs:
               --tag HEAD --display-tag "$RELEASE_TAG" \
               --development-before "$PUSH_BEFORE" \
               --repository "$GITHUB_REPOSITORY" \
-              --changelog-output dist/changelog.md --release-output dist/release-notes.md
+              --changelog-output dist/changelog.md --release-output dist/release-notes.md \
+              --updater-notes-output dist/updater-notes.md
           else
             python3 scripts/generate_release_notes.py \
               --tag "${RELEASE_TAG}" \
               --repository "${GITHUB_REPOSITORY}" \
               --changelog-output dist/changelog.md \
-              --release-output dist/release-notes.md
+              --release-output dist/release-notes.md \
+              --updater-notes-output dist/updater-notes.md
           fi
       - name: Compose updater manifest
         if: env.PUBLISH_RELEASE == 'true'
@@ -226,7 +228,7 @@ jobs:
               "versionCode": code,
               "minSdk": 26,
               "tag": tag,
-              "releaseNotes": (dist / "changelog.md").read_text(encoding="utf-8"),
+              "releaseNotes": (dist / "updater-notes.md").read_text(encoding="utf-8"),
               "sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "prerelease": os.environ["DEV_BUILD"] == "true",
               "assets": assets,

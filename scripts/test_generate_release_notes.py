@@ -105,6 +105,33 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertLess(release.index("## What’s new"), release.index("## Choose your APK"))
         self.assertIn("compare/v0.5.2...v0.6.0", release)
 
+    def test_github_release_retains_all_titles_when_details_exceed_the_body_limit(self):
+        values = [
+            MODULE.Entry("feat", "Add profile", "\U0001F642" * 33_000),
+            MODULE.Entry("fix", "Restore updates", "Android opens the verified installer."),
+        ]
+        repo = "nyxbydesign/SubHub"
+        self.assertIn(values[1].detail, MODULE.github_release_markdown(
+            "0.7.0", values[1:], repo, "v0.6.3", "v0.7.0",
+        ))
+        self.assertIn(values[0].detail, MODULE.changelog_markdown("0.7.0", values))
+        for version, details_path in (
+            ("0.7.0", "blob/v0.7.0/CHANGELOG.md"),
+            ("0.7.0-dev.1", "compare/v0.6.3...v0.7.0-dev.1"),
+        ):
+            with self.subTest(version=version):
+                body = MODULE.github_release_markdown(version, values, repo, "v0.6.3", "v" + version)
+                self.assertLessEqual(len(body.encode("utf-8")), MODULE.GITHUB_RELEASE_BODY_LIMIT)
+                self.assertIn("### New\n\n- **Add profile**\n", body)
+                self.assertIn("### Fixed\n\n- **Restore updates**\n", body)
+                self.assertIn("## Choose your APK", body)
+                self.assertIn(f"https://github.com/{repo}/{details_path}", body)
+                updater = MODULE.updater_release_markdown(version, values, repo, "v0.6.3", "v" + version)
+                self.assertLessEqual(len(updater.encode("utf-16-le")) // 2, MODULE.UPDATER_RELEASE_NOTES_LIMIT)
+                self.assertIn("### New\n\n- **Add profile**\n", updater)
+                self.assertIn("### Fixed\n\n- **Restore updates**\n", updater)
+                self.assertIn(f"https://github.com/{repo}/{details_path}", updater)
+
     def test_legacy_history_keeps_useful_untyped_commits(self):
         values = MODULE.entries([
             MODULE.Commit("a" * 40, "feat: add Dom and Sub modes", "Two clear views."),

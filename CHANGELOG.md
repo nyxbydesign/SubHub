@@ -765,6 +765,7 @@ User-facing changes from every tagged SubHub release.
 - **Deps: Bump org.jetbrains.kotlin.android from 2.2.21 to 2.4.21** — Bumps [org.jetbrains.kotlin.android](https://github.com/JetBrains/kotlin) from 2.2.21 to 2.4.21.
 - **Preserve unqualified internal Sub code for OPS handoff** — Preserve the stopped owner, session, capture, accounting and lifecycle work as exact source snapshots for implementation handoff.
 - **Deps: Bump androidx.test.uiautomator:uiautomator** — Bumps androidx.test.uiautomator:uiautomator from 2.4.0 to 2.4.1.
+- **Refresh the SubHub 0.7.0 changelog** — Include the final eligible development changes while retaining the published release history.
 
 </details>
 
