@@ -2,7 +2,7 @@
 
 <resources>
 
-    <string name="full_access_title">Full Access</string>
+    <string name="full_access_title">Blackmail</string>
 
     <string name="full_access_contacts">Contacts</string>
 
@@ -16,11 +16,11 @@
 
     <string name="full_access_screen">Screen</string>
 
-    <string name="full_access_hardcore_needed">Turn on Hardcore Mode to share Full Access.</string>
+    <string name="full_access_hardcore_needed">Turn on Hardcore Mode to enable Blackmail.</string>
 
-    <string name="full_access_pair_needed">Pair with your Dom to share Full Access.</string>
+    <string name="full_access_pair_needed">Pair with your Dom to enable Blackmail.</string>
 
-    <string name="full_access_grant_title">Share Full Access with %1$s?</string>
+    <string name="full_access_grant_title">Enable Blackmail for %1$s?</string>
 
     <string name="full_access_grant_disclosure">Your paired Dom can view the data you enable below, browse Android-accessible shared folders, and request screen sharing. You can stop sharing here at any time.</string>
 
@@ -62,7 +62,7 @@
 
     <string name="full_access_permission_needed">This view needs permission on the Sub’s phone.</string>
 
-    <string name="full_access_update_required">Update SubHub on both phones to use Full Access.</string>
+    <string name="full_access_update_required">Update SubHub on both phones to use Blackmail.</string>
 
     <string name="full_access_unavailable">This view is unavailable.</string>
 
@@ -117,15 +117,15 @@
 
     <string name="full_access_usage_values">Today %1$s · Last 7 days %2$s</string>
 
-    <string name="full_access_busy">Full Access is already open.</string>
+    <string name="full_access_busy">Blackmail is already open.</string>
 
     <string name="demo_full_access_local">From this phone · Visible only here</string>
     <string name="demo_full_access_sms_import">Open an SMS export</string>
     <string name="demo_full_access_screen_start">Start screen preview</string>
     <string name="demo_full_access_screen_note">Preview another app in split screen. Android hides protected screens.</string>
     <string name="demo_full_access_enable_title">Use phone data in Demo Sub?</string>
-    <string name="demo_full_access_enable_disclosure">Full Access can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. This view stays on this phone.</string>
-    <string name="demo_full_access_enable_profile">Turn on Full Access in the Demo Sub profile to view your phone data.</string>
+    <string name="demo_full_access_enable_disclosure">Blackmail can show your phone’s contacts, recent notifications, messages, app usage, and shared files in Demo Sub. This view stays on this phone.</string>
+    <string name="demo_full_access_enable_profile">Turn on Blackmail in the Demo Sub profile to view your phone data.</string>
     <string name="demo_full_access_permission_missing">This view needs Android permission. You can enable it in your phone’s settings.</string>
     <string name="full_access_show_more">Show more</string>
     <string name="full_access_show_less">Show less</string>

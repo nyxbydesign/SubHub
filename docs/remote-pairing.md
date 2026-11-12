@@ -47,17 +47,17 @@ Artwork transfers as bounded, verified file content. Existing PINs and manual au
 
 Compatible devices expose Start and Stop beside the Sub profile’s applied service duration. Start requires current Sub-approved Hardcore control consent and a ready App Mode service; it uses the already applied configuration and never applies an unsaved draft. A new Start waits until the required configuration artwork has arrived and been verified. Stop remains available for the specific active session last observed on that Sub, including after Hardcore is turned off; it does not require new artwork. Requests expire quickly and are rejected when the peer, relationship, or session has changed. A queued Stop cannot end a later session. Older peers retain only their supported controls. Remote Pause is unavailable.
 
-## Full Access
+## Blackmail
 
-On the Sub’s phone, turn on Full Access in Edit profile after enabling Hardcore Mode. Confirm the paired Dom, then follow Android’s permission screens. SubHub requests supported permissions that are missing and continues if you decline one. Android may deny direct SMS access on some devices or installers. The Sub can share a transcript they select instead.
+On the Sub’s phone, turn on Blackmail in Edit profile after enabling Hardcore Mode. Confirm the paired Dom, then follow Android’s permission screens. SubHub requests supported permissions that are missing and continues if you decline one. Android may deny direct SMS access on some devices or installers. The Sub can share a transcript they select instead.
 
-The Dom opens Full Access from the Sub’s profile. One page shows Contacts, notification history, SMS, and apps reflect the Sub’s enabled sources and Android permissions. Notification history covers up to seven days after enabling that scope. Protected notifications and credential content are excluded. App usage is based on foreground activity reported by Android and can cover a shorter period than the selected range.
+The Dom opens Blackmail from the Sub’s profile. One page shows contacts, notification history, SMS, and apps based on the Sub’s enabled sources and Android permissions. Notification history covers up to seven days after enabling that scope. Protected notifications and credential content are excluded. App usage is based on foreground activity reported by Android and can cover a shorter period than the selected range.
 
 Files are read-only on the Sub’s phone. The Dom can browse Android-permitted shared folders, preview supported media, and explicitly download files or folders. View screen sends a request to the Sub. Screen sharing uses SubHub notifications for requests and the local Stop sharing action. Android asks before each new screen-sharing session. The live view has no audio or saved recording and stops when the Dom closes the view, leaves the page, or the Sub stops sharing.
 
-The Sub can turn off Full Access locally even during Hardcore Mode. Turning off Hardcore Mode or ending the pairing also ends the grant. Already completed downloads remain with the recipient.
+The Sub can turn off Blackmail locally even during Hardcore Mode. Turning off Hardcore Mode or ending the pairing also ends the grant. Already completed downloads remain with the recipient.
 
-To view this phone’s data in Demo Sub, turn on Full Access in the Demo Sub profile editor. Demo Sub uses the same Full Access page for local data, including installed apps and Android foreground usage when available. Demo’s settings, activity totals, limits and ledger still belong to its own sessions. Demo Full Access shares nothing with another device.
+To view this phone’s data in Demo Sub, turn on Blackmail in the Demo Sub profile editor. Demo Sub uses the same Blackmail page for local data, including installed apps and Android foreground usage when available. Demo’s settings, activity totals, limits and ledger still belong to its own sessions. The Demo view stays on this phone.
 
 ## Activity
 
