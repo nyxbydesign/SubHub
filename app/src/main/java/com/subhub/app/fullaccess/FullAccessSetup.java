@@ -27,6 +27,7 @@ import com.subhub.app.security.HardcoreModeManager;
 import com.subhub.app.settings.SettingsRepository;
 import com.subhub.app.util.AsyncUiScope;
 import com.subhub.app.util.StateToggle;
+import com.subhub.app.util.ThemedDialogs;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -236,7 +237,7 @@ public final class FullAccessSetup {
             if (notifications) disclosure += "\n\n";
             disclosure += host.getString(R.string.blackmail_files_review_pair, state.paired);
         }
-        confirmation = new AlertDialog.Builder(host)
+        confirmation = ThemedDialogs.builder(host)
                 .setTitle(title)
                 .setMessage(disclosure)
                 .setNegativeButton(android.R.string.cancel, null)
@@ -274,7 +275,7 @@ public final class FullAccessSetup {
 
     private void confirm(State state) {
         if (!resumed || !allowed.getAsBoolean() || !showable() || !state.eligible) { refresh(); return; }
-        confirmation = new AlertDialog.Builder(host)
+        confirmation = ThemedDialogs.builder(host)
                 .setTitle(demo == null ? host.getString(R.string.full_access_grant_title, state.paired)
                         : host.getString(R.string.demo_full_access_enable_title))
                 .setMessage(demo == null ? R.string.full_access_grant_disclosure : R.string.demo_full_access_enable_disclosure)
