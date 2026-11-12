@@ -11,11 +11,37 @@ import java.nio.file.Path;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class FullAccessFilesTest {
     @Rule public final TemporaryFolder temporary = new TemporaryFolder();
+
+    @Test
+    public void devicePermissionGrantedForDemoDoesNotExpandPairedAccess() {
+        assertTrue(FullAccessFiles.sharedRootsAuthorized(true, true, -1, -1));
+        assertFalse(FullAccessFiles.sharedRootsAuthorized(false, true, -1, 42));
+        assertTrue(FullAccessFiles.sharedRootsAuthorized(false, true, 42, 42));
+        assertFalse(FullAccessFiles.sharedRootsAuthorized(false, true, 42, 43));
+        assertFalse(FullAccessFiles.sharedRootsAuthorized(false, true, 42, -1));
+        assertTrue(FullAccessFiles.sharedRootsAuthorized(false, true, 0, 42));
+        assertFalse(FullAccessFiles.sharedRootsAuthorized(false, false, 0, 42));
+    }
+
+    @Test
+    public void legacyVolumeComesFromExactAppStorageDirectory() throws IOException {
+        Path primary = temporary.newFolder("primary").toPath().toRealPath();
+        Path card = temporary.newFolder("card").toPath().toRealPath();
+        String app = "com.subhub.app";
+        Path first = primary.resolve("Android").resolve("data").resolve(app).resolve("files");
+        Path second = card.resolve("Android").resolve("data").resolve(app).resolve("files");
+        assertEquals(primary, FullAccessFiles.legacyVolumeRoot(first, app));
+        assertEquals(card, FullAccessFiles.legacyVolumeRoot(second, app));
+        assertNull(FullAccessFiles.legacyVolumeRoot(first, "com.another.app"));
+        assertNull(FullAccessFiles.legacyVolumeRoot(first.resolve("DCIM"), app));
+        assertNull(FullAccessFiles.legacyVolumeRoot(first.subpath(0, first.getNameCount()), app));
+    }
 
     @Test
     public void documentIdsStayInsideTheSelectedVolumeAndFolder() {
@@ -35,6 +61,7 @@ public class FullAccessFilesTest {
         Path safe = Files.createDirectories(shared.resolve("Android/media/app"));
         Path outside = temporary.newFolder("shared-other").toPath().toRealPath();
         Path hidden = Files.createDirectories(shared.resolve("Android/data/app"));
+        assertEquals(shared, FullAccessFiles.checkedPath(shared, shared));
         assertEquals(safe, FullAccessFiles.checkedPath(shared, safe));
         assertThrows(IOException.class, () -> FullAccessFiles.checkedPath(shared, outside));
         assertThrows(IOException.class, () -> FullAccessFiles.checkedPath(shared, shared.resolve("../shared-other")));

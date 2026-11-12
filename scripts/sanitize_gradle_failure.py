@@ -110,6 +110,7 @@ LINT_SOURCES = {
 # Fixed tracked production-source labels; messages, paths and symbols remain omitted.
 # New or renamed sources require an explicit literal edit; unknown paths remain unknown.
 JAVAC_MAIN_SOURCES = {
+    b"app/src/main/java/com/subhub/app/fullaccess/BlackmailViews.java": "main_blackmail_views",
     b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccess.java": "main_demo_full_access",
     b"app/src/main/java/com/subhub/app/fullaccess/DemoFullAccessActivity.java": "main_demo_full_access_activity",
     b"app/src/main/java/com/subhub/app/fullaccess/FullAccessSetup.java": "main_full_access_setup",
@@ -873,6 +874,7 @@ JAVAC_SOURCES = {
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessForegroundUsageTest.java": "unit_full_access_foreground_usage_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessScreenFramesTest.java": "unit_full_access_screen_frames_test",
     b"app/src/test/java/com/subhub/app/fullaccess/FullAccessSmsPrivacyTest.java": "unit_full_access_sms_privacy_test",
+    b"app/src/test/java/com/subhub/app/fullaccess/FullAccessSmsThreadsTest.java": "unit_full_access_sms_threads_test",
     b"app/src/test/java/com/subhub/app/remote/FullAccessWireTest.java": "unit_full_access_wire_test",
     b"app/src/test/java/com/subhub/app/runtime/DeviceFailureSettlementTest.java": "unit_device_failure_settlement",
     b"app/src/test/java/com/subhub/app/service/LatestFrameBrokerAsyncTest.java": "unit_latest_frame_broker_async",

@@ -159,12 +159,13 @@ public final class FullAccessContactsAndroidTest {
 
     private void verifySmsExportWithoutAndroidSmsPermission(SyntheticPair pair) throws Exception {
         String sample = "A synthetic transcript selected for this fixture.";
+        String later = "A second line in the same conversation.";
         File folder = new File(context.getFilesDir(), "full-access-downloads");
         assertTrue(folder.isDirectory() || folder.mkdir());
         File transcript = File.createTempFile("full-access-fixture-", ".txt", folder);
         try {
             try (FileOutputStream output = new FileOutputStream(transcript)) {
-                output.write(sample.getBytes(StandardCharsets.UTF_8));
+                output.write((sample + "\n" + later).getBytes(StandardCharsets.UTF_8));
             }
             assertTrue(com.subhub.app.fullaccess.FullAccessDataSources.importSmsExport(context,
                     FileProvider.getUriForFile(context, context.getPackageName() + ".fullaccess.files", transcript)));
@@ -172,6 +173,18 @@ public final class FullAccessContactsAndroidTest {
                 JSONObject page = sms.query(page());
                 assertEquals("ok", page.getString("status"));
                 assertEquals(sample, page.getJSONArray("items").getJSONObject(0).getString("title"));
+                JSONObject conversations = sms.query(new JSONObject().put("op", "conversations"));
+                assertEquals("ok", conversations.getString("status"));
+                JSONArray rows = conversations.getJSONArray("items");
+                assertEquals(1, rows.length());
+                JSONObject summary = rows.getJSONObject(0);
+                assertEquals(later, summary.getString("detail"));
+                JSONObject thread = sms.query(new JSONObject().put("op", "thread").put("node", summary.getString("id")));
+                assertEquals("ok", thread.getString("status"));
+                JSONArray messages = thread.getJSONArray("items");
+                assertEquals(2, messages.length());
+                assertEquals(later, messages.getJSONObject(0).getString("detail"));
+                assertEquals(sample, messages.getJSONObject(1).getString("detail"));
             }
             assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission(Manifest.permission.READ_SMS));
         } finally {

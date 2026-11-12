@@ -23,5 +23,6 @@ public final class FullAccessSmsPrivacyTest {
     @Test public void shortCodesAreMaskedWithoutHidingOrdinaryConversation() {
         assertEquals("Call me when you arrive.", FullAccessSmsExport.safeText("Call me when you arrive."));
         assertEquals("Use •••• on arrival.", FullAccessSmsExport.safeText("Use 172468 on arrival."));
+        assertEquals("Use •••• on arrival.", FullAccessSmsExport.safeText("Use １７２４６８ on arrival."));
     }
 }

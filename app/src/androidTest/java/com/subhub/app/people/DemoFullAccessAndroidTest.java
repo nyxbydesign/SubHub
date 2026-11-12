@@ -71,6 +71,8 @@ public final class DemoFullAccessAndroidTest {
                     });
                     DemoFullAccessActivity viewer = awaitResumed(DemoFullAccessActivity.class);
                     List<ApplicationInfo> installed = new ArrayList<>(context.getPackageManager().getInstalledApplications(0));
+                    installed.removeIf(app -> (app.flags & (ApplicationInfo.FLAG_SYSTEM
+                            | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0);
                     installed.sort(Comparator.comparing(app -> app.packageName));
                     assertFalse(installed.isEmpty());
                     String realApp = installed.get(0).loadLabel(context.getPackageManager()).toString();
@@ -84,6 +86,7 @@ public final class DemoFullAccessAndroidTest {
                         for (String scope : List.of("contacts", "notifications", "sms", "apps", "files", "screen"))
                             assertNotNull(scope, root.findViewWithTag("full_access_section:" + scope));
                         assertNull(root.findViewWithTag("full_access_tabs"));
+                        assertTrue(contains(root, context.getString(R.string.blackmail_messages)));
                         assertTrue(contains(root, context.getString(R.string.full_access_browse_files)));
                         assertTrue(contains(root, context.getString(R.string.full_access_view_screen)));
                         assertNull(MediaProjectionLeaseRegistry.owner());

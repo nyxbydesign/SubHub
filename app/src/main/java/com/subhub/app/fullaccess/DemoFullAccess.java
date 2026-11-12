@@ -1,7 +1,6 @@
 package com.subhub.app.fullaccess;
 
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import com.subhub.app.people.DummySubPreview;
@@ -47,8 +46,15 @@ final class DemoFullAccess {
     }
 
     JSONObject page(String scope, String cursor) throws IOException, JSONException {
+        return page(scope, "page", "", cursor);
+    }
+
+    JSONObject page(String scope, String operation, String node, String cursor) throws IOException, JSONException {
         requireCurrent();
+        if (!FullAccessDataSources.supportsRead(scope, operation, node)) return status("unavailable");
         int count = FullAccessDataSources.PAGE_SIZE;
+        boolean smsContacts = "sms".equals(scope) && !"page".equals(operation) && FullAccessDataSources.hasSmsAccess(app)
+                && "ok".equals(FullAccessDataSources.permissionState(app, "contacts"));
         JSONObject result;
         try {
             result = switch (scope) {
@@ -57,8 +63,8 @@ final class DemoFullAccess {
                         : status("permission_required");
                 case "apps" -> FullAccessAppsSource.page(app,
                         (int) FullAccessDataSources.cursor(cursor, 0, Integer.MAX_VALUE), count, System.currentTimeMillis());
-                case "sms" -> sms(cursor, count);
-                case "notifications" -> notifications(cursor, count);
+                case "sms" -> sms(operation, node, cursor, smsContacts);
+                case "notifications" -> notifications(operation, node, cursor);
                 default -> throw new IllegalArgumentException("Unknown Demo data view");
             };
         } catch (SecurityException denied) {
@@ -67,21 +73,21 @@ final class DemoFullAccess {
         requireCurrent();
         if ("contacts".equals(scope) && !"ok".equals(FullAccessDataSources.permissionState(app, scope))
                 || "notifications".equals(scope) && !FullAccessDataSources.hasNotificationAccess(app)
+                || smsContacts && !"ok".equals(FullAccessDataSources.permissionState(app, "contacts"))
                 || "apps".equals(scope) && result.optBoolean("usageAvailable") && !FullAccessDataSources.hasUsageAccess(app))
             return status("permission_required");
         return result;
     }
 
-    private JSONObject sms(String cursor, int count) throws IOException, JSONException {
+    private JSONObject sms(String operation, String node, String cursor, boolean contacts) throws IOException, JSONException {
         if (FullAccessDataSources.hasSmsAccess(app)) {
-            JSONObject result = FullAccessSmsSource.page(app, FullAccessDataSources.cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), count);
+            JSONObject result = FullAccessDataSources.directSms(app, operation, node, cursor, contacts);
             return FullAccessDataSources.hasSmsAccess(app) ? result : status("permission_required");
         }
         synchronized (HISTORY_LOCK) {
             long epoch = choice(app, "sms", generation);
             if (epoch <= 0 || !FullAccessSmsExport.demoAvailable(app)) return status("permission_required");
-            return FullAccessSmsExport.page(app, epoch,
-                    (int) FullAccessDataSources.cursor(cursor, 0, Integer.MAX_VALUE), count, true);
+            return FullAccessDataSources.exportedSms(app, epoch, operation, node, cursor, true);
         }
     }
 
@@ -99,15 +105,14 @@ final class DemoFullAccess {
         }
     }
 
-    private JSONObject notifications(String cursor, int count) throws JSONException {
+    private JSONObject notifications(String operation, String node, String cursor) throws JSONException {
         synchronized (HISTORY_LOCK) {
             long since = choice(app, "notifications", generation);
             if (since <= 0 || !FullAccessDataSources.hasNotificationAccess(app)) return status("permission_required");
             long now = System.currentTimeMillis();
-            since = Math.max(since, now - FullAccessNotificationHistory.RETENTION_MILLIS);
             try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(app, true)) {
-                return history.page(app, choice(app, "notifications", generation),
-                        FullAccessDataSources.cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), since, now, count);
+                return FullAccessDataSources.notifications(history, app, since, operation, node, cursor,
+                        Math.max(since, now - FullAccessNotificationHistory.RETENTION_MILLIS), now);
             }
         }
     }
@@ -145,16 +150,9 @@ final class DemoFullAccess {
         }
     }
 
-    boolean filesAvailable() { return current() && FullAccessFiles.available(app, generation); }
-
     FullAccessFiles.Session openFiles(BooleanSupplier tab) {
         requireCurrent();
         return FullAccessFiles.open(app, () -> current() && tab.getAsBoolean(), generation);
-    }
-
-    boolean retainFolder(Intent data) {
-        requireCurrent();
-        return FullAccessFiles.retainFolder(app, data, generation);
     }
 
     private void requireCurrent() {

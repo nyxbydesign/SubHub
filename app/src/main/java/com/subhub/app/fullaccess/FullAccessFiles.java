@@ -1,9 +1,11 @@
 package com.subhub.app.fullaccess;
 
+import android.Manifest;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.UriPermission;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -27,6 +29,7 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.File;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -37,6 +40,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,6 +61,10 @@ import java.util.zip.ZipOutputStream;
 public final class FullAccessFiles {
     private static final String PREFS = "subhub_full_access_files";
     private static final String ROOTS = "tree_roots";
+    private static final String PAIRED_STORAGE_EPOCH = "paired_storage_epoch";
+    // Before Demo requested storage access, paired setup could use an existing device grant.
+    private static final long EXISTING_PAIRED_STORAGE = 0;
+    private static final long LOCAL_STORAGE_ONLY = -1;
     private static final String EXTERNAL_PROVIDER = "com.android.externalstorage.documents";
     private static final String BINARY = "application/octet-stream";
     private static final String DIRECTORY = DocumentsContract.Document.MIME_TYPE_DIR;
@@ -81,57 +89,46 @@ public final class FullAccessFiles {
 
     private FullAccessFiles() { }
 
-    /** Launch only from the Sub's explicit Files setup action. */
-    public static Intent broadStorageIntent(Context context) {
-        if (Build.VERSION.SDK_INT < 30) return null;
+    /** Launch only from an explicit local Files setup action. */
+    @RequiresApi(30)
+    static Intent broadStorageIntent(Context context) {
         return new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                 Uri.fromParts("package", context.getPackageName(), null));
     }
 
-    public static Intent selectFolderIntent() {
-        return new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+    static boolean supportsSharedRoots() { return Build.VERSION.SDK_INT != 29; }
+
+    static boolean deviceStorageGranted(Context context) {
+        if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
+        return Build.VERSION.SDK_INT <= 28 && context.checkSelfPermission(
+                Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
     }
 
-    public static boolean retainFolder(Context context, Intent result) {
-        return retainFolder(context, result, null);
-    }
-
-    static boolean retainFolder(Context context, Intent result, String demoGeneration) {
-        if (result == null || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return false;
-        Uri tree = result.getData();
-        if (!validTree(tree)) return false;
+    /** Fence a grant obtained for Demo before handing off to Android's settings or permission UI. */
+    static boolean prepareDemoStorageRequest(Context context) {
         synchronized (GRANT_LOCK) {
-            Set<String> selected = new HashSet<>();
-            for (Uri uri : readableTrees(context, demoGeneration)) selected.add(uri.toString());
-            String root = tree.toString();
-            if (!selected.contains(root) && selected.size() >= MAX_ROOTS) return false;
-            ContentResolver resolver = context.getContentResolver();
-            boolean alreadyHeld = hasReadGrant(resolver, tree);
-            try {
-                resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (SecurityException | IllegalArgumentException unavailable) {
-                return false;
-            }
-            selected.add(root);
-            var choices = rootsPreferences(context, demoGeneration).edit().putStringSet(ROOTS, selected);
-            if (demoGeneration != null) choices.putString("generation", demoGeneration);
-            boolean saved = choices.commit();
-            if (!saved && !alreadyHeld) {
-                try {
-                    resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                } catch (SecurityException ignored) {
-                    // Access has already gone.
-                }
-            }
-            return saved;
+            return deviceStorageGranted(context) || rootsPreferences(context, null).edit()
+                    .putLong(PAIRED_STORAGE_EPOCH, LOCAL_STORAGE_ONLY).commit();
         }
     }
 
-    public static boolean available(Context context) { return available(context, null); }
+    static boolean approvePairedSharedRoots(Context context, long epoch) {
+        if (epoch <= 0 || FullAccessGrant.epoch(context) != epoch) return false;
+        synchronized (GRANT_LOCK) {
+            return deviceStorageGranted(context) && rootsPreferences(context, null).edit()
+                    .putLong(PAIRED_STORAGE_EPOCH, epoch).commit();
+        }
+    }
 
-    static boolean available(Context context, String demoGeneration) {
-        return hasBroadAccess() || !readableTrees(context, demoGeneration).isEmpty();
+    static boolean sharedRootsAvailable(Context context, boolean demo, long epoch) {
+        if (!deviceStorageGranted(context)) return false;
+        long chosen = rootsPreferences(context, null).getLong(PAIRED_STORAGE_EPOCH, EXISTING_PAIRED_STORAGE);
+        return sharedRootsAuthorized(demo, Build.VERSION.SDK_INT >= 30, chosen, epoch);
+    }
+
+    static boolean sharedRootsAuthorized(boolean demo, boolean supportsExistingGrant, long chosen, long epoch) {
+        return demo || (epoch > 0 && (chosen == epoch
+                || (supportsExistingGrant && chosen == EXISTING_PAIRED_STORAGE)));
     }
 
     public static Session open(Context context, BooleanSupplier allowed) {
@@ -139,11 +136,9 @@ public final class FullAccessFiles {
     }
 
     static Session open(Context context, BooleanSupplier allowed, String demoGeneration) {
-        return new Session(context.getApplicationContext(), allowed, demoGeneration);
-    }
-
-    private static boolean hasBroadAccess() {
-        return Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager();
+        Context app = context.getApplicationContext();
+        long epoch = demoGeneration == null ? FullAccessGrant.epoch(app) : -1;
+        return new Session(app, allowed, demoGeneration, epoch);
     }
 
     private static boolean hasReadGrant(ContentResolver resolver, Uri tree) {
@@ -157,6 +152,7 @@ public final class FullAccessFiles {
         return context.getSharedPreferences(demoGeneration == null ? PREFS : "demo_" + PREFS, Context.MODE_PRIVATE);
     }
 
+    /** Retain the deliberately selected roots of installations that predate volume browsing. */
     private static List<Uri> readableTrees(Context context, String demoGeneration) {
         var choices = rootsPreferences(context, demoGeneration);
         if (demoGeneration != null && !demoGeneration.equals(choices.getString("generation", ""))) return List.of();
@@ -224,17 +220,51 @@ public final class FullAccessFiles {
         if (manager == null) return roots;
         Set<Path> unique = new HashSet<>();
         for (StorageVolume volume : manager.getStorageVolumes()) {
-            if (volume.getDirectory() == null || (!Environment.MEDIA_MOUNTED.equals(volume.getState())
-                    && !Environment.MEDIA_MOUNTED_READ_ONLY.equals(volume.getState()))) continue;
-            try {
-                Path path = volume.getDirectory().toPath().toRealPath();
-                if (unique.add(path)) roots.add(Node.path(path, path, volume.getDescription(context), DIRECTORY, -1));
-            } catch (IOException | SecurityException unavailable) {
-                // This volume may have detached while Android was returning the list.
-            }
+            if (!mounted(volume.getState())) continue;
+            addRoot(roots, unique, volume.getDirectory(), volume.getDescription(context));
             if (roots.size() == MAX_ROOTS) break;
         }
         return roots;
+    }
+
+    private static List<Node> legacySharedVolumes(Context context) {
+        List<Node> roots = new ArrayList<>();
+        StorageManager manager = context.getSystemService(StorageManager.class);
+        if (manager == null) return roots;
+        Set<Path> unique = new HashSet<>();
+        for (File appDirectory : context.getExternalFilesDirs(null)) {
+            if (appDirectory == null) continue;
+            Path volumeRoot = legacyVolumeRoot(appDirectory.toPath(), context.getPackageName());
+            StorageVolume volume = manager.getStorageVolume(appDirectory);
+            if (volumeRoot == null || volume == null || !mounted(volume.getState())) continue;
+            addRoot(roots, unique, volumeRoot.toFile(), volume.getDescription(context));
+            if (roots.size() == MAX_ROOTS) break;
+        }
+        return roots;
+    }
+
+    static Path legacyVolumeRoot(Path appDirectory, String packageName) {
+        Path relative = Paths.get("Android", "data", packageName, "files");
+        if (!appDirectory.isAbsolute() || !appDirectory.equals(appDirectory.normalize())
+                || !appDirectory.endsWith(relative) || appDirectory.getNameCount() <= relative.getNameCount())
+            return null;
+        Path volume = appDirectory;
+        for (int index = 0; index < relative.getNameCount(); index++) volume = volume.getParent();
+        return volume;
+    }
+
+    private static boolean mounted(String state) {
+        return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
+    }
+
+    private static void addRoot(List<Node> roots, Set<Path> unique, File directory, String title) {
+        if (directory == null) return;
+        try {
+            Path path = directory.toPath().toRealPath();
+            if (unique.add(path)) roots.add(Node.path(path, path, title, DIRECTORY, -1));
+        } catch (IOException | SecurityException unavailable) {
+            // A detached or inaccessible volume is omitted.
+        }
     }
 
     public static final class Session implements AutoCloseable {
@@ -242,6 +272,7 @@ public final class FullAccessFiles {
         private final ContentResolver resolver;
         private final BooleanSupplier allowed;
         private final String demoGeneration;
+        private final long pairedEpoch;
         private final CancellationSignal cancellation = new CancellationSignal();
         private final Map<String, Node> nodes = new LinkedHashMap<>(64, 0.75f, true);
         private volatile boolean closed;
@@ -251,11 +282,12 @@ public final class FullAccessFiles {
         private String cursorToken;
         private InputStream activeInput;
 
-        private Session(Context context, BooleanSupplier allowed, String demoGeneration) {
+        private Session(Context context, BooleanSupplier allowed, String demoGeneration, long pairedEpoch) {
             this.context = context;
             resolver = context.getContentResolver();
             this.allowed = allowed;
             this.demoGeneration = demoGeneration;
+            this.pairedEpoch = pairedEpoch;
         }
 
         public JSONObject list(String node, String cursor) throws IOException, JSONException {
@@ -296,7 +328,7 @@ public final class FullAccessFiles {
                      | android.os.OperationCanceledException unavailable) {
                 closePage();
                 checkLive();
-                return status(available(context, demoGeneration) ? "unavailable" : "permission_required");
+                return status(missingRootStatus());
             }
         }
 
@@ -308,7 +340,7 @@ public final class FullAccessFiles {
             if (closed) return false;
             StorageGrant exposed = exposedStorage;
             try {
-                if (exposed.broad && !hasBroadAccess()) return false;
+                if (exposed.broad && !sharedRootsAvailable()) return false;
                 if (exposed.trees.isEmpty()) return true;
                 Set<Uri> readable = new HashSet<>();
                 for (UriPermission permission : resolver.getPersistedUriPermissions()) {
@@ -324,8 +356,9 @@ public final class FullAccessFiles {
             JSONArray items = new JSONArray();
             boolean exposedBroad = false;
             Set<Uri> exposedTrees = new HashSet<>(exposedStorage.trees);
-            if (Build.VERSION.SDK_INT >= 30 && hasBroadAccess()) {
-                for (Node root : sharedVolumes(context)) items.put(describe(root));
+            if (sharedRootsAvailable()) {
+                List<Node> roots = Build.VERSION.SDK_INT >= 30 ? sharedVolumes(context) : legacySharedVolumes(context);
+                for (Node root : roots) items.put(describe(root));
                 exposedBroad = items.length() > 0;
             }
             if (items.length() == 0) {
@@ -351,8 +384,7 @@ public final class FullAccessFiles {
             checkLive();
             exposedStorage = new StorageGrant(exposedStorage.broad || exposedBroad, Set.copyOf(exposedTrees));
             if (!isStorageGrantCurrent()) throw new IOException("Storage access ended");
-            return status(items.length() == 0
-                    ? (available(context, demoGeneration) ? "unavailable" : "permission_required") : "ready").put("items", items);
+            return status(items.length() == 0 ? missingRootStatus() : "ready").put("items", items);
         }
 
         public String mime(String node, String operation) throws IOException {
@@ -573,8 +605,17 @@ public final class FullAccessFiles {
 
         private void checkAvailable(Node node) throws IOException {
             checkLive();
-            if (node.path != null ? !hasBroadAccess() : !hasReadGrant(resolver, node.tree))
+            if (node.path != null ? !sharedRootsAvailable() : !hasReadGrant(resolver, node.tree))
                 throw new IOException("Storage access unavailable");
+        }
+
+        private boolean sharedRootsAvailable() {
+            return FullAccessFiles.sharedRootsAvailable(context, demoGeneration != null, pairedEpoch);
+        }
+
+        private String missingRootStatus() {
+            return sharedRootsAvailable() || !readableTrees(context, demoGeneration).isEmpty()
+                    ? "unavailable" : "permission_required";
         }
 
         private synchronized Node lookup(String id) {

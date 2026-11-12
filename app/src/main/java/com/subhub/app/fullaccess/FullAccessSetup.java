@@ -1,6 +1,7 @@
 package com.subhub.app.fullaccess;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -55,16 +56,13 @@ public final class FullAccessSetup {
         parent.addView(panel, new LinearLayout.LayoutParams(-1, -2));
         work = AsyncUiScope.forPage(host);
         permission = host.registerForActivityResult(new ActivityResultContracts.RequestPermission(), this::returned);
-        settings = host.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        settings = host.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), ignored -> {
             String step = pending;
-            launched = false;
-            if ("folder".equals(step) && result.getResultCode() == android.app.Activity.RESULT_OK && result.getData() != null) {
-                Intent selected = result.getData();
-                pending = null;
-                saveScope(() -> this.demo == null ? FullAccessFiles.retainFolder(app, selected) : this.demo.retainFolder(selected));
-            } else {
-                returned("notifications".equals(step) ? FullAccessDataSources.hasNotificationAccess(app) : true);
-            }
+            returned(switch (step == null ? "" : step) {
+                case "files" -> FullAccessFiles.deviceStorageGranted(app);
+                case "notifications" -> FullAccessDataSources.hasNotificationAccess(app);
+                default -> true;
+            });
         });
         export = host.registerForActivityResult(new ActivityResultContracts.OpenDocument(), selected -> {
             long expected = exportEpoch;
@@ -107,11 +105,12 @@ public final class FullAccessSetup {
     private void refresh() {
         if (!resumed || !allowed.getAsBoolean()) return;
         work.load("profile-full-access-state", () -> {
-            if (demo != null) return new State(demo.current(), demo.available(), false, "", "", 0);
+            if (demo != null) return new State(demo.current(), demo.available(), false, "", "", 0,
+                    FullAccessFiles.sharedRootsAvailable(app, true, 0));
             long epoch = FullAccessGrant.epoch(app);
             return new State(epoch >= 0, FullAccessGrant.eligible(app),
                     new HardcoreModeManager(app).isEnabled(), FullAccessGrant.pairedDom(app),
-                    FullAccessGrant.pairedDomKey(app), epoch);
+                    FullAccessGrant.pairedDomKey(app), epoch, FullAccessFiles.sharedRootsAvailable(app, false, epoch));
         }, state -> {
             if (resumed && allowed.getAsBoolean()) render(state);
         }, failure -> { if (resumed) notice(R.string.full_access_unavailable); });
@@ -134,6 +133,19 @@ public final class FullAccessSetup {
         if (!state.enabled && !state.eligible && demo == null)
             PersonUi.text(panel, host.getString(state.hardcore ? R.string.full_access_pair_needed
                     : R.string.full_access_hardcore_needed), false);
+        if (state.enabled && pending == null && remaining.isEmpty() && !state.sharedRoots) {
+            if (FullAccessFiles.supportsSharedRoots()) {
+                PersonUi.action(panel, R.string.blackmail_files_enable, () -> {
+                    if (!resumed || !allowed.getAsBoolean() || pending != null || !remaining.isEmpty()) return;
+                    flow = state.epoch;
+                    remaining.add("files");
+                    advance();
+                    refresh();
+                }, false);
+            } else {
+                PersonUi.text(panel, host.getString(R.string.blackmail_files_android_10), false);
+            }
+        }
         if (state.enabled && pending == null && remaining.isEmpty() && !FullAccessDataSources.hasSmsAccess(app)) {
             PersonUi.action(panel, demo == null ? R.string.full_access_import_sms : R.string.demo_full_access_sms_import,
                     () -> {
@@ -190,7 +202,9 @@ public final class FullAccessSetup {
         String step = remaining.removeFirst();
         pending = step;
         long expected = flow;
-        work.load("profile-full-access-advance", () -> current(expected), permitted -> {
+        work.load("profile-full-access-advance", () -> current(expected)
+                && (demo == null || !"files".equals(step) || !FullAccessFiles.supportsSharedRoots()
+                || FullAccessFiles.prepareDemoStorageRequest(app)), permitted -> {
             if (!permitted || !allowed.getAsBoolean()) {
                 pending = null;
                 remaining.clear();
@@ -230,18 +244,7 @@ public final class FullAccessSetup {
                     if (Build.VERSION.SDK_INT < 28 || FullAccessDataSources.hasUsageAccess(app)) returned(true);
                     else settings.launch(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
                 }
-                case "files" -> {
-                    boolean available = demo == null ? FullAccessFiles.available(app) : demo.filesAvailable();
-                    if (available) returned(true);
-                    else {
-                        Intent broad = demo == null ? FullAccessFiles.broadStorageIntent(app) : null;
-                        if (broad != null) settings.launch(broad);
-                        else {
-                            pending = "folder";
-                            settings.launch(FullAccessFiles.selectFolderIntent());
-                        }
-                    }
-                }
+                case "files" -> launchStoragePermission();
                 case "screen" -> {
                     if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS))
                         permission.launch(Manifest.permission.POST_NOTIFICATIONS);
@@ -261,12 +264,30 @@ public final class FullAccessSetup {
         return app.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
     }
 
+    private void launchStoragePermission() {
+        if (FullAccessFiles.deviceStorageGranted(app)) {
+            returned(true);
+        } else if (Build.VERSION.SDK_INT >= 30) {
+            try { settings.launch(FullAccessFiles.broadStorageIntent(app)); }
+            catch (ActivityNotFoundException unavailable) {
+                settings.launch(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            }
+        } else if (Build.VERSION.SDK_INT <= 28) {
+            permission.launch(Manifest.permission.READ_EXTERNAL_STORAGE);
+        } else {
+            returned(false);
+        }
+    }
+
     private void returned(boolean granted) {
         String step = pending;
         if (step == null) return;
         pending = null;
         launched = false;
-        if ("apps".equals(step) || granted && ("contacts".equals(step) || "sms".equals(step) || "notifications".equals(step))) {
+        if (granted && "files".equals(step) && demo == null) {
+            long expected = flow;
+            saveScope(() -> FullAccessFiles.approvePairedSharedRoots(app, expected));
+        } else if ("apps".equals(step) || granted && ("contacts".equals(step) || "sms".equals(step) || "notifications".equals(step))) {
             saveScope(() -> demo == null ? FullAccessDataSources.enableScope(app, step)
                     : !"notifications".equals(step) || demo.enableNotifications());
         } else finishedStep();
@@ -293,5 +314,6 @@ public final class FullAccessSetup {
         if (resumed) Toast.makeText(host, message, Toast.LENGTH_SHORT).show();
     }
 
-    private record State(boolean enabled, boolean eligible, boolean hardcore, String paired, String pairKey, long epoch) { }
+    private record State(boolean enabled, boolean eligible, boolean hardcore, String paired, String pairKey,
+            long epoch, boolean sharedRoots) { }
 }

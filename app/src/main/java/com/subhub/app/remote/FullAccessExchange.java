@@ -39,7 +39,8 @@ final class FullAccessExchange {
                 files = FullAccessFiles.open(context, current);
                 ownSource.accept(files);
             }
-            write(connection, FullAccessChannel.frame(FullAccessChannel.OPENED).put("status", "ready"), current);
+            write(connection, FullAccessChannel.frame(FullAccessChannel.OPENED).put("status", "ready")
+                    .put("detailVersion", FullAccessChannel.DETAIL_VERSION), current);
             while (current.getAsBoolean()) {
                 connection.setReadTimeoutMillis("screen".equals(scope) ? 4_000 : 12_000);
                 JSONObject request = RemoteProtocol.read(connection.input());
@@ -66,11 +67,12 @@ final class FullAccessExchange {
                     if (image != null && image.length > 0 && image.length <= MAX_JPEG)
                         response.put("image", Base64.getEncoder().encodeToString(image));
                     respond(connection, response, current);
-                } else if (!"screen".equals(scope) && "page".equals(operation)) {
-                    respond(connection, FullAccessDataSources.page(context, scope,
-                            FullAccessChannel.text(request, "cursor")), current);
                 } else {
-                    throw new IOException("Invalid Full Access view operation");
+                    String node = FullAccessChannel.text(request, "node");
+                    if (!FullAccessDataSources.supportsRead(scope, operation, node))
+                        throw new IOException("Invalid Full Access view operation");
+                    respond(connection, FullAccessDataSources.page(context, scope, operation, node,
+                            FullAccessChannel.text(request, "cursor")), current);
                 }
             }
         } finally {

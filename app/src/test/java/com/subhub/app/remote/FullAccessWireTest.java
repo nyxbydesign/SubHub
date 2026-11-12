@@ -4,6 +4,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -63,6 +64,29 @@ public class FullAccessWireTest {
         channel.close();
         assertFalse(channel.isOpen());
         assertThrows(IOException.class, () -> channel.query(new JSONObject().put("op", "list")));
+    }
+
+    @Test public void oldPeerDoesNotReceiveThreadOrGroupOperations() throws Exception {
+        for (String scope : new String[] {"sms", "notifications"}) {
+            TestConnection connection = new TestConnection();
+            try (FullAccessChannel channel = new FullAccessChannel(connection, scope,
+                    new JSONObject().put("status", "ready"), () -> true, () -> {})) {
+                String operation = "sms".equals(scope) ? "conversations" : "groups";
+                assertEquals("update_required", channel.query(new JSONObject().put("op", operation)).getString("status"));
+                assertEquals(-1, connection.received().read());
+                assertTrue(channel.isOpen());
+            }
+        }
+    }
+
+    @Test public void detailOperationsCannotCrossScopeOrUseMissingTarget() {
+        assertTrue(FullAccessChannel.queryOp("sms", "page", ""));
+        assertTrue(FullAccessChannel.queryOp("sms", "thread", "sms-1"));
+        assertTrue(FullAccessChannel.queryOp("notifications", "group", "org.example.mail"));
+        assertFalse(FullAccessChannel.queryOp("contacts", "thread", "sms-1"));
+        assertFalse(FullAccessChannel.queryOp("sms", "group", "org.example.mail"));
+        assertFalse(FullAccessChannel.queryOp("notifications", "group", ""));
+        assertFalse(FullAccessChannel.queryOp("notifications", "groups", "org.example.mail"));
     }
 
     private static final class TestConnection implements PeerTransport.Connection {

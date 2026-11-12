@@ -1,5 +1,7 @@
 package com.subhub.app.remote;
 
+import com.subhub.app.fullaccess.FullAccessDataSources;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -21,6 +23,7 @@ public final class FullAccessChannel implements AutoCloseable {
     static final String REQUEST = "full_access_request";
     static final String RESPONSE = "full_access_response";
     static final int VERSION = 1;
+    static final int DETAIL_VERSION = 1;
     static final int CHUNK_BYTES = 32 * 1024;
     private static final long MAX_BYTES = 32L * 1024 * 1024 * 1024;
     private static final long MAX_TRANSFER_NANOS = TimeUnit.MINUTES.toNanos(15);
@@ -81,10 +84,28 @@ public final class FullAccessChannel implements AutoCloseable {
             requireCurrent();
             if (!"ready".equals(opened.optString("status"))) return opened;
             String operation = text(request, "op");
-            String expected = "files".equals(scope) ? "list" : "screen".equals(scope) ? "frame" : "page";
-            if (!expected.equals(operation)) throw new IOException("Invalid view operation");
-            return exchange(operation, text(request, "node"), text(request, "cursor"));
+            String node = text(request, "node");
+            if (!queryOp(scope, operation, node)) throw new IOException("Invalid view operation");
+            if (isDetail(operation) && opened.optInt("detailVersion") != DETAIL_VERSION)
+                return deniedDetails();
+            return exchange(operation, node, text(request, "cursor"));
         } finally { io.unlock(); }
+    }
+
+    static boolean queryOp(String scope, String operation, String node) {
+        if ("files".equals(scope)) return "list".equals(operation);
+        if ("screen".equals(scope)) return "frame".equals(operation) && node.isEmpty();
+        return FullAccessDataSources.supportsRead(scope, operation, node);
+    }
+
+    private static boolean isDetail(String operation) {
+        return "conversations".equals(operation) || "thread".equals(operation)
+                || "groups".equals(operation) || "group".equals(operation);
+    }
+
+    private static JSONObject deniedDetails() throws IOException {
+        try { return new JSONObject().put("status", "update_required"); }
+        catch (JSONException invalid) { throw new IOException("Could not describe view status", invalid); }
     }
 
     public void transfer(JSONObject request, OutputStream destination) throws IOException {

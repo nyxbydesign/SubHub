@@ -130,8 +130,23 @@ public final class FullAccessDataSources {
     }
 
     public static JSONObject page(Context context, String scope, String cursor) throws JSONException {
+        return page(context, scope, "page", "", cursor);
+    }
+
+    public static boolean supportsRead(String scope, String operation, String node) {
+        if (node == null || node.length() > 512) return false;
+        if ("page".equals(operation)) return recognized(scope) && node.isEmpty();
+        if ("sms".equals(scope))
+            return "conversations".equals(operation) && node.isEmpty()
+                    || "thread".equals(operation) && !node.isEmpty();
+        return "notifications".equals(scope) && ("groups".equals(operation) && node.isEmpty()
+                || "group".equals(operation) && !node.isEmpty());
+    }
+
+    public static JSONObject page(Context context, String scope, String operation, String node, String cursor)
+            throws JSONException {
         long epoch = currentEpoch(context);
-        if (!recognized(scope) || epoch < 0) return response("unavailable", new JSONArray());
+        if (!supportsRead(scope, operation, node) || epoch < 0) return response("unavailable", new JSONArray());
         long enabledAt = chosenAt(context, scope, epoch);
         if (enabledAt <= 0) return response("permission_required", new JSONArray());
         String smsSource = "sms".equals(scope) ? smsSource(context) : "";
@@ -141,6 +156,8 @@ public final class FullAccessDataSources {
             return response("unavailable", new JSONArray());
         String permission = permissionState(context, scope);
         if (!"ok".equals(permission)) return response(permission, new JSONArray());
+        long smsContactsSince = DIRECT_SMS.equals(smsSource) && !"page".equals(operation)
+                ? contactsSharedSince(context, epoch) : 0;
         JSONObject result;
         try {
             long now = System.currentTimeMillis();
@@ -149,13 +166,13 @@ public final class FullAccessDataSources {
                 case "apps" -> FullAccessAppsSource.page(context, (int) cursor(cursor, 0, Integer.MAX_VALUE), PAGE_SIZE, now);
                 case "sms" -> {
                     if (DIRECT_SMS.equals(smsSource)) {
-                        yield FullAccessSmsSource.page(context, cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), PAGE_SIZE);
+                        yield directSms(context, operation, node, cursor, smsContactsSince > 0);
                     }
                     synchronized (LOCAL_HISTORY_LOCK) {
                         if (!EXPORTED_SMS.equals(smsSource) || chosenAt(context, scope, epoch) != enabledAt
                                 || !smsSource.equals(smsSource(context)))
                             yield response("unavailable", new JSONArray());
-                        yield FullAccessSmsExport.page(context, epoch, (int) cursor(cursor, 0, Integer.MAX_VALUE), PAGE_SIZE);
+                        yield exportedSms(context, epoch, operation, node, cursor, false);
                     }
                 }
                 case "notifications" -> {
@@ -164,7 +181,7 @@ public final class FullAccessDataSources {
                             yield response("unavailable", new JSONArray());
                         long since = Math.max(enabledAt, now - FullAccessNotificationHistory.RETENTION_MILLIS);
                         try (FullAccessNotificationHistory history = new FullAccessNotificationHistory(context)) {
-                            yield history.page(context, epoch, cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), since, now, PAGE_SIZE);
+                            yield notifications(history, context, epoch, operation, node, cursor, since, now);
                         }
                     }
                 }
@@ -179,11 +196,45 @@ public final class FullAccessDataSources {
             return response("unavailable", new JSONArray());
         if ("sms".equals(scope) && !smsSource.equals(smsSource(context)))
             return response("unavailable", new JSONArray());
+        if (smsContactsSince > 0 && contactsSharedSince(context, epoch) != smsContactsSince)
+            return response("unavailable", new JSONArray());
         if (DIRECT_SMS.equals(smsSource) && !hasSmsAccess(context)
                 || "apps".equals(scope) && result.optBoolean("usageAvailable") && !hasUsageAccess(context))
             return response("permission_required", new JSONArray());
         permission = permissionState(context, scope);
         return "ok".equals(permission) ? result : response(permission, new JSONArray());
+    }
+
+    private static long contactsSharedSince(Context context, long epoch) {
+        return "ok".equals(permissionState(context, "contacts")) ? chosenAt(context, "contacts", epoch) : 0;
+    }
+
+    static JSONObject directSms(Context context, String operation, String node, String cursor, boolean contacts)
+            throws IOException, JSONException {
+        return switch (operation) {
+            case "conversations" -> FullAccessSmsSource.conversations(context, cursor, PAGE_SIZE, contacts);
+            case "thread" -> FullAccessSmsSource.thread(context, node, cursor, PAGE_SIZE, contacts);
+            default -> FullAccessSmsSource.page(context, cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), PAGE_SIZE);
+        };
+    }
+
+    static JSONObject exportedSms(Context context, long epoch, String operation, String node, String cursor,
+            boolean demo) throws IOException, JSONException {
+        return switch (operation) {
+            case "conversations" -> FullAccessSmsExport.conversations(context, epoch, cursor, PAGE_SIZE, demo);
+            case "thread" -> FullAccessSmsExport.thread(context, epoch, node, cursor, PAGE_SIZE, demo);
+            default -> FullAccessSmsExport.page(context, epoch, (int) cursor(cursor, 0, Integer.MAX_VALUE),
+                    PAGE_SIZE, demo);
+        };
+    }
+
+    static JSONObject notifications(FullAccessNotificationHistory history, Context context, long epoch,
+            String operation, String node, String cursor, long since, long now) throws JSONException {
+        return switch (operation) {
+            case "groups" -> history.groups(context, epoch, cursor, since, now, PAGE_SIZE);
+            case "group" -> history.group(context, epoch, node, cursor, since, now, PAGE_SIZE);
+            default -> history.page(context, epoch, cursor(cursor, Long.MAX_VALUE, Long.MAX_VALUE), since, now, PAGE_SIZE);
+        };
     }
 
     static boolean notificationScopeWasChosen(Context context) {

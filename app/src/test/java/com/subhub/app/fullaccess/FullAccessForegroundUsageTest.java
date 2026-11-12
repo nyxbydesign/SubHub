@@ -3,10 +3,19 @@ package com.subhub.app.fullaccess;
 import static com.subhub.app.fullaccess.FullAccessForegroundUsage.Event.*;
 import static org.junit.Assert.*;
 
+import android.content.pm.ApplicationInfo;
 import java.util.Map;
 import org.junit.Test;
 
 public final class FullAccessForegroundUsageTest {
+    @Test public void hidesPreinstalledAndUpdatedSystemAppsOnly() {
+        assertTrue(FullAccessAppsSource.isSystemApp(ApplicationInfo.FLAG_SYSTEM));
+        assertTrue(FullAccessAppsSource.isSystemApp(ApplicationInfo.FLAG_UPDATED_SYSTEM_APP));
+        assertTrue(FullAccessAppsSource.isSystemApp(ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_DEBUGGABLE));
+        assertFalse(FullAccessAppsSource.isSystemApp(ApplicationInfo.FLAG_DEBUGGABLE));
+        assertFalse(FullAccessAppsSource.isSystemApp(0));
+    }
+
     @Test public void countsOnlyConfirmedUnlockedForegroundAndSeparatesToday() {
         FullAccessForegroundUsage usage = new FullAccessForegroundUsage(10, 50);
         usage.event(RESUMED, 5, "locked", "LockScreen");

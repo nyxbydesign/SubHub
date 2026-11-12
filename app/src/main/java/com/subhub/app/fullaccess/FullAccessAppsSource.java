@@ -38,6 +38,7 @@ final class FullAccessAppsSource {
     static JSONObject page(Context context, int offset, int limit, long now) throws JSONException {
         PackageManager manager = context.getPackageManager();
         List<ApplicationInfo> apps = new java.util.ArrayList<>(manager.getInstalledApplications(0));
+        apps.removeIf(app -> isSystemApp(app.flags));
         apps.sort(Comparator.comparing(info -> info.packageName));
         Usage usage = Build.VERSION.SDK_INT >= 28 && hasUsageAccess(context) ? usage(context, now) : null;
         JSONArray rows = new JSONArray();
@@ -58,6 +59,10 @@ final class FullAccessAppsSource {
         if (usage != null && usage.since >= 0) result.put("since", usage.since);
         if (end < apps.size()) result.put("nextCursor", Integer.toString(end));
         return result;
+    }
+
+    static boolean isSystemApp(int flags) {
+        return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
     }
 
     private record Usage(Map<String, FullAccessForegroundUsage.Totals> totals, long since) { }
