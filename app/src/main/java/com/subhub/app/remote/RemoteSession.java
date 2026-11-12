@@ -87,6 +87,7 @@ public final class RemoteSession {
         int localSessionControl = hooks.sessionControlVersion();
         int localAppIcons = hooks.appIconsVersion();
         JSONObject hello = message("hello",peer).put("route",transport.syncRoute()).put("authVersion",1).put("activityVersion",2).put("phasePlanVersion",1).put("displayName",hooks.displayName(peer));
+        hello.put("fullAccessVersion", FullAccessChannel.VERSION);
         if (localSessionControl == 1) hello.put("sessionControlVersion", 1);
         if (localAppIcons == 1) hello.put("appIconsVersion", 1);
         if (hooks.extraTimeVersion() == 1) hello.put("extraTimeVersion", 1);
@@ -111,6 +112,7 @@ public final class RemoteSession {
         }
         requireType(response,"hello_ack",peer);
         if (helloAcknowledged != null) helloAcknowledged.run();
+        rememberFullAccess(peer, response);
         boolean extraTime = extraTimeVersion(response) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         boolean controls = RemoteSessionCommands.negotiatedVersion(response) == 1 && localSessionControl == 1;
@@ -161,6 +163,8 @@ public final class RemoteSession {
         receiveDisplayName(hello, peer);
         boolean priority = phasePlanVersion(hello) == 1 && controls;
         JSONObject ready=message("hello_ack",peer).put("displayName",hooks.displayName(peer));
+        rememberFullAccess(peer, hello);
+        if (supportsFullAccess(hello)) ready.put("fullAccessVersion", FullAccessChannel.VERSION);
         boolean extraTime = extraTimeVersion(hello) == 1 && hooks.extraTimeVersion() == 1;
         store.putMetadata(peer.identity, peer.generation, "extra_time_version", extraTime ? "1" : "0");
         if (extraTime) ready.put("extraTimeVersion", 1);
@@ -348,6 +352,17 @@ public final class RemoteSession {
         long value=RemoteProtocol.integer(frame,"appIconsVersion");
         if (value<=0) throw new SecurityException("Invalid app icon capability");
         return value;
+    }
+
+    private static boolean supportsFullAccess(JSONObject frame) {
+        Object version = frame.opt("fullAccessVersion");
+        return version instanceof Integer && ((Integer) version) == FullAccessChannel.VERSION
+                || version instanceof Long && ((Long) version) == FullAccessChannel.VERSION;
+    }
+
+    private void rememberFullAccess(RemoteStore.Peer peer, JSONObject frame) {
+        if (peer.localRole == RemoteProtocol.Role.DOM)
+            store.putMetadata(peer.identity, peer.generation, "full_access_version", supportsFullAccess(frame) ? "1" : "0");
     }
 
     private static long phasePlanVersion(JSONObject frame) throws JSONException {
