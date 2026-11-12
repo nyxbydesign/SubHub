@@ -91,11 +91,16 @@ public final class FullAccessContactsAndroidTest {
         UiDevice device = UiDevice.getInstance(instrumentation);
 
         try (SyntheticPair pair = new SyntheticPair(context)) {
-            context.startActivity(hardcore.activationIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            control(device, By.text("Activate this device admin app"), "Android Device Admin approval").click();
-            await("Hardcore Mode is active", hardcore::isEnabled);
-
             try (ActivityScenario<FullAccessActivity> setup = ActivityScenario.launch(FullAccessActivity.class)) {
+                await("Focused SubHub setup before Device Admin", () -> {
+                    AtomicBoolean focused = new AtomicBoolean();
+                    setup.onActivity(activity -> focused.set(activity.hasWindowFocus()));
+                    return focused.get();
+                });
+                setup.onActivity(activity -> activity.startActivity(hardcore.activationIntent()));
+                control(device, By.text(Pattern.compile("(?i)activate(?: this device admin app)?")).clickable(true),
+                        "Android Device Admin approval").click();
+                await("Hardcore Mode is active", hardcore::isEnabled);
                 awaitToggle(setup, false);
                 onView(withTagValue(is("full_access_toggle"))).perform(click());
                 onView(withText(R.string.full_access_share)).inRoot(isDialog()).perform(click());
@@ -118,9 +123,10 @@ public final class FullAccessContactsAndroidTest {
                         context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED);
                 await("Contacts source explicitly enabled", () ->
                         com.subhub.app.fullaccess.FullAccessDataSources.isScopeEnabled(context, "contacts"));
+                awaitToggle(setup, true);
+                addSyntheticContact(device, setup);
             }
 
-            addSyntheticContact(device);
             verifySmsExportWithoutAndroidSmsPermission(pair);
             try (FullAccessChannel live = pair.open("contacts")) {
                 JSONObject response = live.query(page());
@@ -167,12 +173,12 @@ public final class FullAccessContactsAndroidTest {
         }
     }
 
-    private void addSyntheticContact(UiDevice device) {
-        Intent insert = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private void addSyntheticContact(UiDevice device, ActivityScenario<FullAccessActivity> setup) {
+        Intent insert = new Intent(ContactsContract.Intents.Insert.ACTION)
+                .setType(ContactsContract.RawContacts.CONTENT_TYPE)
                 .putExtra(ContactsContract.Intents.Insert.NAME, CONTACT)
                 .putExtra(ContactsContract.Intents.Insert.PHONE, NUMBER);
-        context.startActivity(insert);
+        setup.onActivity(activity -> activity.startActivity(insert));
         UiObject2 local = device.wait(Until.findObject(By.text(Pattern.compile("(?i)save locally|keep contacts on this device"))), 2_000);
         if (local != null) local.click();
         control(device, By.text(Pattern.compile("(?i)save|done")), "Android Contacts save action").click();
@@ -211,7 +217,7 @@ public final class FullAccessContactsAndroidTest {
 
     private static UiObject2 control(UiDevice device, BySelector selector, String description) {
         UiObject2 action = device.wait(Until.findObject(selector), WAIT);
-        assertNotNull(description, action);
+        assertNotNull(description + " in " + device.getCurrentPackageName(), action);
         return action;
     }
 
